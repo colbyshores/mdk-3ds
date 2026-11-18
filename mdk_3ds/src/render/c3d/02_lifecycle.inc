@@ -267,11 +267,12 @@
     // post pass) and the PICA200's fragment stage is fixed-function (SPEC.md 5.3,
     // 7.3). What the PICA CAN express lands feature by feature behind the
     // Enhanced Mode toggles instead (SPEC.md 7.9, owner direction 2026-11-17):
-    // so far the haze (pica_matrix.h, THE HAZE). This flag stays false because it
-    // means the whole look.
+    // so far the haze (pica_matrix.h, THE HAZE), bilinear filtering and mip
+    // chains (06_draw.inc). This flag stays false because it means the whole look.
     caps.enhanced_look = false;
     caps.msaa = false;              // the PICA200 has no multisampling
-    caps.colour_mips = false;       // no mip chains on the original look
+    caps.colour_mips = false;       // the PC's colour-texture chains; the 3DS's own
+                                    // chains are Enhanced Mode enableMipmaps
     caps.hardware_stereo = true;    // the top screen's parallax barrier
     caps.flat_stereo = false;       // SBS / interlaced composites are for flat displays
     caps.insets = true;             // the PICA viewport is a hardware clip rect

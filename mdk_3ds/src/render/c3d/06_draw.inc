@@ -99,6 +99,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // combiner has no constant-colour source for a vertex shader's output,
     // so a colour has to come from a texture.
     C3D_Tex* texture = nullptr;
+    int32_t mipLevels = 0;
     if (draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
         C3dTexture& resource = r->textures[(size_t)draw->material.texture];
         // A released texture whose GPU copy is waiting for the next frame
@@ -112,6 +113,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
             }
             if (resource.valid) {
                 texture = &resource.tex;
+                mipLevels = resource.mipLevels;
                 // THE EVICTION ORDER. The texture is stamped every time it is
                 // drawn, so the least recently used one is the one that goes
                 // when the VRAM is full.
@@ -136,6 +138,30 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     const GPU_TEXTURE_FILTER_PARAM filter =
         (r->toggles.enableFiltering && !animated) ? GPU_LINEAR : GPU_NEAREST;
     C3D_TexSetFilter(texture, filter, filter);
+    // THE MIP CHAIN (SPEC.md 7.9 enableMipmaps): the sampler may descend the
+    // levels the texture was made with while the toggle is on -- trilinear with
+    // FILTERING, nearest-of-nearest without -- and is held at level 0 otherwise,
+    // which is the original look exactly. An animated texture is held at 0 for
+    // the reason it stays nearest: a lower level averages across its stacked
+    // frames. Like the filter, both live in the texture's own words and travel
+    // with the bind.
+    //
+    // AND ONLY ON THE SURFACES THE PC MIPS: its lit and sprite modes sample the
+    // mipped colour textures, while its sky (sky.frag, Panorama::linear) and its
+    // canvas (palette_filtered) are filtered without a chain. Here those are the
+    // Original-shaded draws; descending a chain there blurred the sky (measured,
+    // level 6 frame 300).
+    //
+    // AND ONLY WITH FILTERING. A lower level carries averaged alpha, and the cut
+    // is the half cover only while FILTERING is on (alphaTestReferenceFor); with
+    // the oracle's > 0 a 25%-covered texel would draw opaque and every cut-out
+    // would thicken with distance (review of the mipmap batch, F1). The PC always
+    // pairs its chain with the half cover, so a chain without filtering is not a
+    // PC look either.
+    const bool mipped = r->toggles.enableMipmaps && r->toggles.enableFiltering && !animated &&
+                        draw->material.shading != mdk::Shading::Original;
+    texture->maxLevel = (u8)(mipped ? mipLevels : 0);
+    C3D_TexSetFilterMipmap(texture, filter);
     C3D_TexBind(0, texture);
 
     // THE UV TRANSFORM, in uniform register 4.

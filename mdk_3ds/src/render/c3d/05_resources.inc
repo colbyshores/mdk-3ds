@@ -111,15 +111,24 @@ MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r, int32_t w, int32_t h,
 }
 
 int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t height) {
-    (void)r;
     if (width <= 0 || height <= 0 || width > 1024 || height > 1024) {
         return 0;
     }
     // WHAT THE 3DS SPENDS ON AN INDEX TEXTURE. The indices are expanded
     // through the palette into RGBA8, and the dimensions are padded up to
     // powers of two, so a 95x168 frame costs 128x256x4 = 131072 bytes --
-    // eight times the 15960 bytes of the indices themselves.
-    return nextPowerOfTwo(width) * nextPowerOfTwo(height) * 4;
+    // eight times the 15960 bytes of the indices themselves. AND ITS MIP CHAIN
+    // when Enhanced Mode enableMipmaps is on (makeTexture builds one then): a
+    // third more. Kurt's sprite residency budgets against this number, so it is
+    // the same pica::textureBytes the allocation is costed with.
+    RendererC3D* renderer = asC3d(r);
+    const int32_t paddedW = nextPowerOfTwo(width);
+    const int32_t paddedH = nextPowerOfTwo(height);
+    const int32_t levels = (renderer && renderer->toggles.enableMipmaps)
+                               ? mdk::pica::mipLevelsFor(paddedW, paddedH)
+                               : 0;
+    return (int32_t)mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, paddedW, paddedH,
+                                            levels);
 }
 
 MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba) {

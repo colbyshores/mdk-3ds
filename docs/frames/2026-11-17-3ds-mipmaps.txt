@@ -1,0 +1,8 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-18T06:02:47Z at 6417e9c + this batch's working tree
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: 3DS Enhanced Mode mip-chain batch (enableMipmaps in mdk_core; 3DS backend;
+Linux only logs the new toggle). The pinned Linux level-3 frame was recaptured
+from this tree and is pixel-identical to the previous pin, so that PNG (md5
+6769a13731983d65cee9df02da6cff37) is kept ON PURPOSE. The change's evidence is
+docs/evidence/2026-11-17-3ds-mipmaps.txt (EMULATOR, :99).

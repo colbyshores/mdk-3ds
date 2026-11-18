@@ -35,7 +35,7 @@ public:
         bool close = false;    // leave the menu
     };
 
-    static const int32_t kRowCount = 6;
+    static const int32_t kRowCount = 7;
 
     bool open() const { return open_; }
     void setOpen(bool open) { open_ = open; }

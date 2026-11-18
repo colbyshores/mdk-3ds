@@ -699,5 +699,54 @@ uint32_t hazeColourWord(const Colour& colour);
 void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
                          int32_t paddedHeight);
 
+// ---------------------------------------------------------------------------
+// THE MIP CHAIN (Enhanced Mode, SPEC.md 7.9 `enableMipmaps`)
+// ---------------------------------------------------------------------------
+//
+// The PICA samples a mip chain stored after level 0 (citro3d
+// C3D_TexInitWithParams' maxLevel), each level tiled at its own size, and every
+// level must be at least 8x8. The chain is BUILT ON THE CPU AT TEXTURE CREATION
+// (cold, like the expansion it follows) and SAMPLED BY THE GPU: citro3d's
+// C3D_TexGenerateMipmap runs a blocking display transfer per level, and a texture
+// can be made again mid-frame after an eviction, where that is not safe. The HD
+// texture packs (tex3ds .t3x) will carry their chains prebuilt, into the same
+// slots.
+
+// How many levels below level 0 a padded texture can carry (each >= 8x8, and the
+// PICA's 4-bit field caps the count at 15; a 1024 axis gives at most 7).
+int32_t mipLevelsFor(int32_t paddedWidth, int32_t paddedHeight);
+
+// One level from the one above it: `src` is tiled at width x height (powers of
+// two, >= 16), `dst` is tiled at width/2 x height/2. Each texel is the rounded
+// mean of its 2x2 parents, channel by channel, alpha included -- the colour a
+// transparent parent carries is prepareForFiltering's bled one, so the mean is
+// not pulled toward black.
+void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t* dst);
+
+// THE TEXEL FORMATS this backend stores, and what each costs. RGBA8 is the
+// original look's lossless expansion; ETC1 (opaque) and ETC1A4 (4-bit alpha) are
+// the HD layer's, compressed on the HOST by tex3ds with their chains prebuilt
+// (docs/HD_TEXTURES_3DS_SPEC.md) -- the 3DS never encodes them. Every byte count
+// the backend budgets with (eviction, sprite residency) goes through
+// textureBytes, so an imported ETC texture is costed by the same rule.
+enum class TexelFormat { Rgba8, Etc1, Etc1A4 };
+
+// Bytes of a padded width x height texture of `format` with `levels` mip levels
+// below level 0 (each level is a quarter of the one above; ETC formats are 4 bits
+// and 8 bits per texel, in 4x4 blocks, so every level >= 8x8 is whole blocks).
+size_t textureBytes(TexelFormat format, int32_t paddedWidth, int32_t paddedHeight,
+                    int32_t levels);
+
+// The texels of level 0 plus `levels` levels below it, the size of one buffer
+// holding the whole chain, levels consecutive (level k after level k-1).
+size_t mipChainTexels(int32_t paddedWidth, int32_t paddedHeight, int32_t levels);
+
+// Fills levels 1..levels of a chain buffer whose level 0 is already expanded
+// and prepared: each level downsampled from the one above, then re-prepared
+// (prepareForFiltering) at its own scaled real size -- (real + 1) / 2 per step --
+// so the colour bleed and the one-texel clamp hold all the way down.
+void buildMipChain(uint8_t* chain, int32_t paddedWidth, int32_t paddedHeight, int32_t realWidth,
+                   int32_t realHeight, int32_t levels);
+
 } // namespace pica
 } // namespace mdk

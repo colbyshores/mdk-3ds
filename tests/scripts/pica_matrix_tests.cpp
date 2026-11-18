@@ -1053,6 +1053,117 @@ void testTheFilteredEdge() {
     PICA_CHECK(at(pot, 6, 6, 8)[0] == 255);
 }
 
+void testTheMipChain() {
+    // THE LEVEL COUNT: every level >= 8x8, the short axis decides.
+    PICA_CHECK(mdk::pica::mipLevelsFor(8, 8) == 0);
+    PICA_CHECK(mdk::pica::mipLevelsFor(16, 16) == 1);
+    PICA_CHECK(mdk::pica::mipLevelsFor(256, 256) == 5);     // 256..8: levels 1-5
+    PICA_CHECK(mdk::pica::mipLevelsFor(1024, 1024) == 7);
+    PICA_CHECK(mdk::pica::mipLevelsFor(1024, 16) == 1);     // the short axis
+    PICA_CHECK(mdk::pica::mipLevelsFor(128, 256) == 4);
+
+    // THE BYTES, per format, chain included: 256x256 with 5 levels is
+    // 256^2 + 128^2 + ... + 8^2 = 87360 texels. RGBA8 4 bytes, ETC1 half a byte,
+    // ETC1A4 one byte -- the HD layer's 8x and 4x against the original look.
+    PICA_CHECK(mdk::pica::mipChainTexels(256, 256, 5) == 87360u);
+    PICA_CHECK(mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, 256, 256, 0) == 262144u);
+    PICA_CHECK(mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, 256, 256, 5) == 349440u);
+    PICA_CHECK(mdk::pica::textureBytes(mdk::pica::TexelFormat::Etc1, 256, 256, 5) == 43680u);
+    PICA_CHECK(mdk::pica::textureBytes(mdk::pica::TexelFormat::Etc1A4, 256, 256, 5) == 87360u);
+
+    // THE BOX FILTER, on the tiled layout: a 16x16 level of known texels, each
+    // byte a function of (x, y, channel), halved to 8x8. Every output byte is
+    // the rounded mean of its four parents -- read back through the tile index,
+    // so a row-major write (the Morton trap) fails here.
+    uint8_t src[16 * 16 * 4];
+    for (uint32_t y = 0; y < 16; y++) {
+        for (uint32_t x = 0; x < 16; x++) {
+            uint8_t* t = src + mdk::pica::textureTexelIndex(x, y, 16) * 4u;
+            for (uint32_t k = 0; k < 4; k++) {
+                t[k] = (uint8_t)((x * 13u + y * 7u + k * 31u) & 0xFFu);
+            }
+        }
+    }
+    uint8_t dst[8 * 8 * 4];
+    memset(dst, 0xEE, sizeof(dst));
+    mdk::pica::downsampleTiled(src, 16, 16, dst);
+    bool exact = true;
+    for (uint32_t y = 0; y < 8; y++) {
+        for (uint32_t x = 0; x < 8; x++) {
+            const uint8_t* o = dst + mdk::pica::textureTexelIndex(x, y, 8) * 4u;
+            for (uint32_t k = 0; k < 4; k++) {
+                uint32_t sum = 0;
+                for (uint32_t dy = 0; dy < 2; dy++) {
+                    for (uint32_t dx = 0; dx < 2; dx++) {
+                        sum += src[mdk::pica::textureTexelIndex(2 * x + dx, 2 * y + dy, 16) * 4u + k];
+                    }
+                }
+                if (o[k] != (uint8_t)((sum + 2u) >> 2)) {
+                    exact = false;
+                }
+            }
+        }
+    }
+    PICA_CHECK(exact);
+    // A half-covered 2x2 (two alpha 255, two alpha 0) is alpha 128: above the
+    // half-cover cut, so a distant cut-out edge thins rather than vanishes.
+    uint8_t half[16 * 16 * 4];
+    memset(half, 0, sizeof(half));
+    mdk::pica::texelBytes(half + mdk::pica::textureTexelIndex(0, 0, 16) * 4u, 10, 20, 30, 255);
+    mdk::pica::texelBytes(half + mdk::pica::textureTexelIndex(1, 0, 16) * 4u, 10, 20, 30, 255);
+    mdk::pica::downsampleTiled(half, 16, 16, dst);
+    PICA_CHECK(dst[mdk::pica::textureTexelIndex(0, 0, 8) * 4u] == 128);
+
+    // THE CHAIN IN ONE BUFFER: buildMipChain lays level 1 right after level 0
+    // and equals a downsample (then the edge preparation, a no-op on an opaque
+    // power-of-two level) of it.
+    const size_t chainTexels = mdk::pica::mipChainTexels(16, 16, 1);
+    PICA_CHECK(chainTexels == 16u * 16u + 8u * 8u);
+    uint8_t chain[(16 * 16 + 8 * 8) * 4];
+    memcpy(chain, src, sizeof(src));
+    for (uint32_t i = 0; i < 16 * 16; i++) {
+        chain[i * 4u] = 255;   // opaque, so the preparation leaves it alone
+    }
+    uint8_t level1[8 * 8 * 4];
+    mdk::pica::downsampleTiled(chain, 16, 16, level1);
+    mdk::pica::buildMipChain(chain, 16, 16, 16, 16, 1);
+    PICA_CHECK(memcmp(chain + 16 * 16 * 4, level1, sizeof(level1)) == 0);
+
+    // A PADDED TEXTURE, TWO LEVELS DEEP: 20x20 real in 32x32. Each level sits at
+    // the offset makeTexture uploads it from (the level above's bytes later), is
+    // the downsample of the level above, and is re-prepared at its own scaled real
+    // size ((20+1)/2 = 10, then 5). A chain that wrote level 2 over level 1, or
+    // prepared at the padded size, fails here.
+    const int32_t levels = mdk::pica::mipLevelsFor(32, 32);
+    PICA_CHECK(levels == 2);
+    PICA_CHECK(mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, 32, 32, levels) ==
+               (32u * 32u + 16u * 16u + 8u * 8u) * 4u);
+    static uint8_t padded[(32 * 32 + 16 * 16 + 8 * 8) * 4];
+    memset(padded, 0, sizeof(padded));
+    for (uint32_t y = 0; y < 20; y++) {
+        for (uint32_t x = 0; x < 20; x++) {
+            const bool hole = ((x + y) % 7u) == 0;
+            mdk::pica::texelBytes(padded + mdk::pica::textureTexelIndex(x, y, 32) * 4u,
+                                  (x * 11u) & 0xFFu, (y * 9u) & 0xFFu, 40, hole ? 0u : 255u);
+        }
+    }
+    mdk::pica::prepareForFiltering(padded, 20, 20, 32, 32);
+    // The expected chain, built level by level from the primitives.
+    static uint8_t want1[16 * 16 * 4];
+    static uint8_t want2[8 * 8 * 4];
+    mdk::pica::downsampleTiled(padded, 32, 32, want1);
+    mdk::pica::prepareForFiltering(want1, 10, 10, 16, 16);
+    mdk::pica::downsampleTiled(want1, 16, 16, want2);
+    mdk::pica::prepareForFiltering(want2, 5, 5, 8, 8);
+    mdk::pica::buildMipChain(padded, 32, 32, 20, 20, levels);
+    const size_t offset1 = (size_t)32 * 32 * 4;                 // makeTexture's level 1
+    const size_t offset2 = offset1 + ((size_t)32 >> 1) * ((size_t)32 >> 1) * 4;   // level 2
+    PICA_CHECK(memcmp(padded + offset1, want1, sizeof(want1)) == 0);
+    PICA_CHECK(memcmp(padded + offset2, want2, sizeof(want2)) == 0);
+    PICA_CHECK(offset2 + sizeof(want2) ==
+               mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, 32, 32, levels));
+}
+
 void testTheTexelTileOrder() {
     // THE SAME TRAP ONE UNIT BEFORE THE BYTES: the byte order above says which
     // byte of a texel goes where; this says WHICH TEXEL SLOT a (x, y) goes in.
@@ -1179,6 +1290,7 @@ int runPicaMatrixTests() {
     testSceneUvRunsFromTheLastRow();
     testTheHazeIsThePcCurveOnTheRightDraws();
     testTheFilteredEdge();
+    testTheMipChain();
     return failures;
 }
 

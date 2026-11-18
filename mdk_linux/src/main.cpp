@@ -487,12 +487,13 @@ int main(int argc, char** argv) {
             std::fclose(config);
             if (mdk::parseEnhancedConfig(configText, &enhancedToggles)) {
                 std::printf("[main] config: %s loaded (shadows=%d lights=%d haze=%d "
-                            "mirrors=%d glow=%d filtering=%d)\n",
+                            "mirrors=%d glow=%d filtering=%d mipmaps=%d)\n",
                             configPath, (int)enhancedToggles.enableSkyShadows,
                             (int)enhancedToggles.enableFragmentLights,
                             (int)enhancedToggles.enableHaze, (int)enhancedToggles.enableMirrors,
                             (int)enhancedToggles.enableGlowBillboards,
-                            (int)enhancedToggles.enableFiltering);
+                            (int)enhancedToggles.enableFiltering,
+                            (int)enhancedToggles.enableMipmaps);
             }
         }
     }

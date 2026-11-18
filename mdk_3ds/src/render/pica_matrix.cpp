@@ -392,5 +392,82 @@ void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t 
     }
 }
 
+int32_t mipLevelsFor(int32_t paddedWidth, int32_t paddedHeight) {
+    int32_t levels = 0;
+    int32_t w = paddedWidth;
+    int32_t h = paddedHeight;
+    while (levels < 15 && w >= 16 && h >= 16) {
+        w >>= 1;
+        h >>= 1;
+        levels++;
+    }
+    return levels;
+}
+
+void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t* dst) {
+    if (!src || !dst || width < 16 || height < 16) {
+        return;
+    }
+    const uint32_t sw = (uint32_t)width;
+    const uint32_t dw = sw >> 1;
+    const uint32_t dh = (uint32_t)height >> 1;
+    for (uint32_t y = 0; y < dh; y++) {
+        for (uint32_t x = 0; x < dw; x++) {
+            const uint8_t* a = src + textureTexelIndex(2 * x, 2 * y, sw) * 4u;
+            const uint8_t* b = src + textureTexelIndex(2 * x + 1, 2 * y, sw) * 4u;
+            const uint8_t* c = src + textureTexelIndex(2 * x, 2 * y + 1, sw) * 4u;
+            const uint8_t* d = src + textureTexelIndex(2 * x + 1, 2 * y + 1, sw) * 4u;
+            uint8_t* out = dst + textureTexelIndex(x, y, dw) * 4u;
+            for (int32_t k = 0; k < 4; k++) {
+                out[k] = (uint8_t)(((uint32_t)a[k] + b[k] + c[k] + d[k] + 2u) >> 2);
+            }
+        }
+    }
+}
+
+size_t textureBytes(TexelFormat format, int32_t paddedWidth, int32_t paddedHeight,
+                    int32_t levels) {
+    const size_t texels = mipChainTexels(paddedWidth, paddedHeight, levels);
+    switch (format) {
+        case TexelFormat::Etc1: return texels / 2;   // 4 bits per texel
+        case TexelFormat::Etc1A4: return texels;     // 8 bits per texel
+        default: return texels * 4;                  // RGBA8
+    }
+}
+
+size_t mipChainTexels(int32_t paddedWidth, int32_t paddedHeight, int32_t levels) {
+    size_t total = 0;
+    size_t w = (size_t)paddedWidth;
+    size_t h = (size_t)paddedHeight;
+    for (int32_t level = 0; level <= levels; level++) {
+        total += w * h;
+        w >>= 1;
+        h >>= 1;
+    }
+    return total;
+}
+
+void buildMipChain(uint8_t* chain, int32_t paddedWidth, int32_t paddedHeight, int32_t realWidth,
+                   int32_t realHeight, int32_t levels) {
+    if (!chain) {
+        return;
+    }
+    uint8_t* above = chain;
+    int32_t w = paddedWidth;
+    int32_t h = paddedHeight;
+    int32_t rw = realWidth;
+    int32_t rh = realHeight;
+    for (int32_t level = 1; level <= levels && w >= 16 && h >= 16; level++) {
+        uint8_t* below = above + (size_t)w * (size_t)h * 4u;
+        downsampleTiled(above, w, h, below);
+        w >>= 1;
+        h >>= 1;
+        rw = (rw + 1) >> 1;
+        rh = (rh + 1) >> 1;
+        prepareForFiltering(below, rw, rh, w, h);
+        above = below;
+    }
+}
+
 } // namespace pica
 } // namespace mdk

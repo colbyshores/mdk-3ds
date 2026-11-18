@@ -1290,3 +1290,15 @@ pixel on this host:
   behind, even though this host does not show it.
 - `vkDestroyDevice-device-05137` (x363): images/memory/views still alive at
   device destruction (teardown leaks).
+
+## The 3DS frame is not deterministic at one distant object (2026-11-17)
+
+Two runs of the SAME 3DS build (`mdk_3ds/tools/compare_linux.sh 3 300`, every
+Enhanced Mode toggle off, FIXED=1 clock, Mandarine on `:99`) differ in 6 pixels,
+crop (216..219, 129..130): a small distant object beside the level-3 tower. The
+rest of the frame is bit-identical, and level 7 frame 300 is bit-identical run to
+run. Suspect: an ordering keyed on a heap ADDRESS (ObjectView's layout cache keys
+on the model's address, `mdk_core/src/game/object_view.*`), so same-depth parts
+draw in an order that depends on where the allocator put them. Not yet
+investigated; it makes any claim of "N pixels changed" at that place unreadable,
+and it is why the haze batch's 7-pixel attribution was withdrawn.

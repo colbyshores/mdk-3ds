@@ -238,6 +238,8 @@ struct EnhancedToggles {
     bool enableMirrors = true;        // planar mirror draws
     bool enableGlowBillboards = true; // additive glow (post glow / glow billboards)
     bool enableFiltering = true;      // bilinear texture filtering (the PC's filtered look)
+    bool enableMipmaps = true;        // 3DS: mip chains (made at texture creation, sampled live,
+                                      // only with enableFiltering); the PC always mips
 };
 
 // ---------------------------------------------------------------------------

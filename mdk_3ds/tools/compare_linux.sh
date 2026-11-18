@@ -50,7 +50,7 @@ mkdir -p "$SEED/3ds/mdk"
 if [ -n "${MDK_COMPARE_TOGGLES:-}" ]; then
     cp "$MDK_COMPARE_TOGGLES" "$SEED/3ds/mdk/config.ini"
 else
-    printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\n' \
+    printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\nenableMipmaps=0\n' \
         > "$SEED/3ds/mdk/config.ini"
 fi
 # Enough wall time for load + <frame> fixed frames under emulation.
@@ -64,6 +64,10 @@ if [ -z "$CAP" ]; then
     exit 1
 fi
 cp "$CAP" "$OUT/3ds-L$LEVEL-f$FRAME.bmp"
+# The guest log too (its mem[...] probes carry the linear heap's free bytes, the
+# number an Enhanced Mode memory cost is read from).
+GUEST_LOG=$(find "$LANE_TMP" -name mdk.log | head -1)
+[ -n "$GUEST_LOG" ] && cp "$GUEST_LOG" "$OUT/mdk-L$LEVEL-f$FRAME.log"
 
 for f in $((FRAME - 1)) "$FRAME" $((FRAME + 1)); do
     "$ROOT/build-linux/mdk" --headless --fixed-step --level="$LEVEL" --size=400x240 --seed 1 \

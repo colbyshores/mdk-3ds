@@ -60,3 +60,11 @@ the device having enabled samplerAnisotropy (vk_context.cpp requests only
 fillModeNonSolid), and the SPIR-V (glslang --target-env vulkan1.3) declares
 DemoteToHelperInvocation without shaderDemoteToHelperInvocation enabled. The
 frame still renders.
+
+CORRECTION (2026-11-17, the mipmap batch). The "7 pixels ... the scene is now
+marked Lit, and ObjectView splits a shiny part into its own Sprite batch"
+attribution above is NOT established. The same 3DS build, run twice with every
+toggle off (compare_linux.sh 3 300), differs in 6 pixels at exactly that place
+(216..219,129..130): the distant object there draws NONDETERMINISTICALLY from
+run to run. The 7 pixels are that, at least in part; whether the Lit mark moves
+any pixel there is unmeasured. Recorded in docs/OPEN_ITEMS.md.

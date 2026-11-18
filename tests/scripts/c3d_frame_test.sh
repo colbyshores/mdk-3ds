@@ -1976,6 +1976,18 @@ def adjudicate(text, quiet=False):
         names = re.findall(r"(?:^|[^.\w])([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(", " " + a)
         if names:
             return names
+        # POINTER ARITHMETIC INTO A BUFFER THIS SCAN CAN SEE (2026-11-17, the mip
+        # chain): `pixels + offset` is the buffer `pixels`, so it resolves to
+        # whatever produced `pixels` -- the levels after level 0 live in the same
+        # buffer the expansion filled (a local, or a member kept on the record:
+        # `texture.pixels + offset`, review-8 F5's shape). Arithmetic on a CALL's
+        # result (a member's `.data()`) or a cast still resolves to nothing and is
+        # still refused; the arm `the sink is handed an offset into the unrotated
+        # source` holds that.
+        m = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*(?:(?:\.|->)[A-Za-z_][A-Za-z0-9_]*)*)"
+                         r"[ \t]*\+[ \t]*[A-Za-z_0-9 \t()*>]+", a)
+        if m:
+            return producers_of(m.group(1), body_text)
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:[.-]>?[A-Za-z_][A-Za-z0-9_]*)*", a) \
                 and body_text:
             return re.findall(r"\b" + re.escape(a) +
@@ -2921,6 +2933,12 @@ ARMS = [
     # and the seam's unrotated source is handed to the PICA -- the shipped defect
     # reached from the other direction, and the one mutation that isolates the sink
     # from the filler rule (no new filler exists, so only the sink can refuse it).
+    ("the sink is handed an offset into the unrotated source (the mip chain's "
+     "pointer arithmetic must not become a free pass)",
+     lambda s: s.replace("C3D_TexLoadImage(&texture.tex, pixels + offset, GPU_TEXFACE_2D, level);",
+                         "C3D_TexLoadImage(&texture.tex, texture.source.data() + offset, "
+                         "GPU_TEXFACE_2D, level);", 1),
+     "texel-sink-is-fed-by-a-helper-writer"),
     ("the sink is handed the unrotated source directly (review-7 F1)",
      lambda s: s.replace("C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);",
                          "C3D_TexLoadImage(&texture.tex, texture.source.data(),\n"
@@ -3588,11 +3606,13 @@ PROBES = [
                   "        pixels = expandIndices(texture.source.data(), "
                   "texture.realWidth, texture.realHeight,\n"
                   "                               texture.palette.data(), "
-                  "texture.paddedWidth, texture.paddedHeight);",
+                  "texture.paddedWidth, texture.paddedHeight,\n"
+                  "                               levels);",
                   "        texture.expanded = expandIndices(texture.source.data(),\n"
                   "                               texture.realWidth, texture.realHeight,\n"
                   "                               texture.palette.data(),\n"
-                  "                               texture.paddedWidth, texture.paddedHeight);\n"
+                  "                               texture.paddedWidth, texture.paddedHeight,\n"
+                  "                               levels);\n"
                   "        pixels = texture.expanded;", 1)
               .replace("    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);",
                        "    C3D_TexLoadImage(&texture.tex, texture.expanded,\n"

@@ -116,6 +116,11 @@ struct C3dTexture {
     // When this texture was last drawn, for the eviction order.
     uint32_t lastUsed = 0;
 
+    // The mip levels below level 0 this texture was MADE with (Enhanced Mode
+    // enableMipmaps, decided when the GPU copy is made; pica::mipLevelsFor).
+    // The draw path lets the sampler use them only while the toggle is on.
+    int32_t mipLevels = 0;
+
     // THE SOURCE, kept so that an EVICTED texture can be made again.
     //
     // THE EVICTION HAS TO BE REVERSIBLE. The 3DS has six megabytes of VRAM

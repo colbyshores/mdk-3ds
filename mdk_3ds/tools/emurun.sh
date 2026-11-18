@@ -382,7 +382,7 @@ fi
 case "$EXPECT" in
   hud*) mkdir -p "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk" &&
         : > "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk/canary.txt" &&
-        printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\n' \
+        printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\nenableMipmaps=0\n' \
           > "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk/config.ini" ;;
 esac
 if [ -n "${SEED_SDMC:-}" ]; then

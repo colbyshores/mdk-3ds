@@ -86,8 +86,10 @@ static int32_t acquireTextureSlot(RendererC3D* renderer) {
 // every painted pixel. See `pica::texelBytes`.
 static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t height,
                               const uint8_t* paletteRgba, int32_t paddedWidth,
-                              int32_t paddedHeight) {
-    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;
+                              int32_t paddedHeight, int32_t mipLevels) {
+    // Level 0 and, under Enhanced Mode enableMipmaps, the chain after it in the
+    // same buffer (pica::buildMipChain, levels consecutive).
+    const size_t texels = mdk::pica::mipChainTexels(paddedWidth, paddedHeight, mipLevels);
     uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));
     if (!pixels) {
         return nullptr;
@@ -124,6 +126,7 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
     // nearest sample of any texel it touches is unchanged in colour or
     // discarded as before, except at an exact padded edge, which now clamps).
     mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
+    mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, width, height, mipLevels);
     return pixels;
 }
 
@@ -138,8 +141,8 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
 // to be rotated on the way in. Row-wise memcpy was the first version and it is
 // what painted every flat-coloured surface with its own alpha as red.
 static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
-                           int32_t paddedWidth, int32_t paddedHeight) {
-    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;
+                           int32_t paddedWidth, int32_t paddedHeight, int32_t mipLevels) {
+    const size_t texels = mdk::pica::mipChainTexels(paddedWidth, paddedHeight, mipLevels);
     uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));
     if (!pixels) {
         return nullptr;
@@ -156,6 +159,7 @@ static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
         }
     }
     mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
+    mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, width, height, mipLevels);
     return pixels;
 }
 
@@ -225,7 +229,16 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     if (texture.valid) {
         return true;
     }
-    const size_t gpuBytes = (size_t)texture.paddedWidth * (size_t)texture.paddedHeight * 4;
+    // THE MIP CHAIN (SPEC.md 7.9 enableMipmaps): made with the texture when the
+    // toggle is on at that moment, so turning it on costs its memory -- a third
+    // more per texture -- from the next texture made (the next level load, or an
+    // evicted texture coming back); the sampler's use of it is live (06_draw.inc).
+    int32_t levels = renderer->toggles.enableMipmaps
+                         ? mdk::pica::mipLevelsFor(texture.paddedWidth, texture.paddedHeight)
+                         : 0;
+    size_t gpuBytes = mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8,
+                                                    texture.paddedWidth, texture.paddedHeight,
+                                                    levels);
     const size_t realBytes = (size_t)texture.realWidth * (size_t)texture.realHeight *
                              (texture.indexed ? 1u : 4u);
     if (texture.source.size() != realBytes ||
@@ -256,8 +269,14 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
         // what C3D_TexInit's format argument selects is the TEXEL FORMAT, not
         // the layout. Nothing about the allocation changes here -- only where
         // the expansion writes its texels.
-        if (C3D_TexInit(&texture.tex, (u16)texture.paddedWidth, (u16)texture.paddedHeight,
-                        GPU_RGBA8)) {
+        C3D_TexInitParams params = {};
+        params.width = (u16)texture.paddedWidth;
+        params.height = (u16)texture.paddedHeight;
+        params.maxLevel = (u8)levels;
+        params.format = GPU_RGBA8;
+        params.type = GPU_TEX_2D;
+        params.onVram = false;
+        if (C3D_TexInitWithParams(&texture.tex, nullptr, params)) {
             allocated = true;
             break;
         }
@@ -266,6 +285,17 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
             probeTextureMemory(texture.realWidth, texture.realHeight, gpuBytes);
         }
         if (!evictTextures(renderer, gpuBytes)) {
+            // A CHAIN IS AN ENHANCEMENT, THE TEXTURE IS NOT: with nothing left to
+            // evict, try once more without the chain before the surface goes
+            // missing (review of the mipmap batch, F2).
+            if (levels > 0) {
+                mdk::log3dsPrintf("texture %dx%d: no room for its mip chain; made without",
+                                  (int)texture.realWidth, (int)texture.realHeight);
+                levels = 0;
+                gpuBytes = mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8,
+                                                   texture.paddedWidth, texture.paddedHeight, 0);
+                continue;
+            }
             break;
         }
     }
@@ -308,16 +338,30 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     uint8_t* pixels = nullptr;
     if (texture.indexed) {
         pixels = expandIndices(texture.source.data(), texture.realWidth, texture.realHeight,
-                               texture.palette.data(), texture.paddedWidth, texture.paddedHeight);
+                               texture.palette.data(), texture.paddedWidth, texture.paddedHeight,
+                               levels);
     } else {
         pixels = expandRgba(texture.source.data(), texture.realWidth, texture.realHeight,
-                            texture.paddedWidth, texture.paddedHeight);
+                            texture.paddedWidth, texture.paddedHeight, levels);
     }
     if (!pixels) {
         C3D_TexDelete(&texture.tex);
         return false;
     }
     C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);
+    // The chain, already in the same buffer after level 0 (the expansion built
+    // it: pica::buildMipChain). Each level is handed to the sink from its offset.
+    size_t offset = (size_t)texture.paddedWidth * (size_t)texture.paddedHeight * 4u;
+    int32_t made = 0;
+    for (int32_t level = 1; level <= levels; level++) {
+        C3D_TexLoadImage(&texture.tex, pixels + offset, GPU_TEXFACE_2D, level);
+        offset += ((size_t)texture.paddedWidth >> level) * ((size_t)texture.paddedHeight >> level) * 4u;
+        made = level;
+    }
+    texture.mipLevels = made;
+    // C3D_TexFlush flushes level 0 plus `maxLevel` levels; the draw path rewrites
+    // maxLevel per draw, so put back what the allocation holds first.
+    texture.tex.maxLevel = (u8)levels;
     // THE PAIRED FLUSH. `C3D_TexLoadImage` copies the pixels into the texture's
     // own linear buffer and does NOT make them visible to the GPU. citro3d's
     // flush is a separate call, `C3D_TexFlush`, and that is measured rather than
