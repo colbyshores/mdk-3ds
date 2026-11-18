@@ -1,0 +1,252 @@
+// ============================================================================
+// arena_views.cpp -- see arena_views.h.
+// ============================================================================
+
+#include "game/arena_views.h"
+
+#include <stddef.h>
+
+#include <map>
+
+namespace mdk {
+
+namespace {
+
+// A DTI record that joins two arenas (level_data.cpp kConnection).
+const uint32_t kConnection = 6;
+
+} // namespace
+
+ArenaViews::~ArenaViews() {
+    for (size_t i = 0; i < views_.size(); i++) {
+        delete views_[i].view;
+    }
+}
+
+void ArenaViews::start(MdkRenderer renderer, LevelData* level, SurfaceCache* surfaces,
+                       Shading shading) {
+    clear();
+    renderer_ = renderer;
+    level_ = level;
+    surfaces_ = surfaces;
+    shading_ = shading;
+    connections_.clear();
+    failed_.clear();
+    syncs_ = 0;
+    nextSweep_ = kOrphanSweepSyncs;
+    lastBuilt_.clear();
+    stats_ = Stats();
+    if (!level_) {
+        return;
+    }
+    // The connections: a type-6 record in each of the two arenas, sharing an id.
+    std::map<int32_t, std::vector<std::string>> byId;
+    const std::vector<formats::Dti::ArenaEntry>& entries = level_->dti().arenas();
+    for (size_t a = 0; a < entries.size(); a++) {
+        for (size_t r = 0; r < entries[a].records.size(); r++) {
+            if (entries[a].records[r].type == kConnection) {
+                byId[entries[a].records[r].id].push_back(entries[a].name);
+            }
+        }
+    }
+    for (std::map<int32_t, std::vector<std::string>>::const_iterator it = byId.begin();
+         it != byId.end(); ++it) {
+        if (it->second.size() == 2) {
+            connections_.push_back(std::make_pair(it->second[0], it->second[1]));
+        }
+    }
+}
+
+bool ArenaViews::connected(const std::string& a, const std::string& b) const {
+    for (size_t i = 0; i < connections_.size(); i++) {
+        if ((connections_[i].first == a && connections_[i].second == b) ||
+            (connections_[i].first == b && connections_[i].second == a)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ArenaViews::keeps(const std::string& name, const std::string& current,
+                       const std::string& second, const std::vector<std::string>& drawn) const {
+    if (name == current || name == second) {
+        return true;
+    }
+    for (size_t i = 0; i < drawn.size(); i++) {
+        if (drawn[i] == name) {
+            return true;
+        }
+    }
+    // The arena with the stream, and its corridors (see the header).
+    const std::string& resident = level_->stream().resident();
+    if (resident.empty()) {
+        return false;
+    }
+    if (name == resident) {
+        return true;
+    }
+    return !level_->mto().has(name) && connected(name, resident);
+}
+
+bool ArenaViews::waiting(const std::string& name) const {
+    for (size_t i = 0; i < failed_.size(); i++) {
+        if (failed_[i].name == name) {
+            return syncs_ < failed_[i].retryAt;
+        }
+    }
+    return false;
+}
+
+void ArenaViews::noteFailed(const std::string& name) {
+    Failed* entry = nullptr;
+    for (size_t i = 0; i < failed_.size(); i++) {
+        if (failed_[i].name == name) {
+            entry = &failed_[i];
+        }
+    }
+    if (!entry) {
+        failed_.push_back(Failed());
+        entry = &failed_.back();
+        entry->name = name;
+    }
+    entry->attempts++;
+    entry->retryAt = syncs_ + (entry->attempts <= kQuickRetries ? 1 : kRetrySyncs);
+}
+
+void ArenaViews::forgetFailed(const std::string& name) {
+    for (size_t i = 0; i < failed_.size(); i++) {
+        if (failed_[i].name == name) {
+            failed_.erase(failed_.begin() + (std::ptrdiff_t)i);
+            return;
+        }
+    }
+}
+
+const LevelView* ArenaViews::find(const std::string& name) const {
+    for (size_t i = 0; i < views_.size(); i++) {
+        if (views_[i].name == name) {
+            return views_[i].view;
+        }
+    }
+    return nullptr;
+}
+
+bool ArenaViews::build(const std::string& name) {
+    const formats::Arena* arena = level_->arenaNamed(name);
+    if (!arena) {
+        return false;
+    }
+    LevelView* view = new LevelView();
+    view->setShading(shading_);
+    if (!view->load(renderer_, level_, arena, surfaces_)) {
+        // An arena with no geometry, or no GPU memory for its mesh right now:
+        // tried again later (see the header), not in every frame and not never.
+        view->unload();
+        delete view;
+        noteFailed(name);
+        stats_.failed++;
+        return false;
+    }
+    forgetFailed(name);
+    Entry entry;
+    entry.name = name;
+    entry.view = view;
+    views_.push_back(entry);
+    stats_.built++;
+    lastBuilt_ = name;
+    return true;
+}
+
+void ArenaViews::release(size_t index) {
+    const Entry entry = views_[index];
+    entry.view->unload();
+    // Everything drawn in this arena's colours: its own textures, the level's
+    // through its palette, its objects'. The cache makes them again on the next
+    // draw that asks, so nothing has to know they went.
+    if (const formats::Arena* arena = level_->arenaNamed(entry.name)) {
+        surfaces_->releasePalette(&level_->paletteOf(arena));
+    }
+    delete entry.view;
+    views_.erase(views_.begin() + (std::ptrdiff_t)index);
+    stats_.released++;
+}
+
+int32_t ArenaViews::sync(const std::string& current, const std::string& second) {
+    std::vector<std::string> drawn;
+    drawn.push_back(current);
+    return sync(current, second, drawn);
+}
+
+int32_t ArenaViews::sync(const std::string& current, const std::string& second,
+                         const std::vector<std::string>& drawn) {
+    if (!renderer_ || !level_ || !surfaces_) {
+        return 0;
+    }
+    syncs_++;
+    // Free first. (On the 3DS a release settles at the next frame's start, not
+    // here, which is one reason a build can fail and is retried.)
+    for (size_t i = views_.size(); i > 0; i--) {
+        if (!keeps(views_[i - 1].name, current, second, drawn)) {
+            release(i - 1);
+        }
+    }
+    int32_t built = 0;
+    // The pair, then whatever else is drawn.
+    for (size_t w = 0; w < 2 + drawn.size(); w++) {
+        const std::string& name = w == 0 ? current : (w == 1 ? second : drawn[w - 2]);
+        if (name.empty() || find(name) || waiting(name)) {
+            continue;
+        }
+        if (build(name)) {
+            built++;
+        }
+    }
+    // Every kOrphanSweepSyncs, counted forward (no remainder: the ARM11 has no
+    // integer divide, AGENTS.md R11).
+    if (syncs_ >= nextSweep_) {
+        nextSweep_ = syncs_ + kOrphanSweepSyncs;
+        sweepOrphans(current, second, drawn);
+    }
+    return built;
+}
+
+void ArenaViews::sweepOrphans(const std::string& current, const std::string& second,
+                              const std::vector<std::string>& drawn) {
+    const std::vector<const formats::Arena*>& arenas = level_->arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        const std::string& name = arenas[i]->name();
+        if (find(name) || keeps(name, current, second, drawn)) {
+            continue;
+        }
+        const formats::Palette* palette = &level_->paletteOf(arenas[i]);
+        if (surfaces_->hasPalette(palette)) {
+            surfaces_->releasePalette(palette);
+            stats_.orphansReleased++;
+        }
+    }
+}
+
+void ArenaViews::draw(const std::vector<std::string>& drawn) {
+    for (size_t d = 0; d < drawn.size(); d++) {
+        for (size_t i = 0; i < views_.size(); i++) {
+            if (views_[i].name == drawn[d]) {
+                views_[i].view->draw();
+                break;
+            }
+        }
+    }
+}
+
+void ArenaViews::clear() {
+    if (renderer_ && level_ && surfaces_) {
+        for (size_t i = views_.size(); i > 0; i--) {
+            release(i - 1);
+        }
+    }
+    for (size_t i = 0; i < views_.size(); i++) {
+        delete views_[i].view;
+    }
+    views_.clear();
+}
+
+} // namespace mdk

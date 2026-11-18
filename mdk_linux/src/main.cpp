@@ -48,6 +48,7 @@
 #include "game/player.h"
 #include "game/input.h"
 #include "game/arena_space.h"
+#include "game/arena_views.h"
 #include "formats/mdk_data.h"
 #include "formats/bni.h"
 #include "formats/file_system.h"
@@ -596,7 +597,16 @@ int main(int argc, char** argv) {
     if (modsReady) {
         surfaces.setColourReplacementLookup(modReplacementLookup, &modSource);
     }
-    mdk::LevelView view;
+    // The arenas on the GPU: a LevelView per arena the scripts have loaded,
+    // following the arena stream (game/arena_views.h), exactly as the 3DS
+    // frontend does -- one path on both targets, so this build exercises the
+    // stream the console depends on. (Until 2026-11-18: one view, the start
+    // arena's, and nothing past the first door was drawn.)
+    mdk::ArenaViews arenaViews;
+    std::string startArenaName;
+    std::vector<std::string> startDrawn;
+    const std::vector<std::string>* frameDrawn = nullptr;   // this frame's drawn list
+    int32_t lastDemandLoads = 0;
     mdk::HudView hud;
     mdk::KurtSprite kurtSprite;
     mdk::formats::Cmi cmi;
@@ -644,10 +654,17 @@ int main(int argc, char** argv) {
             if (arena) {
                 std::printf("[main] arena: %s (%d arenas)\n", arena->name().c_str(),
                             (int)level.arenas().size());
-                view.setShading(enhancedLook ? mdk::Shading::Lit : mdk::Shading::Original);
-                if (view.load(renderer, &level, arena, &surfaces)) {
+                startArenaName = arena->name();
+                arenaViews.start(renderer, &level, &surfaces,
+                                 enhancedLook ? mdk::Shading::Lit : mdk::Shading::Original);
+                // The level's start is a SHOW of Kurt's arena (0x41ba68): its
+                // textures are read in whole, now, and its view built.
+                level.stream().update(startArenaName, std::string(), false);
+                arenaViews.sync(startArenaName, std::string());
+                if (const mdk::LevelView* startView = arenaViews.find(startArenaName)) {
                     std::printf("[main] view: %d batches, %d vertices, %d triangles\n",
-                                view.batchCount(), view.vertexCount(), arena->triangleCount());
+                                startView->batchCount(), startView->vertexCount(),
+                                arena->triangleCount());
                     // The sky panorama (C# Viewer.CreatePanorama): the DTI's
                     // sky index texture through the base palette.
                     const mdk::formats::Texture& sky = level.dti().sky();
@@ -827,6 +844,12 @@ int main(int argc, char** argv) {
             space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
         if (here) {
             space.setSolid({*here});
+        }
+        // And it is the arena the frame shows until the scripts' first tick names
+        // one (the stream step's fallback): Kurt's own, which is the level's start
+        // arena unless he was placed elsewhere (--at, a respawn).
+        if (here) {
+            startArenaName = *here;
         }
 
         // The C# reloads the level and constructs a fresh ScriptRuntime when
@@ -1082,9 +1105,68 @@ int main(int argc, char** argv) {
             mixer.device().update(elapsed);
         }
 
-        mdk_render_begin_frame(renderer, &params);
+        // THE ARENAS IN MEMORY AND ON THE GPU FOLLOW THE SCRIPTS, once per frame,
+        // after the steps and before anything is drawn (game/arena_stream.h,
+        // game/arena_views.h): the stream first, so an arena drawn this frame has
+        // its textures' pixels, then the views.
         if (arena) {
-            view.draw();
+            const std::string& streamCurrent =
+                (runtime && !runtime->currentArena().empty()) ? runtime->currentArena()
+                                                              : startArenaName;
+            const std::string streamSecond = runtime ? runtime->secondArena() : std::string();
+            const bool streamActive = runtime && runtime->secondActive();
+            // WHAT THIS FRAME DRAWS: the scripts' drawn list (C# Viewer.cs:702,
+            // LevelView.Draw(DrawnArenas)), or Kurt's arena until their first
+            // tick has named one. ONE list for the stream, the views and the
+            // draw below: the list is the middle of the scripts' tick and the
+            // pair above is its end, and after a scripted teleport they differ
+            // for a frame.
+            const bool scriptsDrew = runtime && !runtime->drawnArenas().empty() &&
+                                     !runtime->drawnArenas()[0].empty();
+            if (!scriptsDrew) {
+                startDrawn.assign(1, startArenaName);
+            }
+            frameDrawn = scriptsDrew ? &runtime->drawnArenas() : &startDrawn;
+            mdk::ArenaStream& stream = level.stream();
+            const mdk::ArenaStream::Stats before = stream.stats();
+            if (before.demandLoads != lastDemandLoads) {
+                std::printf("[main] stream: %d demand load(s) last frame, %lld bytes in all\n",
+                            (int)(before.demandLoads - lastDemandLoads),
+                            (long long)before.demandBytes);
+                lastDemandLoads = before.demandLoads;
+            }
+            stream.update(streamCurrent, streamSecond, streamActive, *frameDrawn);
+            const int32_t releasedBefore = arenaViews.stats().released;
+            const int32_t builtViews = arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);
+            const mdk::ArenaStream::Stats& after = stream.stats();
+            if (after.switches != before.switches) {
+                std::printf("[main] stream: switch to %s (cur=%s second=%s%s)\n",
+                            stream.resident().c_str(), streamCurrent.c_str(),
+                            streamSecond.c_str(), streamActive ? " active" : "");
+            }
+            if (after.stalls != before.stalls) {
+                std::printf("[main] stream: STALL %s shown before its stream was done: %lld bytes\n",
+                            stream.resident().c_str(),
+                            (long long)(after.stallBytes - before.stallBytes));
+            }
+            if (after.readFailures != before.readFailures) {
+                std::printf("[main] stream: read FAILED for %s (%d failures)\n",
+                            stream.resident().c_str(), (int)after.readFailures);
+            }
+            if (builtViews > 0 || arenaViews.stats().released != releasedBefore) {
+                std::printf("[main] views: %d built (last %s), %d released, %d kept\n",
+                            (int)builtViews, arenaViews.lastBuilt().c_str(),
+                            (int)(arenaViews.stats().released - releasedBefore),
+                            (int)arenaViews.count());
+            }
+        }
+
+        mdk_render_begin_frame(renderer, &params);
+        // The arenas the scripts say are drawn: Kurt's and the active second
+        // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
+        // the runtime's first tick has named one.
+        if (arena && frameDrawn) {
+            arenaViews.draw(*frameDrawn);
         }
         if (runtime) {
             // C# Viewer.DrawScene draws the objects after the arena and before
@@ -1244,6 +1326,8 @@ int main(int argc, char** argv) {
         status = 1;
     }
 
+    // The arenas' GPU objects go while the renderer is still there.
+    arenaViews.clear();
     mdk_render_destroy(renderer);
     mdk::audioClose();
     mdk::windowDestroy(&window);

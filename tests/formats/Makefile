@@ -25,6 +25,7 @@ SOURCES := \
 	render_seam_stubs.cpp \
 	path_tests.cpp \
 	format_tests.cpp \
+	stream_tests.cpp \
 	colour_tests.cpp \
 	lighting_tests.cpp \
 	math_lut_tests.cpp \
@@ -53,6 +54,7 @@ SOURCES := \
 	$(CORE)/formats/png.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/game/level_data.cpp \
+	$(CORE)/game/arena_stream.cpp \
 	$(CORE)/formats/font.cpp \
 	$(CORE)/game/enhanced_config.cpp \
 	$(CORE)/game/enhanced_menu.cpp \
@@ -68,7 +70,10 @@ SOURCES := \
 	$(CORE)/render/post_params.cpp \
 	$(CORE)/render/sun_shadow.cpp \
 	$(CORE)/render/material_resolver.cpp \
-	$(CORE)/render/surface_cache.cpp
+	$(CORE)/render/surface_cache.cpp \
+	$(CORE)/render/arena_scene.cpp \
+	$(CORE)/game/level_view.cpp \
+	$(CORE)/game/arena_views.cpp
 
 # scripts/pose_cache.cpp is here because game/level_data.cpp calls
 # scripts::forgetPoseCaches(), and a target links whatever a call resolves to.

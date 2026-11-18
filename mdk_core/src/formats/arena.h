@@ -115,6 +115,29 @@ public:
 
     const TextureArchive& textures() const { return textures_; }
 
+    // THE STREAMED PART (docs/ARENA_STREAMING_SPEC.md Phase 2): this arena's
+    // texture PIXELS, which game/arena_stream.h drops and reads back. The
+    // texture objects never move or go.
+    //
+    // texturePrefixBytes: how much of the arena's MTO block, from its start,
+    // holds everything TextureArchive::parse reads (the block header and the
+    // texture section: up to the models section). 0 for an arena that did not
+    // come from an MTO block (a corridor, the 1996 demo).
+    int32_t texturePrefixBytes() const { return texturePrefixBytes_; }
+    // The pixel bytes resident now.
+    int64_t texturePixelBytes() const;
+    // Drop every texture's pixels; returns the bytes freed.
+    int64_t dropTexturePixels();
+    // Take the pixels of `fresh`, a new parse of this arena's texture section.
+    // All or nothing: false, taking none, unless `fresh` has this archive's
+    // textures in this order with these shapes.
+    bool adoptTexturePixels(TextureArchive* fresh);
+    // Who a reader of away pixels asks (Texture::setPixelSource), for every
+    // texture of this arena. The arena keeps the struct; `load` gets `user`.
+    void setPixelSource(void (*load)(void* user, const Texture* texture), void* user);
+    // Whether `texture` is one of this arena's own (by address).
+    bool ownsTexture(const Texture* texture) const;
+
     // The setters the 1996 demo's loader needs: it reads an arena's
     // textures and palette from files of their own, beside the world.
     void setTextures(const TextureArchive& textures) { textures_ = textures; }
@@ -253,6 +276,11 @@ private:
     // resized after keepAnimationBytes: the animations hold its data().
     std::vector<uint8_t> animationBytes_;
     int32_t droppedAnimations_ = 0;
+
+    int32_t texturePrefixBytes_ = 0;
+    // The textures point at this (Texture::setPixelSource); the arena does not
+    // move (no copy, no move: see above), so its address is stable.
+    TexturePixelSource pixelSource_;
 };
 
 } // namespace formats

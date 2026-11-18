@@ -58,6 +58,8 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
     }
     out->corridors_.clear();
     out->arenas_.clear();
+    // The stream first: it points into the arenas the next line frees.
+    out->stream_.reset();
     out->mto_ = formats::Mto();
     out->levelTextures_ = formats::TextureArchive();
 
@@ -95,8 +97,16 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
         return false;
     }
     for (size_t i = 0; i < out->mto_.arenaNames().size(); i++) {
-        const formats::Arena* arena = out->mto_.getArena(out->mto_.arenaNames()[i]);
+        formats::Arena* arena = out->mto_.getArena(out->mto_.arenaNames()[i]);
         if (arena) {
+            // The pixels go as each arena is parsed, so the load never holds
+            // more than one arena's: the stream brings them back (Phase 2,
+            // attach() below points the textures at it).
+            // (Only an arena the stream can read back: one whose block is not
+            // the retail layout has no prefix and keeps what it parsed.)
+            if (arena->texturePrefixBytes() > 0) {
+                arena->dropTexturePixels();
+            }
             out->arenas_.push_back(arena);
         }
     }
@@ -145,6 +155,11 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
             }
         }
     }
+
+    // The arena stream takes over the MTO arenas' texture pixels: none is
+    // resident until the stream is told where Kurt is (ArenaStream::update), or
+    // something reads one.
+    out->stream_.attach(out);
 
     // The number is set only on success. A level that failed to load is an
     // empty object, and it must not claim a number it has no files for.

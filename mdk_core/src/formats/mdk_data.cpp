@@ -95,10 +95,14 @@ bool MdkData::read(const std::string& relative, std::vector<uint8_t>* outBytes) 
 
 bool MdkData::readRange(const std::string& relative, int32_t offset, int32_t length,
                         std::vector<uint8_t>* outBytes) const {
+    return readRangeAt(pathOf(relative), offset, length, outBytes);
+}
+
+bool MdkData::readRangeAt(const std::string& path, int32_t offset, int32_t length,
+                          std::vector<uint8_t>* outBytes) const {
     if (!system_ || offset < 0 || length < 0) {
         return false;
     }
-    const std::string path = pathOf(relative);
     if (system_->readRange) {
         return system_->readRange(system_->user, path.c_str(), offset, length, outBytes);
     }

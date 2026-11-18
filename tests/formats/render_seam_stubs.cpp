@@ -23,9 +23,53 @@ int32_t mdk_test_replaceWidth = 0;
 int32_t mdk_test_replaceHeight = 0;
 int mdk_test_replaceFirstByte = -1;
 
-MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t, int32_t, const uint8_t*,
+// The arena views' side of the seam (stream_tests.cpp): counts, so a test can
+// say what is on the GPU after a walk -- meshes and index textures made and
+// released, palettes, and the mesh draws queued.
+int mdk_test_indexTextures = 0;
+int mdk_test_texturesReleased = 0;
+int mdk_test_palettes = 0;
+int mdk_test_palettesReleased = 0;
+int mdk_test_meshes = 0;
+int mdk_test_meshesReleased = 0;
+int mdk_test_meshDraws = 0;
+// Index textures made from a null pixel pointer: each would be a texture made
+// of pixels that are away. Counted over EVERY creation, not sampled.
+int mdk_test_nullIndexTextures = 0;
+// How many of the next mesh creations fail (-1), for the views' retry.
+int mdk_test_failMeshCreates = 0;
+
+MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t, int32_t, const uint8_t* indices,
                                              const uint8_t*) {
+    mdk_test_indexTextures++;
+    if (indices == nullptr) {
+        mdk_test_nullIndexTextures++;
+    }
     return 0;
+}
+
+void mdk_render_release_texture(MdkRenderer, MdkTextureId) {
+    mdk_test_texturesReleased++;
+}
+
+void mdk_render_release_palette(MdkRenderer, MdkPaletteId) {
+    mdk_test_palettesReleased++;
+}
+
+MdkMeshId mdk_render_create_mesh(MdkRenderer, const mdk::Vertex*, int32_t) {
+    if (mdk_test_failMeshCreates > 0) {
+        mdk_test_failMeshCreates--;
+        return -1;
+    }
+    return 100 + mdk_test_meshes++;
+}
+
+void mdk_render_release_mesh(MdkRenderer, MdkMeshId) {
+    mdk_test_meshesReleased++;
+}
+
+void mdk_render_draw_mesh(MdkRenderer, const mdk::MeshDraw*) {
+    mdk_test_meshDraws++;
 }
 
 MdkTextureId mdk_render_create_rgba_texture(MdkRenderer, int32_t, int32_t, const uint8_t*) {
@@ -33,6 +77,7 @@ MdkTextureId mdk_render_create_rgba_texture(MdkRenderer, int32_t, int32_t, const
 }
 
 MdkPaletteId mdk_render_create_palette(MdkRenderer, const uint8_t*) {
+    mdk_test_palettes++;
     return 7;
 }
 

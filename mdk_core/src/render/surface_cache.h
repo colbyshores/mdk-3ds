@@ -93,6 +93,19 @@ public:
     // of it in a second view is how the two trees drift.
     MdkTextureId surfaceId(const Surface& surface, const formats::Palette* palette);
 
+    // Release everything made through `palette`: its textures, their mod
+    // replacements' bookkeeping, and the palette itself. An arena that is no
+    // longer on the GPU gives its colours back this way (game/arena_views.h); a
+    // later draw through the palette makes them again, replacements included.
+    // Returns how many textures went.
+    int32_t releasePalette(const formats::Palette* palette);
+
+    // Whether anything has been made through `palette` (its palette id exists:
+    // every draw asks for the palette's id beside its texture's).
+    bool hasPalette(const formats::Palette* palette) const {
+        return palettes_.find(palette) != palettes_.end();
+    }
+
     // The colour-replacement lookup (the mods; null: none, the shipped
     // behaviour). Set once by the frontend before the first surface draws.
     void setColourReplacementLookup(ColourReplacementLookup lookup, void* user) {

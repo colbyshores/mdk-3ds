@@ -127,6 +127,8 @@ set(SOURCES
     ${CORE}/src/game/kurt.cpp
     ${CORE}/src/game/kurt_sprite.cpp
     ${CORE}/src/game/level_data.cpp
+    ${CORE}/src/game/arena_stream.cpp
+    ${CORE}/src/game/arena_views.cpp
     ${CORE}/src/game/level_flow.cpp
     ${CORE}/src/game/enhanced_config.cpp
     ${CORE}/src/game/enhanced_menu.cpp

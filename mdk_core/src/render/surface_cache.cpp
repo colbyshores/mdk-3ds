@@ -47,13 +47,59 @@ MdkTextureId SurfaceCache::textureId(const formats::Texture* texture,
         return found->second;
     }
 
+    // The pixels, which may have to be read back first (an arena's are streamed:
+    // formats/texture.h). A texture whose pixels cannot be had -- the file
+    // stopped reading -- is NOT cached as a failure and NOT handed to the
+    // backend with a null pointer: the surface is skipped this frame and asked
+    // for again, which costs nothing once the stream has given up on the arena.
+    const int32_t texels = texture->width() * texture->height() * texture->frameCount();
+    const uint8_t* indices = texture->indices();
+    if (indices == nullptr || texels <= 0 || texture->indexCount() < texels) {
+        return -1;
+    }
     // The texture's height already includes the animation frames: the
     // original stacks them vertically.
     const MdkTextureId id = mdk_render_create_index_texture(
         renderer_, texture->width(), texture->height() * texture->frameCount(),
-        texture->indices(), palette->rgba());
+        indices, palette->rgba());
     textures_[key] = id;
     return id;
+}
+
+int32_t SurfaceCache::releasePalette(const formats::Palette* palette) {
+    if (!renderer_ || palette == nullptr) {
+        return 0;
+    }
+    int32_t released = 0;
+    typedef std::map<std::pair<const formats::Texture*, const formats::Palette*>, MdkTextureId>
+        TextureMap;
+    for (TextureMap::iterator it = textures_.begin(); it != textures_.end();) {
+        if (it->first.second == palette) {
+            if (it->second >= 0) {
+                mdk_render_release_texture(renderer_, it->second);
+                released++;
+            }
+            textures_.erase(it++);
+        } else {
+            ++it;
+        }
+    }
+    typedef std::map<std::pair<const formats::Texture*, const formats::Palette*>, bool> LookedMap;
+    for (LookedMap::iterator it = replacementLooked_.begin(); it != replacementLooked_.end();) {
+        if (it->first.second == palette) {
+            replacementLooked_.erase(it++);
+        } else {
+            ++it;
+        }
+    }
+    std::map<const formats::Palette*, MdkPaletteId>::iterator found = palettes_.find(palette);
+    if (found != palettes_.end()) {
+        if (found->second >= 0) {
+            mdk_render_release_palette(renderer_, found->second);
+        }
+        palettes_.erase(found);
+    }
+    return released;
 }
 
 MdkTextureId SurfaceCache::flatColourId(const Colour& colour) {

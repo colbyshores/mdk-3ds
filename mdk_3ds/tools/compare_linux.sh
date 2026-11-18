@@ -32,7 +32,7 @@ export DISPLAY=${DISPLAY_FOR_EMULATOR:-:99}
 touch "$ROOT/mdk_3ds/src/main_3ds.cpp" "$ROOT/mdk_3ds/src/platform/harness_3ds.cpp"
 for try in 1 2 3; do
     if make -C "$ROOT/mdk_3ds" -j"$(nproc)" AUTOQUIT=90 FIXED=1 CAPTURE="$FRAME" LEVEL="$LEVEL" \
-         > "$OUT/build.log" 2>&1; then
+         ${MDK_COMPARE_AT:+AT="$MDK_COMPARE_AT"} > "$OUT/build.log" 2>&1; then
         break
     fi
     [ "$try" = 3 ] && { echo "compare: 3DS build failed; see $OUT/build.log" >&2; exit 1; }
@@ -47,6 +47,8 @@ trap 'rm -rf "$LANE_TMP" 2>/dev/null' EXIT   # the lane holds emulator runtime m
 # original look: no --enhanced flag).
 SEED="$LANE_TMP/seed"
 mkdir -p "$SEED/3ds/mdk"
+# MDK_COMPARE_AT=x,y,z,yaw: Kurt placed there on BOTH sides (make AT=..., --at=...)
+# instead of at the level's start: a scene past the start arena.
 # MDK_COMPARE_SDMC: a tree copied onto the emulated SD card as well (e.g. a
 # directory holding 3ds/mdk/hd/, the HD pack built by build_hd_pack.sh).
 if [ -n "${MDK_COMPARE_SDMC:-}" ]; then
@@ -79,6 +81,7 @@ GUEST_LOG=$(find "$LANE_TMP" -name mdk.log | head -1)
 
 for f in $((FRAME - 1)) "$FRAME" $((FRAME + 1)); do
     "$ROOT/build-linux/mdk" --headless --fixed-step --level="$LEVEL" --size=400x240 --seed 1 \
+        ${MDK_COMPARE_AT:+--at="$MDK_COMPARE_AT"} \
         --true-aspect --capture-frame="$f" --capture="$OUT/linux-L$LEVEL-f$f.bmp" > /dev/null 2>&1
 done
 

@@ -957,6 +957,9 @@ CHK = {
     "pitch-from-runtime": "the pitch target is camera_track, then the scripts' arena",
     "objects-drawn-in-order":
         "the object pass is drawn between the arena and Kurt's sprite (Viewer.cs:702-708)",
+    "arenas-follow-the-scripts":
+        "the arena stream is stepped, then the views synced, before the frame; the drawn "
+        "arenas are the runtime's (arena streaming Phase 2)",
     "objects-gated-on-runtime":
         "the object pass runs only when there is a runtime to take its objects from",
     "objects-skip-invisible-and-removed":
@@ -1160,7 +1163,10 @@ def adjudicate(text, quiet=False):
     #     drawn after Kurt paint over him. Presence anywhere in the file is not the
     #     invariant, which is the same reason check 1 exists.
     op = object_pass(text)
-    arena_at = text.find("view.draw();")
+    # The arena draw is the scripts' drawn list (Viewer.cs:702, LevelView.Draw(
+    # DrawnArenas)) since arena streaming Phase 2; it was one `view.draw()` of the
+    # level's start arena before.
+    arena_at = text.find("arenaViews.draw(*frameDrawn);")
     kurt_at = text.find("kurtSprite.draw(")
     frame = frame_body_span(text)
     in_frame = (op is not None and frame is not None
@@ -1169,6 +1175,30 @@ def adjudicate(text, quiet=False):
         in_frame and arena_at >= 0 and kurt_at >= 0 and arena_at < op["start"] < kurt_at,
         "C# Viewer.DrawScene draws the arena, then the objects, then Kurt; anywhere "
         "else and the order of the draws is a different picture")
+
+    # 12b. THE ARENAS FOLLOW THE SCRIPTS, IN THIS ORDER (arena streaming Phase 2):
+    #      the texture stream is stepped (ArenaStream::update), THEN the views are
+    #      synced (a view built this frame finds its textures' pixels in), both
+    #      BEFORE the frame begins (they make and release GPU resources), and what is
+    #      drawn is the runtime's drawn list -- not the start arena, which is all
+    #      this frontend drew until 2026-11-18.
+    #      ONE drawn list feeds all three (frameDrawn: the runtime's drawnArenas, or
+    #      Kurt's arena before the first tick). The scripts snapshot that list in the
+    #      middle of their tick and the current/second pair is its end, so a stream
+    #      or a view fed from the pair alone lets go of an arena the frame still
+    #      draws after a scripted teleport (review, 2026-11-18).
+    update_at = text.find("stream.update(streamCurrent, streamSecond, streamActive, *frameDrawn);")
+    sync_at = text.find("arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);")
+    begin_at = text.find("mdk_render_begin_frame(renderer, &params);")
+    list_at = text.find("frameDrawn = scriptsDrew ? &runtime->drawnArenas() : &startDrawn;")
+    say(CHK["arenas-follow-the-scripts"],
+        frame is not None
+        and frame[0] <= list_at < update_at < sync_at < begin_at < arena_at < frame[1]
+        and "runtime->secondArena()" in text[frame[0]:update_at]
+        and "runtime->secondActive()" in text[frame[0]:update_at],
+        "frameDrawn (the runtime's drawnArenas) -> stream.update -> arenaViews.sync -> "
+        "begin_frame -> arenaViews.draw, all three on the one list; any other order or a "
+        "second list draws an arena whose textures are not in, or lets go of one that is drawn")
 
     # 13. the pass is gated on the runtime. `runtime->objects()` on a null runtime
     #     is a null dereference in the frame path, and the level runs without scripts
@@ -2018,6 +2048,28 @@ def arm_pitch_ignores_runtime(text):
 
 
 # --- the object pass's arms -------------------------------------------------
+def arm_views_synced_before_the_stream(text):
+    """The views are synced before the stream is stepped: a view built this frame
+    would ask for textures whose pixels are still away (a demand load per arena
+    instead of the stream's stall or preload)."""
+    update = "            stream.update(streamCurrent, streamSecond, streamActive, *frameDrawn);\n"
+    sync_at = text.find("arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);")
+    if update not in text or sync_at < 0:
+        return text
+    text = text.replace(update, "", 1)
+    sync_at = text.find("arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);")
+    line_end = text.find("\n", sync_at) + 1
+    return text[:line_end] + update + text[line_end:]
+
+
+def arm_drawn_list_is_the_start_arena(text):
+    """The frame's list is Kurt's start arena whatever the scripts say: the
+    pre-Phase-2 frontend, where nothing past the first door was ever drawn. The
+    stream and the views still run in order, so only the list's source can tell."""
+    return text.replace("frameDrawn = scriptsDrew ? &runtime->drawnArenas() : &startDrawn;",
+                        "frameDrawn = &startDrawn;", 1)
+
+
 def arm_objects_before_arena(text):
     """Move the whole object pass above the arena draw. The pass still runs and
     still skips what it should, so only the ORDER check can catch it -- which is
@@ -2798,6 +2850,10 @@ ARMS = [
     ("pitch-ignores-the-runtime", arm_pitch_ignores_runtime, CHK["pitch-from-runtime"]),
     ("object pass moved above the arena draw", arm_objects_before_arena,
      CHK["objects-drawn-in-order"]),
+    ("views synced before the stream is stepped", arm_views_synced_before_the_stream,
+     CHK["arenas-follow-the-scripts"]),
+    ("the frame's drawn list is the start arena", arm_drawn_list_is_the_start_arena,
+     CHK["arenas-follow-the-scripts"]),
     ("object pass ungated on a null runtime", arm_objects_ungated,
      CHK["objects-gated-on-runtime"]),
     ("object pass draws the removed", arm_objects_draws_removed,

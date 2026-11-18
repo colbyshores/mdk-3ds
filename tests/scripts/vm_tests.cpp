@@ -7075,6 +7075,18 @@ void testTriggerShowBoxDrawsAndTheMinusOneBoxClears(LevelData* levelData, const 
     // above it -- and the batch that ports the loaded-arena half of UpdateArenas has to
     // keep SpawnDtiAliens out of PreloadArena or this pin stops separating the arms.
     CHECK(corridorObjects() > 0);
+    // obj.Visible (UpdateArenas :696-699): an object is drawn exactly while its arena
+    // is in the drawn list. Both arenas are, so every live object of both is visible.
+    const auto visibleIn = [&runtime](const char* arena, bool wanted) {
+        int32_t n = 0;
+        for (const scripts::MdkObject& o : runtime.objects()) {
+            if (!o.dead && o.arena == arena && o.visible == wanted) ++n;
+        }
+        return n;
+    };
+    CHECK(visibleIn("CDANT_9", true) == corridorObjects());
+    CHECK(visibleIn("CDANT_9", false) == 0);
+    CHECK(visibleIn("DANT_10", false) == 0);
 
     // Still inside it: the box fires on every step (:720) and changes nothing.
     player.feet = Vec3{510.0f, kY, kZ};
@@ -7108,6 +7120,13 @@ void testTriggerShowBoxDrawsAndTheMinusOneBoxClears(LevelData* levelData, const 
     CHECK(runtime.drawnArenas().size() == 1);
     CHECK(runtime.drawnArenas()[0] == "DANT_10");
     CHECK(runtime.residentArena() == "DANT_10");
+    // The corridor left the drawn list, so its objects -- still in the world -- are
+    // not drawn any more, and the room's still are. Before obj.visible had a writer
+    // every one of them was drawn from wherever Kurt stood.
+    CHECK(corridorObjects() > 0);
+    CHECK(visibleIn("CDANT_9", true) == 0);
+    CHECK(visibleIn("CDANT_9", false) == corridorObjects());
+    CHECK(visibleIn("DANT_10", false) == 0);
 
     // AND IT KEEPS FIRING while the box is still crossed (`to.X < max.X`, so up to
     // x = 513 and the edge step onto 514).

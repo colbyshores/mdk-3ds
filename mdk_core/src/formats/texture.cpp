@@ -24,8 +24,7 @@ Texture Texture::parse(const std::string& name, const uint8_t* bytes, int32_t by
     if (size < 0 || start < 0 || start + size > byteCount) {
         return texture;
     }
-    // The indices point INTO THE BUFFER rather than being copied. The
-    // caller owns the buffer, and the texture does not outlive it.
+    // A copy: the texture owns its pixels (see texture.h).
     texture.indices_.assign(bytes + start, bytes + start + size);
     return texture;
 }
@@ -111,10 +110,17 @@ const uint8_t* Texture::frame(int32_t index) const {
     if (index < 0 || index >= frameCount_ || size <= 0) {
         return nullptr;
     }
+    needPixels();
+    // Still away (no source, or it failed): no frame, rather than a pointer
+    // past an empty buffer.
+    if (indices_.size() < (size_t)(index + 1) * (size_t)size) {
+        return nullptr;
+    }
     return indices_.data() + (size_t)index * (size_t)size;
 }
 
 void Texture::setIndices(const uint8_t* indices, int32_t count) {
+    away_ = false;
     if (count <= 0 || indices == nullptr) {
         indices_.clear();
         return;
@@ -122,7 +128,27 @@ void Texture::setIndices(const uint8_t* indices, int32_t count) {
     indices_.assign(indices, indices + count);
 }
 
+void Texture::dropPixels() {
+    if (indices_.empty()) {
+        return;   // nothing to drop: an empty texture is not an evicted one
+    }
+    // swap, not clear(): clear keeps the capacity, and the capacity is the point.
+    std::vector<uint8_t>().swap(indices_);
+    away_ = true;
+}
+
+bool Texture::adoptPixels(Texture* fresh) {
+    if (!fresh || fresh->indices_.empty() || fresh->width_ != width_ || fresh->height_ != height_ ||
+        fresh->frameCount_ != frameCount_) {
+        return false;
+    }
+    indices_.swap(fresh->indices_);
+    away_ = false;
+    return true;
+}
+
 void Texture::replaceIndex(uint8_t from, uint8_t to) {
+    needPixels();
     for (size_t i = 0; i < indices_.size(); i++) {
         if (indices_[i] == from) {
             indices_[i] = to;

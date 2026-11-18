@@ -797,13 +797,28 @@ void ScriptRuntime::updateDrawnArenas() {
     // goes in only while it is BOTH active and named (:661-664). Both rooms being in
     // the list is the whole point of it: move() sweeps element 0 as Kurt's own arena
     // and the rest as the free pass (arena_space.cpp), so the room behind the door he
-    // came through keeps its floor. The other half of UpdateArenas -- the loaded-arena
-    // bookkeeping, the loop sounds and obj.Visible -- is unported; when it lands it
-    // belongs in this same call, at this same point.
+    // came through keeps its floor. The loaded-arena bookkeeping of UpdateArenas
+    // (:666-692: an arena that left the loaded pair has its loop sounds stopped and
+    // Kurt's thrown items removed) is unported with the items; when it lands it
+    // belongs in this same call, ahead of the two statements below.
     drawnArenas_.clear();
     drawnArenas_.push_back(currentArena_);
     if (secondActive_ && !secondArena_.empty()) {
         drawnArenas_.push_back(secondArena_);
+    }
+    // obj.Visible (:696-699): an object is drawn only while its arena is. This is
+    // the consumer the drawn list was waiting for -- until it was written every
+    // object of every arena the scripts had ever shown was drawn, wherever Kurt was
+    // -- and it is what lets the frontends keep only the drawn arenas' textures
+    // (game/arena_views.h). The C#'s other term, `!Rides.Hides(obj)` (the bomber's
+    // XE once the view is inside it), is unported with the rides (there is no
+    // Bomber here to hide anything), so the term is true.
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        bool drawn = false;
+        for (size_t i = 0; i < drawnArenas_.size() && !drawn; i++) {
+            drawn = drawnArenas_[i] == it->arena;
+        }
+        it->visible = drawn;
     }
 }
 

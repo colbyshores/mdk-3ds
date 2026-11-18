@@ -39,6 +39,16 @@ bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Aren
     return true;
 }
 
+void LevelView::unload() {
+    if (renderer_ && mesh_ >= 0) {
+        mdk_render_release_mesh(renderer_, mesh_);
+    }
+    mesh_ = -1;
+    scene_ = ArenaScene();
+    arena_ = nullptr;
+    palette_ = nullptr;
+}
+
 bool LevelView::bounds(Vec3* outMin, Vec3* outMax) const {
     if (!arena_ || outMin == nullptr || outMax == nullptr) {
         return false;

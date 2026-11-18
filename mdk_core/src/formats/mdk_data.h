@@ -62,6 +62,13 @@ public:
     bool readRange(const std::string& relative, int32_t offset, int32_t length,
                    std::vector<uint8_t>* outBytes) const;
 
+    // The same read of a path pathOf() ALREADY resolved. Resolving walks the
+    // directory listings (a vector of names copied per path component on the
+    // 3DS), which is level-load work: a reader that comes back every frame
+    // (the arena stream's 32 KiB steps) resolves once and reads with this.
+    bool readRangeAt(const std::string& resolved, int32_t offset, int32_t length,
+                     std::vector<uint8_t>* outBytes) const;
+
 private:
     const FileSystem* system_ = nullptr;
     std::string dir_;

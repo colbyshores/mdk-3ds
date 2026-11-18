@@ -1,0 +1,8 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-18T18:40:48Z at e3c617d
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: arena streaming Phase 2 (one MTO arena's texture pixels resident, a view
+per kept arena, obj.visible written). The start arena's frame did not move: the
+live capture is pixel-identical (0 px differ, same file bytes) to the previous
+pin. What moved is past the first door, which this pinned frame cannot show:
+docs/evidence/2026-11-18-arena-streaming-phase2.txt section 3 and its PNGs.

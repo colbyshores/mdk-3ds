@@ -43,6 +43,16 @@ fi
 if [ -n "${MDK_FRAME_ENHANCED:-}" ]; then
     STEREO_ARGS+=(--enhanced)
 fi
+# The window's own aspect for the projection (the Linux build's --true-aspect),
+# which a size that is not 4:3 needs to match the oracle's field of view.
+if [ -n "${MDK_FRAME_TRUE_ASPECT:-}" ]; then
+    STEREO_ARGS+=(--true-aspect)
+fi
+# Kurt somewhere other than the level's start (x,y,z[,yaw], the oracle's own
+# --at): a scene past the start arena, for the arena-streaming comparisons.
+if [ -n "${MDK_FRAME_AT:-}" ]; then
+    STEREO_ARGS+=(--at="$MDK_FRAME_AT")
+fi
 
 exec env \
     MDK_DATA_DIR="${MDK_DATA_DIR:-$ROOT/MDK}" \

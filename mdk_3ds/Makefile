@@ -142,6 +142,16 @@ $(error LEVEL=$(LEVEL) needs AUTOQUIT: the level override is a harness-build fea
 endif
 DEFINES += -DMDK_HW_LEVEL=$(LEVEL)
 endif
+# `make AUTOQUIT=90 AT=x,y,z,yaw` puts Kurt there instead of at the level's start
+# (the Linux build's and the oracle's --at): a scene past the start arena, for the
+# arena-streaming comparisons. All four numbers. Only main_3ds.cpp reads it: touch
+# it after changing AT.
+ifneq ($(strip $(AT)),)
+ifndef AUTOQUIT
+$(error AT=$(AT) needs AUTOQUIT: the start override is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_AT='$(AT)'
+endif
 # `make AUTOQUIT=90 FIXED=1` gives every frame exactly one 1/60 s step (the
 # Linux --fixed-step), for frame-exact 3DS-vs-Linux comparisons with CAPTURE.
 # Only main_3ds.cpp reads it: touch it after changing FIXED.

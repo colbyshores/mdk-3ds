@@ -1,0 +1,149 @@
+#pragma once
+
+// ============================================================================
+// arena_views.h -- the arenas that are on the GPU, following the scripts.
+//
+// The C#'s LevelView (src/Mdk.Game/Level/LevelView.cs) builds a view of EVERY
+// arena when the level loads and Draw(arenas) picks the ones the scripts say
+// are drawn (Viewer.cs:702: ScriptRuntime.DrawnArenas -- Kurt's arena and the
+// ACTIVE second one, the original's 0x41e344). A PC can hold a level's worth of
+// meshes and textures; the 3DS cannot (SPEC.md 7.3: "the 3DS must stream by
+// arena"), and the original did not either. So the port keeps one LevelView per
+// arena that is LOADED and lets the rest go, by the original's own residency:
+//
+//   kept   Kurt's arena and the second arena (the loaded pair: the second may be
+//          behind a closed door or preloading, so its view is ready the frame
+//          the door opens);
+//          everything the frame DRAWS (the scripts' drawn list is the middle
+//          of their tick and the pair is its end: after a scripted teleport the
+//          frame still draws the arena Kurt left -- review, 2026-11-18);
+//          the MTO arena that has the texture stream (ArenaStream::resident),
+//          and the corridors CONNECTED to it -- the original keeps exactly
+//          those loaded (0x419ac0 frees a corridor that is not connected to the
+//          resident arena, and loads one that is). Keeping them is what stops a
+//          door that opens and closes from rebuilding its corridor every time.
+//   built  when an arena first enters the loaded pair (never ahead of that:
+//          a kept corridor Kurt never approaches costs nothing);
+//   freed  when it is no longer kept: its mesh, and every GPU texture drawn
+//          through ITS palette (SurfaceCache::releasePalette) -- an arena's
+//          textures, the level's textures in its colours, its objects'.
+//   swept  every kOrphanSweepSyncs: textures made through the palette of an
+//          arena that has NO view (an effect or a piece of debris left in an
+//          arena Kurt walked away from is still drawn, as the C# draws it, and
+//          nothing else would ever give those textures back).
+//
+// A view that cannot be built (no GPU memory for its mesh: on the 3DS the
+// departing arena's frees land at the NEXT frame's start, so the first attempt
+// can simply be early) is tried again -- the next few frames, then every
+// kRetrySyncs -- and never given up on: a transient miss must not hide an arena
+// for the rest of the level.
+//
+// draw() is the C#'s Draw(arenas): the drawn list, in its order. An arena in
+// the list with no view (its build failed) is skipped; the log says which.
+//
+// The frame's order is: scripts tick -> ArenaStream::update (pixels) ->
+// ArenaViews::sync (meshes) -> draw. sync after update, so a view that is
+// built this frame finds its textures' pixels in.
+// ============================================================================
+
+#include <stdint.h>
+
+#include <string>
+#include <vector>
+
+#include "game/level_data.h"
+#include "game/level_view.h"
+#include "render/render.h"
+#include "render/surface_cache.h"
+
+namespace mdk {
+
+class ArenaViews {
+public:
+    struct Stats {
+        int32_t built = 0;
+        int32_t released = 0;
+        int32_t failed = 0;          // build attempts that failed
+        int32_t orphansReleased = 0; // palettes the sweep gave back
+    };
+
+    // The sweep's period, and a failed build's retry period after its first
+    // kQuickRetries (which are one sync apart), in sync() calls: ten and two
+    // seconds at 60 frames a second.
+    static const int32_t kOrphanSweepSyncs = 600;
+    static const int32_t kRetrySyncs = 120;
+    static const int32_t kQuickRetries = 3;
+
+    ArenaViews() = default;
+    // The views' GPU objects are released by clear(), which needs the renderer:
+    // call it before the renderer goes. The destructor frees only the memory.
+    ~ArenaViews();
+    ArenaViews(const ArenaViews&) = delete;
+    ArenaViews& operator=(const ArenaViews&) = delete;
+
+    // Everything is BORROWED and must outlive this object (or clear() first).
+    void start(MdkRenderer renderer, LevelData* level, SurfaceCache* surfaces, Shading shading);
+
+    // Follow the scripts: free what is no longer kept, build what is missing of
+    // the loaded pair and of the drawn list. Returns how many views this call
+    // built.
+    int32_t sync(const std::string& current, const std::string& second,
+                 const std::vector<std::string>& drawn);
+    // The same with the drawn list the pair implies (tools and tests).
+    int32_t sync(const std::string& current, const std::string& second);
+
+    // Queue the drawn arenas' visible groups, in the list's order.
+    void draw(const std::vector<std::string>& drawn);
+
+    // An arena's view, or null.
+    const LevelView* find(const std::string& name) const;
+
+    // Release every view (and its palette's GPU textures).
+    void clear();
+
+    int32_t count() const { return (int32_t)views_.size(); }
+    const Stats& stats() const { return stats_; }
+    // The arena the last sync() built a view for, for the frontend's log.
+    const std::string& lastBuilt() const { return lastBuilt_; }
+
+private:
+    struct Entry {
+        std::string name;
+        LevelView* view = nullptr;
+    };
+
+    struct Failed {
+        std::string name;
+        int32_t attempts = 0;
+        int32_t retryAt = 0;   // the sync() count at which to try again
+    };
+
+    bool keeps(const std::string& name, const std::string& current, const std::string& second,
+               const std::vector<std::string>& drawn) const;
+    // Whether a DTI connection (a type-6 record pair) joins the two.
+    bool connected(const std::string& a, const std::string& b) const;
+    bool build(const std::string& name);
+    void release(size_t index);
+    // Whether a failed build of `name` is still waiting for its retry.
+    bool waiting(const std::string& name) const;
+    void noteFailed(const std::string& name);
+    void forgetFailed(const std::string& name);
+    void sweepOrphans(const std::string& current, const std::string& second,
+                      const std::vector<std::string>& drawn);
+
+    MdkRenderer renderer_ = nullptr;
+    LevelData* level_ = nullptr;
+    SurfaceCache* surfaces_ = nullptr;
+    Shading shading_ = Shading::Original;
+    std::vector<Entry> views_;
+    // Each connection once, as the two arena names its record pair names.
+    std::vector<std::pair<std::string, std::string>> connections_;
+    // Arenas whose view could not be built, and when each is tried again.
+    std::vector<Failed> failed_;
+    int32_t syncs_ = 0;
+    int32_t nextSweep_ = kOrphanSweepSyncs;   // the sync() count of the next orphan sweep
+    std::string lastBuilt_;
+    Stats stats_;
+};
+
+} // namespace mdk

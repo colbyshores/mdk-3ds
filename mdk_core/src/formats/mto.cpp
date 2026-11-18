@@ -124,8 +124,31 @@ bool Mto::open(Mto* out, const MdkData* data, const std::string& path) {
         out->offsets_.push_back((int32_t)reader.u32());
     }
     out->data_ = data;
-    out->path_ = path;
+    // Resolved ONCE: every later read of a block goes straight to the file.
+    out->path_ = data->pathOf(path);
     return true;
+}
+
+bool Mto::readBlock(const std::string& name, int32_t at, int32_t length,
+                    std::vector<uint8_t>* out) const {
+    if (!out || at < 0 || length < 0 || (uint32_t)at + (uint32_t)length > kMaxBlockBytes) {
+        return false;
+    }
+    for (size_t i = 0; i < names_.size(); i++) {
+        if (names_[i] != name) {
+            continue;
+        }
+        if (data_) {
+            return data_->readRangeAt(path_, offsets_[i] + at, length, out);
+        }
+        if (bytes_ && offsets_[i] > 0 &&
+            (int64_t)offsets_[i] + at + length <= (int64_t)byteCount_) {
+            out->assign(bytes_ + offsets_[i] + at, bytes_ + offsets_[i] + at + length);
+            return true;
+        }
+        return false;
+    }
+    return false;
 }
 
 void Mto::add(const Arena* arena) {
@@ -172,10 +195,10 @@ Arena* Mto::getArena(const std::string& name) {
             // exceptions: a failed new is fatal).
             std::vector<uint8_t> size;
             std::vector<uint8_t> block;
-            const bool sized = data_->readRange(path_, offsets_[i], 4, &size);
+            const bool sized = data_->readRangeAt(path_, offsets_[i], 4, &size);
             const uint32_t blockSize = sized ? binU32(size.data(), 0) : 0;
             if (sized && blockSize >= 16 && blockSize <= kMaxBlockBytes &&
-                data_->readRange(path_, offsets_[i], (int32_t)blockSize, &block)) {
+                data_->readRangeAt(path_, offsets_[i], (int32_t)blockSize, &block)) {
                 arena = Arena::parse(name, block.data(), (int32_t)block.size(), 0);
             } else {
                 // An unreadable block is a failed LOAD (LevelData::load checks

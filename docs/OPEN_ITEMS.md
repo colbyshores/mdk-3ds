@@ -12,12 +12,20 @@ measured or cited reason, and the batch that closes one should delete its entry.
 - Oracle driver: `/tmp/kilo/oracle/Driver/Program.cs`, args `L T 1 script`, with
   `DOTNET_ROOT=/tmp/kilo/dotnet10` and `MDK_DATA_DIR=<repo>/MDK`. The source oracle
   `src/Mdk.Game/**` is read-only; `tests/frames/capture_oracle.sh` builds the
-  scratch tree. **For a frame later than the first**, `capture_oracle.sh` hardcodes
-  `--wait=0`, so run the binary it built (`/tmp/mdk-frame-oracle/src/Mdk.App/bin/Debug/net10.0/mdk_sdl`)
-  the same way — inside `unshare --user --map-root-user -m` with a bind-mounted private
-  `/tmp/.X11-unix` and its own `Xvfb :99 -nolock` — with `--wait=N`: in test mode the
-  oracle advances 1/60 s per frame, so `--wait=1` is frame 60 (1/60 rounds UP in binary,
-  so the accumulator reaches N/60 exactly on step N).
+  scratch tree. **For a frame later than the first**, set `MDK_FRAME_WAIT=N` (seconds;
+  since 2026-11-18, it was a hardcoded `--wait=0` before -- and that edit to
+  `capture_oracle.sh`, a protected contract file, is UNCOMMITTED in the working
+  tree until the owner approves it; `git diff tests/frames/capture_oracle.sh`): in test mode the oracle
+  advances 1/60 s per frame, so `MDK_FRAME_WAIT=1` is frame 60 (1/60 rounds UP in
+  binary, so the accumulator reaches N/60 exactly on step N) and pairs with
+  `capture_cpp.sh`'s `MDK_FRAME_CAPTURE=60`. `MDK_FRAME_AT=x,y,z[,yaw]` places Kurt
+  on both sides (the app's `--at`). At `MDK_FRAME_WAIT=0` the oracle's drawn list is
+  still empty and it draws EVERY reachable arena; past the first tick it draws the
+  scripts' list. **At a size that is not 4:3 set `MDK_FRAME_TRUE_ASPECT=1` for
+  `capture_cpp.sh`** (the Linux build's `--true-aspect`): without it a 400x240 port
+  frame has a different field of view from the oracle's and reads as a 33-44% gap
+  that is not there (measured 2026-11-18 in level 3's CHMO_1 corridor: with it the
+  same frame is 0.032%).
 - `/tmp/kilo` is readable but NOT writable by the Pi harness (it belongs to the
   other loop's user); captures go under `/tmp/mdk-frame-reference` or
   `/tmp/mdk-pi`, with the display recorded.

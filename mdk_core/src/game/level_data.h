@@ -39,6 +39,7 @@
 #include "formats/dti.h"
 #include "formats/mdk_data.h"
 #include "formats/mto.h"
+#include "game/arena_stream.h"
 #include "formats/palette.h"
 #include "formats/sni.h"
 #include "formats/texture_archive.h"
@@ -66,6 +67,11 @@ public:
     // construct (the fixtures inject their arena before any runtime is built).
     formats::Dti& mutableDti() { return dti_; }
     formats::Mto& mto() { return mto_; }
+
+    // The arena stream: the frontends call stream().update() once per frame
+    // with the scripts' arenas (game/arena_stream.h).
+    ArenaStream& stream() { return stream_; }
+    const ArenaStream& stream() const { return stream_; }
     const formats::TextureArchive& levelTextures() const { return levelTextures_; }
 
     // The arenas, then the corridors (a corridor CHMO_1 follows the arena
@@ -116,6 +122,10 @@ private:
     // (docs/ARENA_STREAMING_SPEC.md Phase 1). It borrows the MdkData the level
     // was loaded with, which the frontends and tests keep for the level's life.
     formats::Mto mto_;
+    // Which arena's texture pixels are in memory (Phase 2, game/arena_stream.h).
+    // The arenas' textures point back at it, so a LevelData does not move (the
+    // stream is neither copyable nor movable, and so neither is this).
+    ArenaStream stream_;
     formats::TextureArchive levelTextures_;
     std::vector<const formats::Arena*> arenas_;
 

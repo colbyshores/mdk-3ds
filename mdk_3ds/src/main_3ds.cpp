@@ -65,6 +65,7 @@
 #include "formats/mdk_data.h"
 #include "formats/font.h"
 #include "game/arena_space.h"
+#include "game/arena_views.h"
 #include "game/enhanced_config.h"
 #include "game/enhanced_menu.h"
 #include "game/font_view.h"
@@ -465,7 +466,12 @@ int main(int argc, char** argv) {
         hdSource.pack = &hdPack;
         surfaces.setColourReplacementLookup(hdPackLookup, &hdSource);
     }
-    mdk::LevelView view;
+    // The arenas on the GPU: a LevelView per arena the scripts have loaded,
+    // following the arena stream (game/arena_views.h). Until 2026-11-18 this was
+    // ONE view of the start arena, loaded once: nothing past the first door was
+    // ever drawn.
+    mdk::ArenaViews arenaViews;
+    std::string startArenaName;
     // THE SKY, as geometry (render/sky_dome.h): the PICA200 has no fragment
     // shader for the oracle's per-pixel panorama pass, and the panorama is wider
     // than a PICA texture, so it is a sphere around the camera in slices.
@@ -552,11 +558,24 @@ int main(int argc, char** argv) {
                 // quite free: ObjectView splits a shiny part into its own (Sprite)
                 // batch under Lit, which can reorder same-depth parts -- measured, 7
                 // pixels of level 3 frame 300 (docs/evidence/2026-11-17-3ds-haze.txt).
-                view.setShading(mdk::Shading::Lit);
-                if (view.load(renderer, &level, arena, &surfaces)) {
+                startArenaName = arena->name();
+                arenaViews.start(renderer, &level, &surfaces, mdk::Shading::Lit);
+                // The level's start is a SHOW of Kurt's arena (the original's
+                // BSPShow at 0x41ba68): its textures are read in whole, now, and
+                // its view built. Every later arena arrives through the frame's
+                // stream step (see the loop).
+                level.stream().update(startArenaName, std::string(), false);
+                arenaViews.sync(startArenaName, std::string());
+                if (const mdk::LevelView* startView = arenaViews.find(startArenaName)) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
-                                      (int)view.batchCount(), (int)view.vertexCount(),
+                                      (int)startView->batchCount(), (int)startView->vertexCount(),
                                       (int)arena->triangleCount());
+                    mdk::log3dsPrintf("stream: start arena %s, %d bytes read (%d arenas hold "
+                                      "pixels, %d bytes)",
+                                      startArenaName.c_str(),
+                                      (int)level.stream().stats().bytesRead,
+                                      (int)level.stream().residentArenas(),
+                                      (int)level.stream().residentBytes());
                     {
                         const mdk::formats::Dti& dti = level.dti();
                         const uint8_t* pal = dti.palette().rgba();
@@ -924,6 +943,19 @@ int main(int argc, char** argv) {
         player = mdk::Player();
         player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
         player.yaw = level.dti().startAngle();
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_AT)
+        // THE HARNESS'S START OVERRIDE (`make AUTOQUIT=.. AT=x,y,z,yaw`): Kurt's
+        // feet and yaw exactly as given, as the Linux build's --at sets them (no
+        // +3 lift: the override is the feet). A harness build only: the console
+        // has no command line, and a release must start where the level says.
+        {
+            const float at[4] = {MDK_HW_AT};
+            player.feet = mdk::Vec3{at[0], at[1], at[2]};
+            player.yaw = at[3];
+            mdk::log3dsPrintf("main: harness start override AT=%.1f,%.1f,%.1f yaw %.1f",
+                              at[0], at[1], at[2], at[3]);
+        }
+#endif
         if (firstSpawn) {
             player.setHealth(entryHealth);
             firstSpawn = false;
@@ -991,6 +1023,12 @@ int main(int argc, char** argv) {
         const std::string* here = space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
         if (here) {
             space.setSolid({*here});
+        }
+        // And it is the arena the frame shows until the scripts' first tick names
+        // one (the stream step's fallback): Kurt's own, which is the level's start
+        // arena unless he was placed elsewhere (--at, a respawn).
+        if (here) {
+            startArenaName = *here;
         }
         mdk::log3dsPrintf("spawn: feet=(%.1f,%.1f,%.1f) yaw=%.1f health=%d arenas=%d",
                           player.feet.x, player.feet.y, player.feet.z, player.yaw,
@@ -1076,6 +1114,12 @@ int main(int argc, char** argv) {
     // from one that nearly fills its 4096.
     int32_t objectCorners = 0;
     int32_t objectDraws = 0;
+    // The arena stream's log state (see the frame's stream step).
+    int32_t lastViewsReleased = 0;
+    int32_t lastViewsFailed = 0;
+    int32_t lastDemandLoads = 0;
+    std::vector<std::string> startDrawn;
+    const std::vector<std::string>* frameDrawn = nullptr;   // this frame's drawn list
     int32_t objectPeakCorners = 0;
     int32_t objectPeakDraws = 0;
     const char* exitReason = "aptMainLoop returned false";
@@ -1394,6 +1438,90 @@ int main(int argc, char** argv) {
             }
         }
 
+        // THE ARENAS IN MEMORY AND ON THE GPU FOLLOW THE SCRIPTS, once per frame,
+        // after the steps and before anything is drawn (game/arena_stream.h,
+        // game/arena_views.h): the stream first, so an arena that is drawn this
+        // frame has its textures' pixels before its view is asked for a texture;
+        // then the views. Outside begin/end_frame: both make and release GPU
+        // resources. A stall (an arena SHOWN before its stream was done, as the
+        // original's BSPShow blocks) is logged with its time: spec Phase 3.
+        if (arena) {
+            const std::string& streamCurrent =
+                (runtime && !runtime->currentArena().empty()) ? runtime->currentArena()
+                                                              : startArenaName;
+            const std::string streamSecond = runtime ? runtime->secondArena() : std::string();
+            const bool streamActive = runtime && runtime->secondActive();
+            // WHAT THIS FRAME DRAWS: the scripts' drawn list (C# Viewer.cs:702,
+            // LevelView.Draw(DrawnArenas)), or Kurt's arena until their first
+            // tick has named one. ONE list for the stream, the views and the
+            // draw below: the list is the middle of the scripts' tick and the
+            // pair above is its end, and after a scripted teleport they differ
+            // for a frame (review, 2026-11-18).
+            const bool scriptsDrew = runtime && !runtime->drawnArenas().empty() &&
+                                     !runtime->drawnArenas()[0].empty();
+            if (!scriptsDrew) {
+                startDrawn.assign(1, startArenaName);
+            }
+            frameDrawn = scriptsDrew ? &runtime->drawnArenas() : &startDrawn;
+            mdk::ArenaStream& stream = level.stream();
+            const mdk::ArenaStream::Stats before = stream.stats();
+            // A reader that found pixels away during the last frame's draws (the
+            // stream's backstop): correct, but a read nobody planned, so it is
+            // said. Level 6's OLYM_9 is the one retail arena expected to.
+            if (before.demandLoads != lastDemandLoads) {
+                mdk::log3dsPrintf("stream: %d demand load(s) last frame, %d bytes in all",
+                                  (int)(before.demandLoads - lastDemandLoads),
+                                  (int)before.demandBytes);
+                lastDemandLoads = before.demandLoads;
+            }
+            const std::string wasStreaming = stream.streaming();
+            const double stream0 = nowSeconds();
+            stream.update(streamCurrent, streamSecond, streamActive, *frameDrawn);
+            const double stream1 = nowSeconds();
+            const int32_t builtViews = arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);
+            const double stream2 = nowSeconds();
+            const mdk::ArenaStream::Stats& after = stream.stats();
+            if (after.switches != before.switches) {
+                const mdk::formats::Arena* target = level.arenaNamed(stream.resident());
+                mdk::log3dsPrintf("stream: switch to %s (%d bytes; cur=%s second=%s%s)",
+                                  stream.resident().c_str(),
+                                  target ? (int)target->texturePrefixBytes() : 0,
+                                  streamCurrent.c_str(), streamSecond.c_str(),
+                                  streamActive ? " active" : "");
+            }
+            if (after.stalls != before.stalls) {
+                mdk::log3dsPrintf("stream: STALL %s shown before its stream was done: %d bytes "
+                                  "in %.1f ms",
+                                  stream.resident().c_str(),
+                                  (int)(after.stallBytes - before.stallBytes),
+                                  (stream1 - stream0) * 1000.0);
+            } else if (!wasStreaming.empty() && stream.streaming().empty() &&
+                       after.readFailures == before.readFailures) {
+                mdk::log3dsPrintf("stream: %s in (%d steps so far, %d arenas hold pixels, "
+                                  "%d bytes)",
+                                  wasStreaming.c_str(), (int)after.steps,
+                                  (int)stream.residentArenas(), (int)stream.residentBytes());
+                heapProbe("stream-in");
+            }
+            if (after.readFailures != before.readFailures) {
+                mdk::log3dsPrintf("stream: read FAILED for %s (%d failures)",
+                                  stream.resident().c_str(), (int)after.readFailures);
+            }
+            if (arenaViews.stats().failed != lastViewsFailed) {
+                mdk::log3dsPrintf("views: build FAILED (%d so far); it is tried again",
+                                  (int)arenaViews.stats().failed);
+                lastViewsFailed = arenaViews.stats().failed;
+            }
+            if (builtViews > 0 || arenaViews.stats().released != lastViewsReleased) {
+                mdk::log3dsPrintf("views: %d built (last %s, %.1f ms), %d released, %d kept",
+                                  (int)builtViews, arenaViews.lastBuilt().c_str(),
+                                  (stream2 - stream1) * 1000.0,
+                                  (int)(arenaViews.stats().released - lastViewsReleased),
+                                  (int)arenaViews.count());
+                lastViewsReleased = arenaViews.stats().released;
+            }
+        }
+
         MdkFrameParams params;
         params.elapsed = elapsed;
         params.frame_index = frame;
@@ -1457,8 +1585,11 @@ int main(int argc, char** argv) {
             }
         }
 
-        if (arena) {
-            view.draw();
+        // The arenas the scripts say are drawn: Kurt's and the active second
+        // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
+        // the runtime's first tick has named one.
+        if (arena && frameDrawn) {
+            arenaViews.draw(*frameDrawn);
         }
         if (runtime) {
             // C# Viewer.DrawScene draws the objects after the arena and before
@@ -1728,6 +1859,8 @@ int main(int argc, char** argv) {
     mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
                       (unsigned)steps, exitReason);
     aptUnhook(&s_lifecycleCookie);
+    // The arenas' GPU objects go while the renderer is still there.
+    arenaViews.clear();
     mdk_render_destroy(renderer);
     mdk::audioClose();
     mdk::romfsFileSystemExit();

@@ -65,6 +65,11 @@ public:
     // load; refresh() keeps it.
     void setShading(Shading shading) { shading_ = shading; }
 
+    // Release the mesh and forget the scene: the arena is no longer on the GPU
+    // (game/arena_views.h). The textures are the shared cache's and go with the
+    // arena's palette there. Safe on a view that never loaded.
+    void unload();
+
     // Draw the arena. The camera and the lighting are the caller's.
     //
     // A group the scripts hid mid-play (group_set_state) is skipped here, per

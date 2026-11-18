@@ -1,5 +1,55 @@
 # Phase 2 continuation checkpoint
 
+## ARENA STREAMING PHASE 2: ONE ARENA'S TEXTURES RESIDENT, EVERY LOADED ARENA DRAWN (2026-11-18)
+
+Spec: `docs/ARENA_STREAMING_SPEC.md` Phases 2-3. Evidence:
+`docs/evidence/2026-11-18-arena-streaming-phase2.txt` (design and Ghidra answers:
+the entry two below). EMULATOR + HOST only -- the console is pinned to another
+project, no hardware number is claimed and the phase is NOT tagged.
+
+- **What landed.** `formats::Texture` pixels can be dropped and read back (the
+  object and its address stay). `mdk::ArenaStream` (`LevelData::stream()`) keeps
+  ONE MTO arena's texture pixels resident: a switch trims the old arena first,
+  reads 32 KiB per frame, and finishes at once (a logged `stream: STALL`) when
+  the arena is already drawn. Geometry, BSP and models stay resident for every
+  arena, so the simulation cannot depend on stream progress (goldens unchanged).
+  `mdk::ArenaViews` holds a `LevelView` per kept arena (loaded pair, the frame's
+  drawn list, the stream's resident arena and its connected corridors), built on
+  entry and freed with its palette's GPU textures on exit. `updateDrawnArenas`
+  now writes `obj.visible` as the C# does.
+- **The frame order is one list.** scripts tick -> `stream.update(...,
+  *frameDrawn)` -> `arenaViews.sync(..., *frameDrawn)` -> `arenaViews.draw(
+  *frameDrawn)`; `frameDrawn` is the runtime's `drawnArenas()` (the MIDDLE of
+  the tick), not the end-of-tick pair. `main_3ds_flow_test.sh` pins it
+  (`arenas-follow-the-scripts`, two arms).
+- **Before this, only the start arena was ever drawn.** Arenas past the first
+  door now draw: level 3 corridor CHMO_1 is 0.032% from the oracle on Linux and
+  0.46% on the 3DS build.
+- **Numbers (EMULATOR, mallinfo used).** Level data L3 19.06 -> 6.37 MB, L7
+  18.73 -> 6.53 MB, L8 22.57 -> 7.35 MB; in play L3 33.98 -> 22.66 MB, L7
+  33.74 -> 22.82 MB, L8 OOM -> 25.60 MB. Heap cap 41.04 MB.
+- **Harness.** `make -C mdk_3ds AUTOQUIT=90 AT=x,y,z,yaw` places Kurt (3DS);
+  `MDK_COMPARE_AT` (compare_linux.sh), `MDK_FRAME_AT` / `MDK_FRAME_WAIT` /
+  `MDK_FRAME_TRUE_ASPECT` (tests/frames). A 400x240 port frame compared with the
+  oracle NEEDS true aspect, or it reads as a 33-44% gap that is not there.
+  **`tests/frames/capture_oracle.sh` is a protected contract file**: its half of
+  the knobs (`MDK_FRAME_AT`, `MDK_FRAME_WAIT`, 11 lines) is in the working tree
+  UNCOMMITTED, waiting for the owner's approval like `AGENTS.md` / `SPEC.md`.
+  The oracle numbers in the Phase 2 evidence were measured with it.
+
+**Still owed / next:**
+- Hardware: heap, stall and view-build times on the Old 3DS; whether the 65
+  units between level 3's preload record (x=82) and show record (x=147) are
+  enough at SD read speed. Owner tests over FTP.
+- Models/animations (1.7-2.4 MB per level) still resident for every arena: needs
+  the unported loaded-arena half of `UpdateArenas` (object model instances freed
+  on deactivation, 0x43f800 / 0x43f8e0).
+- Phase 5, per-arena audio: `LEVELnO.SNI` music tracks (4.5 MB on level 8) are
+  still loaded whole; the 24-byte MTO sound entries are undecoded.
+- A walked door transition under real input, and level 6's OLYM_9 demand load in
+  the emulator (host-tested only).
+- Then sun shadows (enhancement 6), per the owner's order.
+
 ## ARENA STREAMING PHASE 1a: THE MTO IS NO LONGER RESIDENT (2026-11-18)
 
 Spec: `docs/ARENA_STREAMING_SPEC.md` Phase 1. Evidence:
@@ -34,11 +84,93 @@ the console is pinned to another project, so no hardware number is claimed.
   1.65-2.44 MB per level against 8.4-10.3 MB files.
 - *24-byte sound entries.* Still open: `Arena::parseModels` reads the sound count
   and stops; the entries are not decoded yet (Phase 5 needs them).
-- *32 KiB chunk as parse unit, arena +0x24/+0x40 buffers, CD vs HD reads.* Open:
-  Ghidra (owner: `~/re-tools`, ReVa MCP) before Phase 2.
+- *32 KiB chunk, arena +0x24/+0x40.* Answered from Ghidra, see the Phase 2 entry
+  below.
 
-**NEXT.** Phase 2 design from the dependency map (owner: run it at Fable/high
-effort or with a deep Fable review), with the section-4 Ghidra answers first.
+## ARENA STREAMING PHASE 2: GHIDRA ANSWERS AND THE DESIGN (2026-11-18)
+
+**Ghidra.** `MDKD3D.EXE` (md5 13d5553e...), Ghidra 12.0.4 headless, project in
+`build-ghidra/` (ignored), scripts `~/re-tools/ghidra_scripts` (DecompFns).
+Rechecked against the binary, not taken from the secondhand notes:
+
+- `0x423448` stream start: finds the arena by name in the MTO directory (12-byte
+  entries; failure string "No overlay data for %s"), seeks to its offset, reads
+  the u32 size; cursor = ONE fixed buffer (`0x57ec30`), remaining = size.
+- `0x423540` stream step: reads `min(remaining, 0x8000)` at the cursor; returns 1
+  while bytes remain. **The 32 KiB chunk is a READ unit only**: nothing is parsed
+  until the last chunk (`arena_load_step` 0x41983c then sets `arena+0x40`, installs
+  the palette at index 64, registers textures, and starts the arena's sounds: at
+  most 16, `0x573b04 = 1`).
+- **`arena+0x40` is the palette pointer and `arena+0x24` the parsed world pointer,
+  both INTO that one buffer** (`arena_activate` 0x4194e4 parses the world when
+  `+0x24 == 0`). `arena_switch` 0x41970c zeroes both on the previous arena and
+  frees its registered textures: single MTO residency is structural (one buffer),
+  not a policy. It picks Kurt's arena if that is an un-resident MTO arena, else
+  the second.
+- `BSPShow` 0x41a11c BLOCKS: three loops run the stream, the sounds/corridors
+  step (0x419ac0) and the music step to completion, then `0x573a6c = 1` and the
+  first-show spawn.
+- 0x419ac0 is also the CORRIDOR manager, one action per call: free a loaded
+  corridor NOT connected (type 6) to the resident MTO arena (0x431ad8), else load
+  a connected corridor that is missing (0x431914: synchronous, reads of up to
+  0xF768 bytes), else `arena_activate`. So the original keeps one MTO arena plus
+  EVERY corridor connected to it (the spec's "one corridor" is a simplification).
+
+**File facts (host census over levels 3-8, 2026-11-18).**
+- All 84 type-6 connections are arena<->corridor; none arena-arena or
+  corridor-corridor. Two MTO arenas can only be the loaded pair by teleport.
+- Corridors resolve materials ONLY from the level archive (`LEVELnS.MTI`), never
+  from an arena's. Exactly one arena borrows another's textures: level 6 OLYM_9
+  takes O3_FLR1/O3_CORR/O3_BLAST from OLYM_3.
+- An MTO is 60-72% textures (level 8: 7.40 of 10.29 MB), ~20% models and
+  animations, 0.4-1.0 MB world (geometry + BSP).
+- `LEVELnO.SNI` = the corridors + the per-arena MUSIC tracks (~0.5 MB each: level
+  8's 4.99 MB is 9 tracks + 0.5 MB of corridors); `LEVELnS.SNI` = the level's
+  shared sound effects. (The Godot notes' "corridors live in LEVELnS.SNI" is not
+  what these files hold.)
+
+**The port's state before Phase 2.** The SEMANTIC state machine already exists,
+ported from the C#: `currentArena_`, `secondArena_`, `secondActive_`,
+`showArena` (BSPShow), `preloadArena` (opcode 223), `loadArena`, crossings,
+triggers, doors, teleports. What is missing is every CONSUMER of it: both
+frontends build ONE `LevelView` for the start arena and never draw another
+(`drawnArenas()` has no reader), `MdkObject::visible` has no writer (so every
+object of every arena is drawn), and nothing is ever freed.
+
+**Design (owner-approved direction: prioritise streaming; decisions here are
+this entry's, per spec rule 7).**
+1. **The simulation stays the oracle's.** World geometry + BSP of EVERY arena and
+   corridor stay resident (0.4-1.0 MB per level + corridors): ArenaSpace, Bsp,
+   raycasts, floors, and the runtime state stored on the Arena (triangle flags,
+   group states) are untouched, so no script, collision or timing can depend on
+   stream progress. (Spec non-goals: script semantics, movement, collision.)
+2. **Textures are the stream.** An arena's `Texture` objects stay (name, size,
+   frames, stable address: SurfaceCache keys stay valid); their PIXELS are
+   dropped and read back. `ArenaStream` reads the block's texture section in
+   32 KiB steps, one per frame, then re-runs `TextureArchive::parse` over it and
+   moves the pixels in (byte-identical by construction; tested). At most ONE MTO
+   arena's pixels are resident, switched as `arena_switch` does: when a different
+   MTO arena enters {current, second}. A teleport-made MTO pair keeps both and is
+   counted (the original would thrash its one buffer).
+3. **Showing blocks, preloading does not.** An arena that is DRAWN (current, or
+   the active second) with an unfinished stream is finished synchronously and the
+   stall is logged (BSPShow, spec Phase 3); a preloaded second streams one step
+   per frame.
+4. **A reader of evicted pixels faults them in** (`Texture::indices()` through a
+   loader hook), counted and logged: the backstop for OLYM_9's borrow and for
+   anything this map missed. Eviction happens only at the frame boundary, never
+   inside an accessor.
+5. **The frontends draw `drawnArenas()`** through a shared `ArenaViews` (a
+   `LevelView` per loaded arena, built when it enters {current, second}, released
+   with its GPU textures when it leaves), and `obj.visible` is written as the C#
+   does (`drawn.Contains(obj.Arena)`; `Rides.Hides` is unported with the rides).
+6. **Later, measured first:** models/animations (1.7-2.4 MB per level) need the
+   original's activate/deactivate of object model instances (0x43f8e0 /
+   0x43f800), i.e. the unported half of `UpdateArenas`; corridors' world data is
+   kept (see 1).
+
+**NEXT.** Implement 2-5 in that order, each host-tested; then an emulator run
+that crosses a door (a harness warp or scripted walk), and the Fable review.
 
 ## ARENA STREAMING: PHASE 0 FOR EVERY LEVEL, AND THE 20x SCRIPT COST FIXED (2026-11-17)
 

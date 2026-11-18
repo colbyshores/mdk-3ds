@@ -93,6 +93,15 @@ public:
 
     bool has(const std::string& name) const;
 
+    // `length` bytes at `at` of the named arena's block, counted from the
+    // block's start (its size field): the arena stream's read
+    // (game/arena_stream.h), in the original's 32 KiB steps. From the file in
+    // the streamed form (open()), from the borrowed buffer in the parsed form.
+    // False on an unknown arena, an arena that was add()ed, a range outside the
+    // block, or a short read.
+    bool readBlock(const std::string& name, int32_t at, int32_t length,
+                   std::vector<uint8_t>* out) const;
+
     // Streamed-form blocks that could not be read (a short read, a corrupt
     // size): the level's load fails on any (LevelData::load).
     int32_t readFailures() const { return readFailures_; }
@@ -110,7 +119,7 @@ private:
     // The streamed form's file (open()): read one block at a time. Null for a
     // parsed or empty Mto.
     const MdkData* data_ = nullptr;
-    std::string path_;
+    std::string path_;   // RESOLVED (MdkData::pathOf), so a block read is one open
     int32_t readFailures_ = 0;
 
     std::vector<std::string> names_;

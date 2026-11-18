@@ -281,8 +281,10 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     // free again once the deferred deletion settles. (An EVICTION is not a
     // release: it keeps the source, and the texture is made again when it is
     // next drawn.)
-    texture.source.clear();
-    texture.palette.clear();
+    // swap, not clear(): clear keeps the capacity, and an arena-sized release
+    // (game/arena_views.h) must hand the heap back for the next arena's stream.
+    std::vector<uint8_t>().swap(texture.source);
+    std::vector<uint8_t>().swap(texture.palette);
     texture.stale = false;
 }
 

@@ -63,6 +63,13 @@ Arena* Arena::parse(const std::string& name, const uint8_t* bytes, int32_t byteC
         arena->paletteRgb_.assign(bytes + palette, bytes + palette + kPaletteColors * 3);
     }
     arena->textures_ = TextureArchive::parse(bytes, byteCount, buf + 0x10);
+    // What a re-read of the textures needs: the block from its start up to the
+    // models section (the section order is textures, models, palette, world in
+    // every retail arena). The stream test proves a parse of just this prefix
+    // gives every texture's pixels back.
+    if (models > offset && models <= byteCount) {
+        arena->texturePrefixBytes_ = models - offset;
+    }
     arena->parseWorldSection(bytes, byteCount, world, kMaterialNameLength, kBspNodeSize);
 
     // The models, the animations and the sounds. The scripts' FindModel
@@ -96,6 +103,77 @@ Arena* Arena::parse(const std::string& name, const uint8_t* bytes, int32_t byteC
     }
 
     return arena;
+}
+
+int64_t Arena::texturePixelBytes() const {
+    int64_t bytes = 0;
+    const std::vector<std::pair<std::string, Texture>>& textures = textures_.textures();
+    for (size_t i = 0; i < textures.size(); i++) {
+        bytes += textures[i].second.residentBytes();
+    }
+    return bytes;
+}
+
+int64_t Arena::dropTexturePixels() {
+    int64_t freed = 0;
+    std::vector<std::pair<std::string, Texture>>& textures = textures_.mutableTextures();
+    for (size_t i = 0; i < textures.size(); i++) {
+        freed += textures[i].second.residentBytes();
+        textures[i].second.dropPixels();
+    }
+    return freed;
+}
+
+bool Arena::adoptTexturePixels(TextureArchive* fresh) {
+    if (!fresh) {
+        return false;
+    }
+    std::vector<std::pair<std::string, Texture>>& mine = textures_.mutableTextures();
+    std::vector<std::pair<std::string, Texture>>& theirs = fresh->mutableTextures();
+    if (mine.size() != theirs.size()) {
+        return false;
+    }
+    // Check everything BEFORE anything moves: a half-adopted archive would be
+    // some textures of this read and some away, with no way to tell which.
+    for (size_t i = 0; i < mine.size(); i++) {
+        const Texture& a = mine[i].second;
+        const Texture& b = theirs[i].second;
+        if (mine[i].first != theirs[i].first || a.width() != b.width() || a.height() != b.height() ||
+            a.frameCount() != b.frameCount()) {
+            return false;
+        }
+    }
+    for (size_t i = 0; i < mine.size(); i++) {
+        // A texture the fresh parse found no pixels for (cut short in a file
+        // that is not the retail layout) has none to take. It must not stay
+        // "away": a reader would then ask for the whole arena again on every
+        // read, for ever. It becomes what the parse says it is -- empty.
+        if (!mine[i].second.adoptPixels(&theirs[i].second) && mine[i].second.pixelsAway()) {
+            mine[i].second.setIndices(nullptr, 0);
+        }
+    }
+    return true;
+}
+
+void Arena::setPixelSource(void (*load)(void* user, const Texture* texture), void* user) {
+    pixelSource_.load = load;
+    pixelSource_.user = user;
+    std::vector<std::pair<std::string, Texture>>& textures = textures_.mutableTextures();
+    for (size_t i = 0; i < textures.size(); i++) {
+        textures[i].second.setPixelSource(&pixelSource_);
+    }
+}
+
+bool Arena::ownsTexture(const Texture* texture) const {
+    const std::vector<std::pair<std::string, Texture>>& textures = textures_.textures();
+    if (textures.empty() || !texture) {
+        return false;
+    }
+    // One contiguous vector: the address range is the membership test.
+    const std::pair<std::string, Texture>* first = &textures.front();
+    const std::pair<std::string, Texture>* last = &textures.back();
+    return (const void*)texture >= (const void*)first &&
+           (const void*)texture < (const void*)(last + 1);
 }
 
 void Arena::keepAnimationBytes(const uint8_t* bytes, int32_t from, int32_t to, int32_t blockStart,
