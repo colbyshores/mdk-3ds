@@ -772,6 +772,26 @@ emurun_pre_existing_mount() {
   printf '%s\n' "$PRE_MOUNTS" | grep -qxF "$1"
 }
 
+# THE LANE'S SESSION HELPERS. The emulator's private D-Bus session activates
+# desktop services on demand -- xdg-desktop-portal(-gtk/-gnome), the document and
+# permission portals, gvfsd(-fuse), gnome-keyring, gamemoded and the bus itself --
+# and they are reparented to the user's systemd, out of the emulator's process
+# tree, so the tree reap above never sees them. Each portal also holds an X client
+# on the shared :99. MEASURED 2026-11-18: 130 dead lanes had left 1,224 such
+# processes and 254 X clients, and Xvfb :99 refused new clients ("Maximum number
+# of clients reached") -- every later --expect hud verdict failed for want of a
+# screenshot. They are found by THIS lane's own XDG_RUNTIME_DIR in their
+# environment: unique to the lane, so no other lane's or agent's process matches.
+emurun_lane_session_pids() {
+  local p rd
+  [ -n "${LANE:-}" ] || return 0
+  for p in $(pgrep -u "$(id -u)" 2>/dev/null); do
+    rd=$(tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | sed -n 's/^XDG_RUNTIME_DIR=//p')
+    [ "$rd" = "$LANE/runtime" ] && echo "$p"
+  done
+  return 0
+}
+
 emurun_cleanup() {
   local p m
   for p in $(emurun_own_pids 2>/dev/null); do
@@ -780,6 +800,15 @@ emurun_cleanup() {
   sleep 1
   for p in $(emurun_own_pids 2>/dev/null); do
     kill -9 "$p" 2>/dev/null || true
+  done
+  for p in $(emurun_lane_session_pids); do
+    [ "$p" = "$$" ] || kill "$p" 2>/dev/null || true
+  done
+  # gamemoded ignores SIGTERM (measured: three survived it); what is left a
+  # second later gets SIGKILL.
+  sleep 1
+  for p in $(emurun_lane_session_pids); do
+    [ "$p" = "$$" ] || kill -9 "$p" 2>/dev/null || true
   done
   # (review-5 F4) The verdict samples the frame counter at the deadline and then
   # this trap runs, so the emulator keeps writing while it is reaped: a measured

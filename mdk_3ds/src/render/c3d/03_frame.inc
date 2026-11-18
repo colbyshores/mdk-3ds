@@ -68,9 +68,9 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
 
 // The HD stream's entry points (04_textures.inc, THE HD STREAM), declared here
 // because the frame boundary calls them before they are defined.
-static void dropHd(RendererC3D* renderer, C3dTexture& texture);
+static void dropHd(RendererC3D* renderer, HdCopy& copy);
 static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom);
-static bool evictHd(RendererC3D* renderer, uint32_t protectFrom);
+static bool evictHd(RendererC3D* renderer, uint32_t protectFrom, bool unlinkedOnly);
 
 // Settle the texture changes that could not be made while the GPU might
 // still be reading the old copy.
@@ -93,7 +93,6 @@ static void settleDeferredTextures(RendererC3D* renderer) {
             C3D_TexDelete(&texture.tex);
             texture.valid = false;
         }
-        dropHd(renderer, texture);
         texture.releasePending = false;
         texture.stale = false;
         texture.source.clear();

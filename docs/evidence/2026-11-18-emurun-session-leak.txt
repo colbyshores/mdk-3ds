@@ -1,0 +1,28 @@
+EMURUN LEAKED EVERY LANE'S DESKTOP-SESSION HELPERS (2026-11-18).
+
+SYMPTOM. emurun --expect hud failed rc 7, "HUD NOT VISIBLE: 0 canary pixels",
+with "WARNING no screenshot tool (ImageMagick 'import')" -- on a tree whose HUD
+had passed hours earlier. `import` was installed; run by hand it said
+"Maximum number of clients reached ... unable to open X server ':99'".
+
+CAUSE. Each emulator lane runs in a private D-Bus session, which activates
+desktop services on demand: xdg-desktop-portal (+ -gtk, -gnome),
+xdg-document-portal, xdg-permission-store, gvfsd, gvfsd-fuse,
+gnome-keyring-daemon, gamemoded, and the dbus-daemon itself. They are reparented
+to the user's systemd, outside the emulator's process tree, so emurun's tree reap
+never saw them. The portals each hold an X client on the shared :99.
+MEASURED: 130 dead lanes (none with an emulator still running) had left 1,224
+such processes and 254 X clients (128 portal-gnome, 126 portal-gtk); Xvfb's
+client table was full, so every screenshot -- and every --expect hud verdict --
+failed.
+
+FIX. emurun_cleanup now also ends every process whose environment carries THIS
+lane's XDG_RUNTIME_DIR ($LANE/runtime: unique per lane, so no other lane's or
+agent's process can match), SIGTERM then SIGKILL a second later (gamemoded
+ignores SIGTERM: three survived it). The 1,224 orphans were removed by the same
+criterion (lanes with no AppRun/mandarine process), after which :99 had 0 clients
+and `import` worked.
+
+VERIFIED. emurun --expect hud rc 0 (HUD INK 192 of 192); after a full
+compare_linux.sh run, 0 processes carry an mdk-emurun runtime dir and :99 has 0
+clients; emurun_harness_test 321 checks pass.

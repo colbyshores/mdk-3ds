@@ -296,6 +296,12 @@ MDK_TEST(modImagesFromListResolvesByTheScansOrder) {
     // The kinds stay apart.
     MDK_CHECK(pack.resolve(mdk::ModImages::Kind::Images, "SC_STAT", keyTexture(), other, &path));
     MDK_CHECK(!pack.resolve(mdk::ModImages::Kind::Textures, "SC_STAT", keyTexture(), other, &path));
+    // A list-built index is a COMPRESSED pack: its callers (KurtSprite, HudView)
+    // resolve paths for the compressed seams instead of decoding. A scanned one
+    // is not.
+    MDK_CHECK(pack.compressed());
+    MDK_CHECK(!mdk::ModImages::open({g_root + "/keymod"}, true, 3).compressed());
+    MDK_CHECK(!mdk::ModImages().compressed());
 }
 
 namespace {

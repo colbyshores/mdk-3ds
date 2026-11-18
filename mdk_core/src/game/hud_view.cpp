@@ -87,7 +87,15 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
                 char name[32];
                 std::snprintf(name, sizeof(name), "PICKUPS_%d", (int)i);
                 HdImage image;
-                if (mods_->image(name, frame.image, palette, &image)) {
+                std::string path;
+                if (mods_->compressed()) {
+                    // The 3DS HD pack: the picture's .t3x, imported by the backend.
+                    if (mods_->resolve(ModImages::Kind::Images, name, frame.image, palette,
+                                       &path)) {
+                        mdk_render_replace_image_compressed(renderer, icon.texture,
+                                                            path.c_str());
+                    }
+                } else if (mods_->image(name, frame.image, palette, &image)) {
                     mdk_render_replace_image(renderer, icon.texture, palette_, image.width,
                                              image.height, image.rgba.data());
                 }
@@ -127,7 +135,12 @@ void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* ou
     // canvas draws it instead of the filtered index texture.
     if (mods_ && out->texture >= 0 && texture.frameCount() == 1) {
         HdImage image;
-        if (mods_->image(name, texture, palette, &image)) {
+        std::string path;
+        if (mods_->compressed()) {
+            if (mods_->resolve(ModImages::Kind::Images, name, texture, palette, &path)) {
+                mdk_render_replace_image_compressed(renderer_, out->texture, path.c_str());
+            }
+        } else if (mods_->image(name, texture, palette, &image)) {
             mdk_render_replace_image(renderer_, out->texture, palette_, image.width, image.height,
                                      image.rgba.data());
         }

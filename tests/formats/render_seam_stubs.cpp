@@ -47,6 +47,13 @@ void mdk_render_replace_compressed(MdkRenderer, MdkTextureId texture, const char
     mdk_test_compressedPath = path ? path : "";
 }
 
+int mdk_test_compressedImageCalls = 0;
+std::string mdk_test_compressedImagePath;
+void mdk_render_replace_image_compressed(MdkRenderer, MdkTextureId, const char* path) {
+    mdk_test_compressedImageCalls++;
+    mdk_test_compressedImagePath = path ? path : "";
+}
+
 void mdk_render_replace_colour(MdkRenderer, MdkTextureId texture, MdkPaletteId palette,
                                int32_t frames, int32_t width, int32_t height,
                                const uint8_t* rgba) {

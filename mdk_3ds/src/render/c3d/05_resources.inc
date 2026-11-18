@@ -179,10 +179,11 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     texture.lastUsed = ++renderer->drawCounter;
 }
 
-// The HD pack's compressed replacement for an index texture: recorded only.
-// The draw that first wants it queues it, and the frame-boundary pump imports
-// it under the HD budget (04_textures.inc, THE HD STREAM).
-void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId t, const char* path) {
+// Links a texture to the HD copy of `path` (RendererC3D::hdCopies, one per
+// file). Recorded only: the draw that first wants it queues it, and the
+// frame-boundary pump imports it under the HD budget (04_textures.inc, THE HD
+// STREAM).
+static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool canvas) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || t < 0 || (size_t)t >= renderer->textures.size() || !path || !*path) {
         return;
@@ -193,12 +194,51 @@ void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId t, const char* pa
         mdk::log3dsPrintf("hd: path too long, ignored: %s", path);
         return;
     }
-    C3dTexture& texture = renderer->textures[(size_t)t];
-    texture.hdPath = path;
-    texture.hdFailures = 0;
-    if (texture.hdState == C3dTexture::HdFailed) {
-        texture.hdState = C3dTexture::HdNone;
+    // The copy for this FILE, made on first sight and shared from then on.
+    int32_t index = -1;
+    const std::map<std::string, int32_t>::const_iterator found = renderer->hdByPath.find(path);
+    if (found != renderer->hdByPath.end()) {
+        index = found->second;
+    } else {
+        index = (int32_t)renderer->hdCopies.size();
+        HdCopy copy;
+        copy.path = path;
+        renderer->hdCopies.push_back(copy);
+        renderer->hdByPath[path] = index;
     }
+    C3dTexture& texture = renderer->textures[(size_t)t];
+    if (texture.hdCopy != index) {
+        if (texture.hdCopy >= 0 && (size_t)texture.hdCopy < renderer->hdCopies.size()) {
+            HdCopy& old = renderer->hdCopies[(size_t)texture.hdCopy];
+            if (--old.links == 0) {
+                old.unlinkedSince = renderer->frame;
+            }
+        }
+        renderer->hdCopies[(size_t)index].links++;
+    }
+    texture.hdCopy = index;
+    texture.hdCanvas = canvas;
+    // A fresh link is a fresh chance for a copy that failed for a passing reason
+    // (a linear-heap shortage): a re-made Kurt frame must not stay on its
+    // original for the session (review F3). A broken file is not retried.
+    HdCopy& copy = renderer->hdCopies[(size_t)index];
+    if (copy.state == HdCopy::Failed && !copy.broken) {
+        copy.state = HdCopy::None;
+        copy.failures = 0;
+    }
+}
+
+// The HD pack's compressed replacement for an index texture: recorded only.
+// The draw that first wants it queues it, and the frame-boundary pump imports
+// it under the HD budget (04_textures.inc, THE HD STREAM).
+void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId t, const char* path) {
+    recordHdPath(r, t, path, false);
+}
+
+// The same for a canvas picture (HUD, menus): drawn on the canvas's own
+// Original-shaded pass.
+void mdk_render_replace_image_compressed(MdkRenderer r, MdkTextureId t, const char* path) {
+    recordHdPath(r, t, path, true);
 }
 
 // The mod system's DECODED colour-image replacements: the 3DS takes the HD
@@ -217,14 +257,22 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     C3dTexture& texture = renderer->textures[(size_t)t];
     const bool inFlight = renderer->gpuPending ||
                           (renderer->inFrame && texture.lastUsed >= renderer->frameStartUse);
-    if (!inFlight) {
-        dropHd(renderer, texture);
+    // The HD copy is the copies table's, not this texture's: unlinked only. It
+    // stays resident (a re-made texture of the same file relinks to it) until the
+    // budget evicts it, and eviction never takes a copy drawn by a frame the GPU
+    // may still be reading.
+    if (texture.hdCopy >= 0 && (size_t)texture.hdCopy < renderer->hdCopies.size()) {
+        HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
+        if (--copy.links == 0) {
+            copy.unlinkedSince = renderer->frame;
+        }
     }
-    texture.hdPath.clear();
+    texture.hdCopy = -1;
+    texture.hdCanvas = false;
     if (texture.valid && !inFlight) {
         C3D_TexDelete(&texture.tex);
         texture.valid = false;
-    } else if (texture.valid || texture.hdState == C3dTexture::HdResident) {
+    } else if (texture.valid) {
         // The id is invalid to the caller now, but the GPU may still be
         // reading the old copy. The next frame boundary frees it.
         texture.releasePending = true;
@@ -258,6 +306,12 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* v, int32_t n)
     // surfaces are unlit, and the flat-coloured surfaces are drawn with a
     // one-pixel texture of that colour instead.
     mesh.data = linearAlloc((size_t)n * 5 * sizeof(float));
+    // The HD copies share the linear heap: unlinked ones (a finished level's) go
+    // before a mesh fails to be made, then any copy this frame did not draw.
+    while (!mesh.data && (evictHd(renderer, renderer->frameStartUse, true) ||
+                          evictHd(renderer, renderer->frameStartUse, false))) {
+        mesh.data = linearAlloc((size_t)n * 5 * sizeof(float));
+    }
     if (!mesh.data) {
         return -1;
     }
@@ -286,6 +340,10 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer r, int32_t cap) {
     C3dMesh mesh;
     mesh.capacity = cap;
     mesh.data = linearAlloc((size_t)cap * 5 * sizeof(float));
+    while (!mesh.data && (evictHd(renderer, renderer->frameStartUse, true) ||
+                          evictHd(renderer, renderer->frameStartUse, false))) {
+        mesh.data = linearAlloc((size_t)cap * 5 * sizeof(float));
+    }
     if (!mesh.data) {
         // Printed, like every other allocation this backend refuses (the scratch
         // buffer, the textures). A mesh that is not there is a draw that is simply

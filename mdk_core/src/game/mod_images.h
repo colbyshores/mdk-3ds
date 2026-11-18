@@ -74,6 +74,11 @@ public:
     bool resolve(Kind kind, const std::string& name, const formats::Texture& texture,
                  const formats::Palette& palette, std::string* path);
 
+    // True for an index built from a COMPRESSED pack's list (fromList: the 3DS's
+    // .t3x): its files are imported by the backend, never decoded, so callers
+    // resolve() a path and hand it to the compressed seams instead of decoding.
+    bool compressed() const { return compressed_; }
+
     // A 3D texture's replacement (arenas, models, Kurt's frames), or false.
     bool texture(const std::string& name, const formats::Texture& texture,
                  const formats::Palette& palette, HdImage* out);
@@ -115,6 +120,7 @@ private:
     std::map<std::string, HdImage> decoded_;
     std::map<std::string, bool> decodedOk_;
     std::vector<std::string> found_;
+    bool compressed_ = false;
 };
 
 } // namespace mdk

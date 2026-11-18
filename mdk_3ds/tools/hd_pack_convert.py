@@ -20,7 +20,11 @@
 #      carried to the whole image, because a mip chain reaches further than one
 #      texel.)
 #   2. SIZE. Each axis to a power of two (the PICA's rule; ETC1's 4x4 blocks are
-#      then whole), at most --max (512: the pack's cap) and at least 8. A
+#      then whole), at most --max (512: the pack's cap) and at least 8. KURT'S
+#      SPRITE FRAMES (textures named K_*) are capped at --sprite-max (128): he is
+#      about 80 px tall on the 3DS's 240 lines, and at 512 his 360 level-3 frames
+#      were 12.6 MB -- an animation cycle (57 idle frames) overflowed the whole HD
+#      budget and thrashed it (measured, 2026-11-18). A
 #      texture's uv spans its whole image, so a non-POT image is RESAMPLED to the
 #      POT size, not padded: nothing on the 3DS side has to undo a padding.
 #   3. FORMAT. Any alpha below 255 -> ETC1A4 (ETC1 + 4-bit alpha), else ETC1.
@@ -120,10 +124,13 @@ def main():
     ap.add_argument("mod")
     ap.add_argument("out")
     ap.add_argument("--max", type=int, default=512)
+    ap.add_argument("--sprite-max", type=int, default=128)
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     a = ap.parse_args()
-    if a.max not in (8, 16, 32, 64, 128, 256, 512, 1024):
-        sys.exit("hd_pack_convert: --max must be a power of two from 8 to 1024 (the PICA's limit)")
+    for v in (a.max, a.sprite_max):
+        if v not in (8, 16, 32, 64, 128, 256, 512, 1024):
+            sys.exit("hd_pack_convert: --max/--sprite-max must be a power of two from 8 to 1024 "
+                     "(the PICA's limit)")
     if not os.path.exists(TEX3DS):
         sys.exit("hd_pack_convert: no tex3ds at %s (devkitPro tools; set TEX3DS)" % TEX3DS)
 
@@ -149,17 +156,19 @@ def main():
                 dst = os.path.join(a.out, rel + ".t3x")
                 with open(src, "rb") as fh:
                     digest = hashlib.sha256(fh.read()).hexdigest()[:16]
+                cap = a.sprite_max if (sub == "textures" and name.startswith("K_")) else a.max
                 prev = old.get(rel)
-                if prev and prev[7] == digest and prev[8] == str(a.max) and prev[9] == SETTINGS \
+                if prev and prev[7] == digest and prev[8] == str(cap) and prev[9] == SETTINGS \
                         and os.path.exists(dst):
                     kept[rel] = prev
                 else:
-                    jobs.append((src, dst, a.max))
+                    jobs.append((src, dst, cap))
     if not jobs and not kept:
         sys.exit("hd_pack_convert: no PNG under %s/textures or %s/images" % (a.mod, a.mod))
 
     lines = dict(kept)
     failed = 0
+    caps = {src: cap for src, _, cap in jobs}
     with ProcessPoolExecutor(max_workers=a.jobs) as pool:
         for src, info, err in pool.map(convert, jobs, chunksize=4):
             rel = os.path.relpath(src, a.mod)[:-4]
@@ -169,7 +178,7 @@ def main():
                 continue
             fmt, w0, h0, tw, th, size, digest = info
             lines[rel] = [rel, fmt, str(w0), str(h0), str(tw), str(th), str(size), digest,
-                          str(a.max), SETTINGS]
+                          str(caps[src]), SETTINGS]
 
     os.makedirs(a.out, exist_ok=True)
     tmp = manifest_path + ".tmp"

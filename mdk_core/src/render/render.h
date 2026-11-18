@@ -190,6 +190,12 @@ void mdk_render_replace_colour(MdkRenderer r, MdkTextureId texture, MdkPaletteId
 // decodes mods through mdk_render_replace_colour and ignores this.
 void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId texture, const char* path);
 
+// The same for a CANVAS image (a HUD or menu picture): the HD pack's .t3x for
+// it. Separate from mdk_render_replace_compressed because the canvas is drawn
+// with the original shading, which a world texture's HD copy never applies to
+// (the PC's mods replace a canvas image through its own path, ReplaceImage).
+void mdk_render_replace_image_compressed(MdkRenderer r, MdkTextureId texture, const char* path);
+
 // Give a canvas image (an index texture through a palette) a whole colour
 // image (a mod's replacement for a HUD/menu picture: the C# Renderer's
 // ReplaceImage). Drawn by the enhanced look's canvas in place of the

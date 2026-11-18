@@ -758,12 +758,16 @@ void buildMipChain(uint8_t* chain, int32_t paddedWidth, int32_t paddedHeight, in
 struct HdSlot {
     bool resident = false;
     uint32_t lastUsed = 0;   // the draw stamp of its last draw
+    bool linked = true;      // some texture still links to it
 };
 
-// The copy to evict: the least recently drawn resident one NOT drawn at or after
+// The copy to evict: among the resident ones NOT drawn at or after
 // `protectFrom` (the first draw stamp of the frame whose commands may still be
-// in flight, or of the one being recorded). -1 when there is none.
-int32_t hdEvictionVictim(const HdSlot* slots, int32_t count, uint32_t protectFrom);
+// in flight, or of the one being recorded), an UNLINKED one first (nobody will
+// draw it unless it is linked again), then the least recently drawn. With
+// `unlinkedOnly`, only an unlinked one. -1 when there is none.
+int32_t hdEvictionVictim(const HdSlot* slots, int32_t count, uint32_t protectFrom,
+                         bool unlinkedOnly = false);
 
 // May another SD read be handed out? Only when it could be imported: room for
 // the largest pack texture for every read already in flight plus this one, or a

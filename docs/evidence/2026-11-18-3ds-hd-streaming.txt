@@ -88,3 +88,43 @@ Non-vacuity, each with the direct checks disabled: dropping the protect test
 from the victim choice fails `protectedHeld`; a gate that always says yes fails
 `dispatched == imports`. (Review: refactor behaviour-identical; the evictable
 scan now runs only when something is queued.)
+
+KURT, THE HUD, AND HD COPIES KEYED BY FILE (next batch).
+  Kurt's sprite frames (KurtSprite) and the HUD/menu pictures (HudView) now take
+  the pack too: a ModImages built from the pack's list is compressed(), and its
+  callers resolve() a path and hand it to mdk_render_replace_compressed (Kurt) or
+  the new mdk_render_replace_image_compressed (canvas pictures, eligible on the
+  canvas's Original-shaded draws). 3DS main passes the pack to both.
+  MEASURED, then FIXED: with copies owned by the texture id, Kurt's sprite
+  residency releases and re-makes his frames as the animation cycles, and each
+  release dropped the HD copy -- 373 -> 440 -> 450 imports at frames 2700-3000
+  with resident bytes flat and 0 evictions (the same K_IDLE files re-read every
+  loop). HD copies are now a table keyed by FILE (RendererC3D::hdCopies); a
+  texture only links to one, a release only unlinks, and a copy goes only by
+  budget eviction, at a point the GPU cannot be reading it.
+  MEASURED, then FIXED: Kurt's frames at the 512 cap were 360 files / 12.6 MB of
+  the level-3 pack; one idle cycle (57 frames x ~87 KB) overflowed the 6 MB
+  budget, so LRU evicted the frame needed next every frame (246 -> 380 evictions
+  in 900 frames) and three imports failed for linear memory. hd_pack_convert.py
+  caps K_* frames at --sprite-max 128 (Kurt is ~80 px tall on 240 lines): all
+  407 frames of all levels are 3.26 MB.
+  NOW (level 3, frame 600-3000): 95 copies resident (world, Kurt's idle cycle,
+  HUD), 3,588,736 bytes of 6,291,456, 0 evicted, 0 failed, nothing queued; Kurt
+  and the HUD draw their HD copies, upright:
+    docs/evidence/2026-11-18-3ds-hd-kurt-hud.png (Kurt off | on; HUD off | on)
+  REVIEW of the copies table (P3, pointers and shared links found sound) and
+  what changed: a finished level's copies outlived it (release only unlinks), so
+  up to 6 MB could hold linear memory the next level's meshes and originals need.
+  Copies now count their links. Freeing at zero links was tried and MEASURED to
+  bring the churn back (Kurt's residency unlinks idle frames each cycle: 373
+  imports in 2400 frames), so an unlinked copy is instead: the FIRST victim under
+  pressure (pica::hdEvictionVictim prefers unlinked; makeTexture tries an unlinked
+  copy before evicting a live original; mesh allocation falls back to unlinked,
+  then any undrawn copy), freed once unlinked for 600 frames, and a queued or
+  in-flight read of it is cancelled. A fresh link resets a transient failure (a
+  broken file -- rotated -- stays refused). Level 3 again: 95 copies, 3,588,736
+  bytes, 0 evicted, 0 failed, flat from frame 2400 to 3300. Host-tested: the
+  unlinked preference and the unlinked-only mode (PicaMatrix).
+  NOTED, not changed: canvas pictures draw without mips (the PC's canvas has none
+  either) and ETC1A4's 4-bit alpha can band a soft edge under a fade; the K_ cap
+  rule names Kurt's animations by prefix (all 407 K_* in the pack are Kurt's).

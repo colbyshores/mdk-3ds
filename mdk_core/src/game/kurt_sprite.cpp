@@ -484,7 +484,13 @@ bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
             HdImage replacement;
             const std::string name =
                 animation.name + "_" + std::to_string(frameIndex);
-            if (mods_->texture(name, image, palette, &replacement)) {
+            if (mods_->compressed()) {
+                // The 3DS HD pack: the frame's .t3x, imported by the backend.
+                std::string path;
+                if (mods_->resolve(ModImages::Kind::Textures, name, image, palette, &path)) {
+                    mdk_render_replace_compressed(renderer_, texture, path.c_str());
+                }
+            } else if (mods_->texture(name, image, palette, &replacement)) {
                 mdk_render_replace_colour(renderer_, texture, palette_, 1, replacement.width,
                                           replacement.height, replacement.rgba.data());
             }

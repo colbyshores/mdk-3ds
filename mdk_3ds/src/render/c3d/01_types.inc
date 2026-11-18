@@ -115,6 +115,8 @@ static constexpr size_t kHdLargestBytes = 349504u;
 // kHdMaxFailures times.
 static constexpr int32_t kHdRetryFrames = 120;
 static constexpr int32_t kHdMaxFailures = 3;
+// An unlinked copy is freed after this many frames (10 s at 60 fps).
+static constexpr int32_t kHdUnlinkedFrames = 600;
 
 struct C3dTexture {
     C3D_Tex tex;
@@ -135,30 +137,17 @@ struct C3dTexture {
     // When this texture was last drawn, for the eviction order.
     uint32_t lastUsed = 0;
 
-    // THE HD REPLACEMENT (Enhanced Mode enableHdTextures,
-    // docs/HD_TEXTURES_3DS_SPEC.md): a .t3x from the HD pack, ETC1 or ETC1A4,
-    // its mip chain prebuilt by tex3ds on the host. Recorded when the shared
-    // surface cache resolves it (mdk_render_replace_compressed); IMPORTED by the
-    // frame-boundary pump (pumpHdTextures) when a draw first wants it and the HD
-    // budget allows, and EVICTED least-recently-drawn first. Until it is resident
-    // the draw binds the original texture -- a surface turns HD a few frames
-    // after it is first seen; nothing blocks a draw on the SD card.
-    enum HdState : uint8_t { HdNone, HdQueued, HdReading, HdResident, HdFailed };
-    std::string hdPath;
-    HdState hdState = HdNone;
-    C3D_Tex hd;
-    uint32_t hdBytes = 0;
-    int32_t hdLevels = 0;
-    uint32_t hdLastUsed = 0;
-    // A failed import is retried, a few times, after a pause (a linear-heap
-    // shortage passes); the surface cache asks for a texture only once, so the
-    // backend owns the retry (review F4).
-    int32_t hdFailures = 0;
-    int32_t hdRetryFrame = 0;
-    // The image's rectangle in the texture's own texcoords, from the .t3x
-    // (Tex3DS_SubTexture): the draw maps the oracle's [0,1] uv through it, so the
-    // HD path never assumes an orientation.
-    float hdLeft = 0.0f, hdTop = 1.0f, hdRight = 1.0f, hdBottom = 0.0f;
+    // THE HD COPY this texture is linked to: an index into
+    // RendererC3D::hdCopies, -1 for none (docs/HD_TEXTURES_3DS_SPEC.md). The
+    // copies are keyed by FILE and owned by that table, not by the texture: a
+    // texture released and made again -- Kurt's animation frames, cycled by the
+    // sprite residency -- relinks to a copy still resident instead of reading it
+    // from SD again (measured before the table: 440 imports in 3000 frames on
+    // level 3 with resident bytes flat, Kurt's idle loop re-read each cycle).
+    int32_t hdCopy = -1;
+    // A CANVAS picture's copy (mdk_render_replace_image_compressed): eligible on
+    // the canvas's Original-shaded draws, where a world texture's never is.
+    bool hdCanvas = false;
 
     // The mip levels below level 0 this texture was MADE with (Enhanced Mode
     // enableMipmaps, decided when the GPU copy is made; pica::mipLevelsFor).
@@ -254,6 +243,39 @@ struct Census {
     float bestV[9] = {0};    // its three world positions
     float bestArea = 0.0f;
     float bestNdc[6] = {0};  // its first two vertices' ndc x,y
+};
+
+// ONE HD COPY: a .t3x from the HD pack (ETC1 / ETC1A4, its mip chain prebuilt
+// by tex3ds on the host). Asked for by a draw (Queued), read from SD by the
+// reader thread (Reading), imported at a frame boundary under the budget
+// (Resident), evicted least-recently-drawn first (back to None, its path kept
+// so a later draw asks again). Until it is resident a draw binds the original
+// texture: a surface turns HD a few frames after it is first seen.
+struct HdCopy {
+    enum State : uint8_t { None, Queued, Reading, Resident, Failed };
+    std::string path;
+    State state = None;
+    C3D_Tex tex;
+    uint32_t bytes = 0;
+    int32_t levels = 0;
+    uint32_t lastUsed = 0;
+    // A failed read or import is retried, a few times, after a pause (review F4);
+    // `broken` is a property of the FILE (a rotated subtexture), never retried.
+    int32_t failures = 0;
+    int32_t retryFrame = 0;
+    bool broken = false;
+    // How many textures link to this copy, and since when it has had none. An
+    // UNLINKED copy is not freed at once -- Kurt's sprite residency unlinks his
+    // idle frames every cycle and relinks them a second later (freeing at zero
+    // re-read them: 373 imports in 2400 frames, measured) -- but it is the first
+    // victim under memory pressure (texture or mesh allocation), it is freed once
+    // unlinked for kHdUnlinkedFrames, and a queued or in-flight read of it is
+    // cancelled (review of the copies table, F1/F2).
+    int32_t links = 0;
+    int32_t unlinkedSince = 0;
+    // The image's rectangle in the texture's own texcoords (Tex3DS_SubTexture):
+    // the draw maps the oracle's [0,1] uv through it, assuming no orientation.
+    float left = 0.0f, top = 1.0f, right = 1.0f, bottom = 0.0f;
 };
 
 struct RendererC3D {
@@ -471,8 +493,10 @@ struct RendererC3D {
     // The alpha-test reference installed (installAlphaTest's cache).
     int alphaReference = 0;
 
-    // THE HD STREAM (C3dTexture::hdPath): the ids whose HD copy a draw asked
-    // for, the bytes resident against the budget, and what happened.
+    // THE HD STREAM: the copies (by file), the copies a draw asked for, the
+    // bytes resident against the budget, and what happened.
+    std::vector<HdCopy> hdCopies;
+    std::map<std::string, int32_t> hdByPath;
     std::vector<int32_t> hdQueue;
     std::vector<mdk::pica::HdSlot> hdSlotScratch;   // evictHd's view, reused
     // The SD reads, on their own thread (platform/async_file_reader.h): started

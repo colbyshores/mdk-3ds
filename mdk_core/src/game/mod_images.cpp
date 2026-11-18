@@ -266,6 +266,7 @@ ModImages ModImages::fromList(const std::string& root, const std::vector<std::st
         kinds[all[k]] = index;
     }
     images.mods_.push_back(kinds);
+    images.compressed_ = true;
     return images;
 }
 

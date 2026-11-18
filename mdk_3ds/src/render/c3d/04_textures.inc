@@ -284,12 +284,17 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
             diagnosticsRun = true;
             probeTextureMemory(texture.realWidth, texture.realHeight, gpuBytes);
         }
+        // A nobody's HD copy (unlinked: a finished level's, a trimmed frame's)
+        // goes before a live original is evicted.
+        if (evictHd(renderer, renderer->frameStartUse, true)) {
+            continue;
+        }
         if (!evictTextures(renderer, gpuBytes)) {
             // The HD copies share this heap: one not drawn this frame goes before
             // an original fails to be made (review F1). Mid-frame, so only copies
             // older than this frame's first draw (the GPU finished the last one
             // at C3D_FrameBegin; this frame's commands are not submitted yet).
-            if (evictHd(renderer, renderer->frameStartUse)) {
+            if (evictHd(renderer, renderer->frameStartUse, false)) {
                 continue;
             }
             // A CHAIN IS AN ENHANCEMENT, THE TEXTURE IS NOT: with nothing left to
@@ -416,93 +421,108 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
 
 
 // ---------------------------------------------------------------------------
-// THE HD STREAM (C3dTexture::hdPath, docs/HD_TEXTURES_3DS_SPEC.md 4.2)
+// THE HD STREAM (RendererC3D::hdCopies, docs/HD_TEXTURES_3DS_SPEC.md 4.2)
 // ---------------------------------------------------------------------------
 
-// Frees one texture's HD copy. Only at a frame boundary or when the GPU cannot
-// be reading it (P3): the callers are the pump (after C3D_FrameBegin's wait),
-// the deferred-release settle, and a release that is not in flight.
-static void dropHd(RendererC3D* renderer, C3dTexture& texture) {
-    if (texture.hdState == C3dTexture::HdResident) {
-        C3D_TexDelete(&texture.hd);
-        renderer->hdResidentBytes -= texture.hdBytes;
+// Frees one HD copy's texture. Only where the GPU cannot be reading it (P3): the
+// pump at the frame boundary (after C3D_FrameBegin's wait), or makeTexture's
+// fallback for a copy older than this frame's first draw (this frame's commands
+// are not submitted yet, and the last frame's finished at C3D_FrameBegin).
+static void dropHd(RendererC3D* renderer, HdCopy& copy) {
+    if (copy.state == HdCopy::Resident) {
+        C3D_TexDelete(&copy.tex);
+        renderer->hdResidentBytes -= copy.bytes;
     }
-    texture.hdState = C3dTexture::HdNone;
-    texture.hdBytes = 0;
-    texture.hdLevels = 0;
+    copy.state = HdCopy::None;
+    copy.bytes = 0;
+    copy.levels = 0;
 }
 
-// Evicts the least recently drawn HD copy NOT drawn since `protectFrom` (the
-// frame that just ended), or returns false.
-static bool evictHd(RendererC3D* renderer, uint32_t protectFrom) {
-    // The policy is pica::hdEvictionVictim (host-tested); this is its view of
-    // the texture table, in a buffer reused across calls (evictions are rare:
-    // the frame boundary, or an allocation that failed).
+// The policy's view of the copies (pica::HdSlot), in a buffer reused across
+// calls.
+static void hdSlots(RendererC3D* renderer) {
     std::vector<mdk::pica::HdSlot>& slots = renderer->hdSlotScratch;
-    slots.resize(renderer->textures.size());
-    for (size_t i = 0; i < renderer->textures.size(); i++) {
-        slots[i].resident = renderer->textures[i].hdState == C3dTexture::HdResident;
-        slots[i].lastUsed = renderer->textures[i].hdLastUsed;
+    slots.resize(renderer->hdCopies.size());
+    for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
+        slots[i].resident = renderer->hdCopies[i].state == HdCopy::Resident;
+        slots[i].lastUsed = renderer->hdCopies[i].lastUsed;
+        slots[i].linked = renderer->hdCopies[i].links > 0;
     }
-    const int32_t victim =
-        mdk::pica::hdEvictionVictim(slots.data(), (int32_t)slots.size(), protectFrom);
+}
+
+// Evicts the copy pica::hdEvictionVictim names (host-tested), or returns false.
+static bool evictHd(RendererC3D* renderer, uint32_t protectFrom, bool unlinkedOnly) {
+    hdSlots(renderer);
+    const int32_t victim = mdk::pica::hdEvictionVictim(
+        renderer->hdSlotScratch.data(), (int32_t)renderer->hdSlotScratch.size(), protectFrom,
+        unlinkedOnly);
     if (victim < 0) {
         return false;
     }
-    dropHd(renderer, renderer->textures[(size_t)victim]);
+    dropHd(renderer, renderer->hdCopies[(size_t)victim]);
     renderer->hdEvicted++;
     return true;
 }
 
-// A read or import that failed: counted, logged, and retried after
-// kHdRetryFrames up to kHdMaxFailures times (the draw re-queues it, F4).
-static void hdFailed(RendererC3D* renderer, C3dTexture& texture, const char* why) {
-    texture.hdState = C3dTexture::HdFailed;
-    texture.hdFailures++;
-    texture.hdRetryFrame = renderer->frame + kHdRetryFrames;
-    renderer->hdFailedCount++;
-    mdk::log3dsPrintf("hd: %s: %s (failure %d; %u resident)", why, texture.hdPath.c_str(),
-                      (int)texture.hdFailures, (unsigned)renderer->hdResidentBytes);
+static bool hdHasEvictable(RendererC3D* renderer, uint32_t protectFrom) {
+    hdSlots(renderer);
+    return mdk::pica::hdEvictionVictim(renderer->hdSlotScratch.data(),
+                                       (int32_t)renderer->hdSlotScratch.size(),
+                                       protectFrom) >= 0;
 }
 
-static bool hdHasEvictable(RendererC3D* renderer, uint32_t protectFrom) {
-    // The same rule as evictHd's, by the same function: is there a victim?
-    std::vector<mdk::pica::HdSlot>& slots = renderer->hdSlotScratch;
-    slots.resize(renderer->textures.size());
-    for (size_t i = 0; i < renderer->textures.size(); i++) {
-        slots[i].resident = renderer->textures[i].hdState == C3dTexture::HdResident;
-        slots[i].lastUsed = renderer->textures[i].hdLastUsed;
-    }
-    return mdk::pica::hdEvictionVictim(slots.data(), (int32_t)slots.size(), protectFrom) >= 0;
+// A read or import that failed: counted, logged, and retried after
+// kHdRetryFrames up to kHdMaxFailures times (the draw re-queues it, F4).
+static void hdFailed(RendererC3D* renderer, HdCopy& copy, const char* why) {
+    copy.state = HdCopy::Failed;
+    copy.failures++;
+    copy.retryFrame = renderer->frame + kHdRetryFrames;
+    renderer->hdFailedCount++;
+    mdk::log3dsPrintf("hd: %s: %s (failure %d; %u resident, %u linear free)", why,
+                      copy.path.c_str(), (int)copy.failures, (unsigned)renderer->hdResidentBytes,
+                      (unsigned)linearSpaceFree());
 }
 
 // THE PUMP, at the frame boundary -- after C3D_FrameBegin has waited for the
 // previous frame, so an eviction never frees what the GPU is reading (P3).
-// Two halves: queued textures are handed to the reader thread (their SD reads
+// Two halves: queued copies are handed to the reader thread (their SD reads
 // happen there, off this thread); finished reads are imported, at most
 // kHdImportsPerFrame per frame, within the HD budget. `protectFrom` is the first
 // draw stamp of the frame that just ended: what it drew is not evicted.
 static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     // THE TOGGLE OFF: no reads, no imports, and the resident copies are freed
     // (this is a frame boundary, so none is in flight) -- off means the memory is
-    // the original look's again (review F5). Turned back on, draws queue anew.
+    // the original look's again (review F5). Turned back on, draws ask anew.
     if (!renderer->toggles.enableHdTextures) {
         if (renderer->hdResidentBytes > 0) {
-            for (size_t i = 0; i < renderer->textures.size(); i++) {
-                if (renderer->textures[i].hdState == C3dTexture::HdResident) {
-                    dropHd(renderer, renderer->textures[i]);
-                }
+            for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
+                dropHd(renderer, renderer->hdCopies[i]);
             }
         }
         return;
     }
+    // (0) NOBODY'S COPIES. A copy no texture links to any more (a level ended, a
+    // sprite frame was trimmed) is cancelled if it was only asked for (a read in
+    // flight is dropped when it lands) and freed once it has stayed unlinked for
+    // kHdUnlinkedFrames -- this is the frame boundary, and the frame that drew it
+    // last has finished (C3D_FrameBegin waited). Under memory pressure it goes
+    // first (evictHd's unlinked preference, makeTexture and the mesh allocator).
+    for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
+        HdCopy& copy = renderer->hdCopies[i];
+        if (copy.links > 0) {
+            continue;
+        }
+        if (copy.state == HdCopy::Queued ||
+            (copy.state == HdCopy::Resident &&
+             renderer->frame - copy.unlinkedSince >= kHdUnlinkedFrames)) {
+            dropHd(renderer, copy);
+        }
+    }
     // (1) Hand out reads while the reader has free slots -- and only while each
-    // could be imported: room for the largest pack texture per read in flight,
-    // or something the last frame did not draw to evict. Otherwise the queue
+    // could be imported (pica::hdMayDispatch, host-tested). Otherwise the queue
     // waits (the view's working set fills the budget; the originals draw
-    // meanwhile), and nothing is read from SD only to be thrown away (F3).
-    // Only looked for when something waits: most frames have an empty queue,
-    // and the scan copies the whole texture table (review of the policy, low).
+    // meanwhile), and nothing is read from SD only to be thrown away (F3). The
+    // evictable scan only runs when something waits.
     const bool evictable = !renderer->hdQueue.empty() && hdHasEvictable(renderer, protectFrom);
     size_t next = 0;
     for (; next < renderer->hdQueue.size(); next++) {
@@ -512,18 +532,17 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             break;
         }
         const int32_t id = renderer->hdQueue[next];
-        if (id < 0 || (size_t)id >= renderer->textures.size()) {
+        if (id < 0 || (size_t)id >= renderer->hdCopies.size()) {
             continue;
         }
-        C3dTexture& texture = renderer->textures[(size_t)id];
-        if (texture.hdState != C3dTexture::HdQueued || texture.hdPath.empty() ||
-            texture.releasePending) {
+        HdCopy& copy = renderer->hdCopies[(size_t)id];
+        if (copy.state != HdCopy::Queued) {
             continue;
         }
-        if (!renderer->hdReader.request(id, texture.hdPath.c_str())) {
+        if (!renderer->hdReader.request(id, copy.path.c_str())) {
             break;   // every slot is busy: this one waits at the queue's head
         }
-        texture.hdState = C3dTexture::HdReading;
+        copy.state = HdCopy::Reading;
     }
     renderer->hdQueue.erase(renderer->hdQueue.begin(),
                             renderer->hdQueue.begin() + (long)next);
@@ -537,27 +556,29 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     char path[mdk::AsyncFileReader::kPathMax];
     while (imported < kHdImportsPerFrame &&
            renderer->hdReader.poll(&id, path, &bytes, &size, &ok)) {
-        if (id < 0 || (size_t)id >= renderer->textures.size()) {
+        if (id < 0 || (size_t)id >= renderer->hdCopies.size()) {
             free(bytes);
             continue;
         }
-        C3dTexture& texture = renderer->textures[(size_t)id];
-        if (texture.hdState != C3dTexture::HdReading || texture.hdPath != path ||
-            texture.releasePending) {
-            // Released, dropped, or the slot now names another file: the read is
-            // somebody else's past.
+        HdCopy& copy = renderer->hdCopies[(size_t)id];
+        if (copy.state != HdCopy::Reading || copy.path != path || copy.links <= 0) {
+            // Dropped (the toggle went off) or nobody's (unlinked) while it was
+            // being read: not imported.
+            if (copy.state == HdCopy::Reading) {
+                copy.state = HdCopy::None;
+            }
             free(bytes);
             continue;
         }
         if (!ok) {
-            hdFailed(renderer, texture, "cannot read");
+            hdFailed(renderer, copy, "cannot read");
             continue;
         }
         // The file is the chain plus a small header, so its size is the budget's
         // measure before the import; the exact bytes are booked after it.
         bool room = true;
         while (renderer->hdResidentBytes + size > kHdBudgetBytes) {
-            if (!evictHd(renderer, protectFrom)) {
+            if (!evictHd(renderer, protectFrom, false)) {
                 room = false;
                 break;
             }
@@ -566,17 +587,17 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             // Everything resident was drawn last frame: the budget is the view's
             // working set. Back to the queue; it is asked for again later.
             free(bytes);
-            texture.hdState = C3dTexture::HdQueued;
+            copy.state = HdCopy::Queued;
             renderer->hdQueue.push_back(id);
             continue;
         }
-        Tex3DS_Texture t3x = Tex3DS_TextureImport(bytes, size, &texture.hd, nullptr, false);
-        if (!t3x && evictHd(renderer, protectFrom)) {
-            t3x = Tex3DS_TextureImport(bytes, size, &texture.hd, nullptr, false);
+        Tex3DS_Texture t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
+        if (!t3x && evictHd(renderer, protectFrom, false)) {
+            t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
         }
         free(bytes);
         if (!t3x) {
-            hdFailed(renderer, texture, "import FAILED");
+            hdFailed(renderer, copy, "import FAILED");
             continue;
         }
         // The image's rectangle. hd_pack_convert.py makes one unrotated image per
@@ -585,39 +606,39 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         const Tex3DS_SubTexture* sub = Tex3DS_GetSubTexture(t3x, 0);
         if (!sub || Tex3DS_SubTextureRotated(sub)) {
             Tex3DS_TextureFree(t3x);
-            C3D_TexDelete(&texture.hd);
-            texture.hdFailures = kHdMaxFailures;   // a property of the file: no retry
-            hdFailed(renderer, texture, sub ? "rotated subtexture" : "no subtexture");
+            C3D_TexDelete(&copy.tex);
+            copy.failures = kHdMaxFailures;   // a property of the file: no retry
+            copy.broken = true;
+            hdFailed(renderer, copy, sub ? "rotated subtexture" : "no subtexture");
             continue;
         }
-        texture.hdLeft = sub->left;
-        texture.hdTop = sub->top;
-        texture.hdRight = sub->right;
-        texture.hdBottom = sub->bottom;
+        copy.left = sub->left;
+        copy.top = sub->top;
+        copy.right = sub->right;
+        copy.bottom = sub->bottom;
         Tex3DS_TextureFree(t3x);
-        texture.hdLevels = texture.hd.maxLevel;
-        texture.hdBytes = (uint32_t)C3D_TexCalcTotalSize(texture.hd.size, texture.hd.maxLevel);
+        copy.levels = copy.tex.maxLevel;
+        copy.bytes = (uint32_t)C3D_TexCalcTotalSize(copy.tex.size, copy.tex.maxLevel);
         // REPEAT on an axis the image fills (a power-of-two image: exact), CLAMP
         // on one tex3ds padded (an image under 8 texels sits in an 8-texel
         // texture, and REPEAT would wrap through the padding) (F7).
-        const bool fullU = texture.hdLeft == 0.0f && texture.hdRight == 1.0f;
-        const bool fullV = texture.hdTop == 1.0f && texture.hdBottom == 0.0f;
-        C3D_TexSetWrap(&texture.hd, fullU ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,
+        const bool fullU = copy.left == 0.0f && copy.right == 1.0f;
+        const bool fullV = copy.top == 1.0f && copy.bottom == 0.0f;
+        C3D_TexSetWrap(&copy.tex, fullU ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,
                        fullV ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
-        renderer->hdResidentBytes += texture.hdBytes;
-        texture.hdState = C3dTexture::HdResident;
-        texture.hdLastUsed = protectFrom;   // fresh: not the next eviction's victim
+        renderer->hdResidentBytes += copy.bytes;
+        copy.state = HdCopy::Resident;
+        copy.lastUsed = protectFrom;   // fresh: not the next eviction's victim
         renderer->hdImported++;
         imported++;
         if (renderer->hdImported <= 3 || (renderer->hdImported % 50) == 0) {
             mdk::log3dsPrintf("hd: imported %s %ux%u levels=%d %u bytes (uv %.2f,%.2f-%.2f,%.2f); "
-                              "%d resident %u bytes, %d evicted, %d failed",
-                              texture.hdPath.c_str(), (unsigned)texture.hd.width,
-                              (unsigned)texture.hd.height, (int)texture.hdLevels,
-                              (unsigned)texture.hdBytes, texture.hdLeft, texture.hdTop,
-                              texture.hdRight, texture.hdBottom, (int)renderer->hdImported,
-                              (unsigned)renderer->hdResidentBytes, (int)renderer->hdEvicted,
-                              (int)renderer->hdFailedCount);
+                              "%d imported, %u bytes resident, %d evicted, %d failed",
+                              copy.path.c_str(), (unsigned)copy.tex.width,
+                              (unsigned)copy.tex.height, (int)copy.levels, (unsigned)copy.bytes,
+                              copy.left, copy.top, copy.right, copy.bottom,
+                              (int)renderer->hdImported, (unsigned)renderer->hdResidentBytes,
+                              (int)renderer->hdEvicted, (int)renderer->hdFailedCount);
         }
     }
 }

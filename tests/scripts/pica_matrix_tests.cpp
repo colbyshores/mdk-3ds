@@ -1180,6 +1180,22 @@ void testTheHdResidencyPolicy() {
     // Everything resident was drawn at or after the protect stamp: none.
     PICA_CHECK(mdk::pica::hdEvictionVictim(slots, 5, 7) == -1);
     PICA_CHECK(mdk::pica::hdEvictionVictim(slots, 0, 100) == -1);
+    // UNLINKED FIRST: an unlinked copy goes before an older linked one, the
+    // protect stamp still binds it, and unlinkedOnly never names a linked one.
+    {
+        HdSlot u[4];
+        u[0] = {true, 2, true};
+        u[1] = {true, 9, false};    // unlinked, newer than u[0]
+        u[2] = {true, 30, false};   // unlinked but drawn in the protected frame
+        u[3] = {true, 5, false};    // unlinked, the oldest unlinked
+        PICA_CHECK(mdk::pica::hdEvictionVictim(u, 4, 20) == 3);
+        u[3].resident = false;
+        PICA_CHECK(mdk::pica::hdEvictionVictim(u, 4, 20) == 1);
+        PICA_CHECK(mdk::pica::hdEvictionVictim(u, 4, 20, true) == 1);
+        u[1].resident = false;
+        PICA_CHECK(mdk::pica::hdEvictionVictim(u, 4, 20) == 0);        // only a linked one left
+        PICA_CHECK(mdk::pica::hdEvictionVictim(u, 4, 20, true) == -1); // and unlinkedOnly refuses it
+    }
 
     // THE GATE: one more read only if it could be imported.
     const size_t largest = 349504u, budget = 1048576u;

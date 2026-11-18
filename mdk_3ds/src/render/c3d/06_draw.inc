@@ -100,7 +100,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // so a colour has to come from a texture.
     C3D_Tex* texture = nullptr;
     int32_t mipLevels = 0;
-    const C3dTexture* hd = nullptr;   // the resource whose HD copy is bound, if one is
+    const HdCopy* hd = nullptr;   // the HD copy bound, if one is
     if (draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
         C3dTexture& resource = r->textures[(size_t)draw->material.texture];
         // A released texture whose GPU copy is waiting for the next frame
@@ -108,20 +108,26 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         if (!resource.releasePending) {
             // THE HD COPY (enableHdTextures, docs/HD_TEXTURES_3DS_SPEC.md): wanted
             // for a Lit or Sprite surface -- the PC draws a mod's colour image only
-            // in its enhanced lit/sprite modes, never on an Original-shaded pass
-            // (sky, canvas, glass) -- and never for a stacked-frame (animated)
+            // in its enhanced lit/sprite modes, never on an Original-shaded world
+            // pass (sky, glass) -- and for a CANVAS picture linked through
+            // mdk_render_replace_image_compressed (hdCanvas: the PC replaces those
+            // through its own ReplaceImage); never for a stacked-frame (animated)
             // texture (spec 3).
-            const bool wantsHd = r->toggles.enableHdTextures && !resource.hdPath.empty() &&
+            HdCopy* copy = resource.hdCopy >= 0 && (size_t)resource.hdCopy < r->hdCopies.size()
+                               ? &r->hdCopies[(size_t)resource.hdCopy]
+                               : nullptr;
+            const bool wantsHd = r->toggles.enableHdTextures && copy &&
                                  draw->material.frame_count <= 1 &&
-                                 draw->material.shading != mdk::Shading::Original;
-            if (wantsHd && resource.hdState == C3dTexture::HdResident) {
+                                 (draw->material.shading != mdk::Shading::Original ||
+                                  resource.hdCanvas);
+            if (wantsHd && copy->state == HdCopy::Resident) {
                 // Bound whether or not the original is resident: an evicted
                 // original must not take a resident HD copy's surface with it (F1).
-                texture = &resource.hd;
-                mipLevels = resource.hdLevels;
+                texture = &copy->tex;
+                mipLevels = copy->levels;
                 resource.lastUsed = ++r->drawCounter;
-                resource.hdLastUsed = r->drawCounter;
-                hd = &resource;
+                copy->lastUsed = r->drawCounter;
+                hd = copy;
             } else {
                 if (!resource.valid && !resource.source.empty()) {
                     // THE EVICTION IS REVERSIBLE. The texture was made again from
@@ -140,12 +146,11 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
                 // Not resident: this draw takes the original and the copy is asked
                 // for -- or asked again once a failure's pause has passed (F4).
                 if (wantsHd &&
-                    (resource.hdState == C3dTexture::HdNone ||
-                     (resource.hdState == C3dTexture::HdFailed &&
-                      resource.hdFailures < kHdMaxFailures &&
-                      r->frame >= resource.hdRetryFrame))) {
-                    resource.hdState = C3dTexture::HdQueued;
-                    r->hdQueue.push_back(draw->material.texture);
+                    (copy->state == HdCopy::None ||
+                     (copy->state == HdCopy::Failed && copy->failures < kHdMaxFailures &&
+                      r->frame >= copy->retryFrame))) {
+                    copy->state = HdCopy::Queued;
+                    r->hdQueue.push_back(resource.hdCopy);
                 }
             }
         }
@@ -230,10 +235,10 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         // rectangle from its .t3x (Tex3DS_SubTexture: top/bottom are already the
         // texture's t, so no last-row flip is applied on top). A .t3x is a whole
         // power-of-two image: no padding to undo.
-        scaleX = hd->hdRight - hd->hdLeft;
-        offsetX = hd->hdLeft;
-        scaleY = hd->hdBottom - hd->hdTop;
-        offsetY = hd->hdTop;
+        scaleX = hd->right - hd->left;
+        offsetX = hd->left;
+        scaleY = hd->bottom - hd->top;
+        offsetY = hd->top;
     } else {
         // The PICA's t runs from the LAST memory row (pica::sceneUvFromTop has
         // the rule and the measurement). Every draw takes it, the canvas too:

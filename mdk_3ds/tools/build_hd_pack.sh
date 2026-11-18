@@ -18,7 +18,7 @@
 #      them 2x on the Vulkan GPU and writes mods/hd-textures/ in the PC layout
 #      (docs/modding.md). It keeps what is current, so a re-run is cheap.
 #   3. THE 3DS PACK. mdk_3ds/tools/hd_pack_convert.py: bleed, power-of-two at
-#      most --max (512), ETC1 / ETC1A4 by alpha, tex3ds -q high -m gaussian (mip
+#      most --max (512; Kurt's sprite frames at most 128), ETC1 / ETC1A4 by alpha, tex3ds -q high -m gaussian (mip
 #      chain prebuilt), manifest.txt. Incremental.
 #
 # Output: --out (default mdk_3ds/build/hd/), the tree the 3DS reads from

@@ -619,11 +619,17 @@ int main(int argc, char** argv) {
                 if (kurtSprite.load(renderer, sprites, level.dti().palette())) {
                     kurtSpriteReady = true;
                     kurtSprite.setShading(mdk::Shading::Sprite);  // see view.setShading
+                    // Kurt's frames from the HD pack (K_IDLE_0..., in the level's
+                    // folder), made as each frame is first made.
+                    if (hdSource.pack) {
+                        kurtSprite.setMods(&hdPack);
+                    }
                     mdk::log3dsPrintf("sprites: Kurt's animations loaded");
                 } else {
                     mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
                 }
-                if (hud.load(renderer, sprites, level.dti().palette())) {
+                if (hud.load(renderer, sprites, level.dti().palette(),
+                             hdSource.pack ? &hdPack : nullptr)) {
                     hudReady = true;
                     mdk::log3dsPrintf("hud: loaded");
                 } else {
