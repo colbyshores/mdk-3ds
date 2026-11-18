@@ -239,8 +239,9 @@ void mdk_render_end_frame(MdkRenderer r);
 // backends differ only in how they consume it.
 void mdk_render_set_camera(MdkRenderer r, const mdk::Camera* camera);
 
-// The lighting rig. SHARED DATA: the 3DS backend ignores it and draws the
-// original look. See render_types.h.
+// The lighting rig. SHARED DATA: the Vulkan backend's enhanced look consumes
+// all of it; the 3DS backend consumes what the PICA200 can express behind the
+// Enhanced Mode toggles (SPEC.md 7.9; so far the haze). See render_types.h.
 void mdk_render_set_lighting(MdkRenderer r, const mdk::Lighting* lighting);
 
 // The frame's point lights (muzzle flashes, explosions, fires). The Vulkan

@@ -6,7 +6,8 @@
 // cover and mean facing) and EnhancedLook.cs (the arena's Lighting rig).
 //
 // The rig is shared DATA (SPEC.md 5.3): the Vulkan backend consumes it for
-// the enhanced look, the Citro3D backend ignores it. Nothing here renders.
+// the enhanced look, the Citro3D backend takes the haze from it behind its
+// Enhanced Mode toggle (SPEC.md 7.9). Nothing here renders.
 // ============================================================================
 
 #include "render/render_types.h"

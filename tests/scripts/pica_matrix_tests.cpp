@@ -41,6 +41,7 @@
 // not because the arithmetic is inexact.
 // ============================================================================
 
+#include <math.h>
 #include "pica_matrix_tests.h"
 
 #include <stdio.h>
@@ -920,6 +921,47 @@ void testSceneUvRunsFromTheLastRow() {
     PICA_CHECK((1.0f - (0.0f * framed.scaleY + framed.offsetY)) == 0.25f);
 }
 
+void testTheHazeIsThePcCurveOnTheRightDraws() {
+    // THE CURVE. The shader keeps ex2(hazeExponent(density) * depth) of a
+    // vertex's colour; that must be the PC's exp(-density * distance)
+    // (enhanced.frag:187) at every distance the camera reaches (far = 20000).
+    const float density = 0.0002f;   // level_light.cpp kHazeDensity
+    const float x = mdk::pica::hazeExponent(density);
+    PICA_CHECK(x < 0.0f);
+    const float depths[6] = {0.5f, 10.0f, 100.0f, 1000.0f, 5000.0f, 20000.0f};
+    for (int i = 0; i < 6; i++) {
+        const float kept = exp2f(x * depths[i]);
+        const float pc = expf(-density * depths[i]);
+        PICA_CHECK(fabsf(kept - pc) < 1e-5f);
+    }
+    // No density, no haze: ex2(0) = 1 keeps the whole colour.
+    PICA_CHECK(mdk::pica::hazeExponent(0.0f) == 0.0f);
+    PICA_CHECK(mdk::pica::hazeExponent(-1.0f) == 0.0f);
+
+    // THE DRAWS. The PC hazes its lit and sprite modes only: the sky (sky.frag)
+    // and the canvas take none, and both are Original-shaded here.
+    mdk::Lighting rig;
+    rig.enabled = true;
+    rig.haze_density = density;
+    PICA_CHECK(mdk::pica::hazeApplies(true, rig, mdk::Shading::Lit, mdk::Pass::Solid));
+    PICA_CHECK(mdk::pica::hazeApplies(true, rig, mdk::Shading::Sprite, mdk::Pass::Blended));
+    PICA_CHECK(!mdk::pica::hazeApplies(true, rig, mdk::Shading::Original, mdk::Pass::DoubleSided));
+    PICA_CHECK(!mdk::pica::hazeApplies(true, rig, mdk::Shading::Lit, mdk::Pass::Overlay));
+    PICA_CHECK(!mdk::pica::hazeApplies(false, rig, mdk::Shading::Lit, mdk::Pass::Solid));
+    mdk::Lighting off = rig;
+    off.enabled = false;
+    PICA_CHECK(!mdk::pica::hazeApplies(true, off, mdk::Shading::Lit, mdk::Pass::Solid));
+    mdk::Lighting thin = rig;
+    thin.haze_density = 0.0f;
+    PICA_CHECK(!mdk::pica::hazeApplies(true, thin, mdk::Shading::Lit, mdk::Pass::Solid));
+
+    // THE COLOUR WORD: 0xAABBGGRR, opaque, clamped.
+    const mdk::Colour c = {1.0f, 0.5f, 0.0f, 0.3f};
+    PICA_CHECK(mdk::pica::hazeColourWord(c) == 0xFF0080FFu);
+    const mdk::Colour wild = {-1.0f, 2.0f, 0.2f, 1.0f};
+    PICA_CHECK(mdk::pica::hazeColourWord(wild) == 0xFF33FF00u);
+}
+
 void testTheTexelTileOrder() {
     // THE SAME TRAP ONE UNIT BEFORE THE BYTES: the byte order above says which
     // byte of a texel goes where; this says WHICH TEXEL SLOT a (x, y) goes in.
@@ -1044,6 +1086,7 @@ int runPicaMatrixTests() {
     testTheTexelByteOrder();
     testTheTexelTileOrder();
     testSceneUvRunsFromTheLastRow();
+    testTheHazeIsThePcCurveOnTheRightDraws();
     return failures;
 }
 

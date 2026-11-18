@@ -191,8 +191,9 @@ struct Camera {
 //
 // The game computes this exactly as the C# port does (Level/LevelLight.cs,
 // Objects/LightSources.cs). The Vulkan backend consumes it and produces the
-// enhanced look. The Citro3D backend ignores it and produces the ORIGINAL
-// look, which is what the 3DS shows.
+// enhanced look. The Citro3D backend draws the ORIGINAL look and takes from
+// the rig only what its PICA200 can express behind each Enhanced Mode toggle
+// (SPEC.md 7.9; so far the haze colour and density).
 //
 // This is the whole graceful-degradation mechanism: the game code is
 // identical on both targets, and the CAPABILITY differs. There is no #ifdef

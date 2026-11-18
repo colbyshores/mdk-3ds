@@ -115,6 +115,7 @@ static void settleDeferredMeshes(RendererC3D* renderer);
 static void replayQueue(RendererC3D* r);
 static void drawDiagnostic(RendererC3D* r, float canvasWidth);
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
+static void prepareHaze(RendererC3D* r);
 
 // Install one pass's depth state on the citro3d context and record it in the
 // cache.
@@ -350,6 +351,14 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // covers the second; re-installing it per eye is belt and braces,
     // not the mechanism.
     r->cullMode = kSolidCull;
+    // THE HAZE: off, every eye, whatever the last frame left (P2: every GPU state
+    // and every uniform set explicitly). The uniform at 0 keeps every vertex's
+    // whole colour, and combiner stage 1 passes the previous stage through. A
+    // draw that takes the haze switches both on through the hazeOn cache
+    // (drawRecorded's setHaze).
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+    C3D_TexEnvInit(C3D_GetTexEnv(1));
+    r->hazeOn = false;
     C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
                  mdk::pica::kDepthMapOffset);
 
@@ -634,6 +643,7 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
     // The diagnostic is drawn INSIDE the loop, once per eye, so each eye gets
     // its own copy in its own target: drawn once after the loop it would be a
     // triangle in one eye and a hole in the other.
+    prepareHaze(r);
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
@@ -716,10 +726,25 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
 }
 
  void mdk_render_set_lighting(MdkRenderer rr, const mdk::Lighting* light) {
-    // The 3DS draws the ORIGINAL look. The lighting rig is shared DATA
-    // (SPEC.md 5.3) and the 3DS simply does not consume it.
-    (void)rr;
-    (void)light;
+    // The rig is shared DATA (SPEC.md 5.3). The 3DS consumes what its PICA200
+    // can express behind each Enhanced Mode toggle (SPEC.md 7.9): so far the
+    // haze. The game hands it over when the arena changes, not per frame.
+    RendererC3D* r = asC3d(rr);
+    if (!r || !light) {
+        return;
+    }
+    r->lighting = *light;
+}
+
+// The frame's haze, decided once before the eye loop: whether any draw may take
+// it, and the shader's exponent for the rig's density. One multiply; the rest is
+// the PICA's (mdk_c3d.v.pica, haze).
+static void prepareHaze(RendererC3D* r) {
+    // pica::hazeApplies with the draw-independent half decided here, once; the
+    // per-draw half (shading, pass) is drawRecorded's.
+    r->hazeLive = mdk::pica::hazeApplies(r->toggles.enableHaze, r->lighting, mdk::Shading::Lit,
+                                         mdk::Pass::Solid);
+    r->hazeExponent = r->hazeLive ? mdk::pica::hazeExponent(r->lighting.haze_density) : 0.0f;
 }
 
 void mdk_render_set_enhanced_toggles(MdkRenderer rr, const mdk::EnhancedToggles* toggles) {

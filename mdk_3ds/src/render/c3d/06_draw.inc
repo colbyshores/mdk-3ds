@@ -33,6 +33,31 @@ static bool drawSampleArmed() {
     return armed != 0;
 }
 
+// The haze's two halves, switched together: the shader's exponent (each vertex
+// keeps ex2(exponent * eye depth) of its colour, in the primary alpha) and
+// combiner stage 1, which blends the previous stage toward the haze colour by
+// that alpha -- INTERPOLATE is src0 * src2 + src1 * (1 - src2). Off, the uniform
+// is 0 (ex2(0) = 1) and the stage passes its input through. Cached on hazeOn;
+// installEye resets both every eye.
+static void setHaze(RendererC3D* r, bool on) {
+    if (on == r->hazeOn) {
+        return;
+    }
+    C3D_TexEnv* stage = C3D_GetTexEnv(1);
+    C3D_TexEnvInit(stage);
+    if (on) {
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, r->hazeExponent, 0.0f, 0.0f, 0.0f);
+        C3D_TexEnvSrc(stage, C3D_RGB, GPU_PREVIOUS, GPU_CONSTANT, GPU_PRIMARY_COLOR);
+        C3D_TexEnvOpRgb(stage, GPU_TEVOP_RGB_SRC_COLOR, GPU_TEVOP_RGB_SRC_COLOR,
+                        GPU_TEVOP_RGB_SRC_ALPHA);
+        C3D_TexEnvFunc(stage, C3D_RGB, GPU_INTERPOLATE);
+        C3D_TexEnvColor(stage, mdk::pica::hazeColourWord(r->lighting.haze_colour));
+    } else {
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+    }
+    r->hazeOn = on;
+}
+
 static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (draw->mesh < 0 || (size_t)draw->mesh >= r->meshes.size()) {
         return;
@@ -509,6 +534,13 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         }
     }
 
+    // THE HAZE (SPEC.md 7.9 enableHaze) for a surface the PC hazes, nothing for
+    // the rest, cached so a run of like draws writes nothing.
+    // prepareHaze has already decided the toggle and the rig for the frame, so
+    // the per-draw test is two enum compares behind one bool (no float compare
+    // per draw: AGENTS.md R3).
+    setHaze(r, r->hazeLive && draw->material.shading != mdk::Shading::Original &&
+                   draw->material.pass != mdk::Pass::Overlay);
     C3D_DrawArrays(GPU_TRIANGLES, first, count);
     // Restore the frame's default for the next draw, so every draw starts
     // from the state begin_frame installed. The transition back is cached in
@@ -666,6 +698,8 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
     installDepthState(r, mdk::pica::DepthState{false, false});
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 0.0f, 0.0f, 1.0f, 1.0f);
     r->tintIsWhite = false;
+    // The canvas takes no haze, and the last queued draw may have left it on.
+    setHaze(r, false);
     C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
     // The uniform now holds the canvas's matrix, not the frame's. The next
     // installEye -- the other eye, or this one's next frame -- is what puts it

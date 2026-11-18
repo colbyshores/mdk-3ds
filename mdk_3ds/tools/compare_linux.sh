@@ -41,10 +41,22 @@ done
 
 LANE_TMP=$(mktemp -d)
 trap 'rm -rf "$LANE_TMP" 2>/dev/null' EXIT   # the lane holds emulator runtime mounts; ignore their rm noise
+# THE ORIGINAL LOOK ON BOTH SIDES. A missing config.ini means every Enhanced Mode
+# toggle ON (SPEC.md 7.9), so the 3DS is seeded with all of them off unless
+# MDK_COMPARE_TOGGLES names a config to use instead (the Linux side runs the
+# original look: no --enhanced flag).
+SEED="$LANE_TMP/seed"
+mkdir -p "$SEED/3ds/mdk"
+if [ -n "${MDK_COMPARE_TOGGLES:-}" ]; then
+    cp "$MDK_COMPARE_TOGGLES" "$SEED/3ds/mdk/config.ini"
+else
+    printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\n' \
+        > "$SEED/3ds/mdk/config.ini"
+fi
 # Enough wall time for load + <frame> fixed frames under emulation.
 SECS=$(( 40 + FRAME / 20 ))
 [ "$SECS" -gt 600 ] && SECS=600
-TMPDIR=$LANE_TMP "$ROOT/mdk_3ds/tools/emurun.sh" --secs "$SECS" > "$OUT/emurun.log" 2>&1
+TMPDIR=$LANE_TMP "$ROOT/mdk_3ds/tools/emurun.sh" --secs "$SECS" --seed-sdmc "$SEED" > "$OUT/emurun.log" 2>&1
 CAP=$(find "$LANE_TMP" -path '*sdmc*/3ds/mdk/hwcap.bmp.log' | head -1)
 if [ -z "$CAP" ]; then
     echo "compare: the 3DS run wrote no capture (frame $FRAME not reached in ${SECS}s?)" >&2

@@ -146,8 +146,9 @@
     r->mvpLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "mvp");
     r->uvLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "uvtransform");
     r->tintLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "tint");
-    mdk::log3dsPrintf("uniforms: mvp=%d uvtransform=%d tint=%d", (int)r->mvpLocation,
-                      (int)r->uvLocation, (int)r->tintLocation);
+    r->hazeLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "haze");
+    mdk::log3dsPrintf("uniforms: mvp=%d uvtransform=%d tint=%d haze=%d", (int)r->mvpLocation,
+                      (int)r->uvLocation, (int)r->tintLocation, (int)r->hazeLocation);
     // A NAME THE SHADER DOES NOT EXPORT is not a location, and citro3d does not
     // bounds-check one: `C3D_FVUnifWritePtr` (c3d/uniforms.h:15-21) indexes
     // `C3D_FVUnifDirty[type][id+i]` and `C3D_FVUnif[type][id]` with no test, so a
@@ -155,7 +156,8 @@
     // eye and every canvas draw -- silent corruption where a refusal belongs.
     // The Makefile has explicit anti-staleness rules for the shader, so this is a
     // narrow window; it is still the only place it can be caught (review-9 F5).
-    if (r->mvpLocation < 0 || r->uvLocation < 0 || r->tintLocation < 0) {
+    if (r->mvpLocation < 0 || r->uvLocation < 0 || r->tintLocation < 0 ||
+        r->hazeLocation < 0) {
         mdk::log3dsPrintf("shader is missing a uniform it must export -- refusing");
         shaderProgramFree(&r->program);
         return nullptr;   // the same refusal every other create failure uses
@@ -260,10 +262,13 @@
  mdk::MdkCapabilities mdk_render_capabilities(MdkRenderer r) {
     (void)r;
     mdk::MdkCapabilities caps;
-    // THE 3DS GETS THE ORIGINAL LOOK. The enhanced look needs a programmable
-    // fragment shader (for the palette lookup, the tone curve, the ambient
-    // occlusion and the haze) and PICA200's fragment stage is fixed-function.
-    // See SPEC.md 5.3 and 7.3.
+    // THE 3DS DOES NOT HAVE THE PC'S ENHANCED LOOK AS A WHOLE: that needs a
+    // programmable fragment shader (the tone curve, the ambient occlusion, the
+    // post pass) and the PICA200's fragment stage is fixed-function (SPEC.md 5.3,
+    // 7.3). What the PICA CAN express lands feature by feature behind the
+    // Enhanced Mode toggles instead (SPEC.md 7.9, owner direction 2026-11-17):
+    // so far the haze (pica_matrix.h, THE HAZE). This flag stays false because it
+    // means the whole look.
     caps.enhanced_look = false;
     caps.msaa = false;              // the PICA200 has no multisampling
     caps.colour_mips = false;       // no mip chains on the original look

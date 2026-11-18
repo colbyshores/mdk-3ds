@@ -621,5 +621,39 @@ struct EyePlan {
 // renderer_c3d.cpp cannot be compiled on this host.
 EyePlan eyePlan(float slider, float separation);
 
+// ---------------------------------------------------------------------------
+// THE HAZE (Enhanced Mode, SPEC.md 7.9 `enableHaze`): the PC's
+//
+//     fog = 1 - exp(-density * distance)     (enhanced.frag:187)
+//
+// computed by the VERTEX SHADER, not the PICA's fog unit. The fog unit indexes
+// a 128-entry table by the STORED depth, and with this camera (near 0.5, far
+// 20000, a z-buffer) every point past ~64 units lands between the table's first
+// two entries: at 1000 units it would keep 0.08 of the colour where the PC keeps
+// exp(-0.2) = 0.82. A w-buffer would fix the index but replaces the pinned depth
+// map of the whole original look (kDepthMapIsZBuffer) for a cosmetic toggle.
+//
+// So the shader (mdk_c3d.v.pica) takes `kept = ex2(haze.x * clip.w)` per vertex
+// -- clip.w is the eye depth -- and multiplies it into the primary colour's
+// alpha; combiner stage 1 then blends toward the haze colour by it. All of it
+// runs on the PICA; the CPU writes one uniform when it changes. Per vertex
+// against the PC's per pixel, and eye depth against its Euclidean distance,
+// are the two approximations.
+// ---------------------------------------------------------------------------
+
+// The shader's haze.x for a density: -density * log2(e), so ex2(x * depth) is
+// exp(-density * depth). Zero (no haze) for a density that is not positive.
+float hazeExponent(float density);
+
+// Whether one draw takes the haze: the toggle is on, the rig is live with a
+// density, and the draw is a surface the PC hazes (Lit or Sprite shading --
+// the sky and the canvas are Original, and the PC's sky.frag and canvas
+// modes take no haze). Overlay never does.
+bool hazeApplies(bool toggleOn, const Lighting& lighting, Shading shading, Pass pass);
+
+// The combiner constant's word for an opaque colour: 0xAABBGGRR (R in the low
+// byte), the layout C3D_TexEnvColor takes.
+uint32_t hazeColourWord(const Colour& colour);
+
 } // namespace pica
 } // namespace mdk

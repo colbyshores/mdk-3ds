@@ -74,6 +74,7 @@
 #include "game/input.h"
 #include "game/kurt_sprite.h"
 #include "game/level_data.h"
+#include "game/level_light.h"
 #include "game/level_view.h"
 #include "game/effects_draw.h"
 #include "game/effects_view.h"
@@ -450,6 +451,15 @@ int main(int argc, char** argv) {
             if (arena) {
                 mdk::log3dsPrintf("arena: %s (%d arenas)", arena->name().c_str(),
                                   (int)level.arenas().size());
+                // The enhanced look's SHADING marks which draws its features may
+                // touch (the C#'s Lit/Sprite, as the Linux build sets them); each
+                // feature is then gated by its own EnhancedToggles switch inside the
+                // backend (SPEC.md 7.9). With every switch off the backend draws a
+                // Lit surface in the same colours as an Original one. The mark is not
+                // quite free: ObjectView splits a shiny part into its own (Sprite)
+                // batch under Lit, which can reorder same-depth parts -- measured, 7
+                // pixels of level 3 frame 300 (docs/evidence/2026-11-17-3ds-haze.txt).
+                view.setShading(mdk::Shading::Lit);
                 if (view.load(renderer, &level, arena, &surfaces)) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
                                       (int)view.batchCount(), (int)view.vertexCount(),
@@ -515,6 +525,7 @@ int main(int argc, char** argv) {
                 spritesReady = true;
                 if (kurtSprite.load(renderer, sprites, level.dti().palette())) {
                     kurtSpriteReady = true;
+                    kurtSprite.setShading(mdk::Shading::Sprite);  // see view.setShading
                     mdk::log3dsPrintf("sprites: Kurt's animations loaded");
                 } else {
                     mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
@@ -714,14 +725,14 @@ int main(int argc, char** argv) {
     //   * The LOOKS are keyed by arena NAME and point into LevelData, which is not
     //     rebuilt, so they survive a respawn and are not cleared by one.
     //
-    // The shading is the original look's, as LevelView's is: the shared game code
-    // draws the original look on both targets, and the enhanced look lives behind
-    // the Linux-only header the game never includes.
+    // The shading is Lit (Sprite for the effects), as LevelView's is: the mark of
+    // the surfaces the Enhanced Mode features may touch, each behind its own
+    // toggle in the backend (SPEC.md 7.9; see view.setShading above).
     // ---------------------------------------------------------------------
-    mdk::MaterialResolver objectResolver(&level.dti(), mdk::Shading::Original);
+    mdk::MaterialResolver objectResolver(&level.dti(), mdk::Shading::Lit);  // see view.setShading
     mdk::ObjectView objectView(objectResolver);
     mdk::ObjectDraw objectDraw;
-    mdk::EffectsView effectsView(objectResolver, &level, mdk::Shading::Original);
+    mdk::EffectsView effectsView(objectResolver, &level, mdk::Shading::Sprite);
     mdk::EffectsDraw effectsDraw;
     mdk::EffectsFrame effectsFrame;
     mdk::ObjectStream objectStream;
@@ -773,6 +784,8 @@ int main(int argc, char** argv) {
     // It is a pointer because it is rebuilt, and it is gated on its three assets
     // rather than constructed with a hole in one of them (scriptAssetsReady).
     std::unique_ptr<mdk::scripts::ScriptRuntime> runtime;
+    // The arena whose light rig the renderer holds (see the frame's light below).
+    const mdk::formats::Arena* litArena = nullptr;
     // THE SCRIPT OPTION (C# ScriptRuntime.Option). It is a USER SETTING, not a
     // constant: `Option = ui.Settings.Gore ? 1 : 0` when the runtime is built
     // (Viewer.cs:234) and `Option = data["option"]` when a save is loaded
@@ -1293,6 +1306,30 @@ int main(int argc, char** argv) {
             capturePath[0] = '\0';  // one frame, one picture (after the copy above)
         }
         mdk_render_set_camera(renderer, &camera);
+
+        // The enhanced look's light (LevelLight.Update): the scripts' current
+        // arena's rig, or the start arena's before the runtime exists. The Linux
+        // build rebuilds it every frame; here it is rebuilt only when the arena
+        // CHANGES, because enhancedLighting walks the sky panorama and every
+        // triangle of the arena -- level-load work, not frame work, on an ARM11.
+        // The rig carries the haze's colour and density (SPEC.md 7.9).
+        {
+            const mdk::formats::Arena* lightArena = arena;
+            if (runtime) {
+                if (const mdk::formats::Arena* current =
+                        level.arenaNamed(runtime->currentArena())) {
+                    lightArena = current;
+                }
+            }
+            if (lightArena && lightArena != litArena) {
+                litArena = lightArena;
+                const mdk::Lighting rig = mdk::enhancedLighting(level.dti(), *lightArena);
+                mdk_render_set_lighting(renderer, &rig);
+                mdk::log3dsPrintf("light: arena %s haze rgb=(%.3f,%.3f,%.3f) density=%.5f",
+                                  lightArena->name().c_str(), rig.haze_colour.r,
+                                  rig.haze_colour.g, rig.haze_colour.b, rig.haze_density);
+            }
+        }
 
         // The sky first (see SkyRange): centred on the camera, DoubleSided.
         if (skyMesh >= 0) {

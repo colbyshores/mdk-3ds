@@ -409,6 +409,17 @@ struct RendererC3D {
     // runtime setter and the future settings menu all work today.
     mdk::EnhancedToggles toggles;
 
+    // The enhanced look's light rig (mdk_render_set_lighting), held for the haze
+    // (pica_matrix.h, THE HAZE). hazeLive and hazeExponent are decided once per
+    // frame, before the eye loop; hazeOn caches whether the haze uniform and
+    // combiner stage 1 currently haze (the same discipline as cullMode: the cache
+    // describes the context, and installEye resets both every eye).
+    mdk::Lighting lighting;
+    int hazeLocation = 0;
+    float hazeExponent = 0.0f;
+    bool hazeLive = false;
+    bool hazeOn = false;
+
     // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
     // may still be reading the last frame's textures then. C3D_FrameBegin
     // waits for the previous queue, so it is the completion boundary.

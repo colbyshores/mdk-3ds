@@ -302,5 +302,25 @@ EyePlan eyePlan(float slider, float separation) {
     return plan;
 }
 
+float hazeExponent(float density) {
+    // log2(e): ex2(x) = 2^x, so 2^(-density * log2(e) * d) = e^(-density * d).
+    return density > 0.0f ? -density * 1.44269504089f : 0.0f;
+}
+
+bool hazeApplies(bool toggleOn, const Lighting& lighting, Shading shading, Pass pass) {
+    return toggleOn && lighting.enabled && lighting.haze_density > 0.0f &&
+           shading != Shading::Original && pass != Pass::Overlay;
+}
+
+uint32_t hazeColourWord(const Colour& colour) {
+    const float c[3] = {colour.r, colour.g, colour.b};
+    uint32_t word = 0xFF000000u;
+    for (int32_t k = 0; k < 3; k++) {
+        float v = c[k] < 0.0f ? 0.0f : (c[k] > 1.0f ? 1.0f : c[k]);
+        word |= (uint32_t)(v * 255.0f + 0.5f) << (8 * k);
+    }
+    return word;
+}
+
 } // namespace pica
 } // namespace mdk
