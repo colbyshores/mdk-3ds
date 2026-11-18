@@ -1197,23 +1197,35 @@ def adjudicate(text, quiet=False):
     # failure a source gate can honestly have.
     create_span = block_span(text, r"MdkRenderer mdk_render_create\(const MdkRenderDesc\* desc\)")
     create_range = line_range(text, create_span)
-    vsh = call_sites(text, "shaderProgramSetVsh")
+    # Two programs since enableLighting (SPEC.md 7.9): the base one and the lit one
+    # (the same vertex shader plus mdk_c3d.g.pica). Each is built ONCE, at create:
+    # the base program's setVsh exactly once, and every setVsh/setGsh inside create.
+    vsh = call_sites(text, "shaderProgramSetVsh") + call_sites(text, "shaderProgramSetGsh")
+    vsh_base = [loc for _, loc in vsh if "(&r->program," in loc]
     vsh_stray = [loc for ln, loc in vsh
                  if not (create_range and create_range[0] <= ln <= create_range[1])]
     rep.check("shader-uploaded-exactly-once-at-create",
-              len(vsh) == 1 and not vsh_stray and create_range,
+              len(vsh_base) == 1 and not vsh_stray and create_range,
               "%d shaderProgramSetVsh call(s), %d outside mdk_render_create: %s "
               "(setVsh builds the instance the configure later uploads; zero means the "
               "program has no microcode, two means something rebinds it mid-life)"
-              % (len(vsh), len(vsh_stray),
+              % (len(vsh_base), len(vsh_stray),
                  "none" if not vsh_stray else "; ".join(vsh_stray)))
 
     eye_range = line_range(text, body_span(text, "installEye"))
+    # The lit program (enableLighting) is switched per draw, inside the replayed
+    # queue, which runs within the frame: drawRecorded switches to it and back, and
+    # drawDiagnostic (the canvas) restores the base program. Those two are the only
+    # other binds allowed; installEye keeps exactly one.
     bind = call_sites(text, "C3D_BindProgram")
+    draw_ranges = [rg for rg in (line_range(text, body_span(text, fn))
+                                 for fn in ("drawRecorded", "drawDiagnostic")) if rg]
+    in_eye = [loc for ln, loc in bind if eye_range and eye_range[0] <= ln <= eye_range[1]]
     bind_stray = [loc for ln, loc in bind
-                  if not (eye_range and eye_range[0] <= ln <= eye_range[1])]
+                  if not (eye_range and eye_range[0] <= ln <= eye_range[1])
+                  and not any(a <= ln <= b for a, b in draw_ranges)]
     rep.check("program-bound-only-where-an-eye-is-installed",
-              len(bind) == 1 and not bind_stray and eye_range,
+              len(in_eye) == 1 and not bind_stray and eye_range,
               "%d C3D_BindProgram call(s), %d outside installEye: %s (the bind is what "
               "marks the shader dirty so UpdateContext configures it once per frame; a "
               "bind outside the eye install runs outside the frame contract)"

@@ -483,10 +483,27 @@ struct RendererC3D {
     // The enhanced look's light rig (mdk_render_set_lighting), held for the haze
     // (pica_matrix.h, THE HAZE). hazeLive and hazeExponent are decided once per
     // frame, before the eye loop; hazeOn caches whether the haze uniform and
-    // combiner stage 1 currently haze (the same discipline as cullMode: the cache
+    // combiner stage 2 currently haze (the same discipline as cullMode: the cache
     // describes the context, and installEye resets both every eye).
     mdk::Lighting lighting;
     int hazeLocation = 0;
+    // THE LIT PROGRAM (Enhanced Mode enableLighting): the same vertex
+    // shader plus mdk_c3d.g.pica, bound for a Lit draw while the light is live.
+    // Optional: if it cannot be made the renderer runs without it (litReady).
+    shaderProgram_s programLit;
+    bool litReady = false;
+    bool litLive = false;      // decided once per frame (prepareLighting)
+    bool litBound = false;     // the program bound is programLit (cache)
+    bool lightStageOn = false; // combiner stage 1 multiplies by the light (cache)
+    bool worldIsIdentity = true; // the world uniform holds the identity (cache)
+    int32_t programSwitches = 0; // lit/unlit binds this frame, for the census
+    int worldLocation = 0;     // the VS's world matrix (registers 7-10)
+    int sunDirLocation = -1, sunColourLocation = -1, skyLocation = -1, groundLocation = -1;
+    int cameraLocation = -1, lightParamsLocation = -1;
+    float cameraPos[3] = {0.0f, 0.0f, 0.0f};
+    // The frame's six geometry-shader uniforms (prepareLighting), kept so every
+    // bind of the lit program can write them again (installLitUniforms).
+    float litUniforms[6][4] = {};
     float hazeExponent = 0.0f;
     bool hazeLive = false;
     bool hazeOn = false;

@@ -1166,7 +1166,7 @@ int main(int argc, char** argv) {
                     mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
                     const bool saved = saveEnhancedConfig(enhancedToggles);
                     mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
-                                      "glow=%d filtering=%d mipmaps=%d hd=%d (saved=%d)",
+                                      "glow=%d filtering=%d mipmaps=%d hd=%d lighting=%d (saved=%d)",
                                       (int)enhancedToggles.enableSkyShadows,
                                       (int)enhancedToggles.enableFragmentLights,
                                       (int)enhancedToggles.enableHaze,
@@ -1174,7 +1174,8 @@ int main(int argc, char** argv) {
                                       (int)enhancedToggles.enableGlowBillboards,
                                       (int)enhancedToggles.enableFiltering,
                                       (int)enhancedToggles.enableMipmaps,
-                                      (int)enhancedToggles.enableHdTextures, (int)saved);
+                                      (int)enhancedToggles.enableHdTextures,
+                                      (int)enhancedToggles.enableLighting, (int)saved);
                 }
                 if (!menu.open()) {
                     mdk::log3dsPrintf("menu: closed");

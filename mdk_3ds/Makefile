@@ -205,14 +205,17 @@ LIBS := -lcitro3d -lctru -lm -lz
 PICASSO := $(DEVKITPRO)/tools/bin/picasso
 BIN2S   := $(DEVKITPRO)/tools/bin/bin2s
 
+# One DVLB, two entry points: DVLE[0] the vertex shader, DVLE[1] the lit
+# program's geometry shader (Enhanced Mode lighting, mdk_c3d.g.pica).
 SHADER_PICA  := $(CURDIR)/shaders/mdk_c3d.v.pica
+SHADER_GPICA := $(CURDIR)/shaders/mdk_c3d.g.pica
 SHADER_SHBIN := $(BUILD)/mdk_c3d.shbin
 SHADER_HDR   := $(BUILD)/mdk_c3d_shbin.h
 SHADER_OBJ   := $(BUILD)/mdk_c3d_shbin.o
 
-$(SHADER_SHBIN): $(SHADER_PICA) | $(BUILD)
-	@echo "PICA $<"
-	@$(PICASSO) -o $@ $<
+$(SHADER_SHBIN): $(SHADER_PICA) $(SHADER_GPICA) | $(BUILD)
+	@echo "PICA $(notdir $(SHADER_PICA)) $(notdir $(SHADER_GPICA))"
+	@$(PICASSO) -o $@ $(SHADER_PICA) $(SHADER_GPICA)
 
 # &: (grouped target, GNU Make 4.3+) is load-bearing here, NOT stylistic: with
 # a plain ':', two targets sharing one recipe are not atomic, so `make -j` can

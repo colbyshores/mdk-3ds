@@ -233,7 +233,7 @@ struct Lighting {
 // ---------------------------------------------------------------------------
 struct EnhancedToggles {
     bool enableSkyShadows = true;     // the sun shadow map pass
-    bool enableFragmentLights = true; // fragment point lights (LUTs on the PICA200)
+    bool enableFragmentLights = true; // fragment point lights (the PC's point lights only)
     bool enableHaze = true;           // atmospheric haze / fog blend
     bool enableMirrors = true;        // planar mirror draws
     bool enableGlowBillboards = true; // additive glow (post glow / glow billboards)
@@ -242,6 +242,8 @@ struct EnhancedToggles {
                                       // only with enableFiltering); the PC always mips
     bool enableHdTextures = true;     // 3DS: the HD pack's ETC1/ETC1A4 replacements,
                                       // streamed (docs/HD_TEXTURES_3DS_SPEC.md)
+    bool enableLighting = true;       // 3DS: the sky/ground/sun light per triangle (the lit
+                                      // program's geometry shader); the PC always lights
 };
 
 // ---------------------------------------------------------------------------

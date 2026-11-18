@@ -122,6 +122,8 @@ static void replayQueue(RendererC3D* r);
 static void drawDiagnostic(RendererC3D* r, float canvasWidth);
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
 static void prepareHaze(RendererC3D* r);
+static void prepareLighting(RendererC3D* r);
+static void installLitUniforms(RendererC3D* r);
 static void installAlphaTest(RendererC3D* r, int reference, bool force);
 
 // Install one pass's depth state on the citro3d context and record it in the
@@ -379,12 +381,25 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     r->cullMode = kSolidCull;
     // THE HAZE: off, every eye, whatever the last frame left (P2: every GPU state
     // and every uniform set explicitly). The uniform at 0 keeps every vertex's
-    // whole colour, and combiner stage 1 passes the previous stage through. A
+    // whole colour, and combiner stage 2 passes the previous stage through. A
     // draw that takes the haze switches both on through the hazeOn cache
     // (drawRecorded's setHaze).
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
-    C3D_TexEnvInit(C3D_GetTexEnv(1));
+    C3D_TexEnvInit(C3D_GetTexEnv(2));
     r->hazeOn = false;
+    // THE LIGHT, likewise: the unlit program bound (above), combiner stage 1 a
+    // passthrough, and the world matrix the identity (the VS writes a world
+    // position for every draw; only the lit program reads it).
+    C3D_TexEnvInit(C3D_GetTexEnv(1));
+    r->lightStageOn = false;
+    r->litBound = false;
+    {
+        static const float kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        C3D_Mtx worldMtx;
+        mdk::pica::registers(kIdentity, worldMtx.m);
+        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation, &worldMtx);
+        r->worldIsIdentity = true;
+    }
     C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
                  mdk::pica::kDepthMapOffset);
 
@@ -683,6 +698,7 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
     // its own copy in its own target: drawn once after the loop it would be a
     // triangle in one eye and a hole in the other.
     prepareHaze(r);
+    prepareLighting(r);
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
@@ -727,6 +743,14 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
                               (int)r->eyes.passes, (int)r->canvasFrames);
         }
     }
+    // The lit program's switches (each re-sends the dirty uniforms of both
+    // shaders and its own six): the number a draw sort by program would be
+    // judged by on hardware (review of the lighting batch).
+    if (r->litLive && (r->frame % 300) == 0) {
+        mdk::log3dsPrintf("light: frame %d: %d program switches (%d eyes)", (int)r->frame,
+                          (int)r->programSwitches, (int)r->eyes.passes);
+    }
+    r->programSwitches = 0;
     r->canvasQuadsThisFrame = 0;
     r->canvasDrawsThisFrame = 0;
     r->queue.reset();
@@ -762,6 +786,10 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
     // its own offset, and the offset is applied to the view matrix.
     memcpy(r->view, cam->view, sizeof(r->view));
     memcpy(r->projection, cam->projection, sizeof(r->projection));
+    // The eye's world position, for the lit program's normal flip.
+    r->cameraPos[0] = cam->position.x;
+    r->cameraPos[1] = cam->position.y;
+    r->cameraPos[2] = cam->position.z;
 }
 
  void mdk_render_set_lighting(MdkRenderer rr, const mdk::Lighting* light) {
@@ -773,6 +801,57 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
         return;
     }
     r->lighting = *light;
+    // The rig, once per change (the game hands it over per arena): the numbers
+    // the lit program's light is made of.
+    mdk::log3dsPrintf("light rig: sun dir (%.2f,%.2f,%.2f) rgb (%.2f,%.2f,%.2f) sky (%.2f,%.2f,%.2f) "
+                      "ground (%.2f,%.2f,%.2f) exposure %.3f knee %.3f",
+                      light->sun_direction.x, light->sun_direction.y, light->sun_direction.z,
+                      light->sun.r, light->sun.g, light->sun.b, light->sky.r, light->sky.g,
+                      light->sky.b, light->ground.r, light->ground.g, light->ground.b,
+                      light->exposure, light->sky.a);
+}
+
+// The frame's light, decided once before the eye loop (Enhanced Mode
+// enableLighting): whether any draw may take the lit program, and the
+// values of its geometry-shader uniforms -- the rig's sun, sky and ground, the
+// exposure, the eye's position (mdk_c3d.g.pica) -- which installLitUniforms
+// writes at every bind of the lit program (P2).
+static void prepareLighting(RendererC3D* r) {
+    r->litLive = r->litReady && r->toggles.enableLighting && r->lighting.enabled;
+    if (!r->litLive) {
+        return;
+    }
+    const mdk::Lighting& l = r->lighting;
+    const float values[6][4] = {
+        {l.sun_direction.x, l.sun_direction.y, l.sun_direction.z, 0.0f},
+        {l.sun.r, l.sun.g, l.sun.b, 0.0f},
+        {l.sky.r, l.sky.g, l.sky.b, 0.0f},
+        {l.ground.r, l.ground.g, l.ground.b, 0.0f},
+        {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2], 1.0f},
+        // The exposure only: the PC's tone curve (knee 0.6, a constant of its
+        // own, not the rig's) becomes the combiner's clamp (mdk_c3d.g.pica).
+        {l.exposure, 0.0f, 0.0f, 0.0f},
+    };
+    memcpy(r->litUniforms, values, sizeof(values));
+}
+
+// The lit program's uniforms, written AT EVERY BIND of it. Writing them once a
+// frame was not enough: a lit draw that followed an unlit one (an object after
+// the sky or a sprite) read ZEROS -- measured, a lamp's wire frame lit to
+// (1.43, 0, 0), and black when the light was set to the sky colour alone --
+// while the level geometry drawn before any switch was right. THE CAUSE (review,
+// libcitro3d.a disassembly): C3D_BindProgram of a program WITHOUT a geometry
+// shader calls C3Di_ClearShaderUniforms(GPU_GEOMETRY_SHADER) -- on the PICA200
+// the geometry unit runs vertex shading when no geometry shader is bound, so
+// its uniform file is not the lit program's to keep. Six uniform writes per
+// switch to the lit program.
+static void installLitUniforms(RendererC3D* r) {
+    const int locations[6] = {r->sunDirLocation, r->sunColourLocation, r->skyLocation,
+                              r->groundLocation, r->cameraLocation, r->lightParamsLocation};
+    for (int i = 0; i < 6; i++) {
+        C3D_FVUnifSet(GPU_GEOMETRY_SHADER, locations[i], r->litUniforms[i][0], r->litUniforms[i][1],
+                      r->litUniforms[i][2], r->litUniforms[i][3]);
+    }
 }
 
 // The frame's haze, decided once before the eye loop: whether any draw may take

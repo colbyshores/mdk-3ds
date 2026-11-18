@@ -88,6 +88,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->enableMipmaps = value;
     } else if (keyIs(begin, keyEnd, "enableHdTextures")) {
         toggles->enableHdTextures = value;
+    } else if (keyIs(begin, keyEnd, "enableLighting")) {
+        toggles->enableLighting = value;
     }
 }
 
@@ -124,6 +126,7 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "enableFiltering", toggles.enableFiltering);
     appendToggle(&out, "enableMipmaps", toggles.enableMipmaps);
     appendToggle(&out, "enableHdTextures", toggles.enableHdTextures);
+    appendToggle(&out, "enableLighting", toggles.enableLighting);
     return out;
 }
 

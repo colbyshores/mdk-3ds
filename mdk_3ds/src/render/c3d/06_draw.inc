@@ -35,7 +35,8 @@ static bool drawSampleArmed() {
 
 // The haze's two halves, switched together: the shader's exponent (each vertex
 // keeps ex2(exponent * eye depth) of its colour, in the primary alpha) and
-// combiner stage 1, which blends the previous stage toward the haze colour by
+// combiner stage 2 (after the light's stage 1), which blends the previous stage
+// toward the haze colour by
 // that alpha -- INTERPOLATE is src0 * src2 + src1 * (1 - src2). Off, the uniform
 // is 0 (ex2(0) = 1) and the stage passes its input through. Cached on hazeOn;
 // installEye resets both every eye.
@@ -43,7 +44,7 @@ static void setHaze(RendererC3D* r, bool on) {
     if (on == r->hazeOn) {
         return;
     }
-    C3D_TexEnv* stage = C3D_GetTexEnv(1);
+    C3D_TexEnv* stage = C3D_GetTexEnv(2);
     C3D_TexEnvInit(stage);
     if (on) {
         C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, r->hazeExponent, 0.0f, 0.0f, 0.0f);
@@ -621,6 +622,50 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         }
     }
 
+    // THE LIGHT (SPEC.md 7.9 enableLighting): a Lit surface is drawn with
+    // the lit program -- the geometry shader lights each triangle by its face
+    // normal (mdk_c3d.g.pica) -- and combiner stage 1 multiplies the texture by
+    // that light. Sprites (Kurt, effects), the sky and the canvas are not lit, as
+    // on the PC (enhanced.frag modes 2-4). Both switches are cached.
+    // Only a TRIANGLE mesh: a Lines mesh (the glass frames' outlines) is drawn
+    // as triangles from its vertex pairs here (this GPU has no line primitive,
+    // see below), and the geometry shader would light that line data as if it
+    // were triangles (measured: the lamp's wire frame went red/green/black).
+    const bool lit = r->litLive && draw->material.shading == mdk::Shading::Lit && !overlay &&
+                     draw->primitive == mdk::Primitive::Triangles &&
+                     !(renderDebugFlags() & kRenderDebugFlat);
+    if (lit != r->litBound) {
+        C3D_BindProgram(lit ? &r->programLit : &r->program);
+        if (lit) {
+            installLitUniforms(r);
+        }
+        r->litBound = lit;
+        r->programSwitches++;
+    }
+    if (lit) {
+        // The world position the geometry shader takes its normal from; the
+        // identity (every arena batch) is written only when it is not there.
+        const bool identity = mdk::pica::isIdentity(draw->world);
+        if (!identity || !r->worldIsIdentity) {
+            C3D_Mtx worldMtx;
+            mdk::pica::registers(draw->world, worldMtx.m);
+            C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation, &worldMtx);
+            r->worldIsIdentity = identity;
+        }
+    }
+    if (lit != r->lightStageOn) {
+        C3D_TexEnv* light = C3D_GetTexEnv(1);
+        C3D_TexEnvInit(light);
+        if (lit) {
+            C3D_TexEnvSrc(light, C3D_RGB, GPU_PREVIOUS, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+            C3D_TexEnvFunc(light, C3D_RGB, GPU_MODULATE);
+            // The vertex colour carries F / 2 (mdk_c3d.g.pica): x2 lets the light
+            // brighten a surface as well as darken it.
+            C3D_TexEnvScale(light, C3D_RGB, GPU_TEVSCALE_2);
+        }
+        r->lightStageOn = lit;
+    }
+
     // THE HAZE (SPEC.md 7.9 enableHaze) for a surface the PC hazes, nothing for
     // the rest, cached so a run of like draws writes nothing.
     // prepareHaze has already decided the toggle and the rig for the frame, so
@@ -628,7 +673,12 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // per draw: AGENTS.md R3).
     setHaze(r, r->hazeLive && draw->material.shading != mdk::Shading::Original &&
                    draw->material.pass != mdk::Pass::Overlay);
-    C3D_DrawArrays(GPU_TRIANGLES, first, count);
+    if (r->litBound) {
+        // The geometry shader decides the primitives (it emits each triangle).
+        C3D_DrawArrays(GPU_GEOMETRY_PRIM, first, count);
+    } else {
+        C3D_DrawArrays(GPU_TRIANGLES, first, count);
+    }
     // Restore the frame's default for the next draw, so every draw starts
     // from the state begin_frame installed. The transition back is cached in
     // the same way; repeated Solid draws do not dirty the effect block.
@@ -785,8 +835,17 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
     installDepthState(r, mdk::pica::DepthState{false, false});
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 0.0f, 0.0f, 1.0f, 1.0f);
     r->tintIsWhite = false;
-    // The canvas takes no haze, and the last queued draw may have left it on.
+    // The canvas takes no haze and no light, and the last queued draw may have
+    // left either on.
     setHaze(r, false);
+    if (r->litBound) {
+        C3D_BindProgram(&r->program);
+        r->litBound = false;
+    }
+    if (r->lightStageOn) {
+        C3D_TexEnvInit(C3D_GetTexEnv(1));
+        r->lightStageOn = false;
+    }
     C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
     // The uniform now holds the canvas's matrix, not the frame's. The next
     // installEye -- the other eye, or this one's next frame -- is what puts it

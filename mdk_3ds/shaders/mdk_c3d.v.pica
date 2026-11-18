@@ -70,6 +70,7 @@
 .out outpos position
 .out outclr color
 .out outtexcoord texcoord0
+.out outworld dummy        ; whole register to the geometry shader; not rasterised
 
 ; Inputs
 .alias inpos v0
@@ -89,11 +90,18 @@
 ; The haze (Enhanced Mode enableHaze, SPEC.md 7.9), in uniform register 6:
 ; x = -density * log2(e) for a draw that takes the haze, 0 for every other.
 ; The vertex keeps ex2(x * clip.w) of its colour (clip.w is the eye depth), and
-; that fraction rides in the primary colour's alpha to combiner stage 1, which
+; that fraction rides in the primary colour's alpha to combiner stage 2, which
 ; blends toward the haze colour by it. With x = 0, ex2(0) = 1: the alpha is the
 ; tint's own, exactly as before. Why here and not the PICA fog unit:
 ; pica_matrix.h, THE HAZE.
 .fvec haze
+
+; The world matrix of the draw, in uniform registers 7-10 (the same register
+; layout as mvp: rows of the engine matrix's columns, pica::registers). Only the
+; lit program reads its product: the world position goes to the geometry shader
+; (mdk_c3d.g.pica), which lights each triangle by its face normal (Enhanced Mode
+; enableLighting, SPEC.md 7.9). In the unlit program the output is unused.
+.fvec world[4]
 
 .entry vmain
 .proc vmain
@@ -155,6 +163,13 @@
     add r0.x, r0.x, r1.z
     add r0.y, r0.y, r1.w
     mov outtexcoord, r0
+    mov r0.xyz, inpos
+    mov r0.w,   ones
+    dp4 r4.x, world[0], r0
+    dp4 r4.y, world[1], r0
+    dp4 r4.z, world[2], r0
+    mov r4.w, ones
+    mov outworld, r4
 
     end
 .end

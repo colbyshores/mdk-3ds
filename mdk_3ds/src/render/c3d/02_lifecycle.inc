@@ -147,6 +147,36 @@
     r->uvLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "uvtransform");
     r->tintLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "tint");
     r->hazeLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "haze");
+    r->worldLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "world");
+    // THE LIT PROGRAM: the same vertex shader, plus the geometry shader (DVLE[1]),
+    // whose input stride is 12 registers: three vertices of four outputs each
+    // (position, colour, texcoord, world). Optional -- a failure is logged and
+    // lighting is simply unavailable.
+    if (r->dvlb->numDVLE >= 2 && R_SUCCEEDED(shaderProgramInit(&r->programLit))) {
+        const Result litVsh = shaderProgramSetVsh(&r->programLit, &r->dvlb->DVLE[0]);
+        const Result litGsh = shaderProgramSetGsh(&r->programLit, &r->dvlb->DVLE[1], 12);
+        if (R_SUCCEEDED(litVsh) && R_SUCCEEDED(litGsh)) {
+            shaderInstance_s* gs = r->programLit.geometryShader;
+            r->sunDirLocation = shaderInstanceGetUniformLocation(gs, "sunDir");
+            r->sunColourLocation = shaderInstanceGetUniformLocation(gs, "sunColour");
+            r->skyLocation = shaderInstanceGetUniformLocation(gs, "skyColour");
+            r->groundLocation = shaderInstanceGetUniformLocation(gs, "groundColour");
+            r->cameraLocation = shaderInstanceGetUniformLocation(gs, "camera");
+            r->lightParamsLocation = shaderInstanceGetUniformLocation(gs, "params");
+            // The same refusal as the vertex shader's: a -1 location is a write
+            // before a .bss array (review-9 F5).
+            r->litReady = r->sunDirLocation >= 0 && r->sunColourLocation >= 0 &&
+                          r->skyLocation >= 0 && r->groundLocation >= 0 &&
+                          r->cameraLocation >= 0 && r->lightParamsLocation >= 0;
+        }
+        if (!r->litReady) {
+            shaderProgramFree(&r->programLit);
+        }
+    }
+    mdk::log3dsPrintf("lit program: %s (sun=%d sky=%d ground=%d camera=%d params=%d world=%d)",
+                      r->litReady ? "ready" : "UNAVAILABLE", (int)r->sunDirLocation,
+                      (int)r->skyLocation, (int)r->groundLocation, (int)r->cameraLocation,
+                      (int)r->lightParamsLocation, (int)r->worldLocation);
     mdk::log3dsPrintf("uniforms: mvp=%d uvtransform=%d tint=%d haze=%d", (int)r->mvpLocation,
                       (int)r->uvLocation, (int)r->tintLocation, (int)r->hazeLocation);
     // A NAME THE SHADER DOES NOT EXPORT is not a location, and citro3d does not
@@ -157,7 +187,7 @@
     // The Makefile has explicit anti-staleness rules for the shader, so this is a
     // narrow window; it is still the only place it can be caught (review-9 F5).
     if (r->mvpLocation < 0 || r->uvLocation < 0 || r->tintLocation < 0 ||
-        r->hazeLocation < 0) {
+        r->hazeLocation < 0 || r->worldLocation < 0) {
         mdk::log3dsPrintf("shader is missing a uniform it must export -- refusing");
         shaderProgramFree(&r->program);
         return nullptr;   // the same refusal every other create failure uses
@@ -250,6 +280,9 @@
         r->targetRight = nullptr;
     }
     if (r->dvlb) {
+        if (r->litReady) {
+            shaderProgramFree(&r->programLit);
+        }
         shaderProgramFree(&r->program);
         DVLB_Free(r->dvlb);
         r->dvlb = nullptr;

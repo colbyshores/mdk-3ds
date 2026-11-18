@@ -654,7 +654,7 @@ EyePlan eyePlan(float slider, float separation);
 //
 // So the shader (mdk_c3d.v.pica) takes `kept = ex2(haze.x * clip.w)` per vertex
 // -- clip.w is the eye depth -- and multiplies it into the primary colour's
-// alpha; combiner stage 1 then blends toward the haze colour by it. All of it
+// alpha; combiner stage 2 then blends toward the haze colour by it. All of it
 // runs on the PICA; the CPU writes one uniform when it changes. Per vertex
 // against the PC's per pixel, and eye depth against its Euclidean distance,
 // are the two approximations.

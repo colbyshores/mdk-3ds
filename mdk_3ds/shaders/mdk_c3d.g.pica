@@ -1,0 +1,144 @@
+; ============================================================================
+; mdk_c3d.g.pica -- the lit program's geometry shader: the PC's enhanced light,
+; per TRIANGLE, on the PICA200 (Enhanced Mode enableLighting, SPEC.md 7.9).
+;
+; The PC (mdk_linux/shaders/enhanced.frag, mode 1) lights a Lit surface by its
+; FLAT normal, taken from the world position's screen derivatives and turned to
+; face the camera:
+;
+;     light = mix(ground, sky, n.z * 0.5 + 0.5) + sun * max(dot(n, -sunDir), 0)
+;     lit   = to_srgb(tonemap(to_linear(albedo) * exposure * light, knee))
+;
+; The PICA has no fragment derivatives, but a geometry shader sees the whole
+; triangle: its face normal is the cross product of two edges, exactly the flat
+; normal. The hemisphere and the sun are directional, so the light is constant
+; over the triangle and one evaluation per triangle IS the per-pixel value.
+;
+; The albedo stays in the combiner: for a value below the tone curve's knee
+; (the PC's Tonemap.Knee, 0.6), to_srgb(to_linear(a) * k) = a * to_srgb(k)
+; EXACTLY (GAMMA is a pure power), so the shader emits F = to_srgb(exposure *
+; light) per channel and the combiner multiplies the texture by it (06_draw.inc's
+; light stage, scaled x2: the vertex colour carries F / 2, so F reaches 2). The
+; PC's soft shoulder above the knee becomes a clamp at white -- the one
+; approximation, and only for surfaces bright enough to reach it. (Tone-mapping
+; exposure * light ALONE, as a first version did, saturated every face of an
+; indoor arena to ~1 and lit nothing: measured on level 6, exposure 1.34 against
+; a sky of ~1.) Point lights and the sun's shadow are not here.
+;
+; INPUTS (the vertex shader's outputs, in declaration order, three vertices):
+;   v0-v3   first vertex:  clip position, colour (tint rgb, haze kept in w),
+;                          texcoord, world position
+;   v4-v7   second vertex
+;   v8-v11  third vertex
+; ============================================================================
+
+.gsh point c0
+
+; Uniforms (written per frame by the backend when the rig is live).
+.fvec sunDir        ; xyz: the direction the sun SHINES (the PC's u.sun.xyz)
+.fvec sunColour     ; rgb
+.fvec skyColour     ; rgb
+.fvec groundColour  ; rgb
+.fvec camera        ; xyz: the eye's world position
+.fvec params        ; x exposure (y, z, w unused)
+
+.constf consts(0.0, 1.0, 0.5, 0.45454545)   ; 0, 1, 1/2, 1/GAMMA (2.2)
+.constf consts2(2.0, -1.0, 1.0e-12, 0.0)   ; z: the degenerate-normal floor -- float24
+                                            ; stops near 2^-62, so 1e-20 would be 0
+.alias zeros consts.xxxx
+.alias ones  consts.yyyy
+.alias half  consts.zzzz
+.alias invGamma consts.wwww
+.alias two   consts2.xxxx
+.alias minus1 consts2.yyyy
+.alias tiny  consts2.zzzz
+
+.out outpos position
+.out outclr color
+.out outtc  texcoord0
+
+.entry gmain
+.proc gmain
+    ; Every scalar below is written to ALL FOUR lanes and used without a
+    ; broadcast swizzle: a first version wrote `.x` only and read `.xxxx`, and the
+    ; other lanes carried a previous triangle's values into some triangles' light
+    ; (measured: a lamp's wire frame lit (1.43, 0, 0) -- one channel right, two
+    ; zero -- under a grey rig).
+
+    ; THE FACE NORMAL: cross(w1 - w0, w2 - w0), normalised.
+    mov r0, v7                     ; (one input register per instruction)
+    add r0, -v3, r0
+    mov r1, v11
+    add r1, -v3, r1
+    mul r2, r0.yzxw, r1.zxyw
+    mul r3, r0.zxyw, r1.yzxw
+    add r2, r2, -r3
+    mov r2.w, zeros
+    dp3 r3, r2, r2                 ; |n|^2 in every lane
+    max r3, tiny, r3               ; a zero-area triangle: no NaN from rsq(0) (float24
+                                   ; stops near 2^-62, so the floor is 1e-12)
+    rsq r3, r3                     ; 1/|n| in every lane
+    mul r2, r2, r3
+
+    ; TURNED TO THE CAMERA (the PC flips a normal that faces away).
+    add r4, camera, -v3
+    dp3 r5, r2, r4                 ; in every lane
+    slt r5, zeros, r5              ; 1 if facing the camera, else 0
+    mul r5, two, r5
+    add r5, minus1, r5             ; +1 / -1
+    mul r2, r2, r5
+
+    ; THE LIGHT: hemisphere by n.z, plus the sun by n . -sunDir.
+    mov r6, r2.zzzz
+    mul r6, half, r6
+    add r6, half, r6               ; t = n.z * 0.5 + 0.5, every lane
+    mov r7, groundColour           ; (one uniform per instruction)
+    add r7, skyColour, -r7
+    mul r7, r7, r6
+    add r7, groundColour, r7       ; mix(ground, sky, t)
+    dp3 r8, -sunDir, r2            ; every lane
+    max r8, zeros, r8              ; facing
+    mul r3, sunColour, r8
+    add r7, r7, r3                 ; + sun * facing
+    mul r7, params.xxxx, r7        ; * exposure
+
+    ; TO sRGB: pow(c, 1/2.2) = ex2(lg2(c) / 2.2), per channel.
+    max r7, zeros, r7
+    lg2 r13.x, r7.x
+    lg2 r13.y, r7.y
+    lg2 r13.z, r7.z
+    mul r13, invGamma, r13
+    ex2 r14.x, r13.x
+    ex2 r14.y, r13.y
+    ex2 r14.z, r13.z
+    mul r14, half, r14             ; F / 2: the light stage scales x2
+    min r14, ones, r14             ; F >= 2 clamps (white)
+
+    ; EMIT the triangle unchanged, each vertex coloured with F and keeping its
+    ; own w (the haze's kept fraction, mdk_c3d.v.pica).
+    setemit 0
+    mov outpos, v0
+    mov outtc, v2
+    mov r15, v1
+    mov r15.xyz, r14.xyz
+    mov outclr, r15
+    emit
+
+    setemit 1
+    mov outpos, v4
+    mov outtc, v6
+    mov r15, v5
+    mov r15.xyz, r14.xyz
+    mov outclr, r15
+    emit
+
+    setemit 2, prim
+    mov outpos, v8
+    mov outtc, v10
+    mov r15, v9
+    mov r15.xyz, r14.xyz
+    mov outclr, r15
+    emit
+
+    end
+.end

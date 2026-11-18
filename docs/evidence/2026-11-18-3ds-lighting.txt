@@ -1,0 +1,72 @@
+3DS ENHANCED MODE: LIGHTING ON THE PICA200 (SPEC.md 7.9, a ninth toggle enableLighting,
+menu row LIGHTING), 2026-11-18. EMULATOR evidence -- Mandarine r1.2.1 (md5
+0d2adab6ad078c78e6d03e72086f2eb6) on DISPLAY=:99 via compare_linux.sh (make
+AUTOQUIT=90 FIXED=1 CAPTURE=300 LEVEL=<n>). Not a hardware result: the geometry
+shader's Old-3DS cost is owed to the hardware pass.
+
+THE PC. enhanced.frag mode 1: a Lit surface's FLAT normal from the world
+position's screen derivatives, turned to the camera; light = mix(ground, sky,
+n.z * 0.5 + 0.5) + sun * max(n . -sunDir, 0) (+ point lights, x shadow); lit =
+to_srgb(tonemap(to_linear(albedo) * exposure * light, 0.6)).
+
+THE 3DS. A second shader program: the same vertex shader (now also writing the
+world position from a per-draw world matrix) plus a GEOMETRY SHADER
+(mdk_c3d.g.pica), bound for Lit triangle draws while the toggle and the rig are
+live. It sees the whole triangle, so its face normal (cross of two edges) IS the
+flat normal; the hemisphere and the sun are directional, so one evaluation per
+triangle IS the per-pixel value. It emits F = to_srgb(exposure * light) / 2 per
+channel in the vertex colour; combiner stage 1 multiplies the texture by it,
+scaled x2 (haze moved to stage 2). Below the PC's knee this is exact:
+to_srgb(to_linear(a) * k) = a * to_srgb(k) for GAMMA a pure power. Above it the
+PC's soft shoulder becomes a clamp. Not here: point lights, the sun's shadow,
+ambient occlusion, the post pass. Sprites, the sky, the canvas and Lines meshes
+are not lit (the PC's modes 2-4 are unlit too).
+
+FOUND AND FIXED ON THE WAY (each measured in the emulator):
+  - picasso: one input register per instruction, at most one uniform, uniforms
+    as the first source, r0-r15 only.
+  - The knee is the PC's own constant 0.6 (Tonemap.Knee, 10_enhanced.inc), not
+    the rig's sky alpha (1.0). A first version tone-mapped exposure * light
+    alone, which saturated every face of an indoor arena (level 6: exposure
+    1.34 against a sky of ~1) and lit nothing; the tone curve is now the clamp.
+  - float24 stops near 2^-62: a 1e-20 degenerate-normal floor is 0; 1e-12.
+  - THE GEOMETRY SHADER'S UNIFORMS MUST BE WRITTEN AT EVERY BIND OF ITS PROGRAM.
+    Written once per frame, every lit draw that followed an unlit one (an object
+    after the sky or a sprite) read ZEROS: a lamp's wire frame lit (1.43, 0, 0)
+    -- one channel right, two zero -- and black when the light was set to the
+    sky colour alone, while the level geometry drawn before any switch was
+    right. With the six uniforms re-written on each bind it lights normally
+    ((70,65,56) -> (68,64,54), a face turned down). Bisected with a constant F
+    (lit path pixel-identical to unlit: 0 px differ), the pre-sRGB light, and the
+    sky-only light.
+
+MEASURED. Levels 3 and 6, frame 300, filtering on, lighting only (left unlit,
+middle lit, right the PC's enhanced look):
+    docs/evidence/2026-11-18-3ds-lighting-L3.png
+    docs/evidence/2026-11-18-3ds-lighting-L6.png
+  Lit surfaces brighten by the exposure (level 6: ~1.15x in sRGB) and faces
+  away from the light darken; the PC frame is darker overall from its ambient
+  occlusion and post pass, which this GPU does not do.
+
+REVIEW (independent; citro3d's libcitro3d.a disassembled) AND WHAT CHANGED.
+  - THE ZERO-UNIFORM CAUSE, now recorded in code: C3D_BindProgram of a program
+    without a geometry shader calls C3Di_ClearShaderUniforms(GPU_GEOMETRY_SHADER)
+    (on the PICA200 the geometry unit runs vertex shading when no GS is bound).
+    Writing them at every lit bind is the fix; that this matches the CONSOLE (not
+    only Mandarine) is owed to the hardware pass.
+  - The toggle: the PC's enableFragmentLights switches only its point lights, and
+    the menu is shared, so the 3DS light has its own ninth toggle, enableLighting
+    (menu row LIGHTING); enableFragmentLights keeps its label and is reserved for
+    3DS point lights.
+  - The world output is semantic `dummy`: the geometry shader receives whole
+    registers, and the rasteriser no longer interpolates a field nothing reads
+    (the original look's vertices still run the ~7 extra VS instructions --
+    an Old-3DS cost to measure).
+  - The identity world matrix is written only when it is not already there;
+    program switches per frame are logged (`light: frame N: K program
+    switches`), the number a sort-by-program would be judged by.
+  - Precision of the claims: exact while albedo_lin * exposure * light < 0.6 PER
+    CHANNEL; above it the clamp is brighter than the PC's shoulder (at a linear
+    product of 1.0: 1.0 against the PC's 0.930 sRGB, ~7%). The x2 scale halves
+    the 8-bit light's precision (steps of 2/255). Lit Lines meshes (the PC lights
+    them as lines) stay unlit here: this GPU draws no lines.
