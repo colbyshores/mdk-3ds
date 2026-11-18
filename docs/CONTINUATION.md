@@ -1,5 +1,45 @@
 # Phase 2 continuation checkpoint
 
+## ARENA STREAMING PHASE 1a: THE MTO IS NO LONGER RESIDENT (2026-11-18)
+
+Spec: `docs/ARENA_STREAMING_SPEC.md` Phase 1. Evidence:
+`docs/evidence/2026-11-18-arena-streaming-phase1a.txt`. EMULATOR + HOST only:
+the console is pinned to another project, so no hardware number is claimed.
+
+- **What changed.** `Mto::open` keeps only the directory; `getArena` reads one
+  arena block by range (new `FileSystem::readRange` / `MdkData::readRange`, on
+  3DS, Linux and the test harness), parses it, and frees it. Every arena keeps a
+  copy of its MODELS SECTION only -- the one thing still read after parse, by
+  `ModelAnimation::bake` -- and its animations are rebased onto that copy.
+  `LevelData::mtoBytes_` is gone.
+- **Split of Phase 1.** 1a (this) removes the resident file. 1b -- the 32 KiB
+  per-frame `ArenaStream` and arena handles freed on eviction -- lands with
+  Phase 2, which owns eviction: every `Arena*` consumer (ArenaSpace, Bsp, pose
+  caches keyed by pointer, LevelView, EffectsView, palettes_ keyed by `Arena*`,
+  runtime triangle/group state stored on the Arena, `archivesOf` reading every
+  arena) still assumes all arenas resident for the level's life. The full map is
+  in the Phase 1a evidence file.
+- **Numbers (EMULATOR, mallinfo used, same harness as Phase 0's hardware rows).**
+  Level 8: after level data 14.74 MB (Phase 0 hardware 22.57 MB), and it now
+  loads past audio (was OOM) and runs; runtime 31.88 MB. Level 7: level data
+  12.29 MB (was 18.73), runtime 27.94 MB (was 33.74). The 3DS heap cap is
+  41.04 MB. Hardware confirmation owed.
+
+**Spec section 4, answered from file evidence (no Ghidra needed for these):**
+- *Which SNI holds corridors?* `LEVELnO.SNI`: `LevelData::load` parses its
+  non-sound entries as world sections (`level_data.cpp`, the corridor loop).
+- *Block layout.* Every retail arena block (all 60 of levels 3-8) is ordered
+  textures (at +0x10), models, palette, world; the u32 size field COUNTS ITSELF
+  (the next block starts at offset + size, padded to 4). Models sections are
+  1.65-2.44 MB per level against 8.4-10.3 MB files.
+- *24-byte sound entries.* Still open: `Arena::parseModels` reads the sound count
+  and stops; the entries are not decoded yet (Phase 5 needs them).
+- *32 KiB chunk as parse unit, arena +0x24/+0x40 buffers, CD vs HD reads.* Open:
+  Ghidra (owner: `~/re-tools`, ReVa MCP) before Phase 2.
+
+**NEXT.** Phase 2 design from the dependency map (owner: run it at Fable/high
+effort or with a deep Fable review), with the section-4 Ghidra answers first.
+
 ## ARENA STREAMING: PHASE 0 FOR EVERY LEVEL, AND THE 20x SCRIPT COST FIXED (2026-11-17)
 
 The plan this branch works to is now in the repo: `docs/ARENA_STREAMING_SPEC.md`.

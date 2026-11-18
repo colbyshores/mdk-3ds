@@ -131,6 +131,33 @@ inline bool readFile(void* user, const char* path, std::vector<uint8_t>* outByte
     return true;
 }
 
+// Read `length` bytes at `offset` of a file: exactly that many, or false (a
+// short read is a failure, AGENTS.md P5). The arena stream reads one arena's
+// block this way, so a level's MTO is never resident whole.
+inline bool readRange(void* user, const char* path, int32_t offset, int32_t length,
+                        std::vector<uint8_t>* outBytes) {
+    (void)user;
+    if (offset < 0 || length < 0) {
+        return false;
+    }
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        return false;
+    }
+    if (fseek(file, (long)offset, SEEK_SET) != 0) {
+        fclose(file);
+        return false;
+    }
+    outBytes->resize((size_t)length);
+    const size_t read = length > 0 ? fread(outBytes->data(), 1, (size_t)length, file) : 0;
+    fclose(file);
+    if (read != (size_t)length) {
+        outBytes->clear();
+        return false;
+    }
+    return true;
+}
+
 inline bool fileExists(void* user, const char* path) {
     (void)user;
     FILE* file = fopen(path, "rb");
@@ -156,6 +183,7 @@ inline const mdk::formats::FileSystem* fileSystem() {
     static mdk::formats::FileSystem instance;
     instance.listDirectory = listDirectory;
     instance.readFile = readFile;
+    instance.readRange = readRange;
     instance.fileExists = fileExists;
     instance.programDirectory = programDirectory;
     instance.getEnvironment = getEnvironment;

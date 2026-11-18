@@ -56,6 +56,12 @@ public:
     // Read a data file. Returns false when it cannot be read.
     bool read(const std::string& relative, std::vector<uint8_t>* outBytes) const;
 
+    // Read exactly `length` bytes at `offset` of a data file; false on a short
+    // read. Through the platform's readRange, or readFile and a slice when it
+    // has none.
+    bool readRange(const std::string& relative, int32_t offset, int32_t length,
+                   std::vector<uint8_t>* outBytes) const;
+
 private:
     const FileSystem* system_ = nullptr;
     std::string dir_;

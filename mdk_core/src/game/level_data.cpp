@@ -59,7 +59,6 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
     out->corridors_.clear();
     out->arenas_.clear();
     out->mto_ = formats::Mto();
-    out->mtoBytes_.clear();
     out->levelTextures_ = formats::TextureArchive();
 
     char base[128];
@@ -88,20 +87,25 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
         }
     }
 
-    // The arenas. The bytes are kept in the level (mtoBytes_): the MTO and the
-    // arenas/animations it parses borrow them for the level's whole life. The
-    // reset above already emptied it, and a failed read does not touch the
-    // buffer it was given, so the reset is what keeps a failed load empty.
+    // The arenas, one block at a time (Mto::open): only the directory stays
+    // with the level, and each arena is read by range, parsed, and its block
+    // freed. The reset above is what keeps a failed load empty.
     path = std::string(base) + "O.MTO";
-    if (!data->read(path, &out->mtoBytes_)) {
+    if (!formats::Mto::open(&out->mto_, data, path)) {
         return false;
     }
-    out->mto_ = formats::Mto::parse(out->mtoBytes_.data(), (int32_t)out->mtoBytes_.size());
     for (size_t i = 0; i < out->mto_.arenaNames().size(); i++) {
         const formats::Arena* arena = out->mto_.getArena(out->mto_.arenaNames()[i]);
         if (arena) {
             out->arenas_.push_back(arena);
         }
+    }
+    // A block that could not be READ fails the load, as the whole-file read
+    // used to (a block that reads but does not parse is skipped, as before).
+    if (out->mto_.readFailures() > 0) {
+        out->arenas_.clear();
+        out->mto_ = formats::Mto();
+        return false;
     }
 
     // The level's own textures, shared by every arena.

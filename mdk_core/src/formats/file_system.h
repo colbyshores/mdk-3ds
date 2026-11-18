@@ -44,6 +44,12 @@ struct FileSystem {
     // Read a whole file. Returns false when it cannot be read.
     bool (*readFile)(void* user, const char* path, std::vector<uint8_t>* outBytes) = nullptr;
 
+    // Read exactly `length` bytes at `offset` of a file; false on a short read.
+    // Optional: MdkData::readRange falls back to readFile and a slice when a
+    // platform leaves it null.
+    bool (*readRange)(void* user, const char* path, int32_t offset, int32_t length,
+                      std::vector<uint8_t>* outBytes) = nullptr;
+
     // Does a file exist and can it be read?
     bool (*fileExists)(void* user, const char* path) = nullptr;
 

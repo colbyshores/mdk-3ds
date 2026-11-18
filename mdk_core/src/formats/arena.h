@@ -185,6 +185,10 @@ public:
     // index (for the load-time checks).
     int32_t modelCount() const { return (int32_t)models_.size(); }
     int32_t animationCount() const { return (int32_t)animations_.size(); }
+    const std::string& animationName(int32_t index) const { return animations_[index].first; }
+    // Animations parse() had to drop because a track lay outside the arena's
+    // block (keepAnimationBytes). Zero on every retail level (format_tests).
+    int32_t droppedAnimations() const { return droppedAnimations_; }
     const std::string& modelName(int32_t index) const { return models_[index].first; }
 
     int32_t triangleCount() const { return (int32_t)triangleMaterials_.size(); }
@@ -222,6 +226,13 @@ private:
     // sounds are read past, not kept: the audio path is elsewhere.
     void parseModels(const uint8_t* bytes, int32_t byteCount, int32_t baseOffset);
 
+    // Copy [from, to) of the parse buffer -- the models section -- into
+    // animationBytes_ and rebase every animation onto it. If any track falls
+    // outside that range, the whole block [blockStart, blockEnd) is kept
+    // instead; an animation outside even that is dropped and counted.
+    void keepAnimationBytes(const uint8_t* bytes, int32_t from, int32_t to, int32_t blockStart,
+                            int32_t blockEnd);
+
     std::string name_;
     std::vector<uint8_t> paletteRgb_;
     TextureArchive textures_;
@@ -237,6 +248,11 @@ private:
     uint32_t clipFlag_ = 0;
     std::vector<std::pair<std::string, Model>> models_;
     std::vector<std::pair<std::string, ModelAnimation>> animations_;
+    // The bytes the animations' tracks are decoded from at bake time: a copy
+    // of this arena's models section, so nothing borrows the MTO file. Never
+    // resized after keepAnimationBytes: the animations hold its data().
+    std::vector<uint8_t> animationBytes_;
+    int32_t droppedAnimations_ = 0;
 };
 
 } // namespace formats

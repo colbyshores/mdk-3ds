@@ -41,8 +41,12 @@
 // per frame. A delta track is the base vertices and then, for the frames the
 // file names, an s8 delta per vertex added to the previous frame.
 //
-// THE FILE IS BORROWED. The tracks are read from it when the animation is
-// baked, so the buffer must outlive the animation.
+// THE TRACKS' BYTES ARE BORROWED. The tracks are read when the animation is
+// baked, so the buffer must outlive the animation. parse() borrows the buffer
+// it was given; an MTO arena then hands every animation a COPY of its models
+// section and rebase()s it there (Arena::parse), so an arena's animations
+// borrow only the arena that owns them, never the level's MTO file
+// (docs/ARENA_STREAMING_SPEC.md Phase 1: the file is not kept resident).
 // ============================================================================
 
 #include <stdint.h>
@@ -81,6 +85,14 @@ public:
     // Parse a 1996 demo animation. Returns false when the data runs out.
     static bool parseBeta(ModelAnimation* out, const std::string& name, const uint8_t* bytes, int32_t byteCount,
                           int32_t offset);
+
+    // Point the tracks at `bytes`, a copy of the parsed buffer's
+    // [shift, shift + byteCount) range. False, changing nothing, when a
+    // track's header would fall outside it.
+    bool rebase(const uint8_t* bytes, int32_t byteCount, int32_t shift);
+
+    // Whether every track's header lies in [from, to) of the parsed buffer.
+    bool tracksWithin(int32_t from, int32_t to) const;
 
     // Whether this animation moves `model`: one of its tracks names a part
     // of the model (a level's load bakes these pairs).

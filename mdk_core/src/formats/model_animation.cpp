@@ -151,6 +151,36 @@ bool ModelAnimation::parse(ModelAnimation* out, const std::string& name, const u
     return true;
 }
 
+bool ModelAnimation::rebase(const uint8_t* bytes, int32_t byteCount, int32_t shift) {
+    if (!bytes || byteCount <= 0) {
+        return false;
+    }
+    // A track's header is 20 bytes (its name, then the float that picks its
+    // kind); decodeTrack refuses one that does not fit, so this refuses the
+    // same, BEFORE anything moves.
+    for (std::map<std::string, int32_t>::const_iterator it = tracks_.begin(); it != tracks_.end(); ++it) {
+        const int32_t at = it->second - shift;
+        if (at < 0 || at + 20 > byteCount) {
+            return false;
+        }
+    }
+    for (std::map<std::string, int32_t>::iterator it = tracks_.begin(); it != tracks_.end(); ++it) {
+        it->second -= shift;
+    }
+    bytes_ = bytes;
+    byteCount_ = byteCount;
+    return true;
+}
+
+bool ModelAnimation::tracksWithin(int32_t from, int32_t to) const {
+    for (std::map<std::string, int32_t>::const_iterator it = tracks_.begin(); it != tracks_.end(); ++it) {
+        if (it->second < from || it->second + 20 > to) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ModelAnimation::parseBeta(ModelAnimation* out, const std::string& name, const uint8_t* bytes,
                                int32_t byteCount, int32_t offset) {
     if (!out || !bytes || offset < 0 || offset > byteCount) {

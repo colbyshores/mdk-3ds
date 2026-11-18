@@ -111,10 +111,10 @@ public:
 private:
     int32_t number_ = 0;
     formats::Dti dti_;
-    // The MTO file bytes, OWNED here: the MTO borrows them, and the arenas it
-    // parses on demand (and their animations' track data) borrow them too.
-    // Declared before mto_ so it outlives it (members destroy in reverse order).
-    std::vector<uint8_t> mtoBytes_;
+    // The level's arenas, STREAMED from the MTO file by block (Mto::open): the
+    // file is never resident whole, and every arena owns what it keeps
+    // (docs/ARENA_STREAMING_SPEC.md Phase 1). It borrows the MdkData the level
+    // was loaded with, which the frontends and tests keep for the level's life.
     formats::Mto mto_;
     formats::TextureArchive levelTextures_;
     std::vector<const formats::Arena*> arenas_;

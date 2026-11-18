@@ -22,6 +22,8 @@
 #include "test_support.h"
 
 #include "formats/arena.h"
+#include "formats/bin_reader.h"
+#include "formats/model_animation.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/dti.h"
 #include "formats/mdk_data.h"
@@ -362,6 +364,115 @@ MDK_TEST(MtoKeepsTheArenasItWasGiven) {
     MDK_CHECK_STR_EQ(mine->name(), "GIVEN_1");
     delete mine;
     MDK_CHECK_EQ(Arena::liveCount(), before);
+}
+
+// Two bakes, frame by frame, part by part, vertex by vertex, bit for bit.
+static bool sameBake(const std::vector<std::vector<std::vector<Vec3f>>>& a,
+                     const std::vector<std::vector<std::vector<Vec3f>>>& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t f = 0; f < a.size(); f++) {
+        if (a[f].size() != b[f].size()) {
+            return false;
+        }
+        for (size_t p = 0; p < a[f].size(); p++) {
+            if (a[f][p].size() != b[f][p].size() ||
+                (!a[f][p].empty() &&
+                 memcmp(a[f][p].data(), b[f][p].data(), a[f][p].size() * sizeof(Vec3f)) != 0)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// ARENA STREAMING PHASE 1: THE MTO IS NOT RESIDENT, AND NOTHING READ FROM IT
+// CHANGED. LevelData::load reads each arena's block by range (Mto::open) and
+// frees it; an arena keeps only a copy of its models section, where its
+// animations' tracks are decoded at bake time. If any track ran past that
+// copy, its bake would silently fall back to the rest pose -- so this bakes
+// EVERY (model, animation) pair of every arena of levels 3-8 both ways: from
+// the streamed level, and from a reference parsed against the WHOLE file (the
+// old, borrowing path), and requires them identical.
+MDK_TEST(StreamedArenasBakeExactlyAsTheWholeFile) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    int32_t pairs = 0;
+    for (int32_t number = 3; number <= 8; number++) {
+        mdk::LevelData level;
+        MDK_CHECK(mdk::LevelData::load(&level, &game, number));
+        char path[64];
+        snprintf(path, sizeof(path), "TRAVERSE/LEVEL%d/LEVEL%dO.MTO", (int)number, (int)number);
+        std::vector<uint8_t> whole;
+        MDK_CHECK(game.read(path, &whole));
+        const Mto directory = Mto::parse(whole.data(), (int32_t)whole.size());
+        for (size_t a = 0; a < directory.arenaNames().size(); a++) {
+            const Arena* streamed = level.arenaNamed(directory.arenaNames()[a]);
+            MDK_CHECK(streamed != nullptr);
+            if (!streamed) {
+                continue;
+            }
+            MDK_CHECK_EQ(streamed->droppedAnimations(), 0);
+            // The reference: the models directory read straight from the file
+            // (Arena::parse's offsets: the block's buffer starts after its size).
+            const int32_t buf = directory.arenaOffsets()[a] + 4;
+            const int32_t models = buf + (int32_t)binU32(whole.data(), buf);
+            const int32_t base = models + 4;
+            const uint32_t animationCount = binU32(whole.data(), base);
+            MDK_CHECK_EQ((int32_t)animationCount, streamed->animationCount());
+            for (uint32_t i = 0; i < animationCount; i++) {
+                const int32_t entry = base + 12 + (int32_t)i * 12;
+                char name[9] = {};
+                memcpy(name, whole.data() + entry, 8);
+                const int32_t offset = base + (int32_t)binU32(whole.data(), entry + 8);
+                ModelAnimation reference;
+                if (!ModelAnimation::parse(&reference, name, whole.data(), (int32_t)whole.size(),
+                                           offset)) {
+                    continue;
+                }
+                const ModelAnimation* mine = streamed->animation(name);
+                MDK_CHECK(mine != nullptr);
+                if (!mine) {
+                    continue;
+                }
+                // Against EVERY model of the level, not only this arena's: the
+                // scripts pair an arena's animation with whatever model the
+                // object has (ScriptRuntime::getAnimation), and a foreign model
+                // with more vertices on a same-named part reads further into
+                // the track than the arena's own models do (review, 2026-11-18).
+                for (size_t o = 0; o < level.arenas().size(); o++) {
+                    const Arena* owner = level.arenas()[o];
+                    for (int32_t m = 0; m < owner->modelCount(); m++) {
+                        const Model* model = owner->model(owner->modelName(m));
+                        if (!model || !reference.animates(*model)) {
+                            continue;
+                        }
+                        pairs++;
+                        MDK_CHECK(sameBake(mine->bake(*model), reference.bake(*model)));
+                    }
+                }
+            }
+        }
+    }
+    MDK_CHECK(pairs > 0);
+    printf("  streamed arenas: %d (model, animation) pairs baked identically\n", (int)pairs);
+}
+
+// A short range read is a failure, not a truncated success (AGENTS.md P5).
+MDK_TEST(RangeReadsAreExact) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    std::vector<uint8_t> whole;
+    MDK_CHECK(game.read("TRAVERSE/LEVEL3/LEVEL3O.MTO", &whole));
+    std::vector<uint8_t> part;
+    MDK_CHECK(game.readRange("TRAVERSE/LEVEL3/LEVEL3O.MTO", 100, 64, &part));
+    MDK_CHECK(part.size() == 64 && memcmp(part.data(), whole.data() + 100, 64) == 0);
+    MDK_CHECK(!game.readRange("TRAVERSE/LEVEL3/LEVEL3O.MTO", (int32_t)whole.size() - 8, 16, &part));
 }
 
 // A whole level gives back every arena it took: the MTO's and its own

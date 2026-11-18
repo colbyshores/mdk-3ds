@@ -8,7 +8,8 @@
 // THE FILE: a directory at 0x14, of u32 count and then per entry a char[8]
 // name and a u32 offset to the arena's block, in file order.
 //
-// THE ARENAS ARE PARSED ON DEMAND. A level's MTO is 8 MB and holds ten
+// THE ARENAS ARE PARSED ON DEMAND (but LevelData::load asks for every one at
+// load today; freeing them is the arena streaming's Phase 2). A level's MTO is 8 MB and holds ten
 // arenas, and the game only ever draws the current one and the one behind
 // an open door, so parsing them all up front would be both slow and memory
 // hungry. The offsets are cheap; the parsing is not.
@@ -27,6 +28,7 @@ namespace mdk {
 namespace formats {
 
 class Arena;
+class MdkData;
 
 // A level's arena file.
 //
@@ -71,6 +73,14 @@ public:
     // yet.
     static Mto parse(const uint8_t* bytes, int32_t byteCount);
 
+    // THE STREAMED FORM (docs/ARENA_STREAMING_SPEC.md Phase 1): only the
+    // directory is read and kept; getArena() reads that arena's block alone,
+    // by range, parses it, and frees it (the arena keeps a copy of its models
+    // section for its animations, Arena::parse). So a level's MTO -- 10.3 MB on
+    // level 8 -- is never resident whole. `data` is BORROWED and must outlive
+    // every getArena() call. False when the directory cannot be read.
+    static bool open(Mto* out, const MdkData* data, const std::string& path);
+
     // Add an arena that was read from elsewhere. The Mto does not own it and
     // will not delete it; the caller must keep it alive for the Mto's life.
     void add(const Arena* arena);
@@ -83,6 +93,10 @@ public:
 
     bool has(const std::string& name) const;
 
+    // Streamed-form blocks that could not be read (a short read, a corrupt
+    // size): the level's load fails on any (LevelData::load).
+    int32_t readFailures() const { return readFailures_; }
+
     // The arena with this name, parsed on demand and cached. Returns null
     // when there is no such arena.
     Arena* getArena(const std::string& name);
@@ -92,6 +106,12 @@ private:
     // owns it, and the Mto does not outlive it.
     const uint8_t* bytes_ = nullptr;
     int32_t byteCount_ = 0;
+
+    // The streamed form's file (open()): read one block at a time. Null for a
+    // parsed or empty Mto.
+    const MdkData* data_ = nullptr;
+    std::string path_;
+    int32_t readFailures_ = 0;
 
     std::vector<std::string> names_;
     std::vector<int32_t> offsets_;

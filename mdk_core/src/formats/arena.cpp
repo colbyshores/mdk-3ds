@@ -71,7 +71,67 @@ Arena* Arena::parse(const std::string& name, const uint8_t* bytes, int32_t byteC
     // elsewhere.
     arena->parseModels(bytes, byteCount, models + 4);
 
+    // THE ANIMATIONS' OWN BYTES (docs/ARENA_STREAMING_SPEC.md Phase 1). The
+    // models section runs from `models` to the next section's start (palette
+    // and world follow it in every retail arena: measured on LEVEL3O.MTO and
+    // LEVEL8O.MTO, 2026-11-18) or the block's end. That span -- 2.4 MB of
+    // level 8's 10.3 MB -- is all an animation reads when it bakes, so it is
+    // the only part of the block the arena keeps.
+    // The size field counts itself: the block is [offset, offset + size).
+    const int32_t blockEnd = offset + (int32_t)binU32(bytes, offset);
+    int32_t end = blockEnd < byteCount ? blockEnd : byteCount;
+    if (palette > models && palette < end) {
+        end = palette;
+    }
+    if (world > models && world < end) {
+        end = world;
+    }
+    if (models >= buf && models < end) {
+        arena->keepAnimationBytes(bytes, models, end, buf, blockEnd < byteCount ? blockEnd : byteCount);
+    } else {
+        // No span to keep (corrupt offsets): no animation may survive the
+        // parse buffer, which the streamed form frees on return.
+        arena->droppedAnimations_ += (int32_t)arena->animations_.size();
+        arena->animations_.clear();
+    }
+
     return arena;
+}
+
+void Arena::keepAnimationBytes(const uint8_t* bytes, int32_t from, int32_t to, int32_t blockStart,
+                               int32_t blockEnd) {
+    if (animations_.empty()) {
+        return;
+    }
+    // Decide the range FIRST, for every animation, so the rebase below cannot
+    // fail halfway and leave some animations on the copy and some on the parse
+    // buffer that is about to go away.
+    bool inModels = true;
+    for (size_t i = 0; i < animations_.size() && inModels; i++) {
+        inModels = animations_[i].second.tracksWithin(from, to);
+    }
+    if (!inModels) {
+        from = blockStart;   // never measured on retail data: the whole block
+        to = blockEnd;
+    }
+    if (from < 0 || to <= from) {
+        droppedAnimations_ += (int32_t)animations_.size();
+        animations_.clear();
+        return;
+    }
+    animationBytes_.assign(bytes + from, bytes + to);
+    // An animation with a track outside even the block cannot be kept: once
+    // the parse buffer is freed it would read freed memory. It is dropped,
+    // and droppedAnimations() says so (the format tests require zero).
+    std::vector<std::pair<std::string, ModelAnimation>> kept;
+    for (size_t i = 0; i < animations_.size(); i++) {
+        if (animations_[i].second.rebase(animationBytes_.data(), (int32_t)animationBytes_.size(), from)) {
+            kept.push_back(animations_[i]);
+        } else {
+            droppedAnimations_++;
+        }
+    }
+    animations_.swap(kept);
 }
 
 Arena* Arena::parseWorld(const std::string& name, const uint8_t* bytes, int32_t byteCount,
