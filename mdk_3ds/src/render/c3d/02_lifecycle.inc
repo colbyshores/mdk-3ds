@@ -38,6 +38,33 @@ static void releaseEyeTargets(RendererC3D* r) {
     r->targetsShareDepth = false;
 }
 
+// The glow's VRAM (06_draw.inc ensureGlow), outside a frame only, like the eye
+// targets: the first C3D_RenderTargetDelete waits for the GPU queue, so nothing
+// still reads the textures freed after it. Released whenever the eye targets are
+// rebuilt and remade on the glow's next use, so the glow's 0.7 MB never sits
+// between the eye buffers a rebuild needs contiguous (review, 2026-11-18: glow on
+// first, then edge smoothing, could otherwise fragment the VRAM into a refusal).
+// A refusal is forgotten too: it may have been the old layout's.
+static void releaseGlow(RendererC3D* r) {
+    for (int i = 0; i < mdk::pica::kGlowSmallCount; i++) {
+        if (r->glowTarget[i]) {
+            C3D_RenderTargetDelete(r->glowTarget[i]);
+            r->glowTarget[i] = nullptr;
+        }
+    }
+    for (int i = 0; i < mdk::pica::kGlowSmallCount; i++) {
+        if (r->glowSmallMade[i]) {
+            C3D_TexDelete(&r->glowSmall[i]);
+            r->glowSmallMade[i] = false;
+        }
+    }
+    if (r->glowReady) {
+        C3D_TexDelete(&r->glowTex);
+        r->glowReady = false;
+    }
+    r->glowRefused = false;
+}
+
 // Both eyes at `scale`, or neither (false, nothing held). The caller has released
 // the previous pair: the VRAM is not big enough for both generations at once.
 static bool buildEyeTargets(RendererC3D* r, int scale) {
@@ -327,6 +354,7 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
     // Freeing the textures before that wait would hand back memory the GPU
     // may still be reading (AGENTS.md P3); the heap itself goes when the
     // process exits, which is the only caller of this destructor.
+    releaseGlow(r);
     releaseEyeTargets(r);
     if (r->dvlb) {
         if (r->litReady) {
@@ -337,6 +365,17 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
         r->dvlb = nullptr;
     }
     C3D_Fini();
+    // The glow's linear memory after C3D_Fini, which waited for the queue that
+    // may still have been reading it (AGENTS.md P3).
+    if (r->glowScratch) {
+        linearFree(r->glowScratch);
+    }
+    if (r->glowQuad) {
+        linearFree(r->glowQuad);
+    }
+    if (r->glowLevelQuad) {
+        linearFree(r->glowLevelQuad);
+    }
     delete r;
 }
 

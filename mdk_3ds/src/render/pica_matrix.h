@@ -278,6 +278,9 @@ enum BlendFactor {
     kBlendOne = 1,
     kBlendSrcAlpha = 2,
     kBlendOneMinusSrcAlpha = 3,
+    kBlendOneMinusDstColour = 4,   // the glow's screen blend only (kBlendScreen)
+    kBlendConstantAlpha = 5,       // the glow's level mix only (kBlendGlowMix)
+    kBlendOneMinusConstantAlpha = 6,
 };
 
 // What one draw does with what is already in the target.
@@ -304,6 +307,82 @@ struct BlendState {
 // `blendStateForPass` so the host suite and the renderer agree on one pair.
 const BlendState kBlendReplace = {false, kBlendOne, kBlendZero, kBlendOne,
                                   kBlendZero};
+
+// THE GLOW'S BLEND (Enhanced Mode glow, 06_draw.inc drawGlow): a SCREEN,
+// s * (1 - d) + d = 1 - (1 - s)(1 - d), which is the PC's post.frag
+// `1.0 - (1.0 - colour) * (1.0 - shine)` exactly -- here in the panel's sRGB
+// values, where the PC's is in linear light. Alpha is left as it was.
+const BlendState kBlendScreen = {true, kBlendOneMinusDstColour, kBlendOne, kBlendZero,
+                                 kBlendOne};
+
+// THE GLOW'S LEVEL MIX: level 3 := a * level5 + (1 - a) * level3 with the blend
+// colour's alpha a = 1/2 -- the PC's (scene@mip3 + scene@mip5) / 2, folded into
+// level 3 so one texture unit reads both (06_draw.inc drawGlow).
+const BlendState kBlendGlowMix = {true, kBlendConstantAlpha, kBlendOneMinusConstantAlpha,
+                                  kBlendZero, kBlendOne};
+
+// ---------------------------------------------------------------------------
+// THE GLOW (Enhanced Mode enableGlowBillboards; the PC's post.frag shine).
+//
+// The PC:   blurred = to_linear((scene@mip3 + scene@mip5) / 2)
+//           shine   = clamp(max(blurred - 0.8, 0) * 0.8)          (glow.x = 0)
+//           colour  = 1 - (1 - colour)(1 - shine)                   (linear)
+// The PICA works in the panel's sRGB values and its combiner has no power
+// function, so two things are carried over:
+//
+// THE THRESHOLD. 0.8 linear is 0.8^(1/2.2) = 0.9036 sRGB, and over the
+// [0.9036, 1] band the PC's shine is, to first order, 0.15 * u with
+// u = (b_s - 0.9036) / 0.0964 in [0, 1] (0.15 = 0.8 * (1 - 0.8)).
+//
+// THE BLEND. A screen in sRGB values (kBlendScreen) cannot equal a screen in
+// linear light for every background: the PC's lift over black is
+// shine^(1/2.2), over mid-grey about a quarter of that. So the shine the PICA
+// screens is the curve s*(u) that minimises the squared error against the PC's
+// result over every background colour (fitted 2026-11-18): the PC's own shine
+// (s = 0.15u) misses it by up to 69/255, s* by up to 30/255. The combiner draws
+// s* as P * min(1, u / u0) + Q * u (within 2.8/255 of s*): six stages, the
+// buffer carrying Q * u past the clamp (06_draw.inc drawGlow).
+// ---------------------------------------------------------------------------
+const float kGlowThresholdSrgb = 0.9036f;
+const float kGlowBand = 0.0964f;          // 1 - kGlowThresholdSrgb: u's unit
+const float kGlowCurveP = 0.0693f;
+const float kGlowCurveQ = 0.2450f;
+const float kGlowCurveU0 = 0.2551f;       // = 1 / (16 Q): two x4 stages reach it
+
+// The glow texture: the eye's 240x400 picture, copied tile row by tile row
+// into the bottom-left of a 256x512 RGBA8 texture whose mip levels 3 and 5 are
+// the PC's two blur levels (30x50 and 7.5x12.5 of picture).
+const int32_t kGlowTexWidth = 256;
+const int32_t kGlowTexHeight = 512;
+const int32_t kGlowMidLevel = 3;    // 32x64: the PC's mip 3
+const int32_t kGlowLowLevel = 5;    // 8x16: the PC's mip 5
+// Every blur level is its own single-level texture: level k (1..5) at index
+// k - 1, (256 >> k) x (512 >> k), made by a render-to-texture draw from the
+// level above that samples bilinearly at texel corners (an exact 2x2 average).
+// Not the transfer engine's scaling (citro3d itself never uses a tiled-to-tiled
+// scaled transfer, so nothing shows the console does one at these widths -- review,
+// 2026-11-18), and not the picture texture's own mip levels (rendering into
+// those never reached the sampler in the emulator). Index kGlowSmallMix is
+// level 3 with level 5 mixed in -- the PC's (mip3 + mip5) / 2 -- and the one
+// the final quad reads.
+const int32_t kGlowSmallCount = 6;
+const int32_t kGlowSmallMix = 5;    // 32x64
+
+// A draw into a render target made from a texture covers texel (s, t) at
+// clip (2s - 1, 2t - 1): the framebuffer's first memory row is the clip's top
+// (y = +1) and a texture's first memory row is t = 1 (both measured, see
+// glowTexCoord), and its columns run with clip x as the panel's do. So the
+// level-pass quad is the identity: corner (s, t) at clip (2s - 1, 2t - 1),
+// sampling (s, t).
+void glowLevelCorner(float s, float t, float* clipX, float* clipY);
+
+// The glow quad's texture coordinate for a canvas corner at (fx, fy), each in
+// [0, 1] across the panel (y down). The panel is the portrait framebuffer
+// rotated: a framebuffer row is a panel column, so s runs along the panel's
+// height (bottom to top) and t along its width (t = 1 at the first row in
+// memory, the panel's left edge), each scaled by the picture's share of the
+// texture (240 / 256, 400 / 512).
+void glowTexCoord(float fx, float fy, float* s, float* t);
 
 // The oracle's rule, in one place so a host test can hold it to the C#.
 //

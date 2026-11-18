@@ -291,6 +291,27 @@ struct RendererC3D {
     // A scale-2 build that failed: stay at scale 1 until the toggle goes off, so
     // a full VRAM is one refusal line, not a rebuild attempt every frame.
     bool smoothingRefused = false;
+    // The target installEye selected last: the glow pass copies from it.
+    C3D_RenderTarget* eyeTarget = nullptr;
+
+    // THE GLOW (Enhanced Mode enableGlowBillboards, 06_draw.inc drawGlow). Made on
+    // first use, in VRAM (citro3d renders only into VRAM), and released whenever
+    // the eye targets are rebuilt (releaseGlow): the picture's texture (256x512,
+    // one level), one single-level texture per blur level 1-5 plus the mix, each
+    // with a render target (pica::kGlowSmallCount), the 2x target's averaged copy
+    // (linear), the full-panel quad and the small-pass quad (linear).
+    C3D_Tex glowTex;
+    C3D_Tex glowSmall[mdk::pica::kGlowSmallCount];
+    bool glowSmallMade[mdk::pica::kGlowSmallCount] = {};
+    C3D_RenderTarget* glowTarget[mdk::pica::kGlowSmallCount] = {};
+    u32* glowScratch = nullptr;
+    float* glowQuad = nullptr;
+    float* glowLevelQuad = nullptr;
+    float glowQuadWidth = 0.0f;   // the canvas width the quad was built for
+    bool glowReady = false;
+    bool glowRefused = false;     // an allocation failed: no glow this session
+    bool glowLive = false;        // decided once per frame (prepareGlow)
+    int32_t glowPasses = 0;       // this frame's glow draws, for the log
     C3D_RenderTarget* targetBottom = nullptr;
 
     // The camera, kept so each eye can be rendered with its own offset.

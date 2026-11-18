@@ -497,5 +497,21 @@ bool hdMayDispatch(size_t residentBytes, size_t readsInFlight, size_t largestByt
     return evictable || residentBytes + (readsInFlight + 1) * largestBytes <= budgetBytes;
 }
 
+void glowLevelCorner(float s, float t, float* clipX, float* clipY) {
+    *clipX = 2.0f * s - 1.0f;
+    *clipY = 2.0f * t - 1.0f;
+}
+
+void glowTexCoord(float fx, float fy, float* s, float* t) {
+    // Framebuffer column = 239 - panel row, framebuffer row = panel column
+    // (03_frame.inc writeScreenshotBmp's rotation). A texture's s runs along its
+    // rows (the framebuffer's width) and t along its height -- DOWNWARD from the
+    // first row in memory: t = 1 is memory row 0. Measured in Mandarine
+    // (2026-11-18): with t = fx * 400/512 the blur came out mirrored left to
+    // right and shifted by the 112 padding rows.
+    *s = (1.0f - fy) * (240.0f / (float)kGlowTexWidth);
+    *t = 1.0f - fx * (400.0f / (float)kGlowTexHeight);
+}
+
 } // namespace pica
 } // namespace mdk

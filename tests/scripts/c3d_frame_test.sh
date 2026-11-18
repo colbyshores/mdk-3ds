@@ -920,14 +920,15 @@ def adjudicate(text, quiet=False):
               % (len(late_reset), "none" if not late_reset else "; ".join(late_reset)))
 
     per_eye_reset = []
-    for fn in ("installEye", "replayQueue", "drawRecorded", "drawDiagnostic"):
+    for fn in ("installEye", "replayQueue", "drawRecorded", "drawDiagnostic", "drawGlow"):
         b = body(text, fn)
         if b is None:
             per_eye_reset.append(fn + "(missing)")
             continue
         per_eye_reset.extend("%s:%s" % (fn, loc) for _, loc in sites(b, RESET))
     rep.check("per-eye-functions-do-not-empty-the-queue", not per_eye_reset,
-              "none of installEye/replayQueue/drawRecorded/drawDiagnostic empties the queue: %s (the eye "
+              "none of installEye/replayQueue/drawRecorded/drawDiagnostic/drawGlow empties the "
+              "queue: %s (the eye "
               "loop calls these, so a reset in any of them is a reset between the two eyes seen "
               "from inside a function the loop's own text cannot see)"
               % ("clean" if not per_eye_reset else ", ".join(per_eye_reset)))
@@ -1085,15 +1086,17 @@ def adjudicate(text, quiet=False):
     # The emission set is CLOSED (review-3 F1): a seam that does not call
     # replayQueue can still draw by itself, and the queue is not the only thing
     # that can reach the GPU. Every draw call in the file must live in one of the
-    # two functions the per-eye loop reaches, and drawRecorded must be reachable
-    # only from the replay.
+    # functions the per-eye loop reaches, and drawRecorded must be reachable
+    # only from the replay. drawGlow (Enhanced Mode glow) is the third: replayQueue
+    # calls it once per eye, before the Overlay pass, so it lands in every eye (its
+    # small passes draw into its own textures, then it returns to the eye).
     allowed = [line_range(text, body_span(text, n))
-               for n in ("drawRecorded", "drawDiagnostic")]
+               for n in ("drawRecorded", "drawDiagnostic", "drawGlow")]
     stray = [loc for ln, loc in sites(text, EMIT_DRAW)
              if not any(r and r[0] <= ln <= r[1] for r in allowed)]
     rep.check("emission-sites-closed",
               not stray and all(allowed),
-              "%d draw call(s) outside drawRecorded/drawDiagnostic: %s (an immediate draw "
+              "%d draw call(s) outside drawRecorded/drawDiagnostic/drawGlow: %s (an immediate draw "
               "anywhere else is outside the per-eye replay, so it lands in one target or "
               "none)" % (len(stray), "none" if not stray else "; ".join(stray)))
 
@@ -1215,11 +1218,12 @@ def adjudicate(text, quiet=False):
     eye_range = line_range(text, body_span(text, "installEye"))
     # The lit program (enableLighting) is switched per draw, inside the replayed
     # queue, which runs within the frame: drawRecorded switches to it and back, and
-    # drawDiagnostic (the canvas) restores the base program. Those two are the only
-    # other binds allowed; installEye keeps exactly one.
+    # drawDiagnostic (the canvas) restores the base program, and drawGlow's shared
+    # state (glowDrawState) does the same. Those are the only other binds allowed;
+    # installEye keeps exactly one.
     bind = call_sites(text, "C3D_BindProgram")
     draw_ranges = [rg for rg in (line_range(text, body_span(text, fn))
-                                 for fn in ("drawRecorded", "drawDiagnostic")) if rg]
+                                 for fn in ("drawRecorded", "drawDiagnostic", "drawGlow", "glowDrawState")) if rg]
     in_eye = [loc for ln, loc in bind if eye_range and eye_range[0] <= ln <= eye_range[1]]
     bind_stray = [loc for ln, loc in bind
                   if not (eye_range and eye_range[0] <= ln <= eye_range[1])
@@ -1249,6 +1253,74 @@ def adjudicate(text, quiet=False):
               "(the right eye's borrowed depth must be split off the left eye's commands, "
               "then cleared, then drawn on)" % ("yes" if guarded else "NO", split_at,
                                                 clear_at, drawon_at))
+
+    # THE GLOW'S PLACE: called from replayQueue (so once per eye, into that eye's
+    # target), gated on the Overlay pass (so the canvas draws over it, as the PC's
+    # post pass sits under its canvas), and nowhere else.
+    replay_body = body(text, "replayQueue") or ""
+    glow_calls = call_sites(text, "drawGlow")
+    glow_gate = re.search(r"if\s*\(\s*pass\s*==\s*static_cast<int32_t>\(mdk::Pass::Overlay\)\s*\)"
+                          r"\s*\{\s*drawGlow\(r\);", replay_body)
+    rep.check("glow-once-per-eye-before-the-canvas",
+              len(glow_calls) == 1 and glow_gate is not None,
+              "%d drawGlow call site(s); inside replayQueue gated on the Overlay pass: %s "
+              "(anywhere else it lands in one eye, or over the canvas)"
+              % (len(glow_calls), "yes" if glow_gate else "NO"))
+
+    # THE GLOW RESTORES WHAT THE SCENE'S CACHES DESCRIBE. It writes combiner
+    # stages 1-5 and the combiner buffer, and draws into its own small targets;
+    # the caches (lightStageOn, hazeOn) say "pass-through" afterwards, and the
+    # canvas after it draws into the eye with the eye's viewport, so each of those
+    # must be put back before it returns.
+    glow_body = body(text, "drawGlow") or ""
+    tail = glow_body[glow_body.rfind("C3D_DrawArrays"):] if "C3D_DrawArrays" in glow_body else ""
+    back = glow_body.rfind("C3D_FrameDrawOn(eye);")
+    restores = {
+        "stages 1-5": re.search(r"for \(int stage = 1; stage <= 5; stage\+\+\)\s*\{\s*"
+                                r"C3D_TexEnvInit\(C3D_GetTexEnv\(stage\)\);", tail) is not None,
+        "buffer": "C3D_TexEnvBufUpdate(C3D_Both, 0);" in tail,
+        "eye target": back >= 0,
+        "eye viewport": back >= 0 and re.match(
+            r"C3D_FrameDrawOn\(eye\);\s*C3D_SetViewport\(0, 0, \(u32\)r->targetWidth, "
+            r"\(u32\)r->targetHeight\);", glow_body[back:]) is not None,
+    }
+    rep.check("glow-restores-the-frame-state",
+              all(restores.values()),
+              "after its draw, drawGlow restores: %s"
+              % ", ".join("%s %s" % (k, "yes" if v else "NO") for k, v in restores.items()))
+
+    # THE GLOW'S ORDER INSIDE THE COMMAND STREAM. It must split BEFORE it copies
+    # (the copy is a GX queue entry: unsplit, it runs before the eye's scene is
+    # drawn and copies last frame's picture), and every blur pass's draw must be
+    # followed by a framebuffer flush and invalidate before the next pass samples
+    # it (the passes do not split: citro3d's GX queue holds 32 entries).
+    split_at = glow_body.find("C3D_FrameSplit(0);")
+    copy_at = glow_body.find("GX_TextureCopy(")
+    loop = re.search(r"for \(int i = 0; i < 7; i\+\+\) \{(.*?)\n    \}\n", glow_body, re.S)
+    loop_ok = loop is not None and re.search(
+        r"C3D_DrawArrays\(GPU_TRIANGLES, 0, kGlowQuadCorners\);\s*"
+        r"GPUCMD_AddWrite\(GPUREG_FRAMEBUFFER_FLUSH, 1\);\s*"
+        r"GPUCMD_AddWrite\(GPUREG_FRAMEBUFFER_INVALIDATE, 1\);", loop.group(1)) is not None
+    rep.check("glow-splits-before-copying-and-flushes-each-pass",
+              0 <= split_at < copy_at and loop_ok,
+              "split at %d, copy at %d, every blur pass flushed: %s"
+              % (split_at, copy_at, "yes" if loop_ok else "NO"))
+
+    # TWO LIBRARY TRAPS THE EMULATOR CANNOT SHOW (review, 2026-11-18, from the
+    # linked libcitro3d.a's disassembly). C3D_TexGenerateMipmap is a CPU box
+    # filter for a linear texture and a no-op for a VRAM one -- a CPU path in an
+    # enhancement the owner allows only on the PICA200. C3D_TexBind on unit 1 or 2
+    # reads the texture before any check, so a NULL unbind is a data abort on the
+    # console, and a bound unit is sampled on every later fragment -- so this
+    # backend binds unit 0 only.
+    mipgen = calls(text, r"C3D_TexGenerateMipmap\(")
+    high_units = calls(text, r"C3D_TexBind\(\s*(?!0\s*,)[^,]+,")
+    rep.check("no-cpu-mipmaps-and-no-texture-units-above-0",
+              not mipgen and not high_units,
+              "%d C3D_TexGenerateMipmap call(s), %d C3D_TexBind on unit 1/2: %s"
+              % (len(mipgen), len(high_units),
+                 "none" if not (mipgen or high_units)
+                 else "; ".join(loc for _, loc in mipgen + high_units)))
 
     # THE BACKEND'S OWN REFUSED-MESH LINE IS AN EDGE TRIGGER TOO. Review-14's related
     # observation: the frontend's copy of this latch is pinned three times over and
@@ -2610,6 +2682,35 @@ ARMS = [
                          "mdk::pica::kDepthClearValue);\n"
                          "        C3D_FrameSplit(0);\n", 1),
      "borrowed-depth-split-then-cleared-per-right-eye"),
+    ("glow-after-the-canvas",
+     lambda s: s.replace("if (pass == static_cast<int32_t>(mdk::Pass::Overlay)) {\n            drawGlow(r);",
+                         "if (pass == static_cast<int32_t>(mdk::Pass::Count)) {\n            drawGlow(r);", 1),
+     "glow-once-per-eye-before-the-canvas"),
+    ("glow-leaves-the-combiner-buffer-live",
+     lambda s: s.replace("    C3D_TexEnvBufUpdate(C3D_Both, 0);\n    r->lightStageOn = false;\n    r->hazeOn = false;",
+                         "    r->lightStageOn = false;\n    r->hazeOn = false;", 1),
+     "glow-restores-the-frame-state"),
+    ("glow-mips-made-by-the-cpu",
+     lambda s: s.replace("    // THE BLUR (steps 4-6), through the identity matrix",
+                         "    C3D_TexGenerateMipmap(&r->glowTex, GPU_TEXFACE_2D);\n"
+                         "    // THE BLUR (steps 4-6), through the identity matrix", 1),
+     "no-cpu-mipmaps-and-no-texture-units-above-0"),
+    ("glow-unbinds-unit-1-with-null",
+     lambda s: s.replace("    C3D_TexEnvBufUpdate(C3D_Both, 0);\n    r->lightStageOn = false;\n    r->hazeOn = false;",
+                         "    C3D_TexBind(1, nullptr);\n    C3D_TexEnvBufUpdate(C3D_Both, 0);\n"
+                         "    r->lightStageOn = false;\n    r->hazeOn = false;", 1),
+     "no-cpu-mipmaps-and-no-texture-units-above-0"),
+    ("glow-leaves-the-small-viewport",
+     lambda s: s.replace("    C3D_FrameDrawOn(eye);\n    C3D_SetViewport(0, 0, (u32)r->targetWidth, (u32)r->targetHeight);",
+                         "    C3D_FrameDrawOn(eye);", 1),
+     "glow-restores-the-frame-state"),
+    ("glow-copies-before-the-split",
+     lambda s: s.replace("    C3D_RenderTarget* eye = r->eyeTarget;\n    C3D_FrameSplit(0);\n",
+                         "    C3D_RenderTarget* eye = r->eyeTarget;\n", 1),
+     "glow-splits-before-copying-and-flushes-each-pass"),
+    ("glow-pass-unflushed",
+     lambda s: s.replace("        GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);\n", "", 1),
+     "glow-splits-before-copying-and-flushes-each-pass"),
     ("install-fixed-target-for-both-eyes",
      lambda s: s.replace("installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);",
                          "installEye(r, r->targetLeft, 0.0f);", 1),

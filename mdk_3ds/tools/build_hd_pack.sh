@@ -21,9 +21,11 @@
 #      most --max (512; Kurt's sprite frames at most 128), ETC1 / ETC1A4 by alpha, tex3ds -q high -m gaussian (mip
 #      chain prebuilt), manifest.txt. Incremental.
 #
-# Output: --out (default mdk_3ds/build/hd/), the tree the 3DS reads from
+# Output: --out (default build-hd-pack/ at the repo root, ignored as build-*/), the tree the 3DS reads from
 # sdmc:/3ds/mdk/hd/ (docs/HD_TEXTURES_3DS_SPEC.md). It is NOT committed: it is
-# derived from the commercial game data.
+# derived from the commercial game data. It lives OUTSIDE mdk_3ds/build/ on
+# purpose: `make -C mdk_3ds clean` is `rm -rf build`, required on every -D flag
+# change, and it deleted the first full pack (2026-11-18).
 #
 # Needs: MDK_DATA_DIR (default <repo>/MDK), a .NET 10 host (MDK_DOTNET, default
 # /tmp/mdk-dotnet10/dotnet), a Vulkan GPU for Real-ESRGAN (there is no CPU
@@ -34,7 +36,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 LEVELS=3,4,5,6,7,8
 MAX=512
-OUT="$ROOT/mdk_3ds/build/hd"
+OUT="$ROOT/build-hd-pack"
 while [ $# -gt 0 ]; do
     case "$1" in
         --levels) LEVELS=${2:?--levels needs a list}; shift 2 ;;

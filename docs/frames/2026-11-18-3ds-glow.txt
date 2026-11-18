@@ -1,0 +1,8 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-18T15:17:14Z at 7c84e22 + this batch's working tree
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: Enhanced Mode glow on the 3DS (render-to-texture blur, combiner shine,
+screen blend, enableGlowBillboards) and the HD pack's new home (build-hd-pack/).
+Nothing here touches the Linux renderer; the live capture is pixel-identical
+(0 px differ) to the previous pin, so the pinned PNG is that pin's bytes ON
+PURPOSE. Evidence: docs/evidence/2026-11-18-3ds-glow.txt.

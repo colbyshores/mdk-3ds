@@ -1,0 +1,91 @@
+3DS Enhanced Mode glow (enhancement 5 of 7, SPEC.md 7.9) -- EMULATOR evidence
+==============================================================================
+
+Instrument: Mandarine r1.2.1 (20250128-418c25c, md5 0d2adab6...), via
+mdk_3ds/tools/compare_linux.sh -> emurun.sh, DISPLAY=:99, forced llvmpipe OpenGL.
+Builds: make -C mdk_3ds AUTOQUIT=90 FIXED=1 CAPTURE=300 LEVEL=<n>. Fixed 1/60 s.
+NOT a hardware result (the appliance is pinned to another project; the owner
+tests on hardware later, over FTP).
+
+WHAT IT IS
+  The PC's post.frag shine, on the PICA200, behind enableGlowBillboards (the
+  existing GLOW row), when the enhanced rig is on:
+      blurred = to_linear((scene@mip3 + scene@mip5) / 2)
+      shine   = clamp(max(blurred - 0.8, 0) * 0.8)
+      colour  = 1 - (1 - colour)(1 - shine)
+  Per eye, between the scene and the canvas (06_draw.inc drawGlow), all GPU:
+    1. C3D_FrameSplit (the eye's scene is submitted first);
+    2. at edge-smoothing scale 2, a 2x2-averaging transfer to 240x400;
+    3. GX_TextureCopy (a raw copy), 50 tile rows of 7680 bytes, into a 256x512
+       RGBA8 VRAM texture;
+    4. blur levels 1-5 as small separate textures (128x256 .. 8x16), each a
+       render-to-texture quad sampling the level above at texel corners (an
+       exact 2x2 average), each followed by a framebuffer flush in the command
+       list;
+    5. a 32x64 texture := level 3, then += level 5 at constant alpha 1/2: the
+       PC's (mip3 + mip5) / 2 in ONE texture;
+    6. one full-panel quad into the eye: a six-stage combiner (the threshold and
+       the fitted curve below) and a screen blend.
+  One texture unit (0). VRAM ~690 KB, released and remade whenever the eye
+  targets are rebuilt. GX queue: +2 entries per eye (+1 at scale 2), of 32.
+
+THE APPROXIMATION (pica_matrix.h, THE GLOW)
+  The PICA has no power function and blends sRGB values. The threshold is
+  0.9036 sRGB (0.8 linear). No blend factor reproduces a linear-light screen on
+  every background, so the shine screened is the curve that minimises the
+  squared error against the PC's result over all backgrounds, drawn as
+  P*min(1, u/u0) + Q*u (within 2.8/255 of that curve). Modelled against the
+  PC's formula: worst case 30/255 (the PC's own linear shine screened in sRGB
+  would miss by 69/255). Host-tested (pica_matrix_tests.cpp): the constants are
+  reachable by the combiner, both quad mappings, both blend states.
+
+HOW IT GOT HERE (each step measured; probes were temporary builds)
+  - First mapping mirrored and offset by the 112 padding rows: t runs down from
+    memory row 0. Fixed (2026-11-18-3ds-glow-blur-aligned.png).
+  - A first version sampled level 5 on texture unit 1. Unit 1 samples
+    TEXCOORD1 (flat grey under the scene shader), and -- from the review of the
+    linked libcitro3d.a -- C3D_TexBind(1, NULL) is a null dereference on the
+    console and a bound unit cannot be unbound. Now unit 0 only.
+  - The same review: C3D_TexGenerateMipmap is a CPU box filter for a linear
+    texture (no GX call in its body), so it was a CPU path, and it read the
+    previous frame's copy. Now the transfer engine and render-to-texture draws.
+  - citro3d renders only into VRAM (C3D_RenderTargetCreateFromTex refuses
+    anything else: the linear-heap texture's targets came back null).
+  - Rendering into the big texture's own mip levels never reached the sampler
+    in the emulator (level 4 a flat texel, level 5 black, the mix left level 3
+    unchanged); separate single-level textures do.
+  - Second review: the transfer engine's tiled-to-tiled scaling is a path
+    citro3d itself never uses, so the console's behaviour at these widths is
+    unproven -- the blur levels are now render-to-texture too (only the scale-2
+    shrink still uses it: a hardware check). A per-pass C3D_FrameSplit would
+    have used ~28 of the GX queue's 32 entries in stereo at scale 2 (a full
+    queue is svcBreak): the passes flush inside the command list instead. Glow
+    VRAM allocated before edge smoothing could fragment the eye targets' space:
+    it is released and remade around every eye-target rebuild.
+  The source pins the two library traps (c3d_frame_test.sh
+  no-cpu-mipmaps-and-no-texture-units-above-0, with an arm for each), the
+  split before the copy and the flush after every blur pass, the glow's place
+  in the replay, and the state it restores (11 arms in all).
+
+MEASUREMENTS (level 3, frame 300)
+  Against an exact numerical model of this pipeline (box levels, the mix,
+  bilinear sampling, byte-quantised combiner constants, screen blend) run on
+  the glow-off capture, Kurt's known nondeterministic patch excluded: measured
+  lift total 790 vs model 765 (in /255 units), mean |measured - model| on lifted
+  pixels 0.68/255, correlation of the shine 0.999; pixels lifted >4: 21 vs 16;
+  >16: 4 vs 4. The final all-render-to-texture version differs from the
+  transfer-engine version in 7 pixels, all inside that patch.
+  Visible effect is small in this scene, as on the PC: the shine falls on sky
+  that is already near white, where a screen adds almost nothing.
+  Levels 7 and 8 at frame 300: nothing above the threshold (the PC's threshold,
+  by design). The edge-smoothing (scale 2) and stereo runs are in the commit's
+  verification.
+
+NOT VERIFIED (the hardware pass)
+  - Cost per eye on the Old 3DS: a 384 KB copy, seven small render-to-texture
+    passes (the largest 128x256), one full-panel quad (plus a 1.5 MB averaging
+    transfer at scale 2). The owner A/Bs the toggle.
+  - The scale-2 shrink's tiled-to-tiled scaled transfer (see the review note).
+  - GX/render-to-texture ordering and cache behaviour on real hardware.
+  - A scene with a strong glow source over a dark surface: none of the fixed
+    harness frames has one; the arithmetic is verified against the model.

@@ -1378,12 +1378,73 @@ void testTheTexelTileOrder() {
     PICA_CHECK(down > 0);
 }
 
+// THE GLOW (pica_matrix.h). The quad's corners land on the picture's corners in
+// the glow texture, through the panel's quarter turn: the panel's left edge is
+// the texture's first memory row (t = 1), and the panel's bottom is s = 0.
+void testTheGlowQuadMapsThePanelOntoThePicture() {
+    float s = -1.0f, t = -1.0f;
+    mdk::pica::glowTexCoord(0.0f, 0.0f, &s, &t);   // top-left
+    PICA_CHECK(s == 240.0f / 256.0f && t == 1.0f);
+    mdk::pica::glowTexCoord(1.0f, 0.0f, &s, &t);   // top-right
+    PICA_CHECK(s == 240.0f / 256.0f && t == 1.0f - 400.0f / 512.0f);
+    mdk::pica::glowTexCoord(0.0f, 1.0f, &s, &t);   // bottom-left
+    PICA_CHECK(s == 0.0f && t == 1.0f);
+    mdk::pica::glowTexCoord(1.0f, 1.0f, &s, &t);   // bottom-right
+    PICA_CHECK(s == 0.0f && t == 1.0f - 400.0f / 512.0f);
+}
+
+// A small-pass quad covers its whole target with the identity: corner (s, t) at
+// clip (2s - 1, 2t - 1), so the four corners are the clip square's.
+void testTheGlowLevelPassIsTheIdentity() {
+    float x = 0.0f, y = 0.0f;
+    mdk::pica::glowLevelCorner(0.0f, 0.0f, &x, &y);
+    PICA_CHECK(x == -1.0f && y == -1.0f);
+    mdk::pica::glowLevelCorner(1.0f, 1.0f, &x, &y);
+    PICA_CHECK(x == 1.0f && y == 1.0f);
+    mdk::pica::glowLevelCorner(1.0f, 0.0f, &x, &y);
+    PICA_CHECK(x == 1.0f && y == -1.0f);
+    mdk::pica::glowLevelCorner(0.5f, 0.25f, &x, &y);
+    PICA_CHECK(x == 0.0f && y == -0.5f);
+}
+
+// The curve's constants are the ones the combiner can reach: the threshold and
+// the band sum to 1; stage 2's factor Q / (4 band) is a byte at most 1; two x4
+// stages make 16 Q u, which is u / u0 only if u0 = 1 / (16 Q); and the shine is
+// at most the PC's peak lift over black, 0.15^(1/2.2) = 0.422.
+void testTheGlowCurveIsReachableByTheCombiner() {
+    const float t = mdk::pica::kGlowThresholdSrgb;
+    const float band = mdk::pica::kGlowBand;
+    PICA_CHECK(t + band > 0.9999f && t + band < 1.0001f);
+    const float stage2 = mdk::pica::kGlowCurveQ / (4.0f * band);
+    PICA_CHECK(stage2 > 0.0f && stage2 <= 1.0f);
+    const float u0 = 1.0f / (16.0f * mdk::pica::kGlowCurveQ);
+    PICA_CHECK(u0 > mdk::pica::kGlowCurveU0 - 0.001f && u0 < mdk::pica::kGlowCurveU0 + 0.001f);
+    const float peak = mdk::pica::kGlowCurveP + mdk::pica::kGlowCurveQ;   // u = 1
+    PICA_CHECK(peak > 0.0f && peak < 0.422f);
+    // The level mix is (level 3 + level 5) / 2 with the blend colour's alpha at
+    // 1/2: src * a + dst * (1 - a), alpha untouched.
+    PICA_CHECK(mdk::pica::kBlendGlowMix.enable);
+    PICA_CHECK(mdk::pica::kBlendGlowMix.srcColour == mdk::pica::kBlendConstantAlpha);
+    PICA_CHECK(mdk::pica::kBlendGlowMix.dstColour == mdk::pica::kBlendOneMinusConstantAlpha);
+    PICA_CHECK(mdk::pica::kBlendGlowMix.srcAlpha == mdk::pica::kBlendZero);
+    PICA_CHECK(mdk::pica::kBlendGlowMix.dstAlpha == mdk::pica::kBlendOne);
+    // The screen blend is the PC's: 1 - (1 - s)(1 - d) = s * (1 - d) + d.
+    PICA_CHECK(mdk::pica::kBlendScreen.enable);
+    PICA_CHECK(mdk::pica::kBlendScreen.srcColour == mdk::pica::kBlendOneMinusDstColour);
+    PICA_CHECK(mdk::pica::kBlendScreen.dstColour == mdk::pica::kBlendOne);
+    PICA_CHECK(mdk::pica::kBlendScreen.srcAlpha == mdk::pica::kBlendZero);
+    PICA_CHECK(mdk::pica::kBlendScreen.dstAlpha == mdk::pica::kBlendOne);
+}
+
 } // namespace
 
 namespace test {
 
 int runPicaMatrixTests() {
     testIdentityRecognition();
+    testTheGlowQuadMapsThePanelOntoThePicture();
+    testTheGlowCurveIsReachableByTheCombiner();
+    testTheGlowLevelPassIsTheIdentity();
     testIdentityWorldChangesNothing();
     testThePicaRecipe();
     testTheEyeOffset();

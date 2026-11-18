@@ -159,6 +159,9 @@ static GPU_BLENDFACTOR gpuBlendFactor(mdk::pica::BlendFactor factor) {
     case mdk::pica::kBlendOne: return GPU_ONE;
     case mdk::pica::kBlendSrcAlpha: return GPU_SRC_ALPHA;
     case mdk::pica::kBlendOneMinusSrcAlpha: return GPU_ONE_MINUS_SRC_ALPHA;
+    case mdk::pica::kBlendOneMinusDstColour: return GPU_ONE_MINUS_DST_COLOR;
+    case mdk::pica::kBlendConstantAlpha: return GPU_CONSTANT_ALPHA;
+    case mdk::pica::kBlendOneMinusConstantAlpha: return GPU_ONE_MINUS_CONSTANT_ALPHA;
     }
     return GPU_ONE;
 }
@@ -186,6 +189,18 @@ static GPU_BLENDFACTOR gpuBlendFactor(mdk::pica::BlendFactor factor) {
 // because of the alpha test installed next to it -- see
 // `pica::alphaTestPasses` -- since an index-0 texel that is BLENDED with alpha 0
 // still writes depth, and one that is DISCARDED does not.
+// THE ONE BLEND WRITER. `pass`/`mode` are the cache key installBlendState
+// compares; the glow (drawGlow) writes its screen blend with a key no pass has
+// (-2), so the next queued draw rewrites its own.
+static void writeBlendState(RendererC3D* r, const mdk::pica::BlendState& eff, int pass,
+                            int mode) {
+    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
+                   gpuBlendFactor(eff.srcColour), gpuBlendFactor(eff.dstColour),
+                   gpuBlendFactor(eff.srcAlpha), gpuBlendFactor(eff.dstAlpha));
+    r->blendPass = pass;
+    r->blendMode = mode;
+}
+
 static void installBlendState(RendererC3D* r, mdk::Pass pass, mdk::Blend blend) {
     const mdk::pica::BlendState s = mdk::pica::blendStateForPass(pass, blend);
     // `enable` is read here, not only asserted by the host suite: a state the
@@ -197,11 +212,7 @@ static void installBlendState(RendererC3D* r, mdk::Pass pass, mdk::Blend blend) 
     // (`alpha-blend-single-writer`) and a second writer would write behind the
     // blend cache's back.
     const mdk::pica::BlendState eff = s.enable ? s : mdk::pica::kBlendReplace;
-    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
-                   gpuBlendFactor(eff.srcColour), gpuBlendFactor(eff.dstColour),
-                   gpuBlendFactor(eff.srcAlpha), gpuBlendFactor(eff.dstAlpha));
-    r->blendPass = static_cast<int>(pass);
-    r->blendMode = static_cast<int>(blend);
+    writeBlendState(r, eff, static_cast<int>(pass), static_cast<int>(blend));
 }
 
 // Install ONE EYE: its target, its matrix, and every piece of fixed state the
@@ -239,6 +250,7 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
         C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH, 0, mdk::pica::kDepthClearValue);
     }
     C3D_FrameDrawOn(target);
+    r->eyeTarget = target;
 
     // The MVP for this eye: the view-projection with both PICA conversions
     // baked in. It is KEPT on the renderer, because a draw that carries a
@@ -398,6 +410,13 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
     C3D_TexEnvInit(C3D_GetTexEnv(2));
     r->hazeOn = false;
+    // Stages 3-5 and the combiner buffer belong to the glow pass alone, which
+    // resets them after itself; written here too, every eye, because an
+    // unwritten PICA register is frame state nobody set (AGENTS.md P2).
+    for (int stage = 3; stage <= 5; stage++) {
+        C3D_TexEnvInit(C3D_GetTexEnv(stage));
+    }
+    C3D_TexEnvBufUpdate(C3D_Both, 0);
     // THE LIGHT, likewise: the unlit program bound (above), combiner stage 1 a
     // passthrough, and the world matrix the identity (the VS writes a world
     // position for every draw; only the lit program reads it).
@@ -436,6 +455,7 @@ static void applyEdgeSmoothing(RendererC3D* r) {
     if (want == r->targetScale && r->targetLeft) {
         return;
     }
+    releaseGlow(r);
     releaseEyeTargets(r);
     if (buildEyeTargets(r, want)) {
         return;
@@ -766,6 +786,9 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // triangle in one eye and a hole in the other.
     prepareHaze(r);
     prepareLighting(r);
+    // The glow (Enhanced Mode enableGlowBillboards) follows the enhanced rig, as
+    // the PC's post pass does; a session whose glow memory failed stays off.
+    r->glowLive = r->toggles.enableGlowBillboards && r->lighting.enabled && !r->glowRefused;
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
@@ -818,6 +841,11 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
                           (int)r->programSwitches, (int)r->eyes.passes);
     }
     r->programSwitches = 0;
+    if (r->glowLive && (r->frame % 300) == 0) {
+        mdk::log3dsPrintf("glow: frame %d: %d passes (%d eyes, scale %d)", (int)r->frame,
+                          (int)r->glowPasses, (int)r->eyes.passes, (int)r->targetScale);
+    }
+    r->glowPasses = 0;
     r->canvasQuadsThisFrame = 0;
     r->canvasDrawsThisFrame = 0;
     r->queue.reset();
