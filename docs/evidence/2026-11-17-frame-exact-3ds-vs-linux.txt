@@ -31,3 +31,69 @@ OPEN, AN OWNER DECISION: which aspect the 3DS should show -- the true 5:3 view
 (wider than the original's field of view, undistorted), the original's 4:3
 stretched to fill 400x240 (what Linux shows at that size), or 4:3 pillarboxed
 in 320x240 (the original's view, undistorted, with side bars).
+
+OWNER DECISION (2026-11-17): KEEP THE TRUE 5:3. The 3DS keeps
+kAspect = 400/240. The Linux frontend gains `--true-aspect` (project at the
+output size's own ratio; off by default, so the Linux game keeps the original's
+4:3), and compare_linux.sh passes it, so the comparison is between the same
+framing. Level 7 frame 300, shipped 3DS (5:3) vs Linux --true-aspect: 1.33%
+of pixels differ by >16, mean |d| 0.99.
+
+THE CANVAS SAMPLED ITS PADDING (2026-11-17, same session). EMULATOR evidence:
+Mandarine r1.2.1 (md5 0d2adab6ad078c78e6d03e72086f2eb6) on DISPLAY=:99, via
+`mdk_3ds/tools/compare_linux.sh <level> 300` (3DS: make AUTOQUIT=90 FIXED=1
+CAPTURE=300 LEVEL=<level>, left-eye readback; Linux: --headless --fixed-step
+--true-aspect --size=400x240). Not a hardware result.
+
+SYMPTOM. Across levels 3-8 the 3DS differed by 1.3-4.4%. The level 6 HUD read
+"1nn" for "100" (docs/evidence/2026-11-17-hud-digits-L6-before.png, Linux left,
+3DS right): the HUD region differed on 26.10% of pixels.
+
+RULED OUT, MEASURED. Not placement: the green ring's bbox -- by a LOOSE green
+test (G>150, R<100, B<100), not the HUD acceptance's exact (0,255,0) -- is
+(335..386, 193..231/232) in both frames, and a cross-correlation of the HUD crop finds its
+best match at shift (0,0). Not a half-pixel raster convention: half-pixel
+nudges of the canvas projection gave 22.75-27.56% (HUD), and half-pixel UV
+offsets per quad gave 24.94-27.38%.
+
+CAUSE. 06_draw.inc applied the PICA's last-memory-row t rule
+(pica::sceneUvFromTop) to every pass EXCEPT Overlay, on the argument that the
+canvas projection's y inversion cancels it. It does not: the projection places
+the quad, the uv picks the texel. A canvas image that is not a power of two
+tall therefore read its transparent padding rows (the digits), and a
+power-of-two one was upside down within its quad.
+
+FIX. Every draw takes the rule. Level 6 HUD region: 26.10% -> 0.10%. The
+frame, 3DS frame 300 vs the closest Linux frame (% of px differing by >16):
+
+  level   before   after    mean |d| after
+    3     3.43%    2.14%    0.45
+    4     3.20%    1.90%    0.46
+    5     2.53%    1.22%    0.49
+    6     4.41%    3.11%    1.00
+    7     1.33%    0.04%    0.01
+    8     1.82%    0.52%    0.27
+
+  docs/evidence/2026-11-17-compare-L6-f300-canvas-flipped.png (Linux | 3DS | diff x4)
+  docs/evidence/2026-11-17-hud-digits-L6-after.png            (Linux | 3DS)
+
+The residue on level 6 is the sky dome's ceiling (the panorama interpolated
+across ~32x30-texel cells, sky_dome.h) and Kurt's silhouette edges.
+
+THE HUD ACCEPTANCE HAD BEEN CALIBRATED ON THE FLIPPED PANEL. emurun --expect
+hud's reach arm measured the (0,255,0) ink against the panel's derived far
+corner (390,234) with a 2 px shortfall taken from the flipped image. Sampled
+correctly, the ink's far corner is (384,218) in BOTH the Linux frame and the
+3DS frame (192 pixels each, identical bbox), so the oracle itself would fail
+it. The sprite's green-free border is now a measured constant
+(HUD_INK_INSET_X/Y = 4/14, so 6 = 4 + 2 and 16 = 14 + 2); the 12 px budget, the
+2 px calibration and the 20 px ceiling are unchanged, and
+tests/scripts/emurun_harness_test.sh anchors its reach fixtures to the inset
+corner (321 checks pass). emurun --expect hud: rc 0, marker 121/121, HUD INK
+192 of 192 inside, bbox 335,193-384,218, 0 outside.
+
+THE INK CORNER IS THE PANEL SPRITE'S, NOT THE DIGITS'. Exact (0,255,0) in both
+frames after the fix: x=384 only at rows 203-205 and y=218 only at x 336-337,
+the ring's own right and bottom edges, so the far corner does not move with
+the health value shown. (The loose-green bbox above includes the ring's
+darker greens, which reach y=231; the exact colour stops at 218.)

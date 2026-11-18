@@ -131,9 +131,11 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         scaleY = (float)frameHeight / (float)resource.paddedHeight;
         offsetY = (float)(draw->frame * frameHeight) / (float)resource.paddedHeight;
     }
-    if (draw->material.pass != mdk::Pass::Overlay) {
+    {
         // The PICA's t runs from the LAST memory row (pica::sceneUvFromTop has
-        // the rule, the measurement and why the canvas is exempt).
+        // the rule and the measurement). Every draw takes it, the canvas too:
+        // the canvas was once exempt, and its non-power-of-two images (the
+        // health digits) read their transparent padding rows.
         const mdk::pica::SceneUv flipped = mdk::pica::sceneUvFromTop(scaleY, offsetY);
         scaleY = flipped.scaleY;
         offsetY = flipped.offsetY;
@@ -648,7 +650,9 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
     BufInfo_Add(info, marker, 5 * sizeof(float), 2, 0x10);
 
     // THE CANVAS'S STATE, each of it the same call drawRecorded makes for an
-    // Overlay quad.
+    // Overlay quad -- except the uv uniform below, which stays the identity: the
+    // marker samples the 8x8 all-white texture, where the last-row flip that
+    // drawRecorded applies cannot change a texel.
     if (r->canvasWhite >= 0 && (size_t)r->canvasWhite < r->textures.size()) {
         C3D_TexBind(0, &r->textures[(size_t)r->canvasWhite].tex);
     }

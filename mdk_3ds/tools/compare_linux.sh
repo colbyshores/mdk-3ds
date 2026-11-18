@@ -55,7 +55,7 @@ cp "$CAP" "$OUT/3ds-L$LEVEL-f$FRAME.bmp"
 
 for f in $((FRAME - 1)) "$FRAME" $((FRAME + 1)); do
     "$ROOT/build-linux/mdk" --headless --fixed-step --level="$LEVEL" --size=400x240 --seed 1 \
-        --capture-frame="$f" --capture="$OUT/linux-L$LEVEL-f$f.bmp" > /dev/null 2>&1
+        --true-aspect --capture-frame="$f" --capture="$OUT/linux-L$LEVEL-f$f.bmp" > /dev/null 2>&1
 done
 
 

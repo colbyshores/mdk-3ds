@@ -499,14 +499,17 @@ HUD_INK_MIN="$(sed -n 's/^HUD_INK_MIN=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 HUD_INK_REACH="$(sed -n 's/^HUD_INK_REACH=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 HUD_INK_SHORTFALL="$(sed -n 's/^HUD_INK_SHORTFALL=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 HUD_INK_REACH_MAX="$(sed -n 's/^HUD_INK_REACH_MAX=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+HUD_INK_INSET_X="$(sed -n 's/^HUD_INK_INSET_X=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+HUD_INK_INSET_Y="$(sed -n 's/^HUD_INK_INSET_Y=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 check "the harness declares the marker rect, its reach and the floor" "5" \
       "$([ -n "$CANARY_X1" ] && [ -n "$CANARY_Y1" ] && [ -n "$CANARY_REACH_X" ] \
          && [ -n "$CANARY_REACH_Y" ] && [ -n "$CANARY_MIN" ] && echo 5 || echo 0)"
-check "and it declares the HUD's own ink rect, its floor and its reach" "8" \
+check "and it declares the HUD's own ink rect, its floor, its reach and the sprite inset" "10" \
       "$([ -n "$HUD_INK_X0" ] && [ -n "$HUD_INK_Y0" ] && [ -n "$HUD_INK_X1" ] \
          && [ -n "$HUD_INK_Y1" ] && [ -n "$HUD_INK_MIN" ] && [ -n "$HUD_INK_REACH" ] \
          && [ -n "$HUD_INK_SHORTFALL" ] && [ -n "$HUD_INK_REACH_MAX" ] \
-         && echo 8 || echo 0)"
+         && [ -n "$HUD_INK_INSET_X" ] && [ -n "$HUD_INK_INSET_Y" ] \
+         && echo 10 || echo 0)"
 # AND THE FIXTURE REFUSES TO RUN WITHOUT THEM (review-1 F4). Silently carrying an
 # empty CANARY_X1 into the capture builder made python raise ValueError, which left
 # CAP_YES empty, and four PRE-EXISTING rows then failed for a fixture reason and
@@ -516,7 +519,7 @@ check "and it declares the HUD's own ink rect, its floor and its reach" "8" \
 for v in CANARY_X1 CANARY_Y1 CANARY_REACH_X CANARY_REACH_Y CANARY_MIN \
          CANARY_MAX_PIXELS CANARY_MAX_COORD \
          HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1 HUD_INK_MIN HUD_INK_REACH \
-         HUD_INK_SHORTFALL HUD_INK_REACH_MAX; do
+         HUD_INK_SHORTFALL HUD_INK_REACH_MAX HUD_INK_INSET_X HUD_INK_INSET_Y; do
     case "${!v}" in
         ''|*[!0-9]*)
             echo "EMURUN HARNESS: $EMU declares no numeric $v -- the fixture cannot be built" >&2
@@ -564,7 +567,8 @@ fi
 cap() { # cap <here|none|turn|flip|rot180|wide|small|noink|inkout|inkboth|inknear|inkreach|inkshort|inkreachshort|inkband> -> path to a synthetic capture
     python3 - "$1" "$ROOT/tools/panel_crop.py" "$CANARY_REACH_X" "$CANARY_REACH_Y" \
               "$HUD_INK_X0" "$HUD_INK_Y0" "$HUD_INK_X1" "$HUD_INK_Y1" "$HUD_INK_REACH" \
-              "$HUD_INK_SHORTFALL" "$HUD_INK_REACH_MAX" <<'PY'
+              "$HUD_INK_SHORTFALL" "$HUD_INK_REACH_MAX" \
+              "$HUD_INK_INSET_X" "$HUD_INK_INSET_Y" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[2])))
 from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1
@@ -585,6 +589,9 @@ ink_reach = int(sys.argv[9])
 # the same reason. `inkband` below is the one ink fixture NOT anchored to the budget, and
 # it is the row that catches the budget being loosened (review-2 F1).
 ink_short, ink_max = int(sys.argv[10]), int(sys.argv[11])
+# The corner the reach is judged against: the derived far corner less the panel
+# sprite's measured inset (emurun.sh HUD_INK_INSET_X/Y), imported like the rest.
+rx1, ry1 = ix1 - int(sys.argv[12]), iy1 - int(sys.argv[13])
 W, H = PANEL_X1 - PANEL_X0 + 1, PANEL_Y1 - PANEL_Y0 + 1
 img = Image.new("RGB", (1280, 1024), (16, 32, 48))
 px = img.load()
@@ -599,7 +606,9 @@ def block(x0, y0, w, h):
 def digits(x0, y0, w=56, h=27):
     """The HUD's own pixels: a block of its palette's (0,255,0).
 
-    The shipped capture puts the ink at crop (333,206)-(388,232) -- the health number and
+    The capture this was written against put the ink at crop (333,206)-(388,232) (the
+    panel then sampled upside down; since the 2026-11-17 canvas UV fix it is
+    (335,193)-(384,218), hence rx1/ry1) -- the health number and
     the panel sprite's body together, both drawn from the level palette. This stands in
     for it at the same size, anchored to the far corner of the rect the harness declares,
     so moving the harness's rect moves the fixture with it instead of silently leaving a
@@ -658,7 +667,7 @@ elif mode in ("noink", "inkout", "inkboth", "inknear", "inkreach",
 # (the HUD drew, somewhere else) and inkboth (the level makes the colour itself).
 if mode not in ("none", "noink", "inkout", "inknear", "inkreach",
                 "inkshort", "inkreachshort", "inkband", "inkreachx", "inkreachy"):
-    digits(ix1 - 55, iy1 - 26)
+    digits(rx1 - 55, ry1 - 26)
 if mode == "inkout":
     digits(20, 60)
 if mode == "inkboth":
@@ -673,19 +682,20 @@ if mode == "inkreach":
     # The budget's own boundary, on the passing side: the ink's far corner exactly at
     # (derived far corner - HUD_INK_REACH). The arm refuses on `<`, so this must pass, and
     # a budget that reddens its own boundary is a budget nobody can reason about.
-    digits(ix1 - ink_reach - 55, iy1 - ink_reach - 26)
+    digits(rx1 - ink_reach - 55, ry1 - ink_reach - 26)
 if mode == "inkshort":
     # THE CALIBRATION'S OWN MEASUREMENT: the ink stops exactly HUD_INK_SHORTFALL px short
-    # of the derived corner, which is what the shipped capture measures (bbox far corner
-    # 388,232 against the derived 390,234). A budget trimmed below the number it was
+    # of the inset corner rx1/ry1 -- the calibration emurun.sh records (bbox far corner
+    # 388,232 against the derived 390,234 before the canvas UV fix; 384,218 against the
+    # inset corner 386,220 after it, 2 px on each axis either way). A budget trimmed below the number it was
     # derived from reddens the capture it was derived from, and this is that fixture.
-    digits(ix1 - ink_short - 55, iy1 - ink_short - 26)
+    digits(rx1 - ink_short - 55, ry1 - ink_short - 26)
 if mode == "inkreachshort":
     # THE FAILING SIDE OF THE BUDGET (review-2 F1). The fixture above sits AT the budget
     # and passes; nothing sat one past it, so the arm's edge was pinned from one side only
     # and an off-by-one widening of the comparison was invisible. Derived from the budget
     # like the boundary fixture, so it pins the EDGE and not today's number.
-    digits(ix1 - ink_reach - 56, iy1 - ink_reach - 27)
+    digits(rx1 - ink_reach - 56, ry1 - ink_reach - 27)
 if mode == "inkreachx":
     # ONE AXIS AT A TIME, because the arm is a DISJUNCTION (`x short OR y short`) and a
     # fixture that displaces both axes together cannot tell them apart. Measured in this
@@ -693,17 +703,26 @@ if mode == "inkreachx":
     # both-axes fixture refusing on y, so the suite stayed green over a budget doubled on
     # one axis -- review-2 F1's class, arriving through the axis instead of the constant.
     # Here y sits flush on the derived corner, so only x can refuse.
-    digits(ix1 - ink_reach - 56, iy1 - 26)
+    digits(rx1 - ink_reach - 56, ry1 - 26)
 if mode == "inkreachy":
     # The mirror: x flush, y one past the budget.
-    digits(ix1 - 55, iy1 - ink_reach - 27)
+    digits(rx1 - 55, ry1 - ink_reach - 27)
 if mode == "inkband":
     # AN ABSOLUTE SHORTFALL, NOT DERIVED FROM THE BUDGET. Every other ink fixture moves
     # when HUD_INK_REACH moves, which is exactly why raising the budget from 12 to 88 left
     # all 296 checks green (review-2 F1, measured). This one stops at the calibration
     # band's ceiling whatever the budget says, so loosening the budget until it swallows a
     # displacement that large reddens here instead of passing quietly.
-    digits(ix1 - ink_max - 55, iy1 - ink_max - 26)
+    #
+    # AND IT IS NOT ANCHORED TO THE INSET EITHER (review of the inset, 2026-11-17: an
+    # INSET of 40/60 left all 321 checks green, because this fixture moved with rx1/ry1).
+    # Its corner is the derived one less the inset as RECORDED in the evidence
+    # (docs/evidence/2026-11-17-frame-exact-3ds-vs-linux.txt: the oracle's ink far corner
+    # 384,218 against the derived 390,234, i.e. 4/14 beyond the 2 px calibration) --
+    # spelled here on purpose, so loosening HUD_INK_INSET_X/Y in emurun.sh swallows this
+    # displacement and reddens the row instead of moving it.
+    recorded_inset_x, recorded_inset_y = 4, 14
+    digits(ix1 - recorded_inset_x - ink_max - 55, iy1 - recorded_inset_y - ink_max - 26)
 path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdk-harness-cap-%s.png" % mode)
 img.save(path)
 print(path)
@@ -1484,6 +1503,9 @@ rm -f "$PARSER"
 # this batch learned the hard way, from a mutation that shifted drawImage and left the
 # health number sitting there, legibly, at (0,255,0)). For the level this harness boots
 # that palette contains exactly (0,255,0). Measured on the shipped capture: 134 such
+# (192 since the 2026-11-17 canvas UV fix; the `333 206 388 232` stats lines below are
+# the earlier capture's bbox, kept as syntactically valid PARSE fixtures, not as the
+# current measurement)
 # pixels in the whole 400x240 panel, every one inside the ink rect and none outside it.
 # The `outside` arm below is what keeps that a measurement instead of a hope.
 ink_verdict_rc() { # ink_verdict_rc <fixture> -> rc of the pixel verdict

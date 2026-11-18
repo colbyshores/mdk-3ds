@@ -558,8 +558,11 @@ inline uint32_t morton8InTile(uint32_t x, uint32_t y) {
 // of two read its transparent padding instead of the image (a 306-row arena
 // texture in a 512-row buffer sampled rows 511..206), so the arena on every
 // level, and Kurt, went to alpha 0 / black. A power-of-two texture was merely
-// upside down. The canvas does NOT take this: its projection inverts y on the
-// panel, which cancels the same inversion (the HUD reads upright on hardware).
+// upside down. THE CANVAS TAKES IT TOO. It was once exempt, on the argument that
+// its projection's y inversion cancels this one; it does not (the projection
+// places the quad, the uv picks the texel). Measured 2026-11-17, frame-exact
+// against Linux on level 6: exempt, the health digits (not a power of two) read
+// padding rows and the HUD region differed on 26% of pixels; flipped, 0.10%.
 struct SceneUv {
     float scaleY;
     float offsetY;

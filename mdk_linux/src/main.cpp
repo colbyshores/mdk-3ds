@@ -195,6 +195,12 @@ int main(int argc, char** argv) {
     std::string capturePath;
     int captureFrame = 0;
     int hiddenWidth = 1280;
+    // --true-aspect: project at the output size's own width/height instead of
+    // the original's fixed 4:3. The 3DS shows its panel's true 5:3 (owner
+    // decision 2026-11-17), and a frame-exact 3DS-vs-Linux comparison
+    // (mdk_3ds/tools/compare_linux.sh) needs Linux at that same aspect. Off by
+    // default: the Linux game keeps the original's 4:3.
+    bool trueAspect = false;
     int hiddenHeight = 960;
     int levelNumber = 3;
     bool fixedStep = false;
@@ -222,6 +228,8 @@ int main(int argc, char** argv) {
             headless = true;
         } else if (std::strcmp(argv[i], "--fixed-step") == 0) {
             fixedStep = true;
+        } else if (std::strcmp(argv[i], "--true-aspect") == 0) {
+            trueAspect = true;
         } else if ((value = optionValue(argv[i], "--capture")) != nullptr) {
             if (*value == '\0') {
                 std::fprintf(stderr, "[main] --capture must name a file to write\n");
@@ -387,6 +395,14 @@ int main(int argc, char** argv) {
                          "(--frames 3, --seed 1)\n");
             return 1;
         }
+    }
+
+    // --true-aspect projects at --size's own ratio, which is the picture only when
+    // the hidden target IS the picture. A window is always 1280x960 (4:3) and the
+    // canvas follows the window, so a 5:3 projection there would be stretched.
+    if (trueAspect && !headless) {
+        std::fprintf(stderr, "[main] --true-aspect needs --headless (the window is 4:3)\n");
+        return 1;
     }
 
     // A capture the run can never reach is a refusal, not a default.
@@ -862,7 +878,7 @@ int main(int argc, char** argv) {
 
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
     const float kHudStep = 1.0f / 30.0f; // the C# HUD blink's 30 Hz boundary
-    const float kAspect = 1280.0f / 960.0f;
+    const float kAspect = trueAspect ? (float)hiddenWidth / (float)hiddenHeight : 1280.0f / 960.0f;
     float hudPending = 0.0f;
     float pending = 0.0f;
     auto last = std::chrono::steady_clock::now();

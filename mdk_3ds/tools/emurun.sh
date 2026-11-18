@@ -1248,7 +1248,8 @@ CANARY_MAX_INSIDE=$(( (10#$CANARY_X1 + 1) * (10#$CANARY_Y1 + 1) ))
 # -- hud_view.cpp's `drawImage` and `drawNumber` each set `q.palette = palette_` -- and
 # for the level this harness boots that palette contains EXACTLY (0,255,0), which the
 # level's own geometry never produces anywhere in the panel. Measured on the shipped
-# capture: 134 such pixels in the whole 400x240 panel, all of them inside the rect below
+# capture: 134 such pixels in the whole 400x240 panel (192 since the 2026-11-17 canvas
+# UV fix, see HUD_INK_INSET_X below), all of them inside the rect below
 # and none outside it; 58 of them are the health number, which reads "100" legibly, and
 # the rest is the panel sprite's own body (the 58/76 split is batch 174's re-measurement,
 # which corrected this paragraph's earlier 60/74 -- see `docs/evidence/
@@ -1282,7 +1283,8 @@ HUD_INK_X0=200
 HUD_INK_Y0=120
 HUD_INK_X1=390
 HUD_INK_Y1=234
-# 25 for the same reason as CANARY_MIN. The shipped capture puts 134 pixels of the
+# 25 for the same reason as CANARY_MIN. The shipped capture put 134 pixels (192 since the
+# 2026-11-17 canvas UV fix) of the
 # colour inside this rect, 58 of them the health number itself, so the floor sits at a
 # sixth of the real ink and far above a stray pixel or two.
 HUD_INK_MIN=25
@@ -1299,14 +1301,29 @@ HUD_INK_MIN=25
 #
 # WHY THE BUDGET IS NOT ZERO. The far corner is taken with ceil() (389.33 -> 390), and
 # the ink is the farthest HUD-palette PIXEL, not the panel's bounding box: whatever
-# border texels of the sprite carry no (0,255,0) sit between the two. On the shipped
-# capture that shortfall measures 2 px on each axis (bbox far corner 388,232 against the
+# border texels of the sprite carry no (0,255,0) sit between the two. On the capture this
+# was calibrated on (the panel then sampled upside down -- see HUD_INK_INSET_X below)
+# that shortfall measured 2 px on each axis (bbox far corner 388,232 against the
 # derived 390,234). 12 is six times that, and it is still only 18 canvas px -- a
 # displacement the row's own defect class (a HUD landing off its anchor) produces by
 # hundreds, not by tens. A budget this side of the measured 2 would red the moment the
 # open texture-addressing fix changes which texels carry the colour, and a gate that
 # cannot survive the fix it is waiting for gets deleted rather than tuned.
 HUD_INK_REACH=12
+#
+# THE SPRITE'S OWN INSET, per axis, in crop px -- measured, not derived. The reach is
+# judged against (HUD_INK_X1 - HUD_INK_INSET_X, HUD_INK_Y1 - HUD_INK_INSET_Y), not the
+# panel's derived corner itself. Until 2026-11-17 the 3DS sampled the canvas upside down
+# (06_draw.inc exempted it from the PICA's last-row t), so the panel sprite's (0,255,0)
+# ring sat flipped, near the panel's bottom edge, and the 2 px shortfall above was
+# measured on THAT image. Sampled correctly, the ink's far corner is (384,218) -- in the
+# Linux oracle frame and in the 3DS frame alike, 192 pixels each, identical bbox
+# (frame-exact level 6 frame 300, docs/evidence/2026-11-17-frame-exact-3ds-vs-linux.txt)
+# -- 6 and 16 px short of the derived (390,234). The sprite's green-free border is a
+# property of the asset, so it is a constant here; the 2 px rounding calibration and the
+# 12 px budget keep their meaning on top of it: 6 = 4 + 2, 16 = 14 + 2.
+HUD_INK_INSET_X=4
+HUD_INK_INSET_Y=14
 #
 # The budget is a CALIBRATION, and a calibration is a measurement times a margin, so the
 # measurement is a constant here and not prose in a comment (review-2 F1). Everything
@@ -1385,6 +1402,8 @@ hud_ink_verdict() { # hud_ink_verdict <shot> ; 0 when the HUD's OWN pixels reach
        || ! decimal_measurement "$HUD_INK_REACH" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_SHORTFALL" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_REACH_MAX" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$HUD_INK_INSET_X" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$HUD_INK_INSET_Y" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_X0" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_Y0" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_X1" "$CANARY_MAX_COORD" \
@@ -1524,12 +1543,15 @@ EOF
     # whether it got to the corner the HUD's own anchoring puts the panel at. Containment
     # alone is satisfied by the inventory icons, or by a panel drawn a third of the screen
     # away from where kPanelRight/kPanelBottom say it is.
-    if [ $(( bx1 + HUD_INK_REACH )) -lt "$HUD_INK_X1" ] \
-       || [ $(( by1 + HUD_INK_REACH )) -lt "$HUD_INK_Y1" ]; then
+    local reach_x1=$(( HUD_INK_X1 - HUD_INK_INSET_X )) reach_y1=$(( HUD_INK_Y1 - HUD_INK_INSET_Y ))
+    if [ $(( bx1 + HUD_INK_REACH )) -lt "$reach_x1" ] \
+       || [ $(( by1 + HUD_INK_REACH )) -lt "$reach_y1" ]; then
         {
             echo "emurun: HUD NOT AT ITS ANCHOR: the ink's far corner is ($bx1,$by1), more"
-            echo "          than $HUD_INK_REACH px short of the derived ($HUD_INK_X1,$HUD_INK_Y1)"
-            echo "          that canvas 600-kPanelRight / 360-kPanelBottom crops to. The HUD"
+            echo "          than $HUD_INK_REACH px short of ($reach_x1,$reach_y1): the derived"
+            echo "          ($HUD_INK_X1,$HUD_INK_Y1) less the sprite's measured inset"
+            echo "          ($HUD_INK_INSET_X,$HUD_INK_INSET_Y), where canvas 600-kPanelRight /"
+            echo "          360-kPanelBottom crops to. The HUD"
             echo "          painted inside the bottom-right quadrant but NOT where its own"
             echo "          anchoring puts the panel -- which is the defect this row exists"
             echo "          to catch, and containment alone could not see it."
@@ -1539,7 +1561,8 @@ EOF
     echo "expect    : HUD INK -- $inside of $total HUD-palette pixels inside crop"
     echo "expect    : $HUD_INK_X0,$HUD_INK_Y0-$HUD_INK_X1,$HUD_INK_Y1 (bbox"
     echo "expect    : $bx0,$by0-$bx1,$by1, $outside outside, its far corner within"
-    echo "expect    : $HUD_INK_REACH px of the derived $HUD_INK_X1,$HUD_INK_Y1), none of it"
+    echo "expect    : $HUD_INK_REACH px of $reach_x1,$reach_y1 = the derived $HUD_INK_X1,$HUD_INK_Y1 less"
+    echo "expect    : the sprite inset $HUD_INK_INSET_X,$HUD_INK_INSET_Y), none of it"
     echo "expect    : reachable by the level"
     return 0
 }
