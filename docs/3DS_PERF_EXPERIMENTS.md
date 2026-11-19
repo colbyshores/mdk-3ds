@@ -24,8 +24,8 @@ file is the index and the decisions.
 
 ## Where the frame stands
 
-Level 8, stereo, Old 3DS: 94.5 → 77.1 → 67.2 → 61.4 → 57.8 → **55.7 ms** steady
-mean shipped (4cde286). The original look alone is ≈ 40 ms. The renderer is not
+Level 8, stereo, Old 3DS: 94.5 → 77.1 → 67.2 → 61.4 → 57.8 → 55.7 (4cde286) → 41.2 (E6+E8) →
+**40.2 ms** steady mean shipped. The original look alone (every enhancement off) is now 33.6 ms, a locked 30 fps. The renderer is not
 the main bottleneck: the engine side (simulation steps, first-use creation, I/O
 inside the frame) is where the large wins have come from, the same lesson as
 `../forsaken`.
@@ -35,6 +35,8 @@ inside the frame) is where the large wins have come from, the same lesson as
 | # | Experiment | Branch | Result | Status |
 |---|---|---|---|---|
 | — | No SD file poll / periodic log flush inside the frame | merged (4cde286) | −5.1 ms; the 30-frame spikes gone | **merged** |
+| — | E6+E8 together (merged tip 7dac08c) | — | shipped **41.2 ms**, isolated **33.6 ms** (2,559 of 2,577 frames at 2 vblanks) | measured |
+| — | No dedupe/texture stats line written to SD every 300 frames in play/profile builds (the line E6 added) | merged | shipped 41.2 → **40.2 ms**; the spikes at frames 600/1200 (end span 27–32 ms) gone; 2-vblank frames 1,166 → 1,441 of ~2,100 | **merged** |
 | E3 | Sun shadow map sampled NEAREST | deleted | no change | rejected |
 | A | Static light baked once per rig on the CPU | `experiment/3ds-baked-light` | +1.1 ms isolated | rejected |
 | B | Haze through the PICA fog unit (W-buffer) | `experiment/3ds-fog-haze` | scene nearly black on console | rejected (broken) |

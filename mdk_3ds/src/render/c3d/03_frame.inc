@@ -1028,6 +1028,38 @@ static void testNativeShadowWrites(RendererC3D* r) {
     C3D_TexDelete(&tex);
 }
 
+// THE DEDUPE'S LINE (THE DEDUPE, above): per category, the writes made and the
+// writes skipped over the window, and the command list's length in 32-bit words
+// a frame -- what a DRAWDEDUPE=0 build is compared against. Prints and starts a
+// new window. Cold: every 300 frames in the logging harness, once at teardown.
+static void logDedupeWindow(RendererC3D* r) {
+    if (r->cmdWordsFrames == 0) {
+        return;
+    }
+    const int32_t* w = r->dedupeWritten;
+    const int32_t* k = r->dedupeSkipped;
+    mdk::log3dsPrintf("dedupe: frame %d (%s): skipped/written over %d frames: stage0 %d/%d "
+                      "bufinfo %d/%d uv %d/%d tint %d/%d mvp %d/%d world %d/%d "
+                      "texbind %d/%d; command list %lu words in all, %u in the "
+                      "longest frame",
+                      (int)r->frame, kDrawDedupe ? "on" : "OFF", (int)r->cmdWordsFrames,
+                      (int)k[kDedupeTexEnv0], (int)w[kDedupeTexEnv0],
+                      (int)k[kDedupeBufInfo], (int)w[kDedupeBufInfo],
+                      (int)k[kDedupeUv], (int)w[kDedupeUv],
+                      (int)k[kDedupeTint], (int)w[kDedupeTint],
+                      (int)k[kDedupeMvp], (int)w[kDedupeMvp],
+                      (int)k[kDedupeWorld], (int)w[kDedupeWorld],
+                      (int)k[kDedupeTexBind], (int)w[kDedupeTexBind],
+                      (unsigned long)r->cmdWordsSum, (unsigned)r->cmdWordsPeak);
+    for (int c = 0; c < kDedupeCategories; c++) {
+        r->dedupeWritten[c] = 0;
+        r->dedupeSkipped[c] = 0;
+    }
+    r->cmdWordsSum = 0;
+    r->cmdWordsPeak = 0;
+    r->cmdWordsFrames = 0;
+}
+
 void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->ready) return;
@@ -1129,7 +1161,10 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     {
         const int32_t made = r->texturesMade[0] + r->texturesMade[1] + r->texturesMade[2] +
                              r->texturesMade[3] + r->compressedMade;
-        if ((r->frame == 30 || (r->frame % 300) == 0) && made != r->texturesMadeLogged) {
+        // Frame 30 once in every build (the A/B evidence, one write); every 300
+        // frames only where the log is periodic (no SD write inside play).
+        if ((r->frame == 30 || (mdk::log3dsPeriodic() && (r->frame % 300) == 0)) &&
+            made != r->texturesMadeLogged) {
             r->texturesMadeLogged = made;
             int32_t resident16 = 0;
             int32_t resident = 0;
@@ -1522,29 +1557,13 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
             r->cmdWordsPeak = words > r->cmdWordsPeak ? words : r->cmdWordsPeak;
             r->cmdWordsFrames++;
         }
-        if ((r->frame % 300) == 0) {
-            const int32_t* w = r->dedupeWritten;
-            const int32_t* k = r->dedupeSkipped;
-            mdk::log3dsPrintf("dedupe: frame %d (%s): skipped/written over %d frames: stage0 %d/%d "
-                              "bufinfo %d/%d uv %d/%d tint %d/%d mvp %d/%d world %d/%d "
-                              "texbind %d/%d; command list %lu words in all, %u in the "
-                              "longest frame",
-                              (int)r->frame, kDrawDedupe ? "on" : "OFF", (int)r->cmdWordsFrames,
-                              (int)k[kDedupeTexEnv0], (int)w[kDedupeTexEnv0],
-                              (int)k[kDedupeBufInfo], (int)w[kDedupeBufInfo],
-                              (int)k[kDedupeUv], (int)w[kDedupeUv],
-                              (int)k[kDedupeTint], (int)w[kDedupeTint],
-                              (int)k[kDedupeMvp], (int)w[kDedupeMvp],
-                              (int)k[kDedupeWorld], (int)w[kDedupeWorld],
-                              (int)k[kDedupeTexBind], (int)w[kDedupeTexBind],
-                              (unsigned long)r->cmdWordsSum, (unsigned)r->cmdWordsPeak);
-            for (int c = 0; c < kDedupeCategories; c++) {
-                r->dedupeWritten[c] = 0;
-                r->dedupeSkipped[c] = 0;
-            }
-            r->cmdWordsSum = 0;
-            r->cmdWordsPeak = 0;
-            r->cmdWordsFrames = 0;
+        // Every 300 frames only where the log is periodic (harness builds without
+        // PROFILE): an SD write inside a play or profile frame costs 25-30 ms --
+        // measured 2026-11-19 as the spikes at frames 600 and 1200 of a profile
+        // run (the same defect class as 4cde286). Every build still prints the
+        // last window once at teardown (mdk_render_destroy).
+        if (mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
+            logDedupeWindow(r);
         }
     }
     // The halos are this frame's: a frame whose game hands none over (no

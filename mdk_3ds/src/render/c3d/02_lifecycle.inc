@@ -1,3 +1,7 @@
+// Defined in 03_frame.inc; called from mdk_render_destroy below, which the
+// translation unit reaches first.
+static void logDedupeWindow(RendererC3D* r);
+
 // 02_lifecycle.inc -- create/destroy, the backend name and capabilities.
 // Part of renderer_c3d.cpp's single translation unit (see its header).
 // No include guards, no includes of its own; the order is load-bearing.
@@ -474,6 +478,9 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     // The HD reader first: its thread is joined and the buffers it still holds
     // are freed before anything it could name goes away (AGENTS.md P4).
     r->hdReader.stop();
+    // The dedupe's last window, once (03_frame.inc logDedupeWindow): the profile's
+    // A/B evidence without an SD write inside its frames.
+    logDedupeWindow(r);
     if (r->scratch) {
         linearFree(r->scratch);
         r->scratch = nullptr;
