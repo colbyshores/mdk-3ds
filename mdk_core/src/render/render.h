@@ -386,6 +386,10 @@ float mdk_render_gpu_wait_ms(MdkRenderer r);
 //     the previous run's frame to be committed in its place.
 void mdk_render_capture_stats(MdkRenderer r, int32_t* requested, int32_t* written);
 
+// What this renderer has made since it was created (mdk::CreationStats): the
+// first-use counters. Cumulative; a frontend takes the difference around a span.
+void mdk_render_creation_stats(MdkRenderer r, mdk::CreationStats* out);
+
 // ---------------------------------------------------------------------------
 // The Linux-only enhanced look lives in a SEPARATE header
 // (`mdk_linux/src/render/render_enhanced.h`), not here. The 3DS does not

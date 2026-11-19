@@ -3976,10 +3976,14 @@ ARMS = [
     ("the padding fill moved after the expansion loop and zeroes every texel the helper "
      "wrote (review-12 F1: the rule read the destination and the length, not the place)",
      # (Re-anchored 2026-11-17: since prepareForFiltering the loop is followed by
-     # its comment, not by `return`; the wipe still lands right after the loop.)
-     lambda s: s.replace("        }\n    }\n    // Ready for Enhanced Mode filtering",
-                         "        }\n    }\n    memset(pixels, 0, texels * 4);\n"
-                         "    // Ready for Enhanced Mode filtering", 1),
+     # its comment, not by `return`; the wipe still lands right after the loop.
+     # Re-anchored again 2026-11-19: the first-use accounting may put its
+     # `ticks->expanded` stamp between the loop and that comment.)
+     lambda s: re.sub(r"        \}\n    \}\n(    ticks->expanded = svcGetSystemTick\(\);\n)?"
+                      r"    // Ready for Enhanced Mode filtering",
+                      lambda m: "        }\n    }\n    memset(pixels, 0, texels * 4);\n"
+                                + (m.group(1) or "") + "    // Ready for Enhanced Mode filtering",
+                      s, count=1),
      "index-texels-are-rotated-for-the-pica"),
     # Review-12 open question 2, answered as a defect rather than a limit: the same wipe
     # with the fill left where it was and the rows moved around it. Source order cannot
@@ -4213,21 +4217,23 @@ PROBES = [
               .replace("mdk::pica::texelBytes(", "texelBytes(")),
     ("the expanded buffer is kept on the texture record and the sink reads it there "
      "(review-8 F5: a member assigned from a helper writer is the same data flow)",
-     lambda s: s.replace("struct C3dTexture {\n    C3D_Tex tex;",
-                         "struct C3dTexture {\n    C3D_Tex tex;\n"
-                         "    uint8_t* expanded = nullptr;", 1)
-              .replace(
-                  "        pixels = expandIndices(texture.source.data(), "
-                  "texture.realWidth, texture.realHeight,\n"
-                  "                               texture.palette.data(), "
-                  "texture.paddedWidth, texture.paddedHeight,\n"
-                  "                               levels);",
-                  "        texture.expanded = expandIndices(texture.source.data(),\n"
-                  "                               texture.realWidth, texture.realHeight,\n"
-                  "                               texture.palette.data(),\n"
-                  "                               texture.paddedWidth, texture.paddedHeight,\n"
-                  "                               levels);\n"
-                  "        pixels = texture.expanded;", 1)
+     # (Re-anchored 2026-11-19: the call may carry the first-use accounting's
+     # `&split` after `levels`; the rewrite keeps whatever trailing argument it had.)
+     lambda s: re.sub(
+                  r"        pixels = expandIndices\(texture\.source\.data\(\), "
+                  r"texture\.realWidth, texture\.realHeight,\n"
+                  r"                               texture\.palette\.data\(\), "
+                  r"texture\.paddedWidth, texture\.paddedHeight,\n"
+                  r"                               levels(, &split)?\);",
+                  lambda m: "        texture.expanded = expandIndices(texture.source.data(),\n"
+                            "                               texture.realWidth, texture.realHeight,\n"
+                            "                               texture.palette.data(),\n"
+                            "                               texture.paddedWidth, texture.paddedHeight,\n"
+                            "                               levels" + (m.group(1) or "") + ");\n"
+                            "        pixels = texture.expanded;",
+                  s.replace("struct C3dTexture {\n    C3D_Tex tex;",
+                            "struct C3dTexture {\n    C3D_Tex tex;\n"
+                            "    uint8_t* expanded = nullptr;", 1), count=1)
               .replace("    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);",
                        "    C3D_TexLoadImage(&texture.tex, texture.expanded,\n"
                        "                       GPU_TEXFACE_2D, 0);", 1)),

@@ -220,6 +220,17 @@ $(error FIXED=1 needs AUTOQUIT: the fixed clock is a harness-build feature)
 endif
 DEFINES += -DMDK_HW_FIXED=1
 endif
+# `make AUTOQUIT=90 PREWARM=0` builds the harness WITHOUT the prewarm (main_3ds.cpp
+# kPrewarm: the level-load creation of what the first frames draw, the per-frame
+# step before the draws, and Kurt's raised sprite residency), for the A/B against
+# the default, which has it. Release builds always have it. Only main_3ds.cpp
+# reads it: touch it (or `make clean`) after changing PREWARM.
+ifneq ($(strip $(PREWARM)),)
+ifndef AUTOQUIT
+$(error PREWARM=$(PREWARM) needs AUTOQUIT: the prewarm switch is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_PREWARM=$(PREWARM)
+endif
 # `make AUTOQUIT=90 PROFILE=1` logs one `profile:` frame-period summary at exit
 # (harness_3ds.h), what `hw_cycle.sh --profile` reads. Never combine with
 # CAPTURE: the capture's SD write would be inside the measured frames.

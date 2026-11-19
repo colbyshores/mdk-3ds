@@ -84,8 +84,10 @@
 #include "game/object_draw.h"
 #include "game/object_view.h"
 #include "game/player.h"
+#include "game/prewarm.h"
 #include "render/material_resolver.h"
 #include "render/render.h"
+#include "scripts/pose_cache.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
@@ -190,6 +192,67 @@ const char kHdPackRoot[] = "sdmc:/3ds/mdk/hd";
 
 // The sound bank's decoded store, bounded (see where it is set).
 const size_t kDecodedSoundBudgetBytes = (size_t)6 << 20;
+
+// ---------------------------------------------------------------------------
+// THE PREWARM (render/surface_cache.h, game/prewarm.h): what the frame would
+// create on first use -- the arenas' and the objects' textures, the objects'
+// layouts and poses, Kurt's first animations -- made at the level's load, and
+// the rest a little at a time BEFORE the frame's draws.
+//
+// WHY (measured, Old 3DS, level 8, original look, 2026-11-19): 15% of frames
+// took 4+ vblanks, all of them in clusters of 13-16 frames in which the draw
+// build (spanDraw0..spanEnd0) took 20-40 ms instead of ~8. That span is where a
+// surface's texture is made on its first draw (palette expansion into tiled
+// RGBA8 and pica::prepareForFiltering on the ARM11, then the upload), where an
+// object's layout is built and its animation baked, and where Kurt's sprite
+// residency makes the frame it is about to draw. Forsaken loads every model at
+// the level's load and has none of this; the C# preloads too (Viewer.Preload).
+//
+// THE BUDGETS. Nothing here may make the backend EVICT: a texture made to push
+// out one that is drawn only moves the cost. So every make asks prewarmRoom
+// first, which keeps kPrewarmLinearReserve of the linear heap free for what
+// play allocates on its own (the next arena's textures, the stream meshes'
+// growth, HD copies, Kurt). Past that the draw makes what it needs, as before,
+// with the eviction it always had. During play the step makes at most
+// kPrewarmMakesPerFrame textures (one texture's make: a few ms for an opaque
+// world texture) and visits kPrewarmObjectsPerFrame objects, before the draws.
+//
+// THE A/B: `make AUTOQUIT=90 PREWARM=0` builds the harness without it (the
+// Makefile's MDK_HW_PREWARM): no load-time prewarm, no per-frame step, and
+// Kurt's residency at the backend's own bound -- the base build's behaviour.
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_PREWARM) && (MDK_HW_PREWARM == 0)
+const bool kPrewarm = false;
+#else
+const bool kPrewarm = true;
+#endif
+const uint32_t kPrewarmLinearReserve = 4u << 20;
+const int32_t kPrewarmMakesPerFrame = 1;
+const int32_t kPrewarmObjectsPerFrame = 8;
+// KURT'S RESIDENCY, raised by the prewarm. The backend's bound (1 MiB,
+// renderer caps) holds four of his 256x256 frames, so the start's fall and
+// landing (13 + 25 frames) and every cycle of the 57-frame idle loop made a
+// texture nearly every frame -- the Linux build's first-use log of level 8 shows
+// a new Kurt frame every other 60 Hz frame from frame 3 to 81 (fall, landing)
+// and again from 424 (the idle), which at the console's ~25 fps are the
+// profile's two clusters (frames 3-16 and ~182-197). Padded RGBA8 per animation
+// (TRAVSPRT.BNI): K_STILL 0.6 MB, K_FALL 2.1, K_LAND 2.2, K_IDLE 5.3. 8 MiB holds
+// the start's three and most of the idle; once the start is over the residency's
+// LRU keeps the standing set (K_STILL + K_IDLE, 5.9 MB) and the idle's later
+// cycles make nothing. Capped by the linear heap free over the reserve at the
+// load. A resident frame is still the backend's LRU's to evict under pressure
+// (evictTextures does not know Kurt from an arena), so this is a cache bound,
+// not a reservation.
+const int32_t kPrewarmKurtResidencyBytes = 8 << 20;
+
+bool prewarmRoom(void*, int32_t bytes) {
+    return bytes >= 0 && (uint64_t)linearSpaceFree() >= (uint64_t)bytes + kPrewarmLinearReserve;
+}
+
+// Microseconds from svcGetSystemTick deltas, for the prewarm's own log lines
+// (cold: a few calls a frame at most).
+uint32_t ticksUs(uint64_t ticks) {
+    return (uint32_t)((ticks * 4005u) >> 30);   // 1e6 / 268,111,856 Hz = 4004.9 / 2^30
+}
 
 bool loadHdPack(int32_t level, mdk::ModImages* out) {
     FILE* file = fopen("sdmc:/3ds/mdk/hd/manifest.txt", "r");
@@ -1166,9 +1229,108 @@ int main(int argc, char** argv) {
                           player.feet.x, player.feet.y, player.feet.z, player.yaw,
                           player.health(), (int)level.arenas().size());
     };
+    // THE PREWARM (kPrewarm, above): the look an object's arena gives it, asked
+    // through plain pointers (game/prewarm.h) -- the frame's own objectLook, and
+    // null for an arena with no view (a texture made through an unloaded arena's
+    // palette would be the orphan sweep's to give back).
+    struct PrewarmContext {
+        decltype(objectLook)* look;
+        mdk::LevelData* level;
+        mdk::ArenaViews* views;
+        std::unique_ptr<mdk::scripts::ScriptRuntime>* runtime;
+    };
+    PrewarmContext prewarmContext{&objectLook, &level, &arenaViews, &runtime};
+    const mdk::PrewarmLook prewarmLook = [](void* user,
+                                            const std::string& name) -> const mdk::ObjectLook* {
+        PrewarmContext* c = static_cast<PrewarmContext*>(user);
+        if (!name.empty() && c->level->arenaNamed(name) && !c->views->find(name)) {
+            return nullptr;
+        }
+        return &(*c->look)(name);
+    };
+    const mdk::PrewarmRemoved prewarmRemoved = [](void* user, const mdk::scripts::MdkObject* obj) {
+        PrewarmContext* c = static_cast<PrewarmContext*>(user);
+        return *c->runtime && (*c->runtime)->isRemoved(obj);
+    };
+    mdk::ObjectPrewarm objectPrewarm;
+    // The level's load (and a respawn's, which rebuilds the runtime and drops
+    // the layouts and poses): everything the first frames would make, in the
+    // order they would make it, until the linear reserve says stop.
+    auto prewarmLevel = [&]() {
+        if (!kPrewarm || !arena) {
+            return;
+        }
+        const uint64_t t0 = svcGetSystemTick();
+        const uint32_t linear0 = linearSpaceFree();
+        mdk::PrewarmBudget budget;
+        budget.room = prewarmRoom;
+        // (1) The arenas the first frame draws: Kurt's, its views' textures.
+        const std::vector<std::string> firstDrawn(1, startArenaName);
+        (void)arenaViews.prewarm(firstDrawn, &budget);
+        const int32_t arenaMade = budget.made;
+        // (2) The scripts' objects as they stand before the first tick, every
+        // one, with its pose (the C#'s PreloadModels over _scripts.Objects, and
+        // the poses its PreparePoses bakes at the load).
+        objectPrewarm.reset();
+        int32_t posesBefore = mdk::scripts::poseCacheBuilds();
+        if (runtime) {
+            objectPrewarm.step(&objectView, runtime->objects(), prewarmLook, prewarmRemoved,
+                               &prewarmContext, &surfaces, &budget,
+                               (int32_t)runtime->objects().size(), true);
+            objectPrewarm.reset();
+        }
+        const int32_t objectsMade = budget.made - arenaMade;
+        // (3) The start arena's own models (the C#'s PreloadModels over each
+        // arena's Models): what its doors and scenery spawn as.
+        const mdk::formats::Arena* startArena = level.arenaNamed(startArenaName);
+        if (startArena) {
+            const mdk::ObjectLook& look = objectLook(startArenaName);
+            for (int32_t m = 0; m < startArena->modelCount(); m++) {
+                (void)mdk::prewarmModel(&objectView, startArena->model(startArena->modelName(m)),
+                                        look, &surfaces, &budget);
+            }
+        }
+        const int32_t modelsMade = budget.made - arenaMade - objectsMade;
+        const int32_t poses = mdk::scripts::poseCacheBuilds() - posesBefore;
+        // (4) Kurt: what a fresh Kurt plays first -- standing, the fall from the
+        // spawn's lift, the landing -- then the idle loop, inside a residency
+        // raised to kPrewarmKurtResidencyBytes or what the linear heap has left
+        // over the reserve, whichever is smaller (never below the backend's).
+        int32_t kurtMade = 0;
+        if (kurtSpriteReady) {
+            const uint32_t free = linearSpaceFree();
+            int64_t room = (int64_t)free - (int64_t)kPrewarmLinearReserve;
+            if (room > kPrewarmKurtResidencyBytes) {
+                room = kPrewarmKurtResidencyBytes;
+            }
+            if (room > kurtSprite.residencyBudget()) {
+                kurtSprite.setResidencyBudget((int32_t)room);
+            }
+            static const int32_t kKurtFirst[] = {mdk::Kurt::Still, mdk::Kurt::Fall,
+                                                 mdk::Kurt::Land, mdk::Kurt::Idle};
+            kurtMade = kurtSprite.prewarm(kKurtFirst, 4, &budget);
+        }
+        mdk::log3dsPrintf("prewarm: load made %d textures (%d KB) in %lu ms: arena %d, objects "
+                          "%d, models %d, kurt %d frames (residency %d KB); %d poses, %d "
+                          "layouts so far; stopped: %d away, %d no room, %d failed; linear free "
+                          "%lu -> %lu KB (reserve %lu KB)",
+                          (int)budget.made, (int)(budget.madeBytes / 1024),
+                          (unsigned long)(ticksUs(svcGetSystemTick() - t0) / 1000u),
+                          (int)arenaMade, (int)objectsMade, (int)modelsMade, (int)kurtMade,
+                          (int)(kurtSprite.residencyBudget() / 1024), (int)poses,
+                          (int)objectView.layoutsBuilt(), (int)budget.away, (int)budget.noRoom,
+                          (int)budget.failed, (unsigned long)(linear0 / 1024u),
+                          (unsigned long)(linearSpaceFree() / 1024u),
+                          (unsigned long)(kPrewarmLinearReserve / 1024u));
+        heapProbe("prewarm");
+    };
     if (arena) {
         spawnPlayer();
         playerReady = true;
+        prewarmLevel();
+    }
+    if (!kPrewarm) {
+        mdk::log3dsPrintf("prewarm: OFF (harness PREWARM=0): first use makes in the frame");
     }
     if (playerReady && !runtime) {
         // Said out loud, because a silent half-world is the failure mode: the level
@@ -1256,6 +1418,32 @@ int main(int argc, char** argv) {
     int32_t objectPeakDraws = 0;
     const char* exitReason = "aptMainLoop returned false";
     u32 prevHeld = 0;  // last frame's held mask; the menu reads edges
+
+    // THE FIRST-USE RECORD (harness builds: harnessFirstUseArmed): the counters
+    // at the end of the last frame, at the draw build's start, and the
+    // prewarm step's figures, differenced at the frame's end.
+    struct FirstUseCounters {
+        mdk::CreationStats gpu;
+        int32_t surfaces = 0;
+        int32_t kurt = 0;
+        int32_t layouts = 0;
+        int32_t poses = 0;
+    };
+    auto takeFirstUse = [&](FirstUseCounters* c) {
+        mdk_render_creation_stats(renderer, &c->gpu);
+        c->surfaces = surfaces.texturesMade();
+        c->kurt = kurtSprite.framesMade();
+        c->layouts = objectView.layoutsBuilt();
+        c->poses = mdk::scripts::poseCacheBuilds();
+    };
+    FirstUseCounters firstUseFrameEnd;
+    FirstUseCounters firstUseDraw0;
+    const bool firstUseArmed = mdk::harnessFirstUseArmed();
+    if (firstUseArmed) {
+        takeFirstUse(&firstUseFrameEnd);
+    }
+    int32_t prewarmFrameMade = 0;
+    uint32_t prewarmFrameUs = 0;
 
     heapProbe("loop");
     mdk::log3dsPrintf("loop: entering main loop");
@@ -1598,6 +1786,7 @@ int main(int argc, char** argv) {
             // skull crosses SkullEnd, not a wall-clock timer of this frontend's.
             if (player.died()) {
                 spawnPlayer();
+                prewarmLevel();
                 mdk::buildFollowCamera(&camera, player.feet, player.facing(),
                                        mdk::follow_camera::kDefaultPitch,
                                        mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
@@ -1722,6 +1911,25 @@ int main(int argc, char** argv) {
                 mdk::log3dsPrintf("stream: read FAILED for %s (%d failures)",
                                   stream.resident().c_str(), (int)after.readFailures);
             }
+            // THE PREWARM'S STEP (kPrewarm): before the frame's draws, at most
+            // kPrewarmMakesPerFrame textures -- the drawn arenas' first, then the
+            // kept views' (the second arena, ahead of its door) -- and the next
+            // kPrewarmObjectsPerFrame objects' layouts, textures and poses, so an
+            // object the scripts show later is ready when it appears.
+            if (kPrewarm) {
+                const uint64_t warm0 = svcGetSystemTick();
+                mdk::PrewarmBudget budget;
+                budget.makes = kPrewarmMakesPerFrame;
+                budget.room = prewarmRoom;
+                (void)arenaViews.prewarm(*frameDrawn, &budget);
+                if (runtime && !budget.spent()) {
+                    objectPrewarm.step(&objectView, runtime->objects(), prewarmLook,
+                                       prewarmRemoved, &prewarmContext, &surfaces, &budget,
+                                       kPrewarmObjectsPerFrame, true);
+                }
+                prewarmFrameMade = budget.made;
+                prewarmFrameUs = ticksUs(svcGetSystemTick() - warm0);
+            }
             if (arenaViews.stats().failed != lastViewsFailed) {
                 mdk::log3dsPrintf("views: build FAILED (%d so far); it is tried again",
                                   (int)arenaViews.stats().failed);
@@ -1842,6 +2050,10 @@ int main(int argc, char** argv) {
         const uint64_t spanBegin0 = mdk::harnessProfileTick();
         mdk_render_begin_frame(renderer, &params);
         const uint64_t spanDraw0 = mdk::harnessProfileTick();
+        const uint64_t firstUseTick0 = firstUseArmed ? svcGetSystemTick() : 0;
+        if (firstUseArmed) {
+            takeFirstUse(&firstUseDraw0);
+        }
         if (capturePath[0]) {
             capturePath[0] = '\0';  // one frame, one picture (after the copy above)
         }
@@ -2089,12 +2301,53 @@ int main(int argc, char** argv) {
             mdk_render_canvas_end(renderer);
         }
         const uint64_t spanEnd0 = mdk::harnessProfileTick();
+        FirstUseCounters firstUseDraw1;
+        uint32_t firstUseDrawUs = 0;
+        if (firstUseArmed) {
+            firstUseDrawUs = ticksUs(svcGetSystemTick() - firstUseTick0);
+            takeFirstUse(&firstUseDraw1);
+        }
         mdk_render_end_frame(renderer);
         if (frame > 0) {
             mdk::harnessProfileSpans(spanSim, steps - spanSteps0, spanDraw0 - spanBegin0,
                                      spanEnd0 - spanDraw0,
                                      mdk::harnessProfileTick() - spanEnd0);
         }
+        if (firstUseArmed) {
+            // What the draw build made, and what the rest of the frame made (the
+            // steps, the stream step and the prewarm's, the frame boundary's
+            // settles, the replay's remakes of evicted textures).
+            FirstUseCounters end;
+            takeFirstUse(&end);
+            const mdk::CreationStats& a = firstUseDraw0.gpu;
+            const mdk::CreationStats& b = firstUseDraw1.gpu;
+            mdk::FirstUseFrame f;
+            f.frame = frame;
+            f.drawUs = firstUseDrawUs;
+            f.textures = b.textures_made - a.textures_made;
+            f.remade = b.textures_remade - a.textures_remade;
+            f.bytes = (int32_t)(b.texture_bytes - a.texture_bytes);
+            f.textureUs = (uint32_t)(b.texture_us - a.texture_us);
+            f.expandUs = (uint32_t)(b.expand_us - a.expand_us);
+            f.prepareUs = (uint32_t)(b.prepare_us - a.prepare_us);
+            f.mipsUs = (uint32_t)(b.mips_us - a.mips_us);
+            f.uploadUs = (uint32_t)(b.upload_us - a.upload_us);
+            f.meshes = b.meshes_made - a.meshes_made;
+            f.palettes = b.palettes_made - a.palettes_made;
+            f.surfaces = firstUseDraw1.surfaces - firstUseDraw0.surfaces;
+            f.kurtFrames = firstUseDraw1.kurt - firstUseDraw0.kurt;
+            f.layouts = firstUseDraw1.layouts - firstUseDraw0.layouts;
+            f.poses = firstUseDraw1.poses - firstUseDraw0.poses;
+            f.otherTextures = (end.gpu.textures_made - firstUseFrameEnd.gpu.textures_made) - f.textures;
+            f.otherTextureUs = (uint32_t)((end.gpu.texture_us - firstUseFrameEnd.gpu.texture_us) -
+                                          (uint64_t)f.textureUs);
+            f.prewarmMade = prewarmFrameMade;
+            f.prewarmUs = prewarmFrameUs;
+            mdk::harnessFirstUse(f);
+            firstUseFrameEnd = end;
+        }
+        prewarmFrameMade = 0;
+        prewarmFrameUs = 0;
         frame++;
 
         if (frame == 1u) {

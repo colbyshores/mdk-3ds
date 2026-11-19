@@ -464,6 +464,7 @@ bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
         // the first time the frame is drawn.
         const int32_t texture = mdk_render_create_index_texture(
             renderer_, frame.width, frame.height, frame.indices.data(), paletteRgba_.data());
+        framesMade_++;
         if (texture < 0) {
             return false;
         }
@@ -512,6 +513,53 @@ bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
     }
     trimResidency(animationIndex, frameIndex);
     return true;
+}
+
+int32_t KurtSprite::prewarm(const int32_t* states, int32_t count, PrewarmBudget* budget) {
+    if (!renderer_ || states == nullptr || budget == nullptr) {
+        return 0;
+    }
+    int32_t made = 0;
+    for (int32_t s = 0; s < count; s++) {
+        const int32_t state = states[s];
+        if (state < 0 || state >= (int32_t)stateIndices_.size()) {
+            continue;
+        }
+        const int32_t animationIndex = stateIndices_[(size_t)state];
+        if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
+            continue;
+        }
+        const Animation& animation = animations_[(size_t)animationIndex];
+        for (size_t f = 0; f < animation.frames.size(); f++) {
+            const Frame& frame = animation.frames[f];
+            if (frame.texture >= 0) {
+                continue;
+            }
+            const int32_t bytes = mdk_render_index_texture_bytes(renderer_, frame.width, frame.height);
+            if (budget->spent()) {
+                return made;
+            }
+            if (residency_.bounded() && residency_.residentBytes() + bytes > residency_.budget()) {
+                budget->noRoom++;
+                return made;
+            }
+            if (budget->room != nullptr && !budget->room(budget->user, bytes)) {
+                budget->noRoom++;
+                return made;
+            }
+            if (!ensureTexture(animationIndex, (int32_t)f)) {
+                budget->failed++;
+                return made;
+            }
+            if (budget->makes > 0) {
+                budget->makes--;
+            }
+            budget->made++;
+            budget->madeBytes += bytes;
+            made++;
+        }
+    }
+    return made;
 }
 
 void KurtSprite::trimResidency(int32_t keepAnimation, int32_t keepFrame) {

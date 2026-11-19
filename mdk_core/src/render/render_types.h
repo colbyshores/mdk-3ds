@@ -421,4 +421,23 @@ struct MdkCapabilities {
     int32_t sprite_residency_bytes = 0;
 };
 
+// WHAT THE BACKEND HAS MADE, over its life (mdk_render_creation_stats): the
+// first-use counters a frontend differences around a span of the frame to say
+// what that span created. Counts on every backend; the times are the 3DS
+// backend's (svcGetSystemTick around the parts of a texture's creation), 0 on a
+// backend that does not measure them. Microseconds, summed.
+struct CreationStats {
+    int32_t textures_made = 0;     // GPU copies made (a first make or a remake)
+    int32_t textures_remade = 0;   // of which a texture made again after an eviction
+    int64_t texture_bytes = 0;     // GPU bytes of those copies (mip chains included)
+    int32_t palettes_made = 0;
+    int32_t meshes_made = 0;       // static and dynamic, a grown stream mesh included
+    int64_t mesh_bytes = 0;
+    uint64_t texture_us = 0;       // the whole of each texture make
+    uint64_t expand_us = 0;        //   the palette/RGBA expansion into tiles
+    uint64_t prepare_us = 0;       //   the filter preparation (pica::prepareForFiltering)
+    uint64_t mips_us = 0;          //   the mip chain (Enhanced Mode enableMipmaps)
+    uint64_t upload_us = 0;        //   the allocation, the copy into it and the flush
+};
+
 } // namespace mdk

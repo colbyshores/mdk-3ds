@@ -413,6 +413,10 @@ struct RendererVk {
     // `capturesWritten` is incremented ONLY on the path where the bytes landed.
     int32_t capturesRequested = 0;
     int32_t capturesWritten = 0;
+
+    // What this renderer has made (mdk_render_creation_stats): counts only, the
+    // times stay 0 on this backend.
+    mdk::CreationStats creation;
 };
 
 // Defined with the drawing code below; the frame and the canvas need them and

@@ -49,6 +49,7 @@ std::map<const mdk::formats::Model*, ObjectPose> g_restPoses;
 std::map<std::pair<const mdk::formats::Model*, const mdk::formats::ModelAnimation*>,
          std::vector<ObjectPose> > g_baked;
 const ObjectPose g_noPose;
+int g_builds = 0;   // poseCacheBuilds(): a count, never reset
 
 const std::vector<ObjectPose>& baked(const mdk::formats::Model* model,
                                      const mdk::formats::ModelAnimation* animation)
@@ -60,6 +61,7 @@ const std::vector<ObjectPose>& baked(const mdk::formats::Model* model,
     }
     // The C# bakes the whole animation once per (model, animation) and keeps
     // every frame, so nothing is baked while the game plays.
+    g_builds++;
     return g_baked.emplace(key, animation->bake(*model)).first->second;
 }
 
@@ -74,6 +76,7 @@ const std::vector<std::vector<mdk::formats::Vec3f> >& mdk::scripts::MdkObject::p
         if (found != g_restPoses.end()) {
             return found->second;
         }
+        g_builds++;
         return g_restPoses.emplace(model, model->restPose()).first->second;
     }
     const std::vector<ObjectPose>& frames = baked(model, animation);
@@ -92,6 +95,10 @@ const std::vector<std::vector<mdk::formats::Vec3f> >& mdk::scripts::MdkObject::p
         frame = static_cast<int32_t>(frames.size()) - 1;
     }
     return frames[static_cast<size_t>(frame)];
+}
+
+int mdk::scripts::poseCacheBuilds() {
+    return g_builds;
 }
 
 void mdk::scripts::forgetPoseCaches() {

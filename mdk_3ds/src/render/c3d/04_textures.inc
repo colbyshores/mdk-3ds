@@ -84,9 +84,24 @@ static int32_t acquireTextureSlot(RendererC3D* renderer) {
 // RGBA in memory, the hardware reads `[A, B, G, R]`, and writing the palette's
 // order straight through is what pinned the console's red channel to 255 on
 // every painted pixel. See `pica::texelBytes`.
+// Ticks to microseconds without a divide (the ARM11 has none, AGENTS.md R11):
+// 1e6 / SYSCLOCK_ARM11 (268,111,856 Hz) is 4004.9 / 2^30, so a 64-bit multiply
+// and a shift, within 0.003 %. Deltas only (a texture's parts, well under 2^32).
+static uint64_t ticksToUs(uint64_t ticks) {
+    return (ticks * 4005u) >> 30;
+}
+
+// Where an expansion's time went (makeTexture's first-use accounting): the
+// tick at which each part ended. Written by expandIndices/expandRgba.
+struct ExpandTicks {
+    uint64_t expanded = 0;   // the texels written into their tiles
+    uint64_t prepared = 0;   // pica::prepareForFiltering done
+    uint64_t mipped = 0;     // pica::buildMipChain done
+};
+
 static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t height,
                               const uint8_t* paletteRgba, int32_t paddedWidth,
-                              int32_t paddedHeight, int32_t mipLevels) {
+                              int32_t paddedHeight, int32_t mipLevels, ExpandTicks* ticks) {
     // Level 0 and, under Enhanced Mode enableMipmaps, the chain after it in the
     // same buffer (pica::buildMipChain, levels consecutive).
     const size_t texels = mdk::pica::mipChainTexels(paddedWidth, paddedHeight, mipLevels);
@@ -121,12 +136,15 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
                                   paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);
         }
     }
+    ticks->expanded = svcGetSystemTick();
     // Ready for Enhanced Mode filtering whichever way its toggle stands now: the
     // toggle is live, the texture is made once (pica::prepareForFiltering; a
     // nearest sample of any texel it touches is unchanged in colour or
     // discarded as before, except at an exact padded edge, which now clamps).
     mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
+    ticks->prepared = svcGetSystemTick();
     mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, width, height, mipLevels);
+    ticks->mipped = svcGetSystemTick();
     return pixels;
 }
 
@@ -141,7 +159,8 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
 // to be rotated on the way in. Row-wise memcpy was the first version and it is
 // what painted every flat-coloured surface with its own alpha as red.
 static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
-                           int32_t paddedWidth, int32_t paddedHeight, int32_t mipLevels) {
+                           int32_t paddedWidth, int32_t paddedHeight, int32_t mipLevels,
+                           ExpandTicks* ticks) {
     const size_t texels = mdk::pica::mipChainTexels(paddedWidth, paddedHeight, mipLevels);
     uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));
     if (!pixels) {
@@ -158,8 +177,11 @@ static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
                                   row[(size_t)x * 4 + 3]);
         }
     }
+    ticks->expanded = svcGetSystemTick();
     mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
+    ticks->prepared = svcGetSystemTick();
     mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, width, height, mipLevels);
+    ticks->mipped = svcGetSystemTick();
     return pixels;
 }
 
@@ -233,6 +255,8 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     // texture had: no unit's bind may be skipped on the strength of the old
     // contents (03_frame.inc, THE DEDUPE).
     forgetTextureBinds(renderer);
+    // The first-use accounting's clock: the whole make, and its parts below.
+    const uint64_t made0 = svcGetSystemTick();
     // THE MIP CHAIN (SPEC.md 7.9 enableMipmaps): made with the texture when the
     // toggle is on at that moment, so turning it on costs its memory -- a third
     // more per texture -- from the next texture made (the next level load, or an
@@ -352,13 +376,15 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     // memory, and the arena's textures stopped allocating one after
     // another.
     uint8_t* pixels = nullptr;
+    const uint64_t expand0 = svcGetSystemTick();
+    ExpandTicks split;
     if (texture.indexed) {
         pixels = expandIndices(texture.source.data(), texture.realWidth, texture.realHeight,
                                texture.palette.data(), texture.paddedWidth, texture.paddedHeight,
-                               levels);
+                               levels, &split);
     } else {
         pixels = expandRgba(texture.source.data(), texture.realWidth, texture.realHeight,
-                            texture.paddedWidth, texture.paddedHeight, levels);
+                            texture.paddedWidth, texture.paddedHeight, levels, &split);
     }
     if (!pixels) {
         C3D_TexDelete(&texture.tex);
@@ -420,6 +446,25 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     C3D_TexFlush(&texture.tex);
     free(pixels);
     texture.valid = true;
+    // THE ACCOUNTING. The upload is everything that is not the expansion: the
+    // allocation (with any eviction it took) before it, the copy and the flush
+    // after it.
+    {
+        const uint64_t made1 = svcGetSystemTick();
+        mdk::CreationStats& c = renderer->creation;
+        c.textures_made++;
+        if (texture.madeOnce) {
+            c.textures_remade++;
+        }
+        texture.madeOnce = true;
+        c.texture_bytes += (int64_t)mdk::pica::textureBytes(
+            mdk::pica::TexelFormat::Rgba8, texture.paddedWidth, texture.paddedHeight, made);
+        c.texture_us += ticksToUs(made1 - made0);
+        c.expand_us += ticksToUs(split.expanded - expand0);
+        c.prepare_us += ticksToUs(split.prepared - split.expanded);
+        c.mips_us += ticksToUs(split.mipped - split.prepared);
+        c.upload_us += ticksToUs((expand0 - made0) + (made1 - split.mipped));
+    }
     return true;
 }
 

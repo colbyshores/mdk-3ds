@@ -47,6 +47,22 @@ void LevelView::unload() {
     scene_ = ArenaScene();
     arena_ = nullptr;
     palette_ = nullptr;
+    warmCursor_ = 0;
+}
+
+bool LevelView::prewarm(PrewarmBudget* budget) {
+    if (!renderer_ || mesh_ < 0 || surfaces_ == nullptr || budget == nullptr) {
+        return false;
+    }
+    while (warmCursor_ < (int32_t)scene_.batches.size()) {
+        const ArenaBatch& batch = scene_.batches[(size_t)warmCursor_];
+        // The draw's own pair: the batch's surface through the arena's palette.
+        if (prewarmStops(surfaces_->prewarm(batch.surface, palette_, budget))) {
+            return false;
+        }
+        warmCursor_++;
+    }
+    return true;
 }
 
 bool LevelView::bounds(Vec3* outMin, Vec3* outMax) const {
@@ -133,6 +149,7 @@ bool LevelView::refresh() {
 
     scene_.vertices.swap(rebuilt.vertices);
     scene_.batches.swap(rebuilt.batches);
+    warmCursor_ = 0;   // new batches, new surfaces: the prewarm walks them again
 
     // The mesh is rebuilt. The C# creates a new mesh on Rebuild and lets the old
     // one live until the level ends; here the old GPU buffer is released first.

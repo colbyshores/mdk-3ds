@@ -62,6 +62,7 @@ MdkTextureId SurfaceCache::textureId(const formats::Texture* texture,
     const MdkTextureId id = mdk_render_create_index_texture(
         renderer_, texture->width(), texture->height() * texture->frameCount(),
         indices, palette->rgba());
+    texturesMade_++;
     textures_[key] = id;
     return id;
 }
@@ -120,6 +121,7 @@ MdkTextureId SurfaceCache::flatColourId(const Colour& colour) {
     pixel[2] = (uint8_t)((key >> 16) & 0xFFu);
     pixel[3] = (uint8_t)((key >> 24) & 0xFFu);
     const MdkTextureId id = mdk_render_create_rgba_texture(renderer_, 1, 1, pixel);
+    texturesMade_++;
     flatColours_[key] = id;
     return id;
 }
@@ -152,6 +154,66 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
         }
     }
     return id;
+}
+
+bool SurfaceCache::has(const Surface& surface, const formats::Palette* palette) const {
+    if (surface.texture == nullptr) {
+        return flatColours_.find(packColour(surface.colour)) != flatColours_.end();
+    }
+    const std::pair<const formats::Texture*, const formats::Palette*> key(surface.texture, palette);
+    return textures_.find(key) != textures_.end();
+}
+
+PrewarmResult SurfaceCache::prewarm(const Surface& surface, const formats::Palette* palette,
+                                    PrewarmBudget* budget) {
+    if (!renderer_ || budget == nullptr) {
+        return PrewarmResult::Failed;
+    }
+    // A textured surface with no palette is one the draw cannot make either
+    // (textureId's guard): nothing to do, now or later.
+    if (surface.texture != nullptr && palette == nullptr) {
+        return PrewarmResult::Had;
+    }
+    if (has(surface, palette)) {
+        return PrewarmResult::Had;
+    }
+    int32_t bytes = 0;
+    if (surface.texture != nullptr) {
+        // NEVER READ PIXELS THAT ARE AWAY: indices() would load them here, inside
+        // the frame, which is the stall this exists to remove. The draw that
+        // needs them comes after the stream has brought them in.
+        if (surface.texture->pixelsAway()) {
+            budget->away++;
+            return PrewarmResult::Away;
+        }
+        bytes = mdk_render_index_texture_bytes(
+            renderer_, surface.texture->width(),
+            surface.texture->height() * surface.texture->frameCount());
+    } else {
+        bytes = mdk_render_index_texture_bytes(renderer_, 1, 1);
+    }
+    if (budget->spent()) {
+        return PrewarmResult::NoBudget;
+    }
+    if (budget->room != nullptr && !budget->room(budget->user, bytes)) {
+        budget->noRoom++;
+        return PrewarmResult::NoRoom;
+    }
+    // THE DRAW'S OWN CALLS, in the draw's order (LevelView/ObjectDraw/
+    // EffectsDraw: surfaceId, then paletteId), so the texture, its palette and
+    // its mod replacement are exactly the ones the first draw would have made.
+    const MdkTextureId id = surfaceId(surface, palette);
+    (void)paletteId(palette);   // null for no palette, as the draw's call is
+    if (budget->makes > 0) {
+        budget->makes--;
+    }
+    if (id < 0) {
+        budget->failed++;
+        return PrewarmResult::Failed;
+    }
+    budget->made++;
+    budget->madeBytes += bytes;
+    return PrewarmResult::Made;
 }
 
 } // namespace mdk

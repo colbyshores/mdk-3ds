@@ -209,6 +209,13 @@ float mdk_render_gpu_wait_ms(MdkRenderer r) {
     return 0.0f;
 }
 
+void mdk_render_creation_stats(MdkRenderer r, mdk::CreationStats* out) {
+    RendererVk* vr = asVk(r);
+    if (out) {
+        *out = vr ? vr->creation : mdk::CreationStats();
+    }
+}
+
 void mdk_render_capture_stats(MdkRenderer r, int32_t* requested, int32_t* written) {
     RendererVk* vr = asVk(r);
     if (requested) {

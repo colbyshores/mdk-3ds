@@ -60,6 +60,50 @@ void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTic
                          uint64_t drawTicks, uint64_t endTicks);
 void harnessProfileReport();
 
+// FIRST-USE WORK, per frame (the 2026-11-19 level-8 profile: the draw build
+// went from ~8 ms to 20-40 ms in clusters of 13-16 frames, and this is what
+// names what the cluster CREATED). main_3ds.cpp differences the renderer's
+// CreationStats and the shared code's counters around the draw build
+// (spanDraw0..spanEnd0) and around the rest of the frame, and hands the result
+// here once per frame -- only when something was created or the prewarm ran.
+//
+//   * PROFILE builds: no SD write during the run. The frame is kept for the
+//     next frame's `profile: spike` line (which then names what the spiking
+//     frame made), the first kFirstUseKept such frames are kept in a fixed
+//     table, and harnessProfileReport() prints them with the run's totals.
+//   * other harness builds: one `first-use:` line per such frame, as it
+//     happens (capped), like the other periodic diagnostics.
+//   * release builds: compiled to nothing (harnessFirstUseArmed() is false and
+//     main does not even take the counters).
+struct FirstUseFrame {
+    uint32_t frame = 0;
+    uint32_t drawUs = 0;          // the draw build's span (spanDraw0..spanEnd0)
+    // Made INSIDE the draw build:
+    int32_t textures = 0;         // GPU texture copies made (backend)
+    int32_t remade = 0;           //   of which evicted ones made again
+    int32_t bytes = 0;            //   their GPU bytes
+    uint32_t textureUs = 0;       //   their whole make
+    uint32_t expandUs = 0;        //     the expansion into tiles
+    uint32_t prepareUs = 0;       //     pica::prepareForFiltering
+    uint32_t mipsUs = 0;          //     the mip chain
+    uint32_t uploadUs = 0;        //     alloc + copy + flush
+    int32_t meshes = 0;           // meshes made (the stream mesh growing)
+    int32_t palettes = 0;
+    int32_t surfaces = 0;         // SurfaceCache textures (arena/objects/effects)
+    int32_t kurtFrames = 0;       // Kurt's sprite frames (KurtSprite residency)
+    int32_t layouts = 0;          // object layouts built (ObjectView::layoutOf)
+    int32_t poses = 0;            // rest poses and animation bakes
+    // Made OUTSIDE the draw build (the stream step, the prewarm step, the
+    // end-of-frame replay's remakes of evicted textures):
+    int32_t otherTextures = 0;
+    uint32_t otherTextureUs = 0;
+    // The frame's prewarm step (inside the "other" figures above).
+    int32_t prewarmMade = 0;
+    uint32_t prewarmUs = 0;
+};
+bool harnessFirstUseArmed();
+void harnessFirstUse(const FirstUseFrame& f);
+
 // True once the harness deadline expires (first call arms it). Always
 // false in a build without MDK_AUTOQUIT.
 bool harnessAutoquitDue();

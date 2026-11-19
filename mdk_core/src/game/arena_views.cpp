@@ -237,6 +237,31 @@ void ArenaViews::draw(const std::vector<std::string>& drawn) {
     }
 }
 
+bool ArenaViews::prewarm(const std::vector<std::string>& drawn, PrewarmBudget* budget) {
+    if (budget == nullptr) {
+        return false;
+    }
+    // The drawn ones first: they are the ones this frame's draw would make.
+    for (size_t d = 0; d < drawn.size() && !budget->spent(); d++) {
+        for (size_t i = 0; i < views_.size(); i++) {
+            if (views_[i].name == drawn[d]) {
+                (void)views_[i].view->prewarm(budget);
+                break;
+            }
+        }
+    }
+    bool warm = true;
+    for (size_t i = 0; i < views_.size(); i++) {
+        if (views_[i].view->warm()) {
+            continue;
+        }
+        if (budget->spent() || !views_[i].view->prewarm(budget)) {
+            warm = false;
+        }
+    }
+    return warm;
+}
+
 void ArenaViews::clear() {
     if (renderer_ && level_ && surfaces_) {
         for (size_t i = views_.size(); i > 0; i--) {

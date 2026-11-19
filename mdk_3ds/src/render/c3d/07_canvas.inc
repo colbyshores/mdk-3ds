@@ -246,6 +246,15 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
 // has no readback of a rendered target, so a frontend that asked for a frame here
 // did not get one and must be able to fail its run. The request half is counted
 // in `mdk_render_begin_frame`.
+// The first-use accounting (RendererC3D::creation). A copy of a few counters:
+// the frontend calls it around the frame's spans.
+void mdk_render_creation_stats(MdkRenderer r, mdk::CreationStats* out) {
+    RendererC3D* cr = asC3d(r);
+    if (out) {
+        *out = cr ? cr->creation : mdk::CreationStats();
+    }
+}
+
  void mdk_render_capture_stats(MdkRenderer r, int32_t* requested, int32_t* written) {
     RendererC3D* cr = asC3d(r);
     if (requested) *requested = cr ? cr->capturesRequested : 0;

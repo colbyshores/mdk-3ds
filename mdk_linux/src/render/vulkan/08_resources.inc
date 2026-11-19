@@ -27,6 +27,8 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r_, int32_t w, int32_t 
     t.size = (VkDeviceSize)w * (VkDeviceSize)h;
     t.indices.assign(px, px + (size_t)w * (size_t)h);
     t.version = 1;
+    r->creation.textures_made++;
+    r->creation.texture_bytes += (int64_t)t.size;
     ResRef ref;
     ref.kind = 0;
     ref.id = id;
@@ -65,6 +67,8 @@ MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r_, int32_t w, int32_t h
     t.width = w;
     t.height = h;
     t.size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+    r->creation.textures_made++;
+    r->creation.texture_bytes += (int64_t)t.size;
     ResRef ref;
     ref.kind = 0;
     ref.id = id;
@@ -80,6 +84,7 @@ MdkPaletteId mdk_render_create_palette(MdkRenderer r_, const uint8_t* rgba) {
     const int32_t id = acquireSlot(r->palettes);
     PaletteVk& p = r->palettes[id];
     memcpy(p.rgba, rgba, sizeof(p.rgba));
+    r->creation.palettes_made++;
     if (!createHostImage(&r->ctx, 256, 1, VK_FORMAT_R8G8B8A8_UNORM, 4, rgba, &p.image,
                          &p.memory, &p.view, &p.mapped)) {
         refused("palette (256x1 RGBA, 1024 bytes): every surface that names palette id %d "
@@ -238,6 +243,8 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r_, const mdk::Vertex* v, int32_t n
     }
     memcpy(m.mapped[0], v, (size_t)size);
     m.capacity = size;
+    r->creation.meshes_made++;
+    r->creation.mesh_bytes += (int64_t)size;
     ResRef ref;
     ref.kind = 2;
     ref.id = id;
@@ -253,6 +260,8 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer r_, int32_t cap) {
     const int32_t id = acquireSlot(r->meshes);
     MeshVk& m = r->meshes[id];
     const VkDeviceSize size = sizeof(mdk::Vertex) * (VkDeviceSize)cap;
+    r->creation.meshes_made++;
+    r->creation.mesh_bytes += (int64_t)(size * mdk::vk::kFramesInFlight);
     // ONE BUFFER PER FRAME IN FLIGHT. The frame writes its whole stream into
     // the slot it will draw from; the previous frame's submission may still be
     // reading the other one (MeshVk, AGENTS.md P3). Two slots is the whole

@@ -259,6 +259,9 @@ public:
     // The C#'s Preload: lay a model out before it is drawn (a level's load).
     void preload(const formats::Model* model, const ObjectLook& look) { (void)layoutOf(model, look); }
 
+    // The layouts this view has built (first-use work, for the profile lines).
+    int32_t layoutsBuilt() const { return layoutsBuilt_; }
+
     // The mods' model replacements (the C#'s ObjectView.Swaps; null:
     // none, the shipped behaviour). Set before the first layout.
     void setSwaps(ModModels* swaps) { swaps_ = swaps; }
@@ -268,6 +271,7 @@ public:
 private:
     const MaterialResolver* resolver_;
     ModModels* swaps_ = nullptr;
+    int32_t layoutsBuilt_ = 0;
     // A map, not a vector: layoutOf hands out a pointer into it, and a map's
     // elements do not move when later entries are inserted.
     std::map<std::pair<const formats::Model*, const formats::Palette*>,

@@ -32,6 +32,7 @@
 #include "game/player.h"
 #include "render/render.h"
 #include "render/render_types.h"
+#include "render/surface_cache.h"
 
 namespace mdk {
 
@@ -245,6 +246,26 @@ public:
     bool draw(MdkRenderer renderer, const Player& player, const Vec3& feet, const Vec3& eye,
               const Vec3& forward, const Vec3& up, float fieldOfView, ArenaSpace* space);
 
+    // THE PREWARM (render/surface_cache.h): make the frames of the given
+    // states' animations (Kurt::State values, in order -- what a fresh Kurt plays
+    // first goes first) before the frame that first draws them. NEVER past the
+    // residency budget: a prewarm that made the residency drop a frame would only
+    // move the cost to the frame that wants it back. Stops at the first frame
+    // that does not fit (the budget, `room`, or the backend), so the order is
+    // the priority. Returns the frames made.
+    int32_t prewarm(const int32_t* states, int32_t count, PrewarmBudget* budget);
+
+    // The residency bound, set by load() from the backend's capabilities; a
+    // frontend may raise it after load() (the 3DS prewarm experiment does).
+    void setResidencyBudget(int32_t bytes) { residency_.setBudget(bytes); }
+    int32_t residencyBudget() const { return residency_.budget(); }
+    int32_t residentBytes() const { return residency_.residentBytes(); }
+
+    // Frames whose texture this sprite has asked the backend to make, over its
+    // life (a frame the residency dropped and made again counts again): the
+    // first-use counter the profile lines read.
+    int32_t framesMade() const { return framesMade_; }
+
     // The C# KurtSprite's pull constants.
     static constexpr float kFloorMargin = 0.02f;
     static constexpr float kMinFloorShare = 0.1f;
@@ -337,6 +358,7 @@ private:
     int32_t muzzleFlash_ = -1;
     // What is on the GPU, and how much of it there is. See SpriteResidency.
     SpriteResidency residency_;
+    int32_t framesMade_ = 0;
 };
 
 } // namespace mdk

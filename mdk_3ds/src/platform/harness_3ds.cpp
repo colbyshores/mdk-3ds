@@ -69,6 +69,15 @@ uint64_t g_simT = 0, g_beginT = 0, g_drawT = 0, g_endT = 0;
 uint64_t g_simSteps = 0;
 uint32_t g_spanFrames = 0;
 uint64_t g_playerT = 0, g_runtimeT = 0, g_cameraT = 0, g_solidT = 0;
+// THE FIRST-USE TABLE (harnessFirstUse): the last frame's record, for the spike
+// line that reports it one frame later, and the first kFirstUseKept frames that
+// created anything, printed at exit -- no SD write while the run is measured.
+constexpr uint32_t kFirstUseKept = 96u;
+FirstUseFrame g_firstUse[kFirstUseKept];
+uint32_t g_firstUseKept = 0;
+uint32_t g_firstUseFrames = 0;      // frames that created anything (all of them)
+FirstUseFrame g_firstUseTotal;      // their sums
+FirstUseFrame g_lastFirstUse;       // the previous frame's (empty when it made nothing)
 
 uint32_t percentileUs(uint32_t pct) {
     // The bucket's upper edge: an estimate, stated as one in the log line.
@@ -110,13 +119,23 @@ void harnessProfileFrame(double periodSeconds) {
     if (us > kSpikeUs && us <= 500000u && g_count >= kSteadyFrom && g_spikesLogged < kSpikeLogs) {
         g_spikesLogged++;
         const double usPerTick = 1000000.0 / (double)SYSCLOCK_ARM11;
+        const FirstUseFrame& f = g_lastFirstUse;
         mdk::log3dsPrintf("profile: spike %lu.%01lu ms at profiled frame %lu: sim %.2f ms (%lu steps) "
-                          "begin %.2f draw %.2f end %.2f",
+                          "begin %.2f draw %.2f end %.2f; made in draw: tex=%ld (remade %ld, "
+                          "%ld KB, %lu us: expand %lu prep %lu mips %lu upload %lu) surf=%ld "
+                          "kurt=%ld layouts=%ld poses=%ld meshes=%ld; elsewhere tex=%ld %lu us "
+                          "(prewarm %ld, %lu us)",
                           (unsigned long)(us / 1000u), (unsigned long)(us % 1000u / 100u),
                           (unsigned long)g_count, (double)g_lastSimT * usPerTick / 1000.0,
                           (unsigned long)g_lastSteps, (double)g_lastBeginT * usPerTick / 1000.0,
                           (double)g_lastDrawT * usPerTick / 1000.0,
-                          (double)g_lastEndT * usPerTick / 1000.0);
+                          (double)g_lastEndT * usPerTick / 1000.0, (long)f.textures,
+                          (long)f.remade, (long)(f.bytes / 1024), (unsigned long)f.textureUs,
+                          (unsigned long)f.expandUs, (unsigned long)f.prepareUs,
+                          (unsigned long)f.mipsUs, (unsigned long)f.uploadUs, (long)f.surfaces,
+                          (long)f.kurtFrames, (long)f.layouts, (long)f.poses, (long)f.meshes,
+                          (long)f.otherTextures, (unsigned long)f.otherTextureUs,
+                          (long)f.prewarmMade, (unsigned long)f.prewarmUs);
     }
     if (us > 500000u) {
         mdk::log3dsPrintf("profile: STALL %lu.%03lu ms at profiled frame %lu",
@@ -207,6 +226,38 @@ void harnessProfileReport() {
                           (double)g_solidT * usPerTick / steps / 1000.0,
                           ((double)g_simT - parts) * usPerTick / steps / 1000.0);
     }
+    // THE FIRST-USE TABLE (harnessFirstUse): which frames created what. One line
+    // per kept frame, then the run's totals. Printed here, after the measured
+    // frames, so the run itself wrote nothing for it.
+    for (uint32_t i = 0; i < g_firstUseKept; i++) {
+        const FirstUseFrame& f = g_firstUse[i];
+        mdk::log3dsPrintf("profile: first-use frame %lu draw %lu us: tex=%ld (remade %ld, %ld KB, "
+                          "%lu us: expand %lu prep %lu mips %lu upload %lu) surf=%ld kurt=%ld "
+                          "layouts=%ld poses=%ld meshes=%ld palettes=%ld; elsewhere tex=%ld "
+                          "%lu us (prewarm %ld, %lu us)",
+                          (unsigned long)f.frame, (unsigned long)f.drawUs, (long)f.textures,
+                          (long)f.remade, (long)(f.bytes / 1024), (unsigned long)f.textureUs,
+                          (unsigned long)f.expandUs, (unsigned long)f.prepareUs,
+                          (unsigned long)f.mipsUs, (unsigned long)f.uploadUs, (long)f.surfaces,
+                          (long)f.kurtFrames, (long)f.layouts, (long)f.poses, (long)f.meshes,
+                          (long)f.palettes, (long)f.otherTextures, (unsigned long)f.otherTextureUs,
+                          (long)f.prewarmMade, (unsigned long)f.prewarmUs);
+    }
+    {
+        const FirstUseFrame& t = g_firstUseTotal;
+        mdk::log3dsPrintf("profile: first-use totals over %lu frames that made anything (%lu "
+                          "listed): in draw tex=%ld (remade %ld, %ld KB, %lu us: expand %lu prep "
+                          "%lu mips %lu upload %lu) surf=%ld kurt=%ld layouts=%ld poses=%ld "
+                          "meshes=%ld; elsewhere tex=%ld %lu us; prewarm %ld in %lu us",
+                          (unsigned long)g_firstUseFrames, (unsigned long)g_firstUseKept,
+                          (long)t.textures, (long)t.remade, (long)(t.bytes / 1024),
+                          (unsigned long)t.textureUs, (unsigned long)t.expandUs,
+                          (unsigned long)t.prepareUs, (unsigned long)t.mipsUs,
+                          (unsigned long)t.uploadUs, (long)t.surfaces, (long)t.kurtFrames,
+                          (long)t.layouts, (long)t.poses, (long)t.meshes, (long)t.otherTextures,
+                          (unsigned long)t.otherTextureUs, (long)t.prewarmMade,
+                          (unsigned long)t.prewarmUs);
+    }
     u8 model = 0xFF;
     if (R_SUCCEEDED(cfguInit())) {
         CFGU_GetSystemModel(&model);
@@ -241,6 +292,68 @@ void harnessProfileReport() {
                       (unsigned)model, oldFamily ? "old3ds" : (model == 0xFF ? "unknown" : "new3ds"),
                       oldFamily ? "268MHz(by-model)" : "unverified", oldFamily ? "none(by-model)" : "unverified",
                       g_stereoSeen ? "on" : "off");
+#endif
+}
+
+bool harnessFirstUseArmed() {
+    return true;
+}
+
+void harnessFirstUse(const FirstUseFrame& f) {
+#ifdef MDK_HW_PROFILE
+    // Remembered for the next frame's spike line, whatever it holds (an empty
+    // record clears the last one: a spike then says it made nothing).
+    g_lastFirstUse = f;
+    const bool made = f.textures > 0 || f.meshes > 0 || f.layouts > 0 || f.poses > 0 ||
+                      f.kurtFrames > 0 || f.otherTextures > 0 || f.prewarmMade > 0;
+    if (!made) {
+        return;
+    }
+    g_firstUseFrames++;
+    if (g_firstUseKept < kFirstUseKept) {
+        g_firstUse[g_firstUseKept++] = f;
+    }
+    FirstUseFrame& t = g_firstUseTotal;
+    t.textures += f.textures;
+    t.remade += f.remade;
+    t.bytes += f.bytes;
+    t.textureUs += f.textureUs;
+    t.expandUs += f.expandUs;
+    t.prepareUs += f.prepareUs;
+    t.mipsUs += f.mipsUs;
+    t.uploadUs += f.uploadUs;
+    t.meshes += f.meshes;
+    t.palettes += f.palettes;
+    t.surfaces += f.surfaces;
+    t.kurtFrames += f.kurtFrames;
+    t.layouts += f.layouts;
+    t.poses += f.poses;
+    t.otherTextures += f.otherTextures;
+    t.otherTextureUs += f.otherTextureUs;
+    t.prewarmMade += f.prewarmMade;
+    t.prewarmUs += f.prewarmUs;
+#else
+    // A harness build that is not measuring: said as it happens, like the other
+    // periodic diagnostics (log3dsPeriodic), and capped so a level that churns
+    // (Kurt's residency remaking his frames) does not fill the card.
+    static uint32_t logged = 0;
+    const bool made = f.textures > 0 || f.meshes > 0 || f.layouts > 0 || f.poses > 0 ||
+                      f.kurtFrames > 0 || f.otherTextures > 0 || f.prewarmMade > 0;
+    if (!made || logged >= 400u) {
+        return;
+    }
+    logged++;
+    mdk::log3dsPrintf("first-use: frame %lu draw %lu us: tex=%ld (remade %ld, %ld KB, %lu us: "
+                      "expand %lu prep %lu mips %lu upload %lu) surf=%ld kurt=%ld layouts=%ld "
+                      "poses=%ld meshes=%ld palettes=%ld; elsewhere tex=%ld %lu us (prewarm %ld, "
+                      "%lu us)",
+                      (unsigned long)f.frame, (unsigned long)f.drawUs, (long)f.textures,
+                      (long)f.remade, (long)(f.bytes / 1024), (unsigned long)f.textureUs,
+                      (unsigned long)f.expandUs, (unsigned long)f.prepareUs,
+                      (unsigned long)f.mipsUs, (unsigned long)f.uploadUs, (long)f.surfaces,
+                      (long)f.kurtFrames, (long)f.layouts, (long)f.poses, (long)f.meshes,
+                      (long)f.palettes, (long)f.otherTextures, (unsigned long)f.otherTextureUs,
+                      (long)f.prewarmMade, (unsigned long)f.prewarmUs);
 #endif
 }
 
@@ -300,6 +413,12 @@ bool harnessAutoquitDue() {
 const char* harnessCapturePath(uint32_t) {
     return nullptr;
 }
+
+bool harnessFirstUseArmed() {
+    return false;
+}
+
+void harnessFirstUse(const FirstUseFrame&) {}
 
 uint64_t harnessProfileTick() {
     return 0;

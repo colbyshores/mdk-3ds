@@ -62,6 +62,66 @@ typedef bool (*ColourReplacementLookup)(void* user, const Surface& surface,
                                         const formats::Palette* palette,
                                         ColourReplacement* out);
 
+// ---------------------------------------------------------------------------
+// THE PREWARM: a surface's GPU texture made BEFORE the frame that first draws it.
+//
+// WHY. A surface's texture is made the first time a draw asks for it
+// (surfaceId), which puts the backend's whole creation -- on the 3DS the palette
+// expansion into tiled RGBA8, the filter preparation and the upload -- inside the
+// frame that first shows it. Measured on the Old 3DS (level 8, 2026-11-19): the
+// frames where things come into view take the draw build from ~8 ms to 20-40 ms,
+// in clusters of 13-16 frames. The C# makes every texture at the level's load
+// (Viewer.Preload: "a level's load: no frame creates any"); Forsaken pre-inits
+// every model at load. The 3DS cannot hold every texture of a level at once (the
+// arenas stream, the textures evict), so the prewarm makes what the frontend
+// says will be drawn, within a byte budget the platform names, and stops.
+//
+// It makes EXACTLY what the draw would have made -- the same surfaceId call, so
+// the same texture, the same palette, the same mod replacement lookup -- only
+// earlier. A texture whose pixels are away (an arena still streaming) is NEVER
+// made: asking for its indices would load them inside the frame, the stream's
+// demand backstop, which is the stall the prewarm exists to remove.
+//
+// The answer for one surface.
+enum class PrewarmResult {
+    Made,     // the texture was made now
+    Had,      // it was already made (or already tried: the draw path's own cache)
+    Away,     // its pixels are not in memory: not made, ask again later
+    NoBudget, // the call's make budget is spent: ask again later
+    NoRoom,   // the platform said there is no room for it: ask again later
+    Failed    // the backend refused it (the draw will try again, as it does now)
+};
+
+// Whether there is room for a texture costing `bytes` of GPU memory (the
+// backend's own arithmetic: mdk_render_index_texture_bytes). The platform's
+// answer, so that a prewarm never makes the backend EVICT: a texture made only
+// to push out one that is being drawn would move the cost, not remove it.
+typedef bool (*TextureRoom)(void* user, int32_t bytes);
+
+// What one prewarm pass may spend. `makes` < 0: no bound on the count.
+struct PrewarmBudget {
+    int32_t makes = -1;
+    TextureRoom room = nullptr;   // null: always room (the desktop)
+    void* user = nullptr;
+    // What the pass did, for the frontend's log.
+    int32_t made = 0;
+    int32_t madeBytes = 0;
+    int32_t away = 0;
+    int32_t noRoom = 0;
+    int32_t failed = 0;
+
+    bool spent() const { return makes == 0; }
+};
+
+// True when a prewarm walk should stop at this answer and resume at the same
+// surface next time (the budget, the room, pixels that are not in yet); false
+// when it may go on to the next surface (made, already made, refused). A pure
+// rule, pinned by the format tests.
+inline bool prewarmStops(PrewarmResult result) {
+    return result == PrewarmResult::Away || result == PrewarmResult::NoBudget ||
+           result == PrewarmResult::NoRoom;
+}
+
 class SurfaceCache {
 public:
     SurfaceCache() = default;
@@ -118,7 +178,22 @@ public:
     int32_t replacementLooked() const { return (int32_t)replacementLooked_.size(); }
     int32_t replacementFound() const { return replacementFound_; }
 
+    // Make `surface`'s texture through `palette` now, if the budget allows (see
+    // THE PREWARM above). Exactly the draw's surfaceId + paletteId, earlier.
+    PrewarmResult prewarm(const Surface& surface, const formats::Palette* palette,
+                          PrewarmBudget* budget);
+
+    // Whether the draw of `surface` through `palette` would find its texture
+    // made (or already refused) -- i.e. would make nothing.
+    bool has(const Surface& surface, const formats::Palette* palette) const;
+
+    // The textures this cache has asked the backend to make, over its life
+    // (index textures and flat colours; a palette release and remake counts
+    // again). The first-use counter the frontends' profile lines read.
+    int32_t texturesMade() const { return texturesMade_; }
+
 private:
+    int32_t texturesMade_ = 0;
     MdkRenderer renderer_ = nullptr;
     ColourReplacementLookup replacementLookup_ = nullptr;
     void* replacementUser_ = nullptr;

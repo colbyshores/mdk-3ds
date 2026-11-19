@@ -203,6 +203,11 @@ struct C3dTexture {
     // flight. The copy waits for the next frame boundary; the id is already
     // invalid to the caller.
     bool releasePending = false;
+
+    // A GPU copy has been made of this source before: the next make is a REMAKE
+    // (an eviction coming back, a stale replacement), counted apart from a first
+    // make in RendererC3D::creation.
+    bool madeOnce = false;
 };
 
 // A mesh: the vertices, in LINEAR memory, where the GPU reads them.
@@ -745,6 +750,13 @@ struct RendererC3D {
     // the frontend can still tell "asked and got nothing" from "nobody
     // asked", which is the rule this accounting exists for.
     // See `mdk_render_capture_stats`.
+    // FIRST-USE ACCOUNTING (mdk_render_creation_stats): what this backend has
+    // made, and the time each texture make spent in its parts. Cumulative; the
+    // frontend differences it around the frame's spans. The times are taken
+    // with svcGetSystemTick around makeTexture's parts -- a handful of reads per
+    // texture MADE, never per draw.
+    mdk::CreationStats creation;
+
     int32_t capturesRequested = 0;
     int32_t capturesWritten = 0;
     // The pending capture's output path (a fixed buffer: a frame-time
