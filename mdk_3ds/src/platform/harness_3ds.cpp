@@ -41,6 +41,7 @@ uint32_t g_hist[kBuckets + 1];
 uint32_t g_count = 0;
 uint64_t g_sumUs = 0;
 uint32_t g_maxUs = 0;
+uint32_t g_maxAt = 0;    // the profiled frame (1-based) that took g_maxUs
 uint32_t g_over17 = 0;   // > 16.667 ms: missed a 60 Hz vblank
 uint32_t g_over34 = 0;   // > 33.333 ms: missed a 30 Hz vblank
 bool g_stereoSeen = false;
@@ -78,7 +79,19 @@ void harnessProfileFrame(double periodSeconds) {
     g_hist[b < kBuckets ? b : kBuckets]++;
     g_count++;
     g_sumUs += us;
-    if (us > g_maxUs) g_maxUs = us;
+    if (us > g_maxUs) {
+        g_maxUs = us;
+        g_maxAt = g_count;
+    }
+    // A STALL is named when it happens (frame number, length), not only folded
+    // into the summary's max: the summary cannot say which frame, and the frame
+    // log's `elapsed` is the game's clamped step, not the wall clock. Rare by
+    // definition, so the log write is not a per-frame cost.
+    if (us > 500000u) {
+        mdk::log3dsPrintf("profile: STALL %lu.%03lu ms at profiled frame %lu",
+                          (unsigned long)(us / 1000u), (unsigned long)(us % 1000u),
+                          (unsigned long)g_count);
+    }
     if (us > 16667) g_over17++;
     if (us > 33333) g_over34++;
     if (osGet3DSliderState() > 0.0f) g_stereoSeen = true;
@@ -162,14 +175,14 @@ void harnessProfileReport() {
     // Once per process, at exit: a double divide, not a 64-bit integer helper.
     const uint32_t meanUs = g_count ? (uint32_t)((double)g_sumUs / (double)g_count) : 0;
     mdk::log3dsPrintf("profile: frames=%lu mean=%lu.%03lums p50<=%lu.%01lums p95<=%lu.%01lums "
-                      "p99<=%lu.%01lums max=%lu.%03lums over16.7ms=%lu over33.3ms=%lu",
+                      "p99<=%lu.%01lums max=%lu.%03lums (frame %lu) over16.7ms=%lu over33.3ms=%lu",
                       (unsigned long)g_count,
                       (unsigned long)(meanUs / 1000), (unsigned long)(meanUs % 1000),
                       (unsigned long)(percentileUs(50) / 1000), (unsigned long)(percentileUs(50) % 1000 / 100),
                       (unsigned long)(percentileUs(95) / 1000), (unsigned long)(percentileUs(95) % 1000 / 100),
                       (unsigned long)(percentileUs(99) / 1000), (unsigned long)(percentileUs(99) % 1000 / 100),
                       (unsigned long)(g_maxUs / 1000), (unsigned long)(g_maxUs % 1000),
-                      (unsigned long)g_over17, (unsigned long)g_over34);
+                      (unsigned long)g_maxAt, (unsigned long)g_over17, (unsigned long)g_over34);
     mdk::log3dsPrintf("profile: console model=%u family=%s clock=%s l2=%s stereo=%s "
                       "(frame period = wall clock between frames, first frame excluded; "
                       "percentiles are 0.1 ms bucket upper edges)",

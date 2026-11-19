@@ -72,3 +72,16 @@ documented at the flag).
 
 NOT DONE. The look at 128 against 256 on the console (captures); the 2x1
 smoothing mode; the stall.
+
+ADDENDUM 2026-11-19: THE 3.2-3.4 s MAXIMUM, NAMED. The profiler now logs every
+frame over 500 ms as it happens ("profile: STALL <ms> at profiled frame <n>")
+and the summary's max with its frame. Old 3DS, level 8, the branch at 241385f:
+    profile: STALL 3327.973 ms at profiled frame 1
+    profile: STALL 1034.905 ms at profiled frame 2
+and none after. It is the level's FIRST TWO FRAMES -- every texture, mip chain
+and mesh the level draws made on first use, after the load screen -- not a
+gameplay stall, which is why no toggle moved it. It added ~2.8 ms to every
+profile's mean over a 90 s run and nothing to the p50 the comparisons use.
+Moving that work into the level load (the vault's
+first-use-texture-uploads-belong-in-a-frame-load-entry-after-the-fence.md) is
+open.
