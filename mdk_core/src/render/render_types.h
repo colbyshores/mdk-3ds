@@ -73,6 +73,18 @@ struct Vertex {
 
 static constexpr uint32_t kVertexWhite = 0xFFFFFFFFu;
 
+// A GLOW BILLBOARD: the 3DS's stand-in for the PC's bloom (Enhanced Mode
+// enableGlowBillboards; owner decision 2026-11-18). A bright effect sprite's
+// halo -- a camera-facing quad in world space, two triangles, uv 0..1 across it
+// -- and the colour it adds. The game builds them (EffectsView) from the sprite
+// effects whose textures the PC's bloom would catch (texels over its 0.8
+// threshold); the 3DS draws each as one additive soft quad. The PC ignores them:
+// its bloom finds the bright pixels itself.
+struct GlowQuad {
+    Vertex corners[6];
+    float colour[3];
+};
+
 // ---------------------------------------------------------------------------
 // Materials
 // ---------------------------------------------------------------------------
@@ -249,6 +261,9 @@ struct EnhancedToggles {
                                       // own downscale); the PC always multisamples
     bool edgeSmoothing2x2 = false;    // 3DS: 2x2 (480x800) instead of 2x1 (480x400) --
                                       // ~22 ms on the Old 3DS at 2x2; the PC ignores it
+    bool glowBloom = false;           // 3DS: the glow as the PC's bloom, ported (~10 ms on
+                                      // the Old 3DS), instead of the default additive
+                                      // billboards on bright effects; the PC ignores it
 
     // NOT A LOOK: a diagnostic of the 3DS sun shadow, off by default. The caster
     // pass writes the shadow map's four bytes in the order the GPU's shadow unit

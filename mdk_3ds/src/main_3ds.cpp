@@ -430,7 +430,7 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("main: harness config override TOGGLES=%s", MDK_HW_STR(MDK_HW_TOGGLES));
             mdk::log3dsPrintf("main: resolved config shadows=%d lights=%d haze=%d mirrors=%d glow=%d "
                               "filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
-                              "smoothing2x2=%d flip=%d shadowMapSize=%d",
+                              "smoothing2x2=%d glowBloom=%d flip=%d shadowMapSize=%d",
                               (int)enhancedToggles.enableSkyShadows,
                               (int)enhancedToggles.enableFragmentLights,
                               (int)enhancedToggles.enableHaze, (int)enhancedToggles.enableMirrors,
@@ -441,6 +441,7 @@ int main(int argc, char** argv) {
                               (int)enhancedToggles.enableLighting,
                               (int)enhancedToggles.enableEdgeSmoothing,
                               (int)enhancedToggles.edgeSmoothing2x2,
+                              (int)enhancedToggles.glowBloom,
                               (int)enhancedToggles.shadowMapFlipBytes,
                               (int)enhancedToggles.shadowMapSize);
         }
@@ -1362,6 +1363,7 @@ int main(int argc, char** argv) {
         // runs zero steps.
         mdk::Input input;
         const u32 held = mdk::input3dsPoll(&input, elapsed);
+
         const u32 pressed = held & ~prevHeld;
         prevHeld = held;
 
@@ -2003,7 +2005,39 @@ int main(int argc, char** argv) {
             // A refusal is reported like the object pass's, edge-triggered
             // and re-armed, but on this pass's own latch.
             effectsView.build(*runtime, camera, &effectsFrame);
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_GLOWPROBE)
+            // THE HARNESS'S GLOW PROBE (`make AUTOQUIT=.. GLOWPROBE=1`): one halo,
+            // 30 units in front of the camera, 12 across, warm white -- the
+            // billboard path drawn on hardware without waiting for a script to
+            // explode something. A harness build only.
+            {
+                mdk::Mat4 view;
+                mdk::Mat4 projection;
+                memcpy(view.m, camera.view, sizeof(view.m));
+                memcpy(projection.m, camera.projection, sizeof(projection.m));
+                mdk::Vec3 right;
+                mdk::Vec3 up;
+                mdk::Vec3 forward;
+                mdk::effectsBillboardBasis(mdk::multiply(view, projection), &right, &up, &forward);
+                const mdk::Vec3 at{camera.position.x + forward.x * 30.0f,
+                                   camera.position.y + forward.y * 30.0f,
+                                   camera.position.z + forward.z * 30.0f};
+                mdk::GlowQuad probe;
+                mdk::effectsQuadVertices(at, right, up, 12, 12, probe.corners);
+                probe.colour[0] = 1.0f;
+                probe.colour[1] = 0.8f;
+                probe.colour[2] = 0.5f;
+                effectsFrame.glows.push_back(probe);
+            }
+#endif
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
+            if ((frame % 300u) == 0u) {
+                mdk::log3dsPrintf("effects: frame %d: %d sprite effects, %d with a halo, %d not "
+                                  "yet measured (pixels away)",
+                                  (int)frame, (int)effectsView.spriteEffects(),
+                                  (int)effectsView.glowingEffects(),
+                                  (int)effectsView.unmeasuredGlows());
+            }
             if (effectsDraw.allocationFailed()) {
                 if (!effectsFailureLogged) {
                     effectsFailureLogged = true;

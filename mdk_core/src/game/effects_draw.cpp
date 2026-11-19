@@ -44,7 +44,13 @@ bool EffectsDraw::ensure(MdkRenderer renderer, int32_t need) {
 }
 
 void EffectsDraw::draw(MdkRenderer renderer, SurfaceCache* surfaces, const EffectsFrame& frame) {
-    if (!renderer || surfaces == nullptr || frame.draws.empty()) {
+    if (!renderer) {
+        return;
+    }
+    // The halos first, every frame (none clears the last frame's).
+    mdk_render_set_glow_quads(renderer, frame.glows.empty() ? nullptr : frame.glows.data(),
+                              (int32_t)frame.glows.size());
+    if (surfaces == nullptr || frame.draws.empty()) {
         return;
     }
     const int32_t count = (int32_t)frame.vertices.size();

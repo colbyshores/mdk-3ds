@@ -273,6 +273,17 @@ MDK_TEST(EnhancedConfigRoundTrips) {
         MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(fine).c_str(), &fineBack));
         MDK_CHECK(fineBack.edgeSmoothing2x2 && fineBack.enableEdgeSmoothing);
     }
+    // The 3DS glow's bloom (not a toggle of its own): off by default
+    // (billboards), written, read back.
+    MDK_CHECK(!toggles.glowBloom && !back.glowBloom);
+    MDK_CHECK(text.find("glowBloom=0\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles bloom;
+        bloom.glowBloom = true;
+        mdk::EnhancedToggles bloomBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(bloom).c_str(), &bloomBack));
+        MDK_CHECK(bloomBack.glowBloom && bloomBack.enableGlowBillboards);
+    }
     // The 3DS shadow map's side (not a toggle): 0 = automatic by default,
     // written, read back; only 128/256/512 are taken, anything else is 0.
     MDK_CHECK(toggles.shadowMapSize == 0 && back.shadowMapSize == 0);

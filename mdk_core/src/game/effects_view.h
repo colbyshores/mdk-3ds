@@ -59,6 +59,20 @@ int32_t effectsSparkColourIndex(int32_t base, int32_t range, const Vec3& a, cons
 void effectsQuadVertices(const Vec3& center, const Vec3& right, const Vec3& up, int32_t width,
                          int32_t height, Vertex out[6]);
 
+// THE GLOW OF A SPRITE TEXTURE, for the 3DS's glow billboards (GlowQuad): of
+// the opaque texels (index != 0) of `indices` through `paletteRgba`, the share
+// whose LINEAR colour (sRGB^2.2, as the PC's post.frag reads it) passes the PC
+// bloom's threshold (post_params.h kGlowThreshold) in any channel, and -- per
+// channel, over those -- the mean of what the PC's bloom adds from a texel,
+// max(linear - threshold, 0) (post.frag's shine before its gain). 0 and black
+// when none pass. Cold: once per sprite texture.
+void effectsGlowOf(const uint8_t* indices, int32_t texelCount, const uint8_t* paletteRgba,
+                   float* glow, float colour[3]);
+
+// The halo's size against its sprite (both axes) and how much of the measured
+// colour it adds at the centre (the PC's kGlowIntensity, its bloom's gain).
+static const float kGlowHaloScale = 2.0f;
+
 // One queued draw of the effects frame: a slice of the frame's vertices
 // with the surface and palette it draws through, and the animated
 // texture's frame.
@@ -75,10 +89,13 @@ struct EffectsDrawItem {
 struct EffectsFrame {
     std::vector<Vertex> vertices;
     std::vector<EffectsDrawItem> draws;
+    // The bright sprite effects' halos (render_types.h GlowQuad).
+    std::vector<GlowQuad> glows;
 
     void reset() {
         vertices.clear();
         draws.clear();
+        glows.clear();
     }
 };
 
@@ -109,6 +126,15 @@ private:
         bool present = false;
         Surface surface;
         const formats::Palette* palette = nullptr;
+        // THE GLOW (effectsGlowOf): the share of the texture's opaque texels the
+        // PC's bloom would catch, and their mean colour; 0 for none. Measured
+        // once, when the entry is made and the texture's pixels are resident.
+        float glow = 0.0f;
+        float glowColour[3] = {0.0f, 0.0f, 0.0f};
+        // Measured yet: a texture whose pixels were not resident when the entry
+        // was made (arena streaming) is measured at a later build that finds
+        // them, not cached as "no glow".
+        bool glowMeasured = false;
     };
 
     // A piece batch: one surface's corners this frame. The batches keep
@@ -120,7 +146,7 @@ private:
     };
 
     const ObjectLook& lookOf(const std::string& arena);
-    const SpriteEntry& sprite(const std::string& arena, const std::string& texture);
+    SpriteEntry& sprite(const std::string& arena, const std::string& texture);
     Batch& batchFor(const Surface& surface, const formats::Palette* palette);
 
     const MaterialResolver* resolver_;
@@ -129,6 +155,19 @@ private:
 
     std::map<std::string, ObjectLook> looks_;
     std::map<std::pair<std::string, std::string>, SpriteEntry> spriteCache_;
+    // The last build's sprite effects, the ones given a halo, and the ones whose
+    // texture could not be measured yet (pixels not resident): a platform's log
+    // reads them (spriteEffects / glowingEffects / unmeasuredGlows).
+    int32_t lastSprites_ = 0;
+    int32_t lastGlowing_ = 0;
+    int32_t lastUnmeasured_ = 0;
+
+public:
+    int32_t spriteEffects() const { return lastSprites_; }
+    int32_t glowingEffects() const { return lastGlowing_; }
+    int32_t unmeasuredGlows() const { return lastUnmeasured_; }
+
+private:
 
     std::vector<Batch> batches_;
     int32_t batchCount_ = 0;

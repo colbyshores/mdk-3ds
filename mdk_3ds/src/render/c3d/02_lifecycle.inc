@@ -497,6 +497,14 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
         C3D_TexDelete(&r->unitIdle);
         r->unitIdleReady = false;
     }
+    if (r->glowHaloReady) {
+        C3D_TexDelete(&r->glowHalo);
+        r->glowHaloReady = false;
+    }
+    if (r->glowQuadMesh) {
+        linearFree(r->glowQuadMesh);
+        r->glowQuadMesh = nullptr;
+    }
     if (r->copyDrain) {
         linearFree(r->copyDrain);
         r->copyDrain = nullptr;

@@ -3441,6 +3441,39 @@ void testEffectsViewGeometry() {
     CHECK(quad[5].pos.x == -1.0f && quad[5].pos.y == -1.0f && quad[5].uv.x == 0.0f &&
           quad[5].uv.y == 1.0f);
 
+    // THE GLOW OF A SPRITE TEXTURE (the 3DS's billboards): the share of opaque
+    // texels whose LINEAR colour passes the PC bloom's 0.8 in any channel, and
+    // their mean sRGB colour. Entry 1 is white (passes), 2 a mid grey (0.5 sRGB is
+    // 0.22 linear: does not), 3 a red at 0.95 sRGB (0.89 linear: passes on red
+    // alone); index 0 is transparent and is not counted at all.
+    {
+        uint8_t palette[256 * 4] = {};
+        const uint8_t white[4] = {255, 255, 255, 255};
+        const uint8_t grey[4] = {128, 128, 128, 255};
+        const uint8_t red[4] = {242, 20, 20, 255};
+        memcpy(palette + 4, white, 4);
+        memcpy(palette + 8, grey, 4);
+        memcpy(palette + 12, red, 4);
+        const uint8_t texels[8] = {0, 0, 1, 2, 2, 3, 0, 2};   // 5 opaque: 1 white, 1 red, 3 grey
+        float glow = -1.0f;
+        float colour[3] = {-1.0f, -1.0f, -1.0f};
+        effectsGlowOf(texels, 8, palette, &glow, colour);
+        CHECK(fabsf(glow - 2.0f / 5.0f) < 1e-6f);
+        // The mean of max(linear - 0.8, 0): white 0.2 on every channel, the red
+        // (242/255)^2.2 - 0.8 on red and nothing on green.
+        const float redExcess = powf(242.0f / 255.0f, 2.2f) - 0.8f;
+        CHECK(fabsf(colour[0] - (0.2f + redExcess) / 2.0f) < 1e-4f);
+        CHECK(fabsf(colour[1] - 0.2f / 2.0f) < 1e-4f);
+        const uint8_t dim[4] = {2, 2, 0, 0};                    // grey and transparent only
+        effectsGlowOf(dim, 4, palette, &glow, colour);
+        CHECK(glow == 0.0f && colour[0] == 0.0f && colour[1] == 0.0f && colour[2] == 0.0f);
+        effectsGlowOf(nullptr, 4, palette, &glow, colour);    // pixels not resident: none
+        CHECK(glow == 0.0f);
+        const uint8_t clear[2] = {0, 0};                        // nothing opaque: none
+        effectsGlowOf(clear, 2, palette, &glow, colour);
+        CHECK(glow == 0.0f);
+    }
+
     // A spark face turned to the camera takes base + range; edge-on and
     // degenerate faces take base; the index clamps to the palette.
     const Vec3 a{0.0f, 0.0f, 0.0f};

@@ -1226,7 +1226,13 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     castShadows(r);
     // The glow (Enhanced Mode enableGlowBillboards) follows the enhanced rig, as
     // the PC's post pass does; a session whose glow memory failed stays off.
-    r->glowLive = r->toggles.enableGlowBillboards && r->lighting.enabled && !r->glowRefused;
+    // Billboards by default (the owner's 2026-11-18 decision); the PC's bloom,
+    // ported, with config glowBloom.
+    r->glowLive = r->toggles.enableGlowBillboards && r->toggles.glowBloom &&
+                  r->lighting.enabled && !r->glowRefused;
+    r->billboardsLive = r->toggles.enableGlowBillboards && !r->toggles.glowBloom &&
+                        r->lighting.enabled;
+    r->billboardsDrawn = 0;
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
@@ -1287,10 +1293,26 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     }
     r->programSwitches = 0;
     if (r->glowLive && (r->frame % 300) == 0) {
-        mdk::log3dsPrintf("glow: frame %d: %d passes (%d eyes, scale %dx%d)", (int)r->frame,
+        mdk::log3dsPrintf("glow (bloom): frame %d: %d passes (%d eyes, scale %dx%d)", (int)r->frame,
                           (int)r->glowPasses, (int)r->eyes.passes, (int)r->targetScaleX,
                           (int)r->targetScaleY);
     }
+    if (r->billboardsLive) {
+        if (r->glowQuadCount > r->billboardsPeak) {
+            r->billboardsPeak = r->glowQuadCount;
+        }
+        if ((r->frame % 300) == 0) {
+            mdk::log3dsPrintf("glow (billboards): frame %d: %d halos now (%d drawn, both eyes), "
+                              "at most %d a frame since the last line, %d dropped past the cap",
+                              (int)r->frame, (int)r->glowQuadCount, (int)r->billboardsDrawn,
+                              (int)r->billboardsPeak, (int)r->glowQuadsDropped);
+            r->billboardsPeak = 0;
+            r->glowQuadsDropped = 0;
+        }
+    }
+    // The halos are this frame's: a frame whose game hands none over (no
+    // runtime) must not draw the last frame's again (review, 2026-11-19).
+    r->glowQuadCount = 0;
     r->glowPasses = 0;
     r->canvasQuadsThisFrame = 0;
     r->canvasDrawsThisFrame = 0;
@@ -1582,7 +1604,8 @@ static bool ensureShadowMap(RendererC3D* r) {
         // 2026-11-18). So a size is only tried when it leaves the glow's
         // textures their room, while the glow is wanted and not yet made.
         const size_t glowShare =
-            (r->toggles.enableGlowBillboards && !r->glowReady && !r->glowRefused)
+            (r->toggles.enableGlowBillboards && r->toggles.glowBloom && !r->glowReady &&
+             !r->glowRefused)
                 ? mdk::pica::kGlowVramBytes : 0u;
         for (int i = 0; i < tries && !r->shadowTarget; i++) {
             const u16 size = (u16)sizes[i];
@@ -1938,6 +1961,20 @@ void mdk_render_set_enhanced_toggles(MdkRenderer rr, const mdk::EnhancedToggles*
         return;
     }
     r->toggles = *toggles;
+}
+
+ void mdk_render_set_glow_quads(MdkRenderer rr, const mdk::GlowQuad* quads, int32_t count) {
+    RendererC3D* r = asC3d(rr);
+    if (!r) {
+        return;
+    }
+    const int32_t kept = count < 0 ? 0 : (count > RendererC3D::kMaxGlowQuads
+                                              ? RendererC3D::kMaxGlowQuads : count);
+    if (quads && kept > 0) {
+        memcpy(r->glowQuads, quads, sizeof(mdk::GlowQuad) * (size_t)kept);
+    }
+    r->glowQuadCount = quads ? kept : 0;
+    r->glowQuadsDropped += quads && count > kept ? count - kept : 0;
 }
 
  void mdk_render_set_point_lights(MdkRenderer rr, const mdk::PointLight* lights, int32_t count) {

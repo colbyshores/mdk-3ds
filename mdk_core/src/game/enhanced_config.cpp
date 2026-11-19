@@ -129,6 +129,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->shadowMapFlipBytes = value;
     } else if (keyIs(begin, keyEnd, "edgeSmoothing2x2")) {
         toggles->edgeSmoothing2x2 = value;
+    } else if (keyIs(begin, keyEnd, "glowBloom")) {
+        toggles->glowBloom = value;
     }
 }
 
@@ -169,6 +171,8 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "enableEdgeSmoothing", toggles.enableEdgeSmoothing);
     // 3DS: 2x2 rather than the default 2x1 (render_types.h).
     appendToggle(&out, "edgeSmoothing2x2", toggles.edgeSmoothing2x2);
+    // 3DS: the bloom rather than the default billboards (render_types.h).
+    appendToggle(&out, "glowBloom", toggles.glowBloom);
     // A diagnostic, not a look (render_types.h): written so it can be found.
     appendToggle(&out, "shadowMapFlipBytes", toggles.shadowMapFlipBytes);
     // 0 = automatic (render_types.h).

@@ -298,6 +298,14 @@ void mdk_render_set_enhanced_toggles(MdkRenderer rr, const mdk::EnhancedToggles*
     r->toggles = *toggles;
 }
 
+// The PC's glow is its bloom (post.frag); the 3DS's billboards are not drawn
+// here (render.h).
+void mdk_render_set_glow_quads(MdkRenderer rr, const mdk::GlowQuad* quads, int32_t count) {
+    (void)rr;
+    (void)quads;
+    (void)count;
+}
+
 void mdk_render_set_point_lights(MdkRenderer rr, const mdk::PointLight* lights, int32_t count) {
     RendererVk* r = asVk(rr);
     if (!r || !lights || count <= 0) {

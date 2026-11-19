@@ -1090,6 +1090,8 @@ def adjudicate(text, quiet=False):
     # only from the replay. drawGlow (Enhanced Mode glow) is the third: replayQueue
     # calls it once per eye, before the Overlay pass, so it lands in every eye (its
     # small passes draw into its own textures, then it returns to the eye).
+    # drawGlowBillboards is the glow's default form (the 3DS's billboards):
+    # drawGlow hands over to it, so it lands where the glow does, once per eye.
     # The sun shadow (Enhanced Mode enableSkyShadows) adds one: castShadows, the
     # caster pass -- once per FRAME, before the eye loop, into the shadow map and
     # not into an eye at all. The shadow is TAKEN inside drawRecorded (the
@@ -1099,13 +1101,13 @@ def adjudicate(text, quiet=False):
     # of the PICA's own shadow writes, which draws one quad into an 8x8 texture of
     # its own in a frame of its own before the first frame that wants a shadow.
     allowed = [line_range(text, body_span(text, n))
-               for n in ("drawRecorded", "drawDiagnostic", "drawGlow", "castShadows",
-                         "testNativeShadowWrites", "testSampleShadowMap")]
+               for n in ("drawRecorded", "drawDiagnostic", "drawGlow", "drawGlowBillboards",
+                         "castShadows", "testNativeShadowWrites", "testSampleShadowMap")]
     stray = [loc for ln, loc in sites(text, EMIT_DRAW)
              if not any(r and r[0] <= ln <= r[1] for r in allowed)]
     rep.check("emission-sites-closed",
               not stray and all(allowed),
-              "%d draw call(s) outside drawRecorded/drawDiagnostic/drawGlow/castShadows/"
+              "%d draw call(s) outside drawRecorded/drawDiagnostic/drawGlow/drawGlowBillboards/castShadows/"
               "testNativeShadowWrites/testSampleShadowMap: %s (an immediate draw "
               "anywhere else is outside the per-eye replay, so it lands in one target or "
               "none)" % (len(stray), "none" if not stray else "; ".join(stray)))
@@ -1250,8 +1252,8 @@ def adjudicate(text, quiet=False):
     # scene's again) and receiveShadows the receive program and then the scene's.
     draw_ranges = [rg for rg in (line_range(text, body_span(text, fn))
                                  for fn in ("drawRecorded", "drawDiagnostic", "drawGlow",
-                                            "glowDrawState", "castShadows",
-                                            "receiveShadows", "testNativeShadowWrites",
+                                            "drawGlowBillboards", "glowDrawState",
+                                            "castShadows", "testNativeShadowWrites",
                                             "testSampleShadowMap")) if rg]
     in_eye = [loc for ln, loc in bind if eye_range and eye_range[0] <= ln <= eye_range[1]]
     bind_stray = [loc for ln, loc in bind

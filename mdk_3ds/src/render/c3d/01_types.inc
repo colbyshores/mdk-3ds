@@ -318,6 +318,22 @@ struct RendererC3D {
     u32* glowScratchTiled = nullptr; // the shrink re-tiled (06_draw.inc drawGlow, step 2)
     u32* copyDrain = nullptr;        // 64 bytes the readbacks' trailing copy lands in (readBack)
     float* glowQuad = nullptr;
+    // THE GLOW BILLBOARDS (the 3DS default: config glowBloom = 0; 06_draw.inc
+    // drawGlowBillboards): the frame's halos from mdk_render_set_glow_quads, a
+    // linear vertex buffer they are written into once a frame, and the 32x32
+    // soft-dot texture they are drawn with (white, alpha falling off from the
+    // centre), made on first use (linear heap, 4 KB + 12 KB).
+    static constexpr int32_t kMaxGlowQuads = 64;
+    mdk::GlowQuad glowQuads[kMaxGlowQuads];
+    int32_t glowQuadCount = 0;
+    float* glowQuadMesh = nullptr;
+    uint32_t glowQuadMeshFrame = 0xFFFFFFFFu;   // the frame it was last written for
+    C3D_Tex glowHalo;
+    bool glowHaloReady = false;
+    bool billboardsLive = false;   // the frame's glow is billboards (end_frame)
+    int32_t billboardsDrawn = 0;   // halos drawn this frame, both eyes
+    int32_t billboardsPeak = 0;    // the most halos in one frame since the last log line
+    int32_t glowQuadsDropped = 0;  // halos past kMaxGlowQuads since the last log line
     float* glowLevelQuad = nullptr;
     float glowQuadWidth = 0.0f;   // the canvas width the quad was built for
     bool glowReady = false;

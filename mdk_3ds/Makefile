@@ -162,6 +162,15 @@ $(error TOGGLES=$(TOGGLES) needs AUTOQUIT: the config override is a harness-buil
 endif
 DEFINES += -DMDK_HW_TOGGLES='$(TOGGLES)'
 endif
+# `make AUTOQUIT=90 GLOWPROBE=1` adds one halo in front of the camera every
+# frame (a harness aid): the glow billboards' path drawn on hardware without a
+# script's explosion. Only main_3ds.cpp reads it: touch it after changing it.
+ifneq ($(strip $(GLOWPROBE)),)
+ifndef AUTOQUIT
+$(error GLOWPROBE=$(GLOWPROBE) needs AUTOQUIT: the probe is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_GLOWPROBE=1
+endif
 # `make SHADOWPROBE=n` (a harness aid, never a release): 8 pushes every receiver
 # to the map's far end (all shadow, if the unit compares at all); 10 clears the
 # map to the nearest depth and casts nothing (all shadow, and the caster pass's

@@ -262,6 +262,12 @@ void mdk_render_set_lighting(MdkRenderer r, const mdk::Lighting* lighting);
 // backend uploads them; the 3DS backend ignores them.
 void mdk_render_set_point_lights(MdkRenderer r, const mdk::PointLight* lights, int32_t count);
 
+// The frame's glow billboards (render_types.h GlowQuad), replacing the last
+// frame's; count 0 clears them. The 3DS backend draws them when its glow is in
+// billboard mode; the Vulkan backend ignores them (its glow is the PC's bloom).
+// The array is copied: the caller's can go after the call.
+void mdk_render_set_glow_quads(MdkRenderer r, const mdk::GlowQuad* quads, int32_t count);
+
 // The sky. Drawn first, behind everything.
 void mdk_render_set_panorama(MdkRenderer r, const mdk::Panorama* panorama);
 
