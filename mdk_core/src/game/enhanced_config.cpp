@@ -139,6 +139,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->edgeSmoothing2x2 = value;
     } else if (keyIs(begin, keyEnd, "glowBloom")) {
         toggles->glowBloom = value;
+    } else if (keyIs(begin, keyEnd, "texture16")) {
+        toggles->texture16 = value;
     }
 }
 
@@ -181,6 +183,8 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "edgeSmoothing2x2", toggles.edgeSmoothing2x2);
     // 3DS: the bloom rather than the default billboards (render_types.h).
     appendToggle(&out, "glowBloom", toggles.glowBloom);
+    // 3DS: 16-bit texture stores, from the next texture made (render_types.h).
+    appendToggle(&out, "texture16", toggles.texture16);
     // A diagnostic, not a look (render_types.h): written so it can be found.
     appendToggle(&out, "shadowMapFlipBytes", toggles.shadowMapFlipBytes);
     // 0 = automatic (render_types.h).

@@ -124,15 +124,20 @@ int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t hei
     // eight times the 15960 bytes of the indices themselves. AND ITS MIP CHAIN
     // when Enhanced Mode enableMipmaps is on (makeTexture builds one then): a
     // third more. Kurt's sprite residency budgets against this number, so it is
-    // the same pica::textureBytes the allocation is costed with.
+    // the same pica::textureBytes the allocation is costed with. AND ITS STORE
+    // under texture16: an index texture's alpha is 0 or 255, so it is made
+    // RGB565 or RGBA5551 -- two bytes a texel, half the RGBA8 figure -- above
+    // the 8x8 floor (pica::indexTexelFormatBound). A canvas texture is kept
+    // RGBA8 (keepRgba8), but the canvas is not what this number budgets.
     RendererC3D* renderer = asC3d(r);
     const int32_t paddedW = nextPowerOfTwo(width);
     const int32_t paddedH = nextPowerOfTwo(height);
     const int32_t levels = (renderer && renderer->toggles.enableMipmaps)
                                ? mdk::pica::mipLevelsFor(paddedW, paddedH)
                                : 0;
-    return (int32_t)mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, paddedW, paddedH,
-                                            levels);
+    const mdk::pica::TexelFormat format = mdk::pica::indexTexelFormatBound(
+        renderer ? renderer->toggles.texture16 : false, paddedW, paddedH);
+    return (int32_t)mdk::pica::textureBytes(format, paddedW, paddedH, levels);
 }
 
 MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba) {

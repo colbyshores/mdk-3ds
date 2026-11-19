@@ -195,6 +195,19 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         // A released texture whose GPU copy is waiting for the next frame
         // boundary must not be drawn again: the caller has given the id up.
         if (!resource.releasePending) {
+            // THE CANVAS STAYS RGBA8 (texture16, pica::expandedTexelFormat). The
+            // first Overlay draw of a texture pins it, and a copy already made in a
+            // 16-bit store is made again as RGBA8 at the next frame boundary
+            // (settleDeferredTextures: after C3D_FrameBegin's wait, so the copy
+            // this frame draws is not freed under the GPU, AGENTS.md P3). The
+            // HUD's digits and the fonts keep the palette's exact colours; at most
+            // the first frame that draws one shows the 16-bit copy.
+            if (draw->material.pass == mdk::Pass::Overlay && !resource.keepRgba8) {
+                resource.keepRgba8 = true;
+                if (resource.valid && resource.format != mdk::pica::TexelFormat::Rgba8) {
+                    resource.stale = true;
+                }
+            }
             // THE HD COPY (enableHdTextures, docs/HD_TEXTURES_3DS_SPEC.md): wanted
             // for a Lit or Sprite surface -- the PC draws a mod's colour image only
             // in its enhanced lit/sprite modes, never on an Original-shaded world

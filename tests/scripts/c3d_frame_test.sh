@@ -2659,6 +2659,155 @@ def adjudicate(text, quiet=False):
               "batch-121 check green)"
               % (len(sinks), len(bad_sinks),
                  "; ".join(bad_sinks) if bad_sinks else "none"))
+
+    # --- the 16-bit store (EnhancedToggles::texture16) -------------------------
+    # THE CHECKS ABOVE STILL HOLD, AND THEY ARE NOT ENOUGH. Under texture16 the two
+    # expansions still write `pica::texelBytes`' [A, B, G, R] into an RGBA8 chain --
+    # every rule above is about that buffer and is unchanged -- and makeTexture then
+    # rewrites the chain IN PLACE into 2-byte words (`pica::packTexels16`, whose
+    # byte order, rounding and alpha are pinned on the host by
+    # `pica_matrix_tests.cpp` testThe16BitStore). The sink check resolves `pixels`
+    # to the expansions and so cannot see the pack at all. What the host row cannot
+    # see either is the CALLER: four things have to agree in makeTexture, and each
+    # one is a single token from a texture the PICA samples as garbage with no
+    # error raised -- the shipped Morton and byte-order defects' own signature.
+    #
+    #   * the pack is THE helper, ON the buffer the sinks receive, AFTER the
+    #     expansion and BEFORE the first upload (an upload of the unpacked chain
+    #     into a 16-bit texture reads its top half as the whole texture);
+    #   * the allocation's PICA format is the store the texels were packed in (a
+    #     16-bit buffer in an RGBA8 texture is half a texture of garbage);
+    #   * the store is chosen from THE EXPANDED ALPHA, by the toggle and the canvas
+    #     pin (a store chosen from anything else drops holes into RGB565, where the
+    #     PICA samples alpha 1.0 and the index-0 discard stops discarding);
+    #   * every level's offset, and every byte count the allocation is costed with,
+    #     is the STORE's (a level found at the RGBA8 offset in a 2-byte chain is a
+    #     level made of the next level's texels and the padding after them);
+    #   * the pack covers every level uploaded.
+    # And the canvas half: a texture drawn on the canvas is pinned RGBA8 and its
+    # 16-bit copy is re-made at the next frame boundary (stale), never in place.
+    mk_sp = fn_body_span(text, "makeTexture")
+    mk = text[mk_sp[0]:mk_sp[1]] if mk_sp else None
+    mk_code = blank_comments(mk) if mk else ""
+    pack_re = r"\b(?:mdk::)?(?:pica::)?packTexels16[ \t]*\("
+    packs = list(re.finditer(pack_re, mk_code))
+    pack_args = call_args_at(mk, packs[0].end() - 1) if len(packs) == 1 else None
+    pack_args = [a.strip() for a in pack_args] if pack_args else []
+    expand_ends = [m.end() for m in
+                   re.finditer(r"\bpixels[ \t]*=[ \t]*expand[A-Za-z0-9_]*[ \t]*\(", mk_code)]
+    first_sink = re.search(r"\bC3D_TexLoadImage[ \t]*\(", mk_code)
+    pack_at = packs[0].start() if len(packs) == 1 else None
+    placed = (pack_at is not None and bool(expand_ends) and first_sink is not None and
+              max(expand_ends) < pack_at < first_sink.start())
+    rep.check("texel16-store-is-packed-by-the-host-tested-helper",
+              mk is not None and len(packs) == 1 and len(pack_args) == 3 and
+              pack_args[0] == "pixels" and placed,
+              "%d pica::packTexels16 call(s) in makeTexture, on `%s`, %s (the chain is "
+              "expanded in RGBA8 and rewritten in place to the 16-bit store; the pack must "
+              "be the host-tested helper, on the buffer the sinks are handed, after the "
+              "expansion and before the first C3D_TexLoadImage -- unpacked, a 16-bit "
+              "texture samples the top half of an RGBA8 chain as the whole picture)"
+              % (len(packs), pack_args[0] if pack_args else "nothing",
+                 "between the expansion and the first upload" if placed
+                 else "NOT between the expansion and the first upload"))
+
+    store = pack_args[2] if len(pack_args) == 3 else None
+    alloc = re.search(r"\bparams\.format[ \t]*=[ \t]*([^;]+);", mk_code)
+    alloc_rhs = alloc.group(1).strip() if alloc else None
+    alloc_ok = (store is not None and alloc_rhs is not None and re.fullmatch(
+        r"picaTexelFormat[ \t]*\([ \t]*" + re.escape(store) + r"[ \t]*\)", alloc_rhs)
+        is not None)
+    rep.check("texel16-allocation-format-is-the-packed-store",
+              alloc_ok,
+              "the texture is allocated as `%s` and its texels are packed as `%s` (the "
+              "PICA format and the bytes must be the same store: a 16-bit chain in an "
+              "RGBA8 texture is half a texture of garbage, an RGBA8 chain in a 16-bit one "
+              "is its top half twice over)"
+              % (alloc_rhs or "(no params.format)", store or "(no pack)"))
+
+    chosen = binding(store, mk_code) if store else None
+    chooser = re.match(r"(?:mdk::)?(?:pica::)?expandedTexelFormat[ \t]*\(", chosen or "")
+    chooser_args = []
+    if chooser and store:
+        decl = re.search(r"\b" + re.escape(store) +
+                         r"[ \t]*=[ \t]*(?:mdk::)?(?:pica::)?expandedTexelFormat[ \t]*\(",
+                         mk_code)
+        if decl:
+            chooser_args = [a.strip() for a in (call_args_at(mk, decl.end() - 1) or [])]
+    chosen_ok = (len(chooser_args) == 6 and re.search(r"\btexture16\b", chooser_args[0])
+                 is not None and re.search(r"\bkeepRgba8\b", chooser_args[1]) is not None
+                 and chooser_args[4] == "pixels")
+    rep.check("texel16-store-is-chosen-from-the-expanded-alpha",
+              chosen_ok,
+              "the store `%s` is `%s` (it must be pica::expandedTexelFormat over the "
+              "toggle, the canvas pin and the EXPANDED texels -- `pixels`: a store chosen "
+              "from anything else puts a cut-out into RGB565, which the PICA samples as "
+              "alpha 1.0, and the index-0 discard stops discarding)"
+              % (store or "(no pack)",
+                 (" ".join(chosen.split()) if chosen else "unbound")))
+
+    sink_offsets = re.findall(
+        r"\bC3D_TexLoadImage[ \t]*\([^,;]*,[ \t]*pixels[ \t]*\+[ \t]*([A-Za-z_][A-Za-z0-9_]*)",
+        mk_code)
+    store_bytes = r"(?:mdk::)?(?:pica::)?textureBytes[ \t]*\([ \t]*" + \
+        (re.escape(store) if store else "@") + r"[ \t]*,"
+    sized = []
+    for name in sink_offsets + ["gpuBytes"]:
+        rhss = re.findall(r"(?:^|[;{}])[^;{}=]*\b" + re.escape(name) +
+                          r"[ \t]*(?:\+)?=(?!=)[ \t]*([^;{}]+)", mk_code)
+        if not rhss:
+            sized.append("%s is never assigned" % name)
+        for rhs in rhss:
+            if not re.match(store_bytes, rhs.strip()):
+                sized.append("%s = %s" % (name, " ".join(rhs.split())))
+    rep.check("texel16-offsets-and-bytes-are-the-store-s",
+              bool(sink_offsets) and store is not None and not sized,
+              "%d level offset(s) at the sink; %s (each level's offset and the bytes the "
+              "allocation is costed and evicted with must be pica::textureBytes of the "
+              "STORE: an RGBA8 offset in a 2-byte chain uploads the next level's texels "
+              "and the padding after them, and an RGBA8 cost evicts twice what it needs)"
+              % (len(sink_offsets), "; ".join(sized) if sized else "all the store's"))
+
+    count = pack_args[1] if len(pack_args) == 3 else ""
+    count_rhs = binding(count, mk_code) if re.fullmatch(r"[A-Za-z_]\w*", count) else None
+    count_expr = " ".join((count_rhs or count).split())
+    max_level = re.search(r"\bparams\.maxLevel[ \t]*=[ \t]*\(u8\)[ \t]*([A-Za-z_]\w*)",
+                          mk_code)
+    covers = (max_level is not None and re.fullmatch(
+        r"(?:mdk::)?(?:pica::)?mipChainTexels[ \t]*\([ \t]*texture\.paddedWidth[ \t]*,"
+        r"[ \t]*texture\.paddedHeight[ \t]*,[ \t]*" + re.escape(max_level.group(1)) +
+        r"[ \t]*\)", count_expr) is not None)
+    rep.check("texel16-pack-covers-every-level-uploaded",
+              covers,
+              "the pack rewrites `%s` texels against a chain of `%s` levels (every level "
+              "the texture is allocated and uploaded with must be packed: a level left in "
+              "RGBA8 is read as two 16-bit texels a texel)"
+              % (count_expr or "nothing", max_level.group(1) if max_level else "?"))
+
+    blank_all = blank_cached(text)
+    canvas_ok = False
+    for m in re.finditer(r"\bif[ \t]*\(", blank_all):
+        cond = call_args_at(text, m.end() - 1)
+        cond = " ".join(cond) if cond else ""
+        if "Pass::Overlay" not in cond or "keepRgba8" not in cond:
+            continue
+        brace = blank_all.find("{", m.end())
+        sp = block_span_from(text, brace) if brace >= 0 else None
+        block = blank_all[brace:sp[1]] if sp else ""
+        if re.search(r"\bkeepRgba8[ \t]*=[ \t]*true[ \t]*;", block) and \
+           re.search(r"\bstale[ \t]*=[ \t]*true[ \t]*;", block):
+            canvas_ok = True
+    settles = re.search(r"\bif[ \t]*\([ \t]*!texture\.stale[ \t]*\)",
+                        blank_cached(text)[slice(*(fn_body_span(text, "settleDeferredTextures")
+                                                   or (0, 0)))])
+    rep.check("canvas-textures-are-kept-rgba8-at-the-frame-boundary",
+              canvas_ok and settles is not None,
+              "an Overlay draw %s its texture RGBA8 and %s its 16-bit copy for the frame "
+              "boundary; settleDeferredTextures %s stale copies (the canvas keeps the "
+              "palette's exact colours -- and the copy this frame draws is in flight, so "
+              "it is re-made after C3D_FrameBegin's wait, never under the GPU: AGENTS.md P3)"
+              % ("pins" if canvas_ok else "does NOT pin", "marks" if canvas_ok else "does not mark",
+                 "re-makes" if settles else "does NOT re-make"))
     return rep
 
 
@@ -4092,6 +4241,84 @@ ARMS = [
      lambda s: s.replace("memset(pixels, 0, texels * 4);",
                          "memset(pixels, 0b1, texels * 4);", 1),
      "index-texels-are-rotated-for-the-pica"),
+    # THE 16-BIT STORE (EnhancedToggles::texture16). Each arm is one token from a
+    # texture the PICA samples as garbage with nothing raised, the signature of the
+    # Morton and byte-order defects above; the host row (testThe16BitStore) pins the
+    # helper and none of these callers.
+    ("the 16-bit pack is dropped: a 16-bit texture is handed the RGBA8 chain",
+     lambda s: s.replace(
+         "    mdk::pica::packTexels16(pixels,\n"
+         "                            mdk::pica::mipChainTexels(texture.paddedWidth, "
+         "texture.paddedHeight,\n"
+         "                                                      levels),\n"
+         "                            format);\n", "", 1),
+     "texel16-store-is-packed-by-the-host-tested-helper"),
+    ("the 16-bit pack runs after the level-0 upload (level 0 goes up unpacked)",
+     lambda s: s.replace(
+         "    mdk::pica::packTexels16(pixels,\n"
+         "                            mdk::pica::mipChainTexels(texture.paddedWidth, "
+         "texture.paddedHeight,\n"
+         "                                                      levels),\n"
+         "                            format);\n"
+         "    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);\n",
+         "    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);\n"
+         "    mdk::pica::packTexels16(pixels,\n"
+         "                            mdk::pica::mipChainTexels(texture.paddedWidth, "
+         "texture.paddedHeight,\n"
+         "                                                      levels),\n"
+         "                            format);\n", 1),
+     "texel16-store-is-packed-by-the-host-tested-helper"),
+    ("the texture is allocated RGBA8 whatever the store its texels were packed in",
+     lambda s: s.replace("        params.format = picaTexelFormat(format);",
+                         "        params.format = GPU_RGBA8;", 1),
+     "texel16-allocation-format-is-the-packed-store"),
+    ("the pack is handed a store of its own, not the one the texture is allocated as",
+     lambda s: s.replace("                                                      levels),\n"
+                         "                            format);",
+                         "                                                      levels),\n"
+                         "                            mdk::pica::TexelFormat::Rgba4);", 1),
+     "texel16-allocation-format-is-the-packed-store"),
+    ("the store is chosen from the unexpanded source, not the expanded alpha",
+     lambda s: s.replace("        texture.paddedHeight, pixels,\n",
+                         "        texture.paddedHeight, texture.source.data(),\n", 1),
+     "texel16-store-is-chosen-from-the-expanded-alpha"),
+    ("the store ignores the texture16 toggle (the owner's A/B stops switching it)",
+     lambda s: s.replace("        renderer->toggles.texture16, texture.keepRgba8, "
+                         "texture.paddedWidth,\n",
+                         "        true, texture.keepRgba8, texture.paddedWidth,\n", 1),
+     "texel16-store-is-chosen-from-the-expanded-alpha"),
+    ("the store ignores the canvas pin (the HUD is made 16-bit again every frame)",
+     lambda s: s.replace("        renderer->toggles.texture16, texture.keepRgba8, "
+                         "texture.paddedWidth,\n",
+                         "        renderer->toggles.texture16, false, texture.paddedWidth,\n",
+                         1),
+     "texel16-store-is-chosen-from-the-expanded-alpha"),
+    ("a mip level is uploaded from its RGBA8 offset in a 2-byte chain",
+     lambda s: s.replace("        const size_t offset = mdk::pica::textureBytes(format, "
+                         "texture.paddedWidth,\n",
+                         "        const size_t offset = mdk::pica::textureBytes("
+                         "mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,\n", 1),
+     "texel16-offsets-and-bytes-are-the-store-s"),
+    ("the allocation is costed as RGBA8 (the eviction frees twice what it needs)",
+     lambda s: s.replace("    size_t gpuBytes = mdk::pica::textureBytes(format, "
+                         "texture.paddedWidth, texture.paddedHeight,\n",
+                         "    size_t gpuBytes = mdk::pica::textureBytes("
+                         "mdk::pica::TexelFormat::Rgba8, texture.paddedWidth, "
+                         "texture.paddedHeight,\n", 1),
+     "texel16-offsets-and-bytes-are-the-store-s"),
+    ("the pack rewrites level 0 only and the chain goes up in RGBA8 bytes",
+     lambda s: s.replace(
+         "    mdk::pica::packTexels16(pixels,\n"
+         "                            mdk::pica::mipChainTexels(texture.paddedWidth, "
+         "texture.paddedHeight,\n"
+         "                                                      levels),\n",
+         "    mdk::pica::packTexels16(pixels,\n"
+         "                            (size_t)texture.paddedWidth * "
+         "(size_t)texture.paddedHeight,\n", 1),
+     "texel16-pack-covers-every-level-uploaded"),
+    ("a canvas texture is pinned RGBA8 but its 16-bit copy is never re-made",
+     lambda s: s.replace("                    resource.stale = true;\n", "", 1),
+     "canvas-textures-are-kept-rgba8-at-the-frame-boundary"),
 ]
 
 # --- probes (review-16 R2) ----------------------------------------------------
@@ -4432,6 +4659,26 @@ PROBES = [
      "added)",
      lambda s: s.replace("memset(pixels, 0, texels * 4);",
                          "memset(pixels, 0b0, texels * 4);", 1)),
+    # The 16-bit store's green halves: the texel count hoisted into a named local,
+    # and the pack reached unqualified through a using-declaration, are the same
+    # program, and a gate that reddened either would be routed around (review-16 R2).
+    ("the 16-bit pack's texel count is hoisted into a named local",
+     lambda s: s.replace(
+         "    mdk::pica::packTexels16(pixels,\n"
+         "                            mdk::pica::mipChainTexels(texture.paddedWidth, "
+         "texture.paddedHeight,\n"
+         "                                                      levels),\n"
+         "                            format);\n",
+         "    const size_t chainTexels =\n"
+         "        mdk::pica::mipChainTexels(texture.paddedWidth, texture.paddedHeight, levels);\n"
+         "    mdk::pica::packTexels16(pixels, chainTexels, format);\n", 1)),
+    ("the 16-bit pack is reached unqualified through a using-declaration",
+     lambda s: s.replace("static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, "
+                         "bool diagnostics) {\n",
+                         "using mdk::pica::packTexels16;\n\n"
+                         "static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, "
+                         "bool diagnostics) {\n", 1)
+              .replace("    mdk::pica::packTexels16(pixels,\n", "    packTexels16(pixels,\n", 1)),
 ]
 
 # --- mutant dump (review-15 F5) ------------------------------------------------

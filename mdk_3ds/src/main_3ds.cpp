@@ -430,7 +430,8 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("main: harness config override TOGGLES=%s", MDK_HW_STR(MDK_HW_TOGGLES));
             mdk::log3dsPrintf("main: resolved config shadows=%d lights=%d haze=%d mirrors=%d glow=%d "
                               "filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
-                              "smoothing2x2=%d glowBloom=%d flip=%d shadowMapSize=%d shadowMapRefresh=%d",
+                              "smoothing2x2=%d glowBloom=%d flip=%d shadowMapSize=%d shadowMapRefresh=%d "
+                              "texture16=%d",
                               (int)enhancedToggles.enableSkyShadows,
                               (int)enhancedToggles.enableFragmentLights,
                               (int)enhancedToggles.enableHaze, (int)enhancedToggles.enableMirrors,
@@ -444,7 +445,8 @@ int main(int argc, char** argv) {
                               (int)enhancedToggles.glowBloom,
                               (int)enhancedToggles.shadowMapFlipBytes,
                               (int)enhancedToggles.shadowMapSize,
-                              (int)enhancedToggles.shadowMapRefresh);
+                              (int)enhancedToggles.shadowMapRefresh,
+                              (int)enhancedToggles.texture16);
         }
 #undef MDK_HW_STR
 #undef MDK_HW_STR2

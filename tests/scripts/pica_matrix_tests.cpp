@@ -1165,6 +1165,205 @@ void testTheMipChain() {
                mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, 32, 32, levels));
 }
 
+// The PICA's widening of an n-bit channel back to 8 bits (bit replication), the
+// decode the hardware does when it samples a 16-bit texel.
+uint32_t widen(uint32_t v, uint32_t bits) {
+    if (bits == 1) {
+        return v ? 255u : 0u;
+    }
+    if (bits == 4) {
+        return v * 17u;
+    }
+    return (v << (8u - bits)) | (v >> (2u * bits - 8u));
+}
+
+uint16_t wordAt(const uint8_t* buffer, size_t texel) {
+    return (uint16_t)(buffer[texel * 2u] | (buffer[texel * 2u + 1u] << 8));
+}
+
+void testThe16BitStore() {
+    using mdk::pica::TexelFormat;
+    // THE WORDS, channel by channel, with the bit fields the TEXUNITi_TYPE
+    // formats define: RGB565 R[15:11] G[10:5] B[4:0]; RGBA5551 R[15:11] G[10:6]
+    // B[5:1] A[0]; RGBA4 R[15:12] G[11:8] B[7:4] A[3:0].
+    PICA_CHECK(mdk::pica::rgb565Word(255, 0, 0) == 0xF800u);
+    PICA_CHECK(mdk::pica::rgb565Word(0, 255, 0) == 0x07E0u);
+    PICA_CHECK(mdk::pica::rgb565Word(0, 0, 255) == 0x001Fu);
+    PICA_CHECK(mdk::pica::rgba5551Word(255, 0, 0, 0) == 0xF800u);
+    PICA_CHECK(mdk::pica::rgba5551Word(0, 255, 0, 0) == 0x07C0u);
+    PICA_CHECK(mdk::pica::rgba5551Word(0, 0, 255, 0) == 0x003Eu);
+    PICA_CHECK(mdk::pica::rgba5551Word(0, 0, 0, 255) == 0x0001u);
+    PICA_CHECK(mdk::pica::rgba4Word(255, 0, 0, 0) == 0xF000u);
+    PICA_CHECK(mdk::pica::rgba4Word(0, 255, 0, 0) == 0x0F00u);
+    PICA_CHECK(mdk::pica::rgba4Word(0, 0, 255, 0) == 0x00F0u);
+    PICA_CHECK(mdk::pica::rgba4Word(0, 0, 0, 255) == 0x000Fu);
+
+    // THE BYTE ORDER: the little-endian u16, low byte first. Backwards, the
+    // RGB565 red lands in blue's bits -- the R = 255 class of defect, one size
+    // down -- so it is asserted as BYTES, like texelBytes.
+    uint8_t two[2] = {0, 0};
+    mdk::pica::texel16Bytes(two, 0xF81Fu);
+    PICA_CHECK(two[0] == 0x1Fu && two[1] == 0xF8u);
+
+    // THE ROUNDING: every 8-bit value comes back within half a step of itself
+    // through the PICA's bit-replication widening (5 bits: 255/62 = 4.1, 6 bits:
+    // 2.0, 4 bits: 8.5), and the extremes are exact.
+    int32_t worst5 = 0;
+    int32_t worst6 = 0;
+    int32_t worst4 = 0;
+    for (uint32_t v = 0; v < 256u; v++) {
+        const uint16_t w565 = mdk::pica::rgb565Word(v, v, v);
+        const uint16_t w4 = mdk::pica::rgba4Word(v, v, v, 255);
+        const int32_t d5 = (int32_t)widen((w565 >> 11) & 31u, 5) - (int32_t)v;
+        const int32_t d6 = (int32_t)widen((w565 >> 5) & 63u, 6) - (int32_t)v;
+        const int32_t d4 = (int32_t)widen((w4 >> 12) & 15u, 4) - (int32_t)v;
+        worst5 = d5 < 0 ? (-d5 > worst5 ? -d5 : worst5) : (d5 > worst5 ? d5 : worst5);
+        worst6 = d6 < 0 ? (-d6 > worst6 ? -d6 : worst6) : (d6 > worst6 ? d6 : worst6);
+        worst4 = d4 < 0 ? (-d4 > worst4 ? -d4 : worst4) : (d4 > worst4 ? d4 : worst4);
+    }
+    PICA_CHECK(worst5 <= 4);
+    PICA_CHECK(worst6 <= 2);
+    PICA_CHECK(worst4 <= 8);
+    PICA_CHECK(mdk::pica::rgb565Word(255, 255, 255) == 0xFFFFu);
+    PICA_CHECK(mdk::pica::rgb565Word(0, 0, 0) == 0x0000u);
+
+    // THE ALPHA TEST SURVIVES THE STORE, for both references the backend installs
+    // (alphaTestReferenceFor: > 0 for the oracle's discard, > 127 for the half
+    // cover). RGBA4: both, for every alpha. RGBA5551: the half cover for every
+    // alpha (the only test a mip level is sampled under), and > 0 for the 0/255
+    // alpha every index texture's level 0 holds.
+    bool rgba4Exact = true;
+    bool rgba5551Half = true;
+    for (uint32_t a = 0; a < 256u; a++) {
+        const uint32_t a4 = widen(mdk::pica::rgba4Word(0, 0, 0, a) & 15u, 4);
+        const uint32_t a1 = widen(mdk::pica::rgba5551Word(0, 0, 0, a) & 1u, 1);
+        if ((a4 > (uint32_t)mdk::pica::kAlphaTestReference) !=
+                (a > (uint32_t)mdk::pica::kAlphaTestReference) ||
+            (a4 > (uint32_t)mdk::pica::kAlphaTestHalfCover) !=
+                (a > (uint32_t)mdk::pica::kAlphaTestHalfCover)) {
+            rgba4Exact = false;
+        }
+        if ((a1 > (uint32_t)mdk::pica::kAlphaTestHalfCover) !=
+            (a > (uint32_t)mdk::pica::kAlphaTestHalfCover)) {
+            rgba5551Half = false;
+        }
+    }
+    PICA_CHECK(rgba4Exact);
+    PICA_CHECK(rgba5551Half);
+    PICA_CHECK(widen(mdk::pica::rgba5551Word(9, 9, 9, 0) & 1u, 1) == 0u);
+    PICA_CHECK(widen(mdk::pica::rgba5551Word(9, 9, 9, 255) & 1u, 1) == 255u);
+    // The smallest nonzero alpha is still kept by > 0 in RGBA4 (rounding alone
+    // would make it 0 and discard a texel RGBA8 drew).
+    PICA_CHECK((mdk::pica::rgba4Word(0, 0, 0, 1) & 15u) == 1u);
+
+    // THE CHOICE.
+    static uint8_t level0[16 * 16 * 4];
+    for (uint32_t i = 0; i < 16u * 16u; i++) {
+        mdk::pica::texelBytes(level0 + i * 4u, i & 0xFFu, 7, 9, 255);
+    }
+    PICA_CHECK(mdk::pica::expandedTexelFormat(true, false, 16, 16, level0, 256) ==
+               TexelFormat::Rgb565);
+    PICA_CHECK(mdk::pica::expandedTexelFormat(false, false, 16, 16, level0, 256) ==
+               TexelFormat::Rgba8);   // the toggle off: the original store
+    PICA_CHECK(mdk::pica::expandedTexelFormat(true, true, 16, 16, level0, 256) ==
+               TexelFormat::Rgba8);   // the canvas pin
+    PICA_CHECK(mdk::pica::expandedTexelFormat(true, false, 8, 8, level0, 64) ==
+               TexelFormat::Rgba8);   // the 8x8 floor: a flat colour stays exact
+    level0[100 * 4u] = 0;             // a hole (index 0)
+    PICA_CHECK(mdk::pica::expandedTexelFormat(true, false, 16, 16, level0, 256) ==
+               TexelFormat::Rgba5551);
+    level0[200 * 4u] = 128;           // a partial alpha (an RGBA source)
+    PICA_CHECK(mdk::pica::expandedTexelFormat(true, false, 16, 16, level0, 256) ==
+               TexelFormat::Rgba4);
+    PICA_CHECK(mdk::pica::indexTexelFormatBound(true, 128, 256) == TexelFormat::Rgba5551);
+    PICA_CHECK(mdk::pica::indexTexelFormatBound(false, 128, 256) == TexelFormat::Rgba8);
+    PICA_CHECK(mdk::pica::indexTexelFormatBound(true, 8, 8) == TexelFormat::Rgba8);
+
+    // THE BYTES: two a texel, chain included, half of RGBA8's.
+    PICA_CHECK(mdk::pica::textureBytes(TexelFormat::Rgb565, 256, 256, 5) == 174720u);
+    PICA_CHECK(mdk::pica::textureBytes(TexelFormat::Rgba5551, 256, 256, 0) == 131072u);
+    PICA_CHECK(mdk::pica::textureBytes(TexelFormat::Rgba4, 32, 32, 2) ==
+               mdk::pica::textureBytes(TexelFormat::Rgba8, 32, 32, 2) / 2u);
+
+    // THE PACK, IN PLACE: texel i's word at byte 2i, from texel i's [A, B, G, R]
+    // -- and RGBA8 untouched.
+    uint8_t texels[4 * 4] = {0};
+    mdk::pica::texelBytes(texels + 0, 255, 0, 0, 255);
+    mdk::pica::texelBytes(texels + 4, 0, 255, 0, 0);
+    mdk::pica::texelBytes(texels + 8, 0, 0, 255, 255);
+    mdk::pica::texelBytes(texels + 12, 16, 32, 48, 128);
+    uint8_t keep[16];
+    memcpy(keep, texels, sizeof(keep));
+    mdk::pica::packTexels16(texels, 4, TexelFormat::Rgba8);
+    PICA_CHECK(memcmp(keep, texels, sizeof(keep)) == 0);
+    mdk::pica::packTexels16(texels, 4, TexelFormat::Rgba5551);
+    PICA_CHECK(wordAt(texels, 0) == 0xF801u);
+    PICA_CHECK(wordAt(texels, 1) == 0x07C0u);
+    PICA_CHECK(wordAt(texels, 2) == 0x003Fu);
+    PICA_CHECK(wordAt(texels, 3) == mdk::pica::rgba5551Word(16, 32, 48, 128));
+    memcpy(texels, keep, sizeof(keep));
+    mdk::pica::packTexels16(texels, 4, TexelFormat::Rgba4);
+    PICA_CHECK(wordAt(texels, 0) == 0xF00Fu);
+    PICA_CHECK(wordAt(texels, 3) == mdk::pica::rgba4Word(16, 32, 48, 128));
+
+    // END TO END, THE WAY makeTexture DOES IT: a 20x20 cut-out in 32x32 with its
+    // chain, expanded and prepared in RGBA8, chosen, packed in place -- and every
+    // level read back at the offset makeTexture uploads it from
+    // (textureBytes(format, 32, 32, level - 1)). Every texel of every level keeps
+    // its colour within the rounding and its half-cover answer exactly; level 0
+    // keeps its > 0 answer too.
+    const int32_t levels = mdk::pica::mipLevelsFor(32, 32);
+    const size_t chainTexels = mdk::pica::mipChainTexels(32, 32, levels);
+    static uint8_t rgba8[(32 * 32 + 16 * 16 + 8 * 8) * 4];
+    static uint8_t store[(32 * 32 + 16 * 16 + 8 * 8) * 4];
+    memset(rgba8, 0, sizeof(rgba8));
+    for (uint32_t y = 0; y < 20; y++) {
+        for (uint32_t x = 0; x < 20; x++) {
+            const bool hole = ((x * 3u + y) % 5u) == 0;
+            mdk::pica::texelBytes(rgba8 + mdk::pica::textureTexelIndex(x, y, 32) * 4u,
+                                  (x * 13u) & 0xFFu, (y * 11u) & 0xFFu, 200, hole ? 0u : 255u);
+        }
+    }
+    mdk::pica::prepareForFiltering(rgba8, 20, 20, 32, 32);
+    mdk::pica::buildMipChain(rgba8, 32, 32, 20, 20, levels);
+    const TexelFormat format = mdk::pica::expandedTexelFormat(true, false, 32, 32, rgba8, 32 * 32);
+    PICA_CHECK(format == TexelFormat::Rgba5551);
+    memcpy(store, rgba8, sizeof(store));
+    mdk::pica::packTexels16(store, chainTexels, format);
+    bool levelsHold = true;
+    bool sawPartial = false;
+    size_t at8 = 0;
+    for (int32_t level = 0; level <= levels; level++) {
+        const size_t offset16 =
+            level == 0 ? 0u : mdk::pica::textureBytes(format, 32, 32, level - 1);
+        const size_t count = ((size_t)32 >> level) * ((size_t)32 >> level);
+        for (size_t i = 0; i < count; i++) {
+            const uint8_t* t = rgba8 + (at8 + i) * 4u;
+            const uint16_t w = wordAt(store + offset16, i);
+            const uint32_t a1 = widen(w & 1u, 1);
+            if (t[0] != 0u && t[0] != 255u) {
+                sawPartial = true;
+            }
+            if ((a1 > 127u) != (t[0] > 127u)) {
+                levelsHold = false;
+            }
+            if (level == 0 && (a1 > 0u) != (t[0] > 0u)) {
+                levelsHold = false;
+            }
+            const int32_t dr = (int32_t)widen((w >> 11) & 31u, 5) - (int32_t)t[3];
+            const int32_t dg = (int32_t)widen((w >> 6) & 31u, 5) - (int32_t)t[2];
+            const int32_t db = (int32_t)widen((w >> 1) & 31u, 5) - (int32_t)t[1];
+            if (dr > 4 || dr < -4 || dg > 4 || dg < -4 || db > 4 || db < -4) {
+                levelsHold = false;
+            }
+        }
+        at8 += count;
+    }
+    PICA_CHECK(levelsHold);
+    PICA_CHECK(sawPartial);   // the chain's averaged edge alpha was there to cut
+    PICA_CHECK(at8 == chainTexels);
+}
+
 void testTheHdResidencyPolicy() {
     using mdk::pica::HdSlot;
     // THE VICTIM: the least recently drawn resident copy that the protected frame
@@ -1752,6 +1951,7 @@ int runPicaMatrixTests() {
     testTheHazeIsThePcCurveOnTheRightDraws();
     testTheFilteredEdge();
     testTheMipChain();
+    testThe16BitStore();
     testTheHdResidencyPolicy();
     testTheSunsShadow();
     return failures;

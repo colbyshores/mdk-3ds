@@ -214,6 +214,27 @@ static void probeTextureMemory(int32_t width, int32_t height, size_t bytes) {
     }
 }
 
+// The PICA texel format of a store (C3D_TexInitWithParams' format), and its
+// slot in RendererC3D::texturesMade. The ETC formats are the HD layer's, which
+// tex3ds imports itself; an expanded texture is never one, so they read RGBA8.
+static GPU_TEXCOLOR picaTexelFormat(mdk::pica::TexelFormat format) {
+    switch (format) {
+        case mdk::pica::TexelFormat::Rgb565: return GPU_RGB565;
+        case mdk::pica::TexelFormat::Rgba5551: return GPU_RGBA5551;
+        case mdk::pica::TexelFormat::Rgba4: return GPU_RGBA4;
+        default: return GPU_RGBA8;
+    }
+}
+
+static int32_t texelStoreIndex(mdk::pica::TexelFormat format) {
+    switch (format) {
+        case mdk::pica::TexelFormat::Rgb565: return 0;
+        case mdk::pica::TexelFormat::Rgba5551: return 1;
+        case mdk::pica::TexelFormat::Rgba4: return 2;
+        default: return 3;
+    }
+}
+
 // Makes the GPU copy of a texture from the source the backend kept, and
 // fills it.
 //
@@ -240,9 +261,6 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     int32_t levels = renderer->toggles.enableMipmaps
                          ? mdk::pica::mipLevelsFor(texture.paddedWidth, texture.paddedHeight)
                          : 0;
-    size_t gpuBytes = mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8,
-                                                    texture.paddedWidth, texture.paddedHeight,
-                                                    levels);
     const size_t realBytes = (size_t)texture.realWidth * (size_t)texture.realHeight *
                              (texture.indexed ? 1u : 4u);
     if (texture.source.size() != realBytes ||
@@ -251,6 +269,42 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
                           (int)texture.realWidth, (int)texture.realHeight);
         return false;
     }
+
+    // THE PIXELS, BEFORE THE ALLOCATION: the store (texture16) is chosen from the
+    // expanded texels' alpha, and the allocation's size is the store's.
+    //
+    // A PLAIN CPU BUFFER, NOT linearAlloc.
+    //
+    // The linear heap STARTS IN THE VRAM: its first megabytes are texture
+    // memory, and only then does it extend into system RAM. So a
+    // temporary buffer taken from the linear heap PERMANENTLY EATS VRAM --
+    // and this one is a temporary: it is copied into the texture and thrown
+    // away. Every expansion was therefore costing the 3DS its texture
+    // memory, and the arena's textures stopped allocating one after
+    // another.
+    uint8_t* pixels = nullptr;
+    if (texture.indexed) {
+        pixels = expandIndices(texture.source.data(), texture.realWidth, texture.realHeight,
+                               texture.palette.data(), texture.paddedWidth, texture.paddedHeight,
+                               levels);
+    } else {
+        pixels = expandRgba(texture.source.data(), texture.realWidth, texture.realHeight,
+                            texture.paddedWidth, texture.paddedHeight, levels);
+    }
+    if (!pixels) {
+        return false;
+    }
+    // THE STORE (EnhancedToggles::texture16): RGBA8, or 16 bits a texel -- RGB565
+    // with no transparent texel, RGBA5551 with only 0/255 alpha (every index
+    // texture), RGBA4 with partial alpha. pica::expandedTexelFormat carries the
+    // reasons (the alpha test's two references survive each). Decided here, when
+    // the texture is made: the toggle reaches a texture at its next making.
+    const mdk::pica::TexelFormat format = mdk::pica::expandedTexelFormat(
+        renderer->toggles.texture16, texture.keepRgba8, texture.paddedWidth,
+        texture.paddedHeight, pixels,
+        (size_t)texture.paddedWidth * (size_t)texture.paddedHeight);
+    size_t gpuBytes = mdk::pica::textureBytes(format, texture.paddedWidth, texture.paddedHeight,
+                                              levels);
     bool allocated = false;
     bool diagnosticsRun = false;
     for (;;) {
@@ -273,11 +327,15 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
         // what C3D_TexInit's format argument selects is the TEXEL FORMAT, not
         // the layout. Nothing about the allocation changes here -- only where
         // the expansion writes its texels.
+        //
+        // THE FORMAT IS THE STORE'S, the same `format` the texels are packed in
+        // below: a 16-bit buffer in an RGBA8 texture is half a texture of
+        // garbage, an RGBA8 buffer in a 16-bit one is the top half twice over.
         C3D_TexInitParams params = {};
         params.width = (u16)texture.paddedWidth;
         params.height = (u16)texture.paddedHeight;
         params.maxLevel = (u8)levels;
-        params.format = GPU_RGBA8;
+        params.format = picaTexelFormat(format);
         params.type = GPU_TEX_2D;
         params.onVram = false;
         if (C3D_TexInitWithParams(&texture.tex, nullptr, params)) {
@@ -303,19 +361,22 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
             }
             // A CHAIN IS AN ENHANCEMENT, THE TEXTURE IS NOT: with nothing left to
             // evict, try once more without the chain before the surface goes
-            // missing (review of the mipmap batch, F2).
+            // missing (review of the mipmap batch, F2). The expanded buffer still
+            // holds level 0 at its start (the levels are consecutive), and the
+            // store was chosen from level 0 alone, so neither is made again.
             if (levels > 0) {
                 mdk::log3dsPrintf("texture %dx%d: no room for its mip chain; made without",
                                   (int)texture.realWidth, (int)texture.realHeight);
                 levels = 0;
-                gpuBytes = mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8,
-                                                   texture.paddedWidth, texture.paddedHeight, 0);
+                gpuBytes = mdk::pica::textureBytes(format, texture.paddedWidth,
+                                                   texture.paddedHeight, 0);
                 continue;
             }
             break;
         }
     }
     if (!allocated) {
+        free(pixels);
         mdk::log3dsPrintf("texture %dx%d FAILED: no texture memory",
                           (int)texture.realWidth, (int)texture.realHeight);
         return false;
@@ -342,36 +403,25 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
                    texture.realWidth == texture.paddedWidth ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,
                    texture.realHeight == texture.paddedHeight ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
 
-    // THE PIXELS. A PLAIN CPU BUFFER, NOT linearAlloc.
-    //
-    // The linear heap STARTS IN THE VRAM: its first megabytes are texture
-    // memory, and only then does it extend into system RAM. So a
-    // temporary buffer taken from the linear heap PERMANENTLY EATS VRAM --
-    // and this one is a temporary: it is copied into the texture and thrown
-    // away. Every expansion was therefore costing the 3DS its texture
-    // memory, and the arena's textures stopped allocating one after
-    // another.
-    uint8_t* pixels = nullptr;
-    if (texture.indexed) {
-        pixels = expandIndices(texture.source.data(), texture.realWidth, texture.realHeight,
-                               texture.palette.data(), texture.paddedWidth, texture.paddedHeight,
-                               levels);
-    } else {
-        pixels = expandRgba(texture.source.data(), texture.realWidth, texture.realHeight,
-                            texture.paddedWidth, texture.paddedHeight, levels);
-    }
-    if (!pixels) {
-        C3D_TexDelete(&texture.tex);
-        return false;
-    }
+    // THE 16-BIT STORE: the chain's texels rewritten in place, 4 bytes to 2 in
+    // `format`'s word (pica::packTexels16, host-tested: the PICA's little-endian
+    // u16, the same tile slots). Every texel up to the last level uploaded, and
+    // nothing for RGBA8. After the expansion (which builds the chain in RGBA8:
+    // the filter's colour bleed and the mip averaging stay one implementation),
+    // before the first upload.
+    mdk::pica::packTexels16(pixels,
+                            mdk::pica::mipChainTexels(texture.paddedWidth, texture.paddedHeight,
+                                                      levels),
+                            format);
     C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);
     // The chain, already in the same buffer after level 0 (the expansion built
-    // it: pica::buildMipChain). Each level is handed to the sink from its offset.
-    size_t offset = (size_t)texture.paddedWidth * (size_t)texture.paddedHeight * 4u;
+    // it: pica::buildMipChain). Each level is handed to the sink from its offset:
+    // the bytes of the levels above it IN THE STORE (2 a texel for a 16-bit one).
     int32_t made = 0;
     for (int32_t level = 1; level <= levels; level++) {
+        const size_t offset = mdk::pica::textureBytes(format, texture.paddedWidth,
+                                                      texture.paddedHeight, level - 1);
         C3D_TexLoadImage(&texture.tex, pixels + offset, GPU_TEXFACE_2D, level);
-        offset += ((size_t)texture.paddedWidth >> level) * ((size_t)texture.paddedHeight >> level) * 4u;
         made = level;
     }
     texture.mipLevels = made;
@@ -420,6 +470,12 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     C3D_TexFlush(&texture.tex);
     free(pixels);
     texture.valid = true;
+    texture.format = format;
+    renderer->texturesMade[texelStoreIndex(format)]++;
+    renderer->textureBytesSaved +=
+        mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,
+                                texture.paddedHeight, levels) -
+        gpuBytes;
     return true;
 }
 

@@ -434,7 +434,67 @@ size_t textureBytes(TexelFormat format, int32_t paddedWidth, int32_t paddedHeigh
     switch (format) {
         case TexelFormat::Etc1: return texels / 2;   // 4 bits per texel
         case TexelFormat::Etc1A4: return texels;     // 8 bits per texel
+        case TexelFormat::Rgb565:
+        case TexelFormat::Rgba5551:
+        case TexelFormat::Rgba4: return texels * 2;  // 16 bits per texel
         default: return texels * 4;                  // RGBA8
+    }
+}
+
+TexelFormat expandedTexelFormat(bool texture16, bool keepRgba8, int32_t paddedWidth,
+                                int32_t paddedHeight, const uint8_t* level0, size_t level0Texels) {
+    if (!texture16 || keepRgba8 || !level0 || level0Texels == 0 ||
+        (size_t)paddedWidth * (size_t)paddedHeight <= 64u) {
+        return TexelFormat::Rgba8;
+    }
+    bool opaque = true;
+    bool binary = true;
+    for (size_t i = 0; i < level0Texels; i++) {
+        const uint8_t alpha = level0[i * 4u];   // [A, B, G, R] (texelBytes)
+        if (alpha != 255u) {
+            opaque = false;
+            if (alpha != 0u) {
+                binary = false;
+                break;
+            }
+        }
+    }
+    if (opaque) {
+        return TexelFormat::Rgb565;
+    }
+    return binary ? TexelFormat::Rgba5551 : TexelFormat::Rgba4;
+}
+
+TexelFormat indexTexelFormatBound(bool texture16, int32_t paddedWidth, int32_t paddedHeight) {
+    if (!texture16 || (size_t)paddedWidth * (size_t)paddedHeight <= 64u) {
+        return TexelFormat::Rgba8;
+    }
+    return TexelFormat::Rgba5551;
+}
+
+void packTexels16(uint8_t* chain, size_t texels, TexelFormat format) {
+    if (!chain || (format != TexelFormat::Rgb565 && format != TexelFormat::Rgba5551 &&
+                   format != TexelFormat::Rgba4)) {
+        return;
+    }
+    for (size_t i = 0; i < texels; i++) {
+        // Read texel i whole before its word is written: the word lands at 2i,
+        // which for i >= 1 is below 4i (already read) and for i = 0 overlaps only
+        // texel 0's own bytes, held in the locals by then.
+        const uint8_t* t = chain + i * 4u;
+        const uint32_t a = t[0];
+        const uint32_t b = t[1];
+        const uint32_t g = t[2];
+        const uint32_t r = t[3];
+        uint16_t word = 0;
+        if (format == TexelFormat::Rgb565) {
+            word = rgb565Word(r, g, b);
+        } else if (format == TexelFormat::Rgba5551) {
+            word = rgba5551Word(r, g, b, a);
+        } else {
+            word = rgba4Word(r, g, b, a);
+        }
+        texel16Bytes(chain + i * 2u, word);
     }
 }
 

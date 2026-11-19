@@ -176,6 +176,16 @@ struct C3dTexture {
     // The draw path lets the sampler use them only while the toggle is on.
     int32_t mipLevels = 0;
 
+    // The STORE the GPU copy was made in (EnhancedToggles::texture16: RGBA8, or
+    // RGB565 / RGBA5551 / RGBA4 by pica::expandedTexelFormat), decided when the
+    // GPU copy is made, from the expanded texels' alpha.
+    mdk::pica::TexelFormat format = mdk::pica::TexelFormat::Rgba8;
+    // DRAWN ON THE CANVAS: stays RGBA8 whatever texture16 says (06_draw.inc sets
+    // it on the first Overlay draw and has a 16-bit copy made again at the next
+    // frame boundary). The HUD's digits and the fonts keep the palette's exact
+    // colours; they are small, so the bandwidth they would save is nothing.
+    bool keepRgba8 = false;
+
     // THE SOURCE, kept so that an EVICTED texture can be made again.
     //
     // THE EVICTION HAS TO BE REVERSIBLE. The 3DS has six megabytes of VRAM
@@ -731,6 +741,14 @@ struct RendererC3D {
     int32_t hdImported = 0;
     int32_t hdEvicted = 0;
     int32_t hdFailedCount = 0;
+
+    // THE STORES makeTexture chose (EnhancedToggles::texture16), counted per
+    // making -- an evicted texture made again counts again -- indexed by
+    // texelStoreIndex: RGB565, RGBA5551, RGBA4, RGBA8. And the bytes the 16-bit
+    // makings did not allocate against RGBA8. Logged per level (03_frame.inc).
+    int32_t texturesMade[4] = {0, 0, 0, 0};
+    size_t textureBytesSaved = 0;
+    int32_t texturesMadeLogged = -1;   // the making count at the last line
 
     // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
     // may still be reading the last frame's textures then. C3D_FrameBegin

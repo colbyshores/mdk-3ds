@@ -284,6 +284,20 @@ MDK_TEST(EnhancedConfigRoundTrips) {
         MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(bloom).c_str(), &bloomBack));
         MDK_CHECK(bloomBack.glowBloom && bloomBack.enableGlowBillboards);
     }
+    // The 3DS's 16-bit texture stores: ON by default, written, and read back
+    // when it is off (the owner's A/B: texture16=0 is the RGBA8 store).
+    MDK_CHECK(toggles.texture16 && back.texture16);
+    MDK_CHECK(text.find("texture16=1\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles wide;
+        wide.texture16 = false;
+        mdk::EnhancedToggles wideBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(wide).c_str(), &wideBack));
+        MDK_CHECK(!wideBack.texture16 && wideBack.enableMipmaps);
+        MDK_CHECK(mdk::writeEnhancedConfig(wide).find("texture16=0\n") != std::string::npos);
+        mdk::EnhancedToggles off;
+        MDK_CHECK(mdk::parseEnhancedConfig("texture16 = off\n", &off) && !off.texture16);
+    }
     // How often the 3DS redraws the shadow map (not a toggle): 0 = automatic by
     // default, written, read back; only 1-4 are taken, anything else is 0.
     MDK_CHECK(toggles.shadowMapRefresh == 0 && back.shadowMapRefresh == 0);

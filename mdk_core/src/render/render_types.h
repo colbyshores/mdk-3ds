@@ -264,6 +264,13 @@ struct EnhancedToggles {
     bool glowBloom = false;           // 3DS: the glow as the PC's bloom, ported (~10 ms on
                                       // the Old 3DS), instead of the default additive
                                       // billboards on bright effects; the PC ignores it
+    bool texture16 = true;            // 3DS: the palette-expanded textures stored 16 bits a
+                                      // texel (RGB565 / RGBA5551 / RGBA4, chosen per texture
+                                      // by pica::expandedTexelFormat) instead of RGBA8 --
+                                      // half the texture bandwidth and memory. Decided when a
+                                      // texture is MADE: a change takes effect at the next
+                                      // level load (or an evicted texture made again). The
+                                      // PC ignores it
 
     // NOT A LOOK: a diagnostic of the 3DS sun shadow, off by default. The caster
     // pass writes the shadow map's four bytes in the order the GPU's shadow unit

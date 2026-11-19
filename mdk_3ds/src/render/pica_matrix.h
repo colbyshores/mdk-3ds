@@ -822,13 +822,112 @@ void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t*
 // (docs/HD_TEXTURES_3DS_SPEC.md) -- the 3DS never encodes them. Every byte count
 // the backend budgets with (eviction, sprite residency) goes through
 // textureBytes, so an imported ETC texture is costed by the same rule.
-enum class TexelFormat { Rgba8, Etc1, Etc1A4 };
+//
+// Rgb565, Rgba5551 and Rgba4 are the 16-bit stores of an EXPANDED texture
+// (EnhancedToggles::texture16, a 3DS store choice): half the bytes the PICA
+// fetches per texel, chosen per texture by expandedTexelFormat below.
+enum class TexelFormat { Rgba8, Etc1, Etc1A4, Rgb565, Rgba5551, Rgba4 };
 
 // Bytes of a padded width x height texture of `format` with `levels` mip levels
 // below level 0 (each level is a quarter of the one above; ETC formats are 4 bits
-// and 8 bits per texel, in 4x4 blocks, so every level >= 8x8 is whole blocks).
+// and 8 bits per texel, in 4x4 blocks, so every level >= 8x8 is whole blocks; the
+// 16-bit formats are 2 bytes a texel). The byte OFFSET of level k in a chain
+// buffer is textureBytes(format, w, h, k - 1): the levels are consecutive.
 size_t textureBytes(TexelFormat format, int32_t paddedWidth, int32_t paddedHeight,
                     int32_t levels);
+
+// ---------------------------------------------------------------------------
+// THE 16-BIT STORE (EnhancedToggles::texture16)
+// ---------------------------------------------------------------------------
+//
+// THE WORDS. Each 16-bit PICA texel is ONE LITTLE-ENDIAN u16, the high channel
+// in the high bits (3dbrew GPU/Internal Registers, TEXUNITi_TYPE 2/3/4; the same
+// packers in ../perfect_dark/port/fast3d/gfx_citro3d.cpp:1832-1855 run on this
+// GPU; Obsidian GX-to-PICA200/22-textures.md:113 for RGB565):
+//
+//     RGB565    R[15:11] G[10:5]  B[4:0]            (sampled alpha is 1.0)
+//     RGBA5551  R[15:11] G[10:6]  B[5:1]  A[0]
+//     RGBA4     R[15:12] G[11:8]  B[7:4]  A[3:0]
+//
+// so memory holds the LOW byte first: `texel16Bytes`. This is the same
+// convention as RGBA8's [A, B, G, R] (`texelBytes`) one size down -- the channel
+// that is lowest in the word is first in memory -- and getting it backwards is
+// the R = 255 class of defect again (alpha/blue read as red). The 8x8 Morton
+// tile order is unchanged: a texel's SLOT is the same (`textureTexelIndex`),
+// only its size is 2 bytes instead of 4.
+//
+// THE ROUNDING. A channel goes to n bits by round(v * (2^n - 1) / 255), the
+// nearest representable level once the PICA widens it back by bit replication
+// (5 bits: v << 3 | v >> 2, 6 bits: v << 2 | v >> 4, 4 bits: v * 17).
+//
+// THE ALPHA IS THE GAMEPLAY HALF, as on RGBA8: the alpha test keeps alpha > 0
+// (the oracle's index-0 discard) or alpha > 127 (the filtered half cover,
+// alphaTestReferenceFor). RGBA5551's one bit is set for alpha >= 128, which is
+// the half cover exactly and, for an alpha that is 0 or 255 (every index
+// texture's level 0), the > 0 test exactly too. RGBA4's four bits round to
+// nearest, which keeps >= 128 <-> >= 8 (136) exactly, and a nonzero alpha
+// never rounds to 0 (it takes 1, i.e. 17) so the > 0 test is exact as well.
+inline uint32_t channelBits(uint32_t v, uint32_t maxLevel) {
+    return (v * maxLevel + 127u) / 255u;
+}
+inline uint16_t rgb565Word(uint32_t r, uint32_t g, uint32_t b) {
+    return (uint16_t)((channelBits(r, 31u) << 11) | (channelBits(g, 63u) << 5) |
+                      channelBits(b, 31u));
+}
+inline uint16_t rgba5551Word(uint32_t r, uint32_t g, uint32_t b, uint32_t a) {
+    return (uint16_t)((channelBits(r, 31u) << 11) | (channelBits(g, 31u) << 6) |
+                      (channelBits(b, 31u) << 1) | (a >= 128u ? 1u : 0u));
+}
+inline uint16_t rgba4Word(uint32_t r, uint32_t g, uint32_t b, uint32_t a) {
+    uint32_t alpha = channelBits(a, 15u);
+    if (a != 0u && alpha == 0u) {
+        alpha = 1u;   // a texel the > 0 test keeps must not become one it discards
+    }
+    return (uint16_t)((channelBits(r, 15u) << 12) | (channelBits(g, 15u) << 8) |
+                      (channelBits(b, 15u) << 4) | alpha);
+}
+inline void texel16Bytes(uint8_t* dst, uint16_t word) {
+    dst[0] = (uint8_t)(word & 0xFFu);
+    dst[1] = (uint8_t)(word >> 8);
+}
+
+// THE CHOICE, per texture, from its EXPANDED level 0 (`texelBytes` order, tiled,
+// `level0Texels` = paddedWidth * paddedHeight, padding included):
+//
+//   * Rgba8 when the toggle is off, when the texture is pinned to RGBA8 (the
+//     canvas: `keepRgba8`, see 06_draw.inc), or when the padded texture is at
+//     most 8x8 (64 texels: a flat colour, the canvas white -- nothing to save
+//     and a flat colour must stay the colour it was asked for);
+//   * Rgb565 when every texel is opaque (alpha 255, padding included -- a
+//     padded texture's padding is transparent, so only an unpadded hole-free
+//     texture qualifies; the PICA samples RGB565 as alpha 1.0);
+//   * Rgba5551 when every alpha is 0 or 255 -- every index texture: index 0 is
+//     alpha 0 and the rest 255 (expandIndices). Level 0 is then stored EXACTLY in
+//     alpha, and the mip levels' averaged alpha (64, 128, 191 at a cut-out's
+//     edge) is cut at 128 -- the same answer the half-cover test gives at every
+//     texel centre, which is the only test a mip level is ever sampled under
+//     (06_draw.inc: the chain only with FILTERING, and FILTERING is the half
+//     cover). What moves is the bilinear crossing BETWEEN two mip texels of a
+//     cut-out's edge, by at most half a mip texel: sub-pixel at the distance a
+//     level >= 1 is sampled. 5 bits of colour instead of RGBA4's 4 is the reason
+//     to take that, because the near view (level 0) is where banding shows;
+//   * Rgba4 otherwise -- a source with partial alpha (an RGBA texture), where one
+//     bit of alpha would change level 0 itself (a canvas picture blends by its
+//     alpha); four bits keep both alpha tests exact (rgba4Word).
+TexelFormat expandedTexelFormat(bool texture16, bool keepRgba8, int32_t paddedWidth,
+                                int32_t paddedHeight, const uint8_t* level0, size_t level0Texels);
+
+// The widest store an INDEX texture of this padded size can take: Rgba5551 (2
+// bytes, standing for Rgb565 too) under texture16 above the 8x8 floor, else
+// Rgba8 -- an index texture's level 0 alpha is always 0 or 255, so it never
+// takes Rgba4. The sprite residency's estimate (mdk_render_index_texture_bytes).
+TexelFormat indexTexelFormatBound(bool texture16, int32_t paddedWidth, int32_t paddedHeight);
+
+// Rewrites a chain buffer of `texels` texels from 4-byte `texelBytes` texels
+// into 2-byte `format` texels IN PLACE (texel i's word at byte 2i; each read of
+// texel i, at byte 4i, precedes the write, and no write reaches a texel not yet
+// read). A no-op for Rgba8 (and for the ETC formats, which are never expanded).
+void packTexels16(uint8_t* chain, size_t texels, TexelFormat format);
 
 // The texels of level 0 plus `levels` levels below it, the size of one buffer
 // holding the whole chain, levels consecutive (level k after level k-1).

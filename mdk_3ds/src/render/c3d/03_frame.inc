@@ -1120,6 +1120,45 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
                           (unsigned)kHdBudgetBytes, (int)r->hdEvicted, (int)r->hdFailedCount,
                           (int)r->hdQueue.size(), (int)r->hdReader.busy());
     }
+    // THE STORES THE TEXTURES WERE MADE IN (EnhancedToggles::texture16): once a
+    // level's textures are made (frame 30), then every 300 frames when more were
+    // made since (an arena streamed in, an evicted texture made again). The
+    // makings are counted, so a texture made twice counts twice; the resident
+    // half is a walk of the table (a few hundred entries, at most once per 300
+    // frames). Cold: this is the A/B's evidence that the store changed at all.
+    {
+        const int32_t made = r->texturesMade[0] + r->texturesMade[1] + r->texturesMade[2] +
+                             r->texturesMade[3];
+        if ((r->frame == 30 || (r->frame % 300) == 0) && made != r->texturesMadeLogged) {
+            r->texturesMadeLogged = made;
+            int32_t resident16 = 0;
+            int32_t resident = 0;
+            size_t residentBytes = 0;
+            size_t residentRgba8Bytes = 0;
+            for (size_t i = 0; i < r->textures.size(); i++) {
+                const C3dTexture& t = r->textures[i];
+                if (!t.valid) {
+                    continue;
+                }
+                resident++;
+                if (t.format != mdk::pica::TexelFormat::Rgba8) {
+                    resident16++;
+                }
+                residentBytes += mdk::pica::textureBytes(t.format, t.paddedWidth, t.paddedHeight,
+                                                         t.mipLevels);
+                residentRgba8Bytes += mdk::pica::textureBytes(
+                    mdk::pica::TexelFormat::Rgba8, t.paddedWidth, t.paddedHeight, t.mipLevels);
+            }
+            mdk::log3dsPrintf("textures: frame %d texture16=%d: made %d rgb565, %d rgba5551, "
+                              "%d rgba4, %d rgba8, %u bytes saved vs rgba8; resident %d (%d "
+                              "16-bit) %u bytes of %u as rgba8",
+                              (int)r->frame, (int)r->toggles.texture16, (int)r->texturesMade[0],
+                              (int)r->texturesMade[1], (int)r->texturesMade[2],
+                              (int)r->texturesMade[3], (unsigned)r->textureBytesSaved,
+                              (int)resident, (int)resident16, (unsigned)residentBytes,
+                              (unsigned)residentRgba8Bytes);
+        }
+    }
     r->queue.reset();
 
     // THE CLEAR COLOUR IS CONVERTED, NOT PASSED THROUGH. The seam carries
