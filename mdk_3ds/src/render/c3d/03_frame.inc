@@ -873,6 +873,16 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // deletes the eye targets, and C3D_RenderTargetDelete waits for the GPU queue
     // first (and breaks inside a frame), so nothing in flight still reads them.
     applyEdgeSmoothing(r);
+    // A changed shadowMapSize (config.ini; the menu has no row for it) remakes
+    // the map, here, between frames: the next frame that casts makes it at the
+    // new size. Against the size ASKED for when the map was made (or refused),
+    // not the one made: a map VRAM held to a smaller size would otherwise be
+    // remade every frame. A refusal is forgotten too, so a smaller size is tried.
+    if ((r->shadowMapReady || r->shadowRefused) &&
+        r->toggles.shadowMapSize != r->shadowMapAsked) {
+        releaseShadowMap(r);
+        r->shadowMapAsked = r->toggles.shadowMapSize;
+    }
     if (!r->ready) return;
     // The native shadow-write test, once, before the first frame that may cast
     // a sun shadow (testNativeShadowWrites): outside the frame, like the rebuild.
@@ -1523,17 +1533,25 @@ static bool makeShadowRamp(RendererC3D* r) {
 // THE SUN SHADOW'S MAP, made on first use: the map itself (a PICA shadow
 // texture in VRAM) and, when the caster pass writes through the ramp (not
 // natively: castShadows), a 16-bit depth buffer for it and the 512x256 ramp that
-// turns a depth into the map's bytes (linear heap, half a megabyte). The map is 512 texels a side when the VRAM has
-// the megabyte and a half that takes, and 256 when it does not -- with both
-// eyes' targets at the edge smoothing's double size and the glow's textures,
-// it does not. False when nothing could be made: sun shadows are then off for
-// the session, with one line.
+// turns a depth into the map's bytes (linear heap, half a megabyte). The map's
+// side is config.ini's shadowMapSize (128 / 256 / 512) or, automatic (0), 512;
+// each smaller size down to 128 is tried while VRAM refuses -- with both eyes'
+// targets at the edge smoothing's double size and the glow's textures, 512 does
+// not fit and 256 does. (Automatic also falls to 128 now, where it used to give
+// up at 256: the owner's 128 measured the same frame time, 2026-11-18.) False
+// when nothing could be made: sun shadows are then off for the session, with one
+// line.
 static bool ensureShadowMap(RendererC3D* r) {
     if (r->shadowRefused) {
         return false;
     }
     if (!(r->shadowMapReady && r->shadowTarget)) {
-        const int sizes[2] = {mdk::pica::kSunShadowMapSize, mdk::pica::kSunShadowMapSize / 2};
+        // The config's size (shadowMapSize), else 512; then each smaller one
+        // down to 128 while VRAM refuses.
+        const int first = r->toggles.shadowMapSize > 0 ? (int)r->toggles.shadowMapSize
+                                                       : mdk::pica::kSunShadowMapSize;
+        const int sizes[3] = {first, first / 2, first / 4};
+        const int tries = first >= 512 ? 3 : (first >= 256 ? 2 : 1);
         // THE GLOW'S SHARE IS LEFT FOR IT. Both are made on first use out of the
         // same VRAM, and this one is asked first (before the eyes; the glow is
         // made inside the first eye): at the edge smoothing's double-size targets
@@ -1543,7 +1561,7 @@ static bool ensureShadowMap(RendererC3D* r) {
         const size_t glowShare =
             (r->toggles.enableGlowBillboards && !r->glowReady && !r->glowRefused)
                 ? mdk::pica::kGlowVramBytes : 0u;
-        for (int i = 0; i < 2 && !r->shadowTarget; i++) {
+        for (int i = 0; i < tries && !r->shadowTarget; i++) {
             const u16 size = (u16)sizes[i];
             if ((size_t)vramSpaceFree() < mdk::pica::sunShadowVramBytes(sizes[i]) + glowShare) {
                 continue;
@@ -1568,6 +1586,7 @@ static bool ensureShadowMap(RendererC3D* r) {
                 continue;
             }
             r->shadowMapSize = sizes[i];
+            r->shadowMapAsked = r->toggles.shadowMapSize;
             // The unit blends the four nearest comparisons (the PC's 2x2).
             C3D_TexSetFilter(&r->shadowTex, GPU_LINEAR, GPU_LINEAR);
             C3D_TexSetWrap(&r->shadowTex, GPU_CLAMP_TO_BORDER, GPU_CLAMP_TO_BORDER);
@@ -1593,6 +1612,7 @@ static bool ensureShadowMap(RendererC3D* r) {
                           (int)r->shadowMapReady, r->shadowTarget ? 1 : 0,
                           (int)r->shadowRampReady, (unsigned)vramSpaceFree());
         r->shadowRefused = true;
+        r->shadowMapAsked = r->toggles.shadowMapSize;
         return false;
     }
     // The order can change while the game runs (the config's flip): the ramp is

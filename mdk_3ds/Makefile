@@ -152,6 +152,16 @@ $(error AT=$(AT) needs AUTOQUIT: the start override is a harness-build feature)
 endif
 DEFINES += -DMDK_HW_AT='$(AT)'
 endif
+# `make AUTOQUIT=90 TOGGLES='enableGlowBillboards=0;shadowMapSize=128'` applies
+# config.ini lines (';' between them, no spaces, no commas) over the console's own
+# config, for the per-toggle cost profiles: one console config per run without
+# writing the SD card. Only main_3ds.cpp reads it: touch it after changing TOGGLES.
+ifneq ($(strip $(TOGGLES)),)
+ifndef AUTOQUIT
+$(error TOGGLES=$(TOGGLES) needs AUTOQUIT: the config override is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_TOGGLES='$(TOGGLES)'
+endif
 # `make SHADOWPROBE=n` (a harness aid, never a release): the sun shadow's receive
 # pass draws one of its terms alone instead of the shadow -- 1 a constant half
 # grey (does the pass reach pixels?), 2 the map's answer, 3 the factor R, 4 the

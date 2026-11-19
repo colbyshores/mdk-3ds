@@ -1,0 +1,74 @@
+2026-11-18  3DS Enhanced Mode: what each expensive enhancement costs on the Old 3DS
+=================================================================================
+
+HARDWARE. Old 3DS appliance old3ds-lan167 (CFGU model 0, 268 MHz, L2 none),
+stereo ON, level 8 from its start, AUTOQUIT=90, PROFILE=1. Branch
+experimental/3ds-perf-glow-shadows, the tree of commit 60eead5 plus the
+shadowMapSize setting and the TOGGLES harness flag of this commit. Every run
+`hw_cycle.sh --profile` FRESH and "PROFILE OG (Old-3DS family)".
+
+THE METHOD. One build per row, `make AUTOQUIT=90 PROFILE=1 LEVEL=8
+TOGGLES='<one change>'`: everything on (no config.ini on the card = every
+toggle on) except the row's change, applied by main_3ds.cpp over the card's
+config (logged: "main: harness config override TOGGLES=..."). The script:
+scratchpad profile_runs.sh, five runs back to back (~35 min).
+
+  run                        p50 frame   mean     begin wait  draw    end wait  sim
+  everything on (baseline)   80.3 ms     94.5 ms  26.9 ms     16.6    26.6      8.8
+  shadow map 128 (not 256)   80.5        94.8     26.8        16.6    27.0      8.8
+  sun shadows OFF            56.0        69.1     19.4        15.3    15.3      6.6
+  edge smoothing OFF         58.6        72.5     10.4        15.1    27.0      7.2
+  glow OFF                   70.3        84.0     19.7        16.2    25.9      7.9
+  (earlier, 60eead5's tree:  80.1        94.1     26.8        16.5    26.6      8.9)
+
+  (p50 is the histogram's 0.1 ms bucket upper edge; "begin wait" is the wait in
+  C3D_FrameBegin for the previous frame's GPU work, "end" C3D_FrameEnd's.)
+
+READING IT.
+- SUN SHADOWS ~24 ms, and NOT the map: 128 against 256 is the same frame. The
+  cost is the receive pass (every opaque Lit mesh drawn again per eye, depth
+  EQUAL, a multiply blend): the next increment folds it into the lit draw.
+- EDGE SMOOTHING (2x2 targets) ~22 ms. The vault's "many-pass frames are
+  draw-call bound, supersampling is nearly free" (30-architecture/patterns/
+  pica200-many-pass-frame-is-drawcall-bound-not-fill-bound.md) was measured on
+  a New 3DS; here the frame-start wait falls 26.9 -> 10.4 ms without it. Part
+  of it is the shadows' receive pass and the glow running on four times the
+  pixels. A 2x1 mode is the next measurement.
+- GLOW (the PC's bloom, ported) ~10 ms -- for a look the PC's own bloom barely
+  shows at these starts (the Linux build, glow on against off, frame 60: level
+  8 0 pixels brighter by >8, level 7 169, level 3 0). Owner decision: the 3DS
+  glow becomes additive billboards; the PC keeps its bloom.
+- These are not additive (each ablation also removes the others' share of the
+  pixels it no longer draws), and the waits move with the CPU's work (vault:
+  gpu-wait-is-unhidden-gpu-time-not-gpu-time.md): the p50 frame is the number.
+- A 3.2-3.4 s maximum is in EVERY run, whatever is off: one stall not owned by
+  an enhancement (the start's settling is the suspect), open.
+
+THE SETTING. config.ini `shadowMapSize` = 0 (automatic: 512, else 256, else
+128 as VRAM allows), or 128 / 256 / 512 (that size, or smaller as VRAM
+refuses); other numbers read as 0, junk leaves it alone. The PC ignores it. A
+change remakes the map between frames (compared against the size ASKED for, so
+a map VRAM held smaller is not remade every frame). Map 128 at every
+enhancement on: "shadows: map 128x128 (VRAM, 1617920 free)"; the glow then has
+910,848 bytes free, not 714,240.
+Tests: tests/formats/lighting_tests.cpp (default, round-trip, 512 with CR,
+300 -> 0, junk unchanged, 1 -> 0 with the next key still read);
+tests/scripts/pica_matrix_tests.cpp (the guard at 128 is 8 units, the VRAM
+arithmetic).
+
+REVIEW (independent, read-only, Fable): no blocker. Fixed:
+- automatic now falls to 128 where it gave up at 256 -- documented (kept: the
+  owner's 128 costs nothing measurable);
+- a TOGGLES run could profile the wrong config silently (typo keys dropped, a
+  stale -D, only the raw string logged) -> the RESOLVED config is logged after
+  the override; an over-long value is refused and said;
+- the menu would have saved the overridden set to the card -> a TOGGLES build
+  saves nothing;
+- a refused map was never retried after a size change -> the refusal records
+  the size asked, and a change forgets it.
+Not changed: the number parser's strictness (+128 / -1 / a trailing comment
+read as junk, value unchanged) and the stringify limits (no ' # , in TOGGLES;
+documented at the flag).
+
+NOT DONE. The look at 128 against 256 on the console (captures); the 2x1
+smoothing mode; the stall.

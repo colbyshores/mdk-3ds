@@ -262,6 +262,25 @@ MDK_TEST(EnhancedConfigRoundTrips) {
                                            &flippedBack));
         MDK_CHECK(flippedBack.shadowMapFlipBytes && flippedBack.enableSkyShadows);
     }
+    // The 3DS shadow map's side (not a toggle): 0 = automatic by default,
+    // written, read back; only 128/256/512 are taken, anything else is 0.
+    MDK_CHECK(toggles.shadowMapSize == 0 && back.shadowMapSize == 0);
+    MDK_CHECK(text.find("shadowMapSize=0\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles sized;
+        sized.shadowMapSize = 128;
+        mdk::EnhancedToggles sizedBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(sized).c_str(), &sizedBack));
+        MDK_CHECK(sizedBack.shadowMapSize == 128 && sizedBack.enableSkyShadows);
+        mdk::EnhancedToggles odd;
+        MDK_CHECK(mdk::parseEnhancedConfig("shadowMapSize = 512\r\n", &odd) && odd.shadowMapSize == 512);
+        MDK_CHECK(mdk::parseEnhancedConfig("shadowMapSize=300\n", &odd) && odd.shadowMapSize == 0);
+        mdk::EnhancedToggles junk;
+        junk.shadowMapSize = 256;
+        MDK_CHECK(mdk::parseEnhancedConfig("shadowMapSize=big\n", &junk) && junk.shadowMapSize == 256);
+        MDK_CHECK(mdk::parseEnhancedConfig("shadowMapSize=1\nenableHaze=0\n", &junk) &&
+                  junk.shadowMapSize == 0 && !junk.enableHaze);
+    }
     MDK_CHECK(text.find("enableLighting=0\n") != std::string::npos);
     MDK_CHECK(text.find("enableHdTextures=0\n") != std::string::npos);
     MDK_CHECK(text.find("enableMipmaps=0\n") != std::string::npos);

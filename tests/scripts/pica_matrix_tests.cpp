@@ -1605,6 +1605,9 @@ void testTheSunsShadow() {
     PICA_CHECK(mdk::pica::sunShadowNormalOffset(mdk::pica::kSunShadowPcMapSize) == 0.5f);
     PICA_CHECK(mdk::pica::sunShadowNormalOffset(512) == 2.0f);
     PICA_CHECK(mdk::pica::sunShadowNormalOffset(256) == 4.0f);
+    // The owner's 128 (config shadowMapSize): the same 1.7 texels, 8 units.
+    PICA_CHECK(mdk::pica::sunShadowNormalOffset(128) == 8.0f);
+    PICA_CHECK(mdk::pica::sunShadowVramBytes(128) == 128u * 128u * 6u);
     PICA_CHECK(mdk::pica::sunShadowDepthBias(mdk::pica::kSunShadowPcMapSize) ==
                0.5f / (2.0f * mdk::kSunShadowReach));
     PICA_CHECK(mdk::pica::sunShadowDepthBias(512) == 2.0f / (2.0f * mdk::kSunShadowReach));

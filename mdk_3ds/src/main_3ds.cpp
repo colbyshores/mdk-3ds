@@ -136,6 +136,13 @@ constexpr float kAspect = 400.0f / 240.0f;
 // config.ini, rewritten whenever a toggle changes. The directory is
 // the log's (log_3ds.cpp makes sdmc:/3ds/mdk before this can run).
 bool saveEnhancedConfig(const mdk::EnhancedToggles& toggles) {
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_TOGGLES)
+    // A TOGGLES harness build runs a config the card does not hold: writing it
+    // back would leave the override in sdmc:/3ds/mdk/config.ini for every later
+    // run (review, 2026-11-18). Nothing is saved; the caller logs saved=0.
+    (void)toggles;
+    return false;
+#endif
     FILE* config = fopen("sdmc:/3ds/mdk/config.ini", "wb");
     if (!config) {
         return false;
@@ -394,6 +401,52 @@ int main(int argc, char** argv) {
             }
         }
     }
+
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_TOGGLES)
+    // THE HARNESS'S CONFIG OVERRIDE (`make AUTOQUIT=.. TOGGLES='k=v;k=v'`), applied
+    // over whatever sdmc:/3ds/mdk/config.ini held and never written back (the
+    // menu's save is off in such a build: saveEnhancedConfig). The value must not
+    // hold ' # or , (make, the shell, the macro), nor a word that is a macro. The
+    // per-toggle cost runs need one console config each and the appliance's SD
+    // has no write path from the loop. A harness build only.
+    {
+#define MDK_HW_STR2(x) #x
+#define MDK_HW_STR(x) MDK_HW_STR2(x)
+        // Unknown keys are dropped by the parser, so the RESOLVED set is logged
+        // after it: a typo (`enableGlow=0`) shows as a run with the glow still on,
+        // and a stale -D (the Makefile does not track it) shows as the old set.
+        char overrides[512];
+        const int length = snprintf(overrides, sizeof(overrides), "%s", MDK_HW_STR(MDK_HW_TOGGLES));
+        if (length < 0 || length >= (int)sizeof(overrides)) {
+            mdk::log3dsPrintf("main: harness config override TOGGLES is too long (%d bytes); "
+                              "NOT applied", length);
+        } else {
+            for (char* c = overrides; *c != '\0'; c++) {
+                if (*c == ';') {
+                    *c = '\n';
+                }
+            }
+            mdk::parseEnhancedConfig(overrides, &enhancedToggles);
+            mdk::log3dsPrintf("main: harness config override TOGGLES=%s", MDK_HW_STR(MDK_HW_TOGGLES));
+            mdk::log3dsPrintf("main: resolved config shadows=%d lights=%d haze=%d mirrors=%d glow=%d "
+                              "filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d flip=%d "
+                              "shadowMapSize=%d",
+                              (int)enhancedToggles.enableSkyShadows,
+                              (int)enhancedToggles.enableFragmentLights,
+                              (int)enhancedToggles.enableHaze, (int)enhancedToggles.enableMirrors,
+                              (int)enhancedToggles.enableGlowBillboards,
+                              (int)enhancedToggles.enableFiltering,
+                              (int)enhancedToggles.enableMipmaps,
+                              (int)enhancedToggles.enableHdTextures,
+                              (int)enhancedToggles.enableLighting,
+                              (int)enhancedToggles.enableEdgeSmoothing,
+                              (int)enhancedToggles.shadowMapFlipBytes,
+                              (int)enhancedToggles.shadowMapSize);
+        }
+#undef MDK_HW_STR
+#undef MDK_HW_STR2
+    }
+#endif
 
 #ifdef MDK_TOGGLE_WALK
     // The toggle walk (a harness aid, `make TOGGLEWALK=1`, never a release):

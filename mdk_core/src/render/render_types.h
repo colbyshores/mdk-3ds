@@ -256,6 +256,14 @@ struct EnhancedToggles {
     // is wrong -- everything the map covers half dark, or nothing shadowed at
     // all -- this swaps the order without a rebuild. The PC ignores it.
     bool shadowMapFlipBytes = false;
+
+    // NOT A TOGGLE: the 3DS sun shadow map's side, for the owner's cost A/B.
+    // 0 = automatic (512 texels, else 256, else 128 as VRAM allows -- every
+    // enhancement on at edge smoothing 2x gives 256); 128, 256 or 512 = that
+    // size, or the next smaller one VRAM allows, down to 128. Anything else reads as 0. The
+    // self-shadow guards follow the size (pica::sunShadowNormalOffset). The PC
+    // ignores it (its map is 2048).
+    int32_t shadowMapSize = 0;
 };
 
 // ---------------------------------------------------------------------------

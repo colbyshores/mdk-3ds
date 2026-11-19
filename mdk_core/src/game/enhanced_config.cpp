@@ -3,6 +3,7 @@
 
 #include "game/enhanced_config.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace mdk {
@@ -49,6 +50,29 @@ bool readValue(const char* begin, const char* end, bool* out) {
     return false;
 }
 
+// A whole-number value (spaces and a trailing CR ignored); false when the
+// word is not one.
+bool readNumber(const char* begin, const char* end, int32_t* out) {
+    while (begin < end && (*begin == ' ' || *begin == '\t')) {
+        begin++;
+    }
+    while (end > begin && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r')) {
+        end--;
+    }
+    if (begin >= end || end - begin > 6) {
+        return false;
+    }
+    int32_t value = 0;
+    for (const char* c = begin; c < end; c++) {
+        if (*c < '0' || *c > '9') {
+            return false;
+        }
+        value = value * 10 + (*c - '0');
+    }
+    *out = value;
+    return true;
+}
+
 void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
     // Lines starting with ';' or '#' are comments; blank lines pass.
     while (begin < end && (*begin == ' ' || *begin == '\t')) {
@@ -67,6 +91,15 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
     const char* keyEnd = equals;
     while (keyEnd > begin && (keyEnd[-1] == ' ' || keyEnd[-1] == '\t')) {
         keyEnd--;
+    }
+    // The one number: the 3DS shadow map's side (render_types.h). Only the
+    // sizes the renderer makes are taken; anything else means automatic.
+    if (keyIs(begin, keyEnd, "shadowMapSize")) {
+        int32_t size = 0;
+        if (readNumber(equals + 1, end, &size)) {
+            toggles->shadowMapSize = (size == 128 || size == 256 || size == 512) ? size : 0;
+        }
+        return;
     }
     bool value = false;
     if (!readValue(equals + 1, end, &value)) {
@@ -134,6 +167,10 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "enableEdgeSmoothing", toggles.enableEdgeSmoothing);
     // A diagnostic, not a look (render_types.h): written so it can be found.
     appendToggle(&out, "shadowMapFlipBytes", toggles.shadowMapFlipBytes);
+    // 0 = automatic (render_types.h).
+    char size[32];
+    snprintf(size, sizeof(size), "shadowMapSize=%d\n", (int)toggles.shadowMapSize);
+    out.append(size);
     return out;
 }
 
