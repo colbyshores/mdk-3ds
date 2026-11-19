@@ -1,0 +1,4 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-19T19:22:17Z at 766fe67
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: this batch changes only the 3DS backend's per-draw state writes (the draw dedupe); the Linux frame is the pinned record and cannot show it -- its evidence is the console's dedupe: log line and an Old-3DS PROFILE=1 A/B against DRAWDEDUPE=0.

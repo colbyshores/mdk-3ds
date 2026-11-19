@@ -255,6 +255,133 @@ static void installAlphaTest(RendererC3D* r, int reference, bool force) {
 }
 
 // ============================================================================
+// THE DEDUPE (Old 3DS, level 8 stereo: ~245 queued draws an eye, and the CPU
+// spends 11-14 ms a frame building their command list -- the vault's
+// pica200-many-pass-frame-is-drawcall-bound-not-fill-bound and
+// citro3d-redundant-per-draw-state-writes). Every per-draw write below used to
+// be made on every draw; each is now compared with what the GPU will already
+// hold and skipped when BIT-IDENTICAL, so the picture cannot change: a skipped
+// write is one whose register value is already the value it would have sent.
+//
+// WHAT "ALREADY HOLD" IS READ FROM, per category (RendererC3D, THE PER-DRAW
+// STATE DEDUPE):
+//   * a vertex uniform: citro3d's own C3D_FVUnif array. Every uniform write in
+//     this backend goes through it (C3D_FVUnifSet/Mtx4x4/WritePtr), and
+//     C3D_UpdateUniforms sends what it holds, so a write that leaves it unchanged
+//     changes no register. The two ways a register can differ from the array are
+//     both handled where they happen: shader constants (uploaded straight to
+//     their registers at a bind -- measured in this build's shbin at c94/c95, far
+//     above the c0-c10 uniforms; create logs it, `draw dedupe:`) and shader unit 3 leaving geometry mode
+//     (bindProgram re-dirties the vertex uniforms). installEye re-dirties them
+//     all anyway, so each eye starts from registers that match the array.
+//   * combiner stage 0 and the vertex buffer table: the context's own copies,
+//     through the pointers C3D_GetTexEnv(0) and C3D_GetBufInfo return (taken in
+//     installEye). Whoever wrote them last -- the glow, the canvas canary, the
+//     caster pass, the shadowed lit layout -- the compare sees it.
+//   * a texture unit: the shadow bindTexUnit keeps (citro3d has no getter), so
+//     C3D_TexBind has exactly one call site, here.
+//
+// Off in a harness build made with DRAWDEDUPE=0 (kDrawDedupe): every category is
+// then written on every draw, as before, for the owner's A/B profile.
+static void bindTexUnit(RendererC3D* r, int unit, C3D_Tex* tex) {
+    if (unit < 0 || unit > 2) {
+        return;
+    }
+    C3D_TexBind(unit, tex);
+    // C3D_TexBind refuses a non-2D texture on units 1-2 (its own check of the
+    // mode bits): the shadow must not then claim the bind happened.
+    const bool refused = unit > 0 && tex && (tex->param & (7u << 28)) != 0;
+    r->texUnitBound[unit] = refused ? nullptr : tex;
+    if (tex && !refused) {
+        memcpy(&r->texUnitState[unit], tex, sizeof(C3D_Tex));
+    }
+}
+
+// The texture memory a bound C3D_Tex describes may now hold other texels (a
+// texture made, remade or imported): the next bind of every unit is a real one,
+// and with it citro3d's texture-cache clear (TEXUNIT_CONFIG bit 16).
+static void forgetTextureBinds(RendererC3D* r) {
+    for (int unit = 0; unit < 3; unit++) {
+        r->texUnitBound[unit] = nullptr;
+    }
+}
+
+// drawRecorded's bind: skipped when the unit already holds this C3D_Tex with
+// the same address, size, format, filter, wrap and levels it was bound with.
+static void bindTexUnitIfChanged(RendererC3D* r, int unit, C3D_Tex* tex) {
+    if (kDrawDedupe && tex && unit >= 0 && unit <= 2 && r->texUnitBound[unit] == tex &&
+        memcmp(&r->texUnitState[unit], tex, sizeof(C3D_Tex)) == 0) {
+        r->dedupeSkipped[kDedupeTexBind]++;
+        return;
+    }
+    bindTexUnit(r, unit, tex);
+    r->dedupeWritten[kDedupeTexBind]++;
+}
+
+// Whether vertex uniforms [location, location + count) already hold `want`, in
+// citro3d's own array. A byte compare: no float compare (AGENTS.md R3), and a
+// -0 against a +0 is a write, never a skip.
+static bool vsUniformsHold(int location, const C3D_FVec* want, int count) {
+    if (location < 0 || count <= 0 || location + count > C3D_FVUNIF_COUNT) {
+        return false;
+    }
+    return memcmp(&C3D_FVUnif[GPU_VERTEX_SHADER][location], want,
+                  sizeof(C3D_FVec) * (size_t)count) == 0;
+}
+
+static void setVsUniform(RendererC3D* r, DedupeCategory category, int location, float x,
+                         float y, float z, float w) {
+    if (kDrawDedupe) {
+        const C3D_FVec want = FVec4_New(x, y, z, w);
+        if (vsUniformsHold(location, &want, 1)) {
+            r->dedupeSkipped[category]++;
+            return;
+        }
+    }
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, location, x, y, z, w);
+    r->dedupeWritten[category]++;
+}
+
+static void setVsMatrix(RendererC3D* r, DedupeCategory category, int location,
+                        const C3D_Mtx* m) {
+    if (kDrawDedupe && vsUniformsHold(location, m->r, 4)) {
+        r->dedupeSkipped[category]++;
+        return;
+    }
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, location, m);
+    r->dedupeWritten[category]++;
+}
+
+// Combiner stage 0, against the context's own stage 0.
+static void setTexEnv0(RendererC3D* r, C3D_TexEnv* want) {
+    if (kDrawDedupe && r->liveTexEnv &&
+        memcmp(r->liveTexEnv, want, sizeof(C3D_TexEnv)) == 0) {
+        r->dedupeSkipped[kDedupeTexEnv0]++;
+        return;
+    }
+    C3D_SetTexEnv(0, want);
+    r->dedupeWritten[kDedupeTexEnv0]++;
+}
+
+// The vertex buffer table for a mesh of five-float vertices (position, uv: the
+// permutation 0x10), against the context's own table. The table is a pure
+// function of the pointer, so it is rebuilt only when the mesh changes.
+static void bindVertexBuffer(RendererC3D* r, const void* data) {
+    if (data != r->vbufFor) {
+        BufInfo_Init(&r->vbufInfo);
+        BufInfo_Add(&r->vbufInfo, data, 5 * sizeof(float), 2, 0x10);
+        r->vbufFor = data;
+    }
+    if (kDrawDedupe && r->liveBufInfo &&
+        memcmp(r->liveBufInfo, &r->vbufInfo, sizeof(C3D_BufInfo)) == 0) {
+        r->dedupeSkipped[kDedupeBufInfo]++;
+        return;
+    }
+    C3D_SetBufInfo(&r->vbufInfo);
+    r->dedupeWritten[kDedupeBufInfo]++;
+}
+
+// ============================================================================
 // THE GEOMETRY-STAGE RULE (HARDWARE; measured 2026-11-18 on the Old 3DS
 // appliance with mdk_3ds/tools/gstest, which draws through this DVLB).
 // On the PICA200 a program WITHOUT a geometry shader must not draw after a
@@ -367,6 +494,16 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     r->tintIsWhite = true;
 
     bindProgram(r, &r->program);
+    // THE DEDUPE'S EYE BOUNDARY (above: THE DEDUPE). Every vertex uniform is sent
+    // again from citro3d's array -- P2's "every uniform written every frame", and
+    // what makes the array the registers' value for this eye's compares (the
+    // caster pass before the eyes ran its own program and constants). The
+    // texture shadow is forgotten, so the eye's first bind is a real one and
+    // clears the texture cache (the shadow map was rendered since the last eye).
+    if (r->vshUniformVecs > 0) {
+        C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, 0, r->vshUniformVecs);
+    }
+    forgetTextureBinds(r);
 
     // EVERY GPU STATE, EVERY FRAME. Uninitialised registers give
     // invisible geometry, not an error.
@@ -388,6 +525,11 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     C3D_TexEnvInit(env);
     C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
     C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+    // The context's own stage 0 and buffer table, for the dedupe's compares. The
+    // GetBufInfo marks the table dirty too: it is sent once per eye whatever the
+    // draws then skip (P2).
+    r->liveTexEnv = env;
+    r->liveBufInfo = C3D_GetBufInfo();
 
     // THE DEPTH TEST IS ON, with the oracle's LESS_OR_EQUAL and a write
     // mask, for the frame's default pass. The ORIGINAL look still draws
@@ -636,7 +778,7 @@ static void testSampleShadowMap(RendererC3D* r, C3D_Tex* tex, C3D_RenderTarget* 
     C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation + 2, 0.0f, 0.0f, 0.0f, 0.75f);
     C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation + 3, 0.0f, 0.0f, 0.0f, 1.0f);
     C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowLutMapLocation, 0.0f, 0.0f, 0.0f, 0.0f);
-    C3D_TexBind(0, tex);
+    bindTexUnit(r, 0, tex);
     C3D_TexShadowParams(false, 0.0f);
     C3D_TexEnvInit(env);
     C3D_TexEnvSrc(env, C3D_RGB, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
@@ -753,7 +895,7 @@ static void testNativeShadowWrites(RendererC3D* r) {
             bindProgram(r, &r->programCaster);
             r->litBound = false;
             C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->casterMvpLocation, &identity);
-            C3D_TexBind(0, &r->shadowRamp);
+            bindTexUnit(r, 0, &r->shadowRamp);
             C3D_TexEnv* rampEnv = C3D_GetTexEnv(0);
             C3D_TexEnvInit(rampEnv);
             C3D_TexEnvSrc(rampEnv, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
@@ -882,7 +1024,7 @@ static void testNativeShadowWrites(RendererC3D* r) {
     // test's texture (on this stack) goes, so nothing re-dirtied later (an APT
     // resume re-sends every unit) can read a dead C3D_Tex (review, 2026-11-18).
     // Every draw that samples unit 0 binds its own texture first.
-    C3D_TexBind(0, nullptr);
+    bindTexUnit(r, 0, nullptr);
     C3D_TexDelete(&tex);
 }
 
@@ -920,6 +1062,10 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     }
     r->inFrame = true;
     r->frame++;
+    // THE COMMAND LIST'S LENGTH (the dedupe's evidence): libctru's write
+    // position, which only moves forward through the frame's splits
+    // (GPUCMD_Split advances gpuCmdBuf by what it hands over).
+    r->cmdFrameStart = gpuCmdBuf + gpuCmdBufOffset;
     // A new command list: nothing of this frame has used a geometry program.
     r->gsInList = false;
     r->geometrySplits = 0;
@@ -1322,6 +1468,43 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
                           (int)r->drawsPass, (int)r->drawsPlain);
     }
     r->drawsLit = r->drawsShadowLit = r->drawsPass = r->drawsPlain = 0;
+    // THE DEDUPE'S LINE (03_frame.inc, THE DEDUPE): per category, the writes
+    // made and the writes skipped over the window, and the command list's length
+    // in 32-bit words a frame (C3D_FrameBegin to here, every split included) --
+    // what a DRAWDEDUPE=0 build is compared against.
+    {
+        const u32* now = gpuCmdBuf + gpuCmdBufOffset;
+        if (r->cmdFrameStart && now >= r->cmdFrameStart) {
+            const uint32_t words = (uint32_t)(now - r->cmdFrameStart);
+            r->cmdWordsSum += words;
+            r->cmdWordsPeak = words > r->cmdWordsPeak ? words : r->cmdWordsPeak;
+            r->cmdWordsFrames++;
+        }
+        if ((r->frame % 300) == 0) {
+            const int32_t* w = r->dedupeWritten;
+            const int32_t* k = r->dedupeSkipped;
+            mdk::log3dsPrintf("dedupe: frame %d (%s): skipped/written over %d frames: stage0 %d/%d "
+                              "bufinfo %d/%d uv %d/%d tint %d/%d mvp %d/%d world %d/%d "
+                              "texbind %d/%d; command list %lu words in all, %u in the "
+                              "longest frame",
+                              (int)r->frame, kDrawDedupe ? "on" : "OFF", (int)r->cmdWordsFrames,
+                              (int)k[kDedupeTexEnv0], (int)w[kDedupeTexEnv0],
+                              (int)k[kDedupeBufInfo], (int)w[kDedupeBufInfo],
+                              (int)k[kDedupeUv], (int)w[kDedupeUv],
+                              (int)k[kDedupeTint], (int)w[kDedupeTint],
+                              (int)k[kDedupeMvp], (int)w[kDedupeMvp],
+                              (int)k[kDedupeWorld], (int)w[kDedupeWorld],
+                              (int)k[kDedupeTexBind], (int)w[kDedupeTexBind],
+                              (unsigned long)r->cmdWordsSum, (unsigned)r->cmdWordsPeak);
+            for (int c = 0; c < kDedupeCategories; c++) {
+                r->dedupeWritten[c] = 0;
+                r->dedupeSkipped[c] = 0;
+            }
+            r->cmdWordsSum = 0;
+            r->cmdWordsPeak = 0;
+            r->cmdWordsFrames = 0;
+        }
+    }
     // The halos are this frame's: a frame whose game hands none over (no
     // runtime) must not draw the last frame's again (review, 2026-11-19).
     r->glowQuadCount = 0;
@@ -1891,7 +2074,7 @@ static void castShadows(RendererC3D* r) {
     C3D_TexEnvInit(ramp);
     C3D_TexEnvColor(ramp, 0x00000000u);   // native mode's source (unused by the ramp's)
     if (!r->shadowNative) {
-        C3D_TexBind(0, &r->shadowRamp);
+        bindTexUnit(r, 0, &r->shadowRamp);
     }
     C3D_TexEnvSrc(ramp, C3D_RGB, r->shadowNative ? GPU_CONSTANT : GPU_TEXTURE0,
                   r->shadowNative ? GPU_CONSTANT : GPU_TEXTURE0,
@@ -1967,7 +2150,8 @@ static void castShadows(RendererC3D* r) {
             }
             C3D_Mtx gpuMtx;
             mdk::pica::registers(upload, gpuMtx.m);
-            C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->casterMvpLocation, &gpuMtx);
+            // Deduped (THE DEDUPE): a run of identity-world casters shares sunVp.
+            setVsMatrix(r, kDedupeMvp, r->casterMvpLocation, &gpuMtx);
             // THE PC'S CULL (11_shadow_post.inc: depthPipelines[Solid ? 0 : 1]): a
             // Solid caster shows the sun only its FRONT faces, a DoubleSided one
             // both. It is not a detail: the levels' walls are one-sided shells,
@@ -1980,9 +2164,7 @@ static void castShadows(RendererC3D* r) {
                 C3D_CullFace(wantedCull);
                 r->cullMode = wantedCull;
             }
-            C3D_BufInfo* bufInfo = C3D_GetBufInfo();
-            BufInfo_Init(bufInfo);
-            BufInfo_Add(bufInfo, mesh.data, 5 * sizeof(float), 2, 0x10);
+            bindVertexBuffer(r, mesh.data);
             C3D_DrawArrays(GPU_TRIANGLES, draw->first_vertex, draw->vertex_count);
             r->shadowCasters++;
         }

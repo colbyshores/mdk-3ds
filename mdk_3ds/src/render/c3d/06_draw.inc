@@ -79,9 +79,9 @@ static void setHaze(RendererC3D* r, bool on) {
 // (lightStageOn, hazeOn) are made to say "not installed" while it is here.
 static void installShadowLitStages(RendererC3D* r, bool haze) {
     if (!r->shadowLitStages) {
-        C3D_TexBind(0, &r->shadowTex);
+        bindTexUnit(r, 0, &r->shadowTex);
         C3D_TexShadowParams(false, 0.0f);   // orthographic: no divide; the bias is the GS's
-        C3D_TexBind(2, &r->shadowTint);
+        bindTexUnit(r, 2, &r->shadowTint);
         C3D_TexEnv* amount = C3D_GetTexEnv(0);
         C3D_TexEnvInit(amount);
         C3D_TexEnvSrc(amount, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
@@ -141,8 +141,8 @@ static void leaveShadowLitStages(RendererC3D* r) {
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
     r->hazeOn = false;
     r->lightStageOn = false;
-    C3D_TexBind(1, &r->unitIdle);
-    C3D_TexBind(2, &r->unitIdle);
+    bindTexUnit(r, 1, &r->unitIdle);
+    bindTexUnit(r, 2, &r->unitIdle);
     r->shadowLitStages = false;
     r->shadowLitHaze = -1;
 }
@@ -308,7 +308,9 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     const bool shadowLit = lit && r->shadowLitLive &&
                            mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,
                                                      draw->primitive);
-    C3D_TexBind(shadowLit ? 1 : 0, texture);
+    // Skipped when the unit already holds this texture as it is now (THE DEDUPE,
+    // 03_frame.inc): a run of draws of one texture binds it once.
+    bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);
 
     // THE UV TRANSFORM, in uniform register 4.
     //
@@ -360,7 +362,9 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         scaleY = flipped.scaleY;
         offsetY = flipped.offsetY;
     }
-    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation, scaleX, scaleY, offsetX, offsetY);
+    // Skipped when the register already holds it (THE DEDUPE): every unpadded
+    // single-frame texture has the same transform.
+    setVsUniform(r, kDedupeUv, r->uvLocation, scaleX, scaleY, offsetX, offsetY);
 
     // THE COMBINER, and with it the question of where a draw's colour comes from.
     //
@@ -381,9 +385,11 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // the texture is the same colour in arithmetic, but every capture this
     // backend has ever measured was taken with REPLACE installed, and a combiner
     // op is not the place to spend a fidelity question. The cost of the split is
-    // nothing: `C3D_GetTexEnv` marks the stage dirty on every call (measured from
-    // the linked libcitro3dd.a: it sets bit 26+id of the context's dirty word),
-    // so this block already re-sends the combiner on every draw either way.
+    // one stage-0 write at each scene/canvas transition: `C3D_GetTexEnv` marks
+    // the stage dirty on every call (measured from the linked libcitro3dd.a: it
+    // sets bit 26+id of the context's dirty word), which is why this block no
+    // longer calls it -- it builds the stage locally and setTexEnv0 sends it only
+    // when the context's stage 0 holds something else.
     // THE CUT for this draw (pica::alphaTestReferenceFor): the half cover for a
     // filtered scene draw, the oracle's discard for the canvas and for nearest.
     installAlphaTest(r, mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,
@@ -393,49 +399,53 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (!shadowLit) {
         leaveShadowLitStages(r);
     }
-    C3D_TexEnv* env = shadowLit ? nullptr : C3D_GetTexEnv(0);
-    if (shadowLit) {
-        // (stage 0 is installShadowLitStages')
-    } else if (overlay) {
+    // Stage 0 is built here and sent only when the context's stage 0 differs
+    // (setTexEnv0, THE DEDUPE): a run of scene draws sends it once, not per draw
+    // as C3D_GetTexEnv's unconditional dirty used to make it.
+    if (!shadowLit) {
+        C3D_TexEnv stage0;
+        C3D_TexEnv* env = &stage0;
         C3D_TexEnvInit(env);
-        C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-        C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
-    } else if (renderDebugFlags() & kRenderDebugFlat) {
-        C3D_TexEnvInit(env);
-        // rdebug `flat`: the texture is ignored; a constant colour per pass
-        // (Solid red, DoubleSided green, Blended blue, others yellow), opaque.
-        uint32_t c = 0xFF00FFFFu;  // ABGR: yellow
-        if (draw->material.pass == mdk::Pass::Solid) c = 0xFF0000FFu;
-        else if (draw->material.pass == mdk::Pass::DoubleSided) c = 0xFF00FF00u;
-        else if (draw->material.pass == mdk::Pass::Blended) c = 0xFFFF0000u;
-        C3D_TexEnvSrc(env, C3D_Both, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
-        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
-        C3D_TexEnvColor(env, c);
-    } else {
-        C3D_TexEnvInit(env);
-        C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
-        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+        if (overlay) {
+            C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+            C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+        } else if (renderDebugFlags() & kRenderDebugFlat) {
+            // rdebug `flat`: the texture is ignored; a constant colour per pass
+            // (Solid red, DoubleSided green, Blended blue, others yellow), opaque.
+            uint32_t c = 0xFF00FFFFu;  // ABGR: yellow
+            if (draw->material.pass == mdk::Pass::Solid) c = 0xFF0000FFu;
+            else if (draw->material.pass == mdk::Pass::DoubleSided) c = 0xFF00FF00u;
+            else if (draw->material.pass == mdk::Pass::Blended) c = 0xFFFF0000u;
+            C3D_TexEnvSrc(env, C3D_Both, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
+            C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+            C3D_TexEnvColor(env, c);
+        } else {
+            C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
+            C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+        }
+        setTexEnv0(r, env);
     }
+    // (else: stage 0 is installShadowLitStages')
 
     // THE TINT, in uniform register 5. Only the canvas asks for one; the cache
     // restores white for the first scene draw after a canvas batch so the scene
     // cannot inherit the last quad's half-transparent red.
     if (overlay) {
         const mdk::Colour& tint = draw->material.colour;
-        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, tint.r, tint.g, tint.b, tint.a);
+        setVsUniform(r, kDedupeTint, r->tintLocation, tint.r, tint.g, tint.b, tint.a);
         r->tintIsWhite = false;
         r->canvasDrawsThisFrame++;
     } else if (!r->tintIsWhite) {
-        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+        setVsUniform(r, kDedupeTint, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
         r->tintIsWhite = true;
     }
 
     // The vertex data. The buffer info names the linear memory the GPU
     // reads. Two attributes (position, texture coordinate), so the
     // permutation is 0x10 -- the same shape the devkitPro examples use.
-    C3D_BufInfo* bufInfo = C3D_GetBufInfo();
-    BufInfo_Init(bufInfo);
-    BufInfo_Add(bufInfo, mesh.data, 5 * sizeof(float), 2, 0x10);
+    // Sent only when the context's table names another buffer (THE DEDUPE):
+    // the arena's batches are ranges of one mesh.
+    bindVertexBuffer(r, mesh.data);
 
     r->drawCount++;
     r->triangleCount += draw->vertex_count / 3;
@@ -529,7 +539,8 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (!frameMatrix || !r->matrixIsFrame) {
         C3D_Mtx gpuMtx;
         mdk::pica::registers(upload, gpuMtx.m);
-        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
+        // Deduped (THE DEDUPE): consecutive canvas quads share the canvas matrix.
+        setVsMatrix(r, kDedupeMvp, r->mvpLocation, &gpuMtx);
         r->matrixIsFrame = frameMatrix;
     }
 
@@ -790,7 +801,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         if (!identity || !r->worldIsIdentity) {
             C3D_Mtx worldMtx;
             mdk::pica::registers(draw->world, worldMtx.m);
-            C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation, &worldMtx);
+            setVsMatrix(r, kDedupeWorld, r->worldLocation, &worldMtx);
             r->worldIsIdentity = identity;
         }
     }
@@ -970,7 +981,7 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
     // marker samples the 8x8 all-white texture, where the last-row flip that
     // drawRecorded applies cannot change a texel.
     if (r->canvasWhite >= 0 && (size_t)r->canvasWhite < r->textures.size()) {
-        C3D_TexBind(0, &r->textures[(size_t)r->canvasWhite].tex);
+        bindTexUnit(r, 0, &r->textures[(size_t)r->canvasWhite].tex);
     }
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation, 1.0f, 1.0f, 0.0f, 0.0f);
     C3D_TexEnv* plain = C3D_GetTexEnv(0);
@@ -1089,7 +1100,7 @@ static void glowDrawState(RendererC3D* r, C3D_Tex* view) {
     bindProgram(r, &r->program);
     r->litBound = false;
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation, 1.0f, 1.0f, 0.0f, 0.0f);
-    C3D_TexBind(0, view);
+    bindTexUnit(r, 0, view);
     C3D_TexEnv* tex = C3D_GetTexEnv(0);
     C3D_TexEnvInit(tex);
     C3D_TexEnvSrc(tex, C3D_RGB, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
@@ -1451,13 +1462,13 @@ static void drawGlowBillboards(RendererC3D* r) {
         C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
         r->matrixIsFrame = true;
     }
-    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation, 1.0f, 1.0f, 0.0f, 0.0f);   // a symmetric dot
+    setVsUniform(r, kDedupeUv, r->uvLocation, 1.0f, 1.0f, 0.0f, 0.0f);   // a symmetric dot
     setHaze(r, false);
     if (r->lightStageOn) {
         C3D_TexEnvInit(C3D_GetTexEnv(1));
         r->lightStageOn = false;
     }
-    C3D_TexBind(0, &r->glowHalo);
+    bindTexUnit(r, 0, &r->glowHalo);
     C3D_TexEnv* env = C3D_GetTexEnv(0);
     C3D_TexEnvInit(env);
     C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
@@ -1469,12 +1480,10 @@ static void drawGlowBillboards(RendererC3D* r) {
         C3D_CullFace(GPU_CULL_NONE);
         r->cullMode = GPU_CULL_NONE;
     }
-    C3D_BufInfo* bufInfo = C3D_GetBufInfo();
-    BufInfo_Init(bufInfo);
-    BufInfo_Add(bufInfo, r->glowQuadMesh, 5 * sizeof(float), 2, 0x10);
+    bindVertexBuffer(r, r->glowQuadMesh);
     for (int32_t q = 0; q < r->glowQuadCount; q++) {
         const float* c = r->glowQuads[q].colour;
-        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, c[0], c[1], c[2], 1.0f);
+        setVsUniform(r, kDedupeTint, r->tintLocation, c[0], c[1], c[2], 1.0f);
         if (r->boundProgram && r->boundProgram->geometryShader) {
             C3D_DrawArrays(GPU_GEOMETRY_PRIM, q * 6, 6);
         } else {

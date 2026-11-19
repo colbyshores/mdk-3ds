@@ -229,6 +229,10 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     if (texture.valid) {
         return true;
     }
+    // Texel memory is about to be (re)filled, possibly at an address a bound
+    // texture had: no unit's bind may be skipped on the strength of the old
+    // contents (03_frame.inc, THE DEDUPE).
+    forgetTextureBinds(renderer);
     // THE MIP CHAIN (SPEC.md 7.9 enableMipmaps): made with the texture when the
     // toggle is on at that moment, so turning it on costs its memory -- a third
     // more per texture -- from the next texture made (the next level load, or an
@@ -591,6 +595,7 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             renderer->hdQueue.push_back(id);
             continue;
         }
+        forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)
         Tex3DS_Texture t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
         if (!t3x && evictHd(renderer, protectFrom, false)) {
             t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);

@@ -52,6 +52,27 @@ static constexpr size_t kGpuScratchSize = 256u * 1024u;
 // `ensureCanvasMesh` sizes from the quads actually queued and only clamps here.
 static constexpr int32_t kCanvasQuadCapacity = 4096;
 
+// THE PER-DRAW STATE DEDUPE's switch and its categories (03_frame.inc, THE
+// DEDUPE). On in every build; a harness build may turn it off for the owner's
+// A/B profile (`make AUTOQUIT=90 DRAWDEDUPE=0`), and the off build sends the
+// command stream the backend sent before the dedupe: every category written on
+// every draw.
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_DRAWDEDUPE_OFF)
+static constexpr bool kDrawDedupe = false;
+#else
+static constexpr bool kDrawDedupe = true;
+#endif
+enum DedupeCategory {
+    kDedupeTexEnv0 = 0,   // combiner stage 0
+    kDedupeBufInfo,       // the vertex buffer table
+    kDedupeUv,            // the uv-transform uniform
+    kDedupeTint,          // the tint uniform
+    kDedupeMvp,           // the mvp matrix (scene, canvas and caster draws)
+    kDedupeWorld,         // the lit program's world matrix
+    kDedupeTexBind,       // a texture unit's bind
+    kDedupeCategories
+};
+
 // The next power of two at or above `value`, and at least 8.
 //
 // The PICA200's texture size register encodes log2 of the dimensions, so a
@@ -660,6 +681,42 @@ struct RendererC3D {
     bool hazeOn = false;
     // The alpha-test reference installed (installAlphaTest's cache).
     int alphaReference = 0;
+
+    // THE PER-DRAW STATE DEDUPE (03_frame.inc, THE DEDUPE). drawRecorded re-sent
+    // combiner stage 0, the vertex buffer table, the uv/tint/matrix uniforms and
+    // the texture bind on every draw whether or not they had changed; each is a
+    // block of PICA register writes, twice per stereo frame (~490 draws). They
+    // are now compared first and skipped when bit-identical. Three of the four
+    // compare against CITRO3D'S OWN STORED STATE, not a copy of ours, so no
+    // writer anywhere can leave them stale:
+    //   * combiner stage 0 against `liveTexEnv` (C3D_GetTexEnv(0)'s pointer into
+    //     the context, taken in installEye; a write is C3D_SetTexEnv);
+    //   * the buffer table against `liveBufInfo` (C3D_GetBufInfo's, likewise;
+    //     a write is C3D_SetBufInfo of `vbufInfo`, BufInfo_Init + BufInfo_Add of
+    //     `vbufFor`, rebuilt only when the mesh changes);
+    //   * a vertex uniform against citro3d's own C3D_FVUnif array.
+    // The texture bind has no public getter, so it is the one SHADOW: what
+    // bindTexUnit (the only C3D_TexBind) last bound on each unit, with a copy of
+    // the C3D_Tex as it was bound (citro3d reads the address, size, format,
+    // filter, wrap and levels out of it). installEye forgets it every eye (the
+    // first bind of an eye is a real one, and with it the texture-cache clear),
+    // and so does makeTexture/an HD import, where texel memory can be reused.
+    C3D_TexEnv* liveTexEnv = nullptr;
+    C3D_BufInfo* liveBufInfo = nullptr;
+    const void* vbufFor = nullptr;
+    C3D_BufInfo vbufInfo = {};
+    C3D_Tex* texUnitBound[3] = {nullptr, nullptr, nullptr};
+    C3D_Tex texUnitState[3] = {};
+    // What it saved, by category, since the last `dedupe:` line (every 300
+    // frames): writes made, writes skipped. And the command list's length in
+    // 32-bit words, from C3D_FrameBegin to just before C3D_FrameEnd (every
+    // split included), summed and the largest, over the same window.
+    int32_t dedupeWritten[kDedupeCategories] = {};
+    int32_t dedupeSkipped[kDedupeCategories] = {};
+    const u32* cmdFrameStart = nullptr;
+    uint32_t cmdWordsSum = 0;
+    uint32_t cmdWordsPeak = 0;
+    int32_t cmdWordsFrames = 0;
 
     // THE HD STREAM: the copies (by file), the copies a draw asked for, the
     // bytes resident against the budget, and what happened.

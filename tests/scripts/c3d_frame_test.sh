@@ -513,6 +513,12 @@ def body(text, name):
     return text[sp[0]:sp[1]] if sp else None
 
 
+def fn_body(text, name):
+    """One function's source text whatever it returns (fn_body_span), or ""."""
+    sp = fn_body_span(text, name)
+    return text[sp[0]:sp[1]] if sp else ""
+
+
 # A log line is a REFUSAL line when its own format says so. The frontend gate
 # (main_3ds_flow_test.sh) uses the same test for the same reason: the property is
 # about EVERY refusal line, and a first-pass diagnostic that reports the failed
@@ -1384,14 +1390,14 @@ def adjudicate(text, quiet=False):
     takes = re.search(r"const bool shadowLit = lit && r->shadowLitLive &&\s*"
                       r"mdk::pica::castsSunShadow\(draw->material\.pass, draw->material\.shading,"
                       r"\s*draw->primitive\);", rec_body) is not None
-    unit1 = "C3D_TexBind(shadowLit ? 1 : 0, texture);" in rec_body
+    unit1 = "bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);" in rec_body
     program = re.search(r"shadowLit\s*\?\s*&r->programShadow", rec_body) is not None
     stages = re.search(r"if\s*\(shadowLit\)\s*\{\s*installShadowLitStages\(r,", rec_body) is not None
     leaves = re.search(r"if\s*\(!shadowLit\)\s*\{\s*leaveShadowLitStages\(r\);", rec_body) is not None
     haze_guard = re.search(r"if\s*\(!shadowLit\)\s*\{\s*setHaze\(", rec_body) is not None
     install_b = body(text, "installShadowLitStages") or ""
-    units = ("C3D_TexBind(0, &r->shadowTex);" in install_b
-             and "C3D_TexBind(2, &r->shadowTint);" in install_b)
+    units = ("bindTexUnit(r, 0, &r->shadowTex);" in install_b
+             and "bindTexUnit(r, 2, &r->shadowTint);" in install_b)
     rep.check("sun-shadow-cast-once-and-taken-in-the-lit-draw",
               len(cast_calls) == 1 and 0 <= prepare_at < cast_at < loop_at
               and 0 <= cast_target < cast_draw < cast_flush and no_second_pass
@@ -1527,20 +1533,120 @@ def adjudicate(text, quiet=False):
     # and the idle 8x8 texture both units go back to (leaveShadowLitStages); and
     # every path that installs a combiner of its own leaves that layout first.
     mipgen = calls(text, r"C3D_TexGenerateMipmap\(")
-    high_units = calls(text, r"C3D_TexBind\(\s*(?!0\s*,)[^,]+,")
-    high_text = sorted(re.search(r"C3D_TexBind\(\s*(?!0\s*,)[^;]*;", line).group(0)
+    # Every bind goes through bindTexUnit (THE DEDUPE's texture shadow: the one
+    # C3D_TexBind, pinned by per-draw-state-dedupe), so the units are read off
+    # its calls -- and drawRecorded's deduped one.
+    # (bindTexUnitIfChanged's own forward to bindTexUnit carries the unit it was
+    # handed, which is drawRecorded's call, listed below.)
+    tbi_range = line_range(text, body_span(text, "bindTexUnitIfChanged"))
+    high_units = [(ln, loc) for ln, loc in
+                  calls(text, r"bindTexUnit(?:IfChanged)?\(\s*r\s*,(?!\s*0\s*,)[^,]+,")
+                  if not (tbi_range and tbi_range[0] <= ln <= tbi_range[1])]
+    high_text = sorted(re.search(r"bindTexUnit(?:IfChanged)?\(\s*r\s*,(?!\s*0\s*,)[^;]*;",
+                                 line).group(0)
                        for _, line in high_units)
-    expected_high = sorted(["C3D_TexBind(2, &r->shadowTint);", "C3D_TexBind(1, &r->unitIdle);",
-                            "C3D_TexBind(2, &r->unitIdle);",
-                            "C3D_TexBind(shadowLit ? 1 : 0, texture);"])
+    expected_high = sorted(["bindTexUnit(r, 2, &r->shadowTint);",
+                            "bindTexUnit(r, 1, &r->unitIdle);",
+                            "bindTexUnit(r, 2, &r->unitIdle);",
+                            "bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);"])
+    # ... and a raw C3D_TexBind on unit 1/2 anywhere but inside the helper is the
+    # same hazard spelled around it (a NULL unbind reads through the pointer).
+    tb_range = line_range(text, body_span(text, "bindTexUnit"))
+    raw_high = [loc for ln, loc in calls(text, r"C3D_TexBind\((?!\s*0\s*,)")
+                if not (tb_range and tb_range[0] <= ln <= tb_range[1])]
     leavers = [n for n in ("installEye", "castShadows", "drawGlow", "drawRecorded")
                if "leaveShadowLitStages(r);" not in (body(text, n) or "")]
     rep.check("no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw",
-              not mipgen and high_text == expected_high and not leavers,
-              "%d C3D_TexGenerateMipmap call(s); %d C3D_TexBind on unit 1/2 (%s); combiner "
-              "paths that do not leave the shadowed layout first: %s"
+              not mipgen and high_text == expected_high and not raw_high and not leavers,
+              "%d C3D_TexGenerateMipmap call(s); %d bind(s) on unit 1/2 (%s); raw C3D_TexBind "
+              "on unit 1/2 outside bindTexUnit: %s; combiner paths that do not leave the "
+              "shadowed layout first: %s"
               % (len(mipgen), len(high_units), "; ".join(high_text) or "none",
-                 ", ".join(leavers) or "none"))
+                 "; ".join(raw_high) or "none", ", ".join(leavers) or "none"))
+
+    # THE PER-DRAW STATE DEDUPE (03_frame.inc, THE DEDUPE). drawRecorded's
+    # per-draw writes -- combiner stage 0, the vertex buffer table, the uv/tint/
+    # matrix uniforms, the texture bind -- are skipped when bit-identical to what
+    # the GPU already holds. A skip is only picture-identical if "already holds"
+    # is TRUE, so the pin is on WHAT each compare reads and on every place the one
+    # shadow is forgotten; a stale cache is invisible in every emulator capture
+    # until the frame where it is not (the vault's
+    # citro3d-redundant-per-draw-state-writes: a perf AND correctness hazard).
+    #   * stage 0, the buffer table and the uniforms compare against citro3d's
+    #     OWN state (the context's stage 0 and table through the pointers
+    #     installEye takes from C3D_GetTexEnv(0)/C3D_GetBufInfo, and the
+    #     C3D_FVUnif vertex array), so no other writer can leave them stale;
+    #   * the texture bind is the one shadow: bindTexUnit is the only C3D_TexBind
+    #     and records what it bound (pointer and C3D_Tex), the deduped bind
+    #     compares BOTH, and the shadow is forgotten every eye (installEye), at
+    #     every texture make (makeTexture) and at every HD import;
+    #   * installEye re-sends every vertex uniform (P2, and what makes the array
+    #     the registers' value for the eye: the caster pass ran its own program);
+    #   * drawRecorded makes none of those writes raw, and the off switch
+    #     (DRAWDEDUPE=0) exists only in a harness build.
+    tex_bind = calls(text, r"C3D_TexBind\(")
+    tb_body = body(text, "bindTexUnit") or ""
+    tb_stray = [loc for ln, loc in tex_bind
+                if not (tb_range and tb_range[0] <= ln <= tb_range[1])]
+    tb_records = (re.search(r"r->texUnitBound\[unit\]\s*=", tb_body) is not None
+                  and re.search(r"memcpy\(&r->texUnitState\[unit\],\s*tex,\s*sizeof\(C3D_Tex\)\)",
+                                tb_body) is not None)
+    tbi_body = body(text, "bindTexUnitIfChanged") or ""
+    tbi_compares = (re.search(r"r->texUnitBound\[unit\]\s*==\s*tex", tbi_body) is not None
+                    and re.search(r"memcmp\(&r->texUnitState\[unit\],\s*tex,\s*sizeof\(C3D_Tex\)\)"
+                                  r"\s*==\s*0", tbi_body) is not None)
+    forgets = {
+        "installEye": "forgetTextureBinds(r);" in (body(text, "installEye") or ""),
+        "makeTexture": "forgetTextureBinds(renderer);" in fn_body(text, "makeTexture"),
+        "the HD import": re.search(r"forgetTextureBinds\(renderer\);[^\n]*\n\s*Tex3DS_Texture t3x = "
+                                   r"Tex3DS_TextureImport\(", body(text, "pumpHdTextures") or "")
+                         is not None,
+    }
+    eye_b = body(text, "installEye") or ""
+    live_env = (re.search(r"C3D_TexEnv\* env = C3D_GetTexEnv\(0\);", eye_b) is not None
+                and "r->liveTexEnv = env;" in eye_b)
+    live_buf = "r->liveBufInfo = C3D_GetBufInfo();" in eye_b
+    redirty = re.search(r"C3D_FVUnifWritePtr\(GPU_VERTEX_SHADER,\s*0,\s*r->vshUniformVecs\);",
+                        eye_b) is not None
+    env_cmp = re.search(r"memcmp\(r->liveTexEnv,\s*want,\s*sizeof\(C3D_TexEnv\)\)",
+                        body(text, "setTexEnv0") or "") is not None
+    buf_cmp = re.search(r"memcmp\(r->liveBufInfo,\s*&r->vbufInfo,\s*sizeof\(C3D_BufInfo\)\)",
+                        body(text, "bindVertexBuffer") or "") is not None
+    unif_cmp = re.search(r"memcmp\(&C3D_FVUnif\[GPU_VERTEX_SHADER\]\[location\]",
+                         fn_body(text, "vsUniformsHold")) is not None
+    rec_b = body(text, "drawRecorded") or ""
+    rec_code = "\n".join(l for _, l in code_lines(rec_b))
+    raw_in_draw = [w for w in ("C3D_GetTexEnv(0)", "C3D_GetBufInfo(", "C3D_TexBind(",
+                               "C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation",
+                               "C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation",
+                               "C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation",
+                               "C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation")
+                   if w in rec_code]
+    routed = all(c in rec_b for c in ("setTexEnv0(r, env);", "bindVertexBuffer(r, mesh.data);",
+                                      "setVsUniform(r, kDedupeUv, r->uvLocation,",
+                                      "setVsMatrix(r, kDedupeMvp, r->mvpLocation, &gpuMtx);",
+                                      "bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);"))
+    off_switch = re.search(r"#if defined\(MDK_AUTOQUIT\) && defined\(MDK_HW_DRAWDEDUPE_OFF\)\s*\n"
+                           r"static constexpr bool kDrawDedupe = false;\s*\n#else\s*\n"
+                           r"static constexpr bool kDrawDedupe = true;", text) is not None
+    rep.check("per-draw-state-dedupe",
+              len(tex_bind) == 1 and not tb_stray and tb_records and tbi_compares
+              and all(forgets.values()) and live_env and live_buf and redirty and env_cmp
+              and buf_cmp and unif_cmp and not raw_in_draw and routed and off_switch,
+              "%d C3D_TexBind call(s), outside bindTexUnit: %s; the shadow recorded %s and "
+              "compared by pointer and C3D_Tex %s; forgotten in %s; installEye takes the "
+              "live stage 0 %s and buffer table %s and re-sends the vertex uniforms %s; "
+              "compares read the context's stage 0 %s, its buffer table %s, citro3d's "
+              "vertex uniform array %s; raw writes left in drawRecorded: %s; routed through "
+              "the dedupe %s; the off switch harness-only %s"
+              % (len(tex_bind), "; ".join(tb_stray) or "none", "yes" if tb_records else "NO",
+                 "yes" if tbi_compares else "NO",
+                 ", ".join("%s %s" % (k, "yes" if v else "NO") for k, v in forgets.items()),
+                 "yes" if live_env else "NO", "yes" if live_buf else "NO",
+                 "yes" if redirty else "NO", "yes" if env_cmp else "NO",
+                 "yes" if buf_cmp else "NO", "yes" if unif_cmp else "NO",
+                 ", ".join(raw_in_draw) or "none", "yes" if routed else "NO",
+                 "yes" if off_switch else "NO"))
 
     # THE BACKEND'S OWN REFUSED-MESH LINE IS AN EDGE TRIGGER TOO. Review-14's related
     # observation: the frontend's copy of this latch is pinned three times over and
@@ -3028,7 +3134,8 @@ ARMS = [
          "    // the GPU still holds of it goes to memory first (the glow's rule).\n", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("shadowed-lit-draw-keeps-the-surface-on-unit-0",
-     lambda s: s.replace("C3D_TexBind(shadowLit ? 1 : 0, texture);", "C3D_TexBind(0, texture);", 1),
+     lambda s: s.replace("bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);",
+                         "bindTexUnitIfChanged(r, 0, texture);", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("shadowed-lit-draw-through-the-plain-lit-program",
      lambda s: s.replace("shadowLit ? &r->programShadow", "shadowLit ? &r->programLit", 1),
@@ -3046,8 +3153,57 @@ ARMS = [
      lambda s: s.replace("    if (!shadowLit) {\n        leaveShadowLitStages(r);\n    }\n", "", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("shadowed-layout-leaves-the-surface-on-unit-1",
-     lambda s: s.replace("    C3D_TexBind(1, &r->unitIdle);\n", "", 1),
+     lambda s: s.replace("    bindTexUnit(r, 1, &r->unitIdle);\n", "", 1),
      "no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw"),
+    # THE PER-DRAW STATE DEDUPE: each way its "already holds" stops being true.
+    ("texture-shadow-kept-across-the-eye-boundary",
+     lambda s: s.replace("        C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, 0, r->vshUniformVecs);\n"
+                         "    }\n    forgetTextureBinds(r);\n",
+                         "        C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, 0, r->vshUniformVecs);\n"
+                         "    }\n", 1),
+     "per-draw-state-dedupe"),
+    ("texture-shadow-kept-over-a-made-texture",
+     lambda s: s.replace("    forgetTextureBinds(renderer);\n", "", 1),
+     "per-draw-state-dedupe"),
+    ("texture-shadow-kept-over-an-hd-import",
+     lambda s: s.replace("        forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)\n",
+                         "", 1),
+     "per-draw-state-dedupe"),
+    ("glow-binds-behind-the-texture-shadow",
+     lambda s: s.replace("    bindTexUnit(r, 0, view);\n", "    C3D_TexBind(0, view);\n", 1),
+     "per-draw-state-dedupe"),
+    ("texture-shadow-not-recorded-at-the-bind",
+     lambda s: s.replace("    r->texUnitBound[unit] = refused ? nullptr : tex;\n", "", 1),
+     "per-draw-state-dedupe"),
+    ("texture-bind-skipped-on-the-pointer-alone",
+     lambda s: s.replace("    if (kDrawDedupe && tex && unit >= 0 && unit <= 2 && r->texUnitBound[unit] == tex &&\n"
+                         "        memcmp(&r->texUnitState[unit], tex, sizeof(C3D_Tex)) == 0) {\n",
+                         "    if (kDrawDedupe && tex && unit >= 0 && unit <= 2 && r->texUnitBound[unit] == tex) {\n", 1),
+     "per-draw-state-dedupe"),
+    ("vertex-uniforms-not-resent-per-eye",
+     lambda s: s.replace("    if (r->vshUniformVecs > 0) {\n"
+                         "        C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, 0, r->vshUniformVecs);\n"
+                         "    }\n    forgetTextureBinds(r);\n",
+                         "    forgetTextureBinds(r);\n", 1),
+     "per-draw-state-dedupe"),
+    ("buffer-table-compared-against-its-own-copy",
+     lambda s: s.replace("    r->liveBufInfo = C3D_GetBufInfo();\n", "    r->liveBufInfo = &r->vbufInfo;\n", 1),
+     "per-draw-state-dedupe"),
+    ("stage-0-compare-never-told-the-context",
+     lambda s: s.replace("    r->liveTexEnv = env;\n", "", 1),
+     "per-draw-state-dedupe"),
+    ("uniforms-compared-against-the-geometry-array",
+     lambda s: s.replace("memcmp(&C3D_FVUnif[GPU_VERTEX_SHADER][location]",
+                         "memcmp(&C3D_FVUnif[GPU_GEOMETRY_SHADER][location]", 1),
+     "per-draw-state-dedupe"),
+    ("stage-0-written-raw-every-draw-again",
+     lambda s: s.replace("        C3D_TexEnv stage0;\n        C3D_TexEnv* env = &stage0;\n",
+                         "        C3D_TexEnv* env = C3D_GetTexEnv(0);\n", 1),
+     "per-draw-state-dedupe"),
+    ("dedupe-off-switch-reaches-a-release-build",
+     lambda s: s.replace("#if defined(MDK_AUTOQUIT) && defined(MDK_HW_DRAWDEDUPE_OFF)",
+                         "#if defined(MDK_HW_DRAWDEDUPE_OFF)", 1),
+     "per-draw-state-dedupe"),
     ("the-glow-runs-over-the-shadowed-layout",
      lambda s: s.replace("    leaveShadowLitStages(r);\n    frameSplit(r);\n", "    frameSplit(r);\n", 1),
      "no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw"),

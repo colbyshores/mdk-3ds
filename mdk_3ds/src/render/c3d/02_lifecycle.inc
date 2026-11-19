@@ -351,6 +351,33 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     r->vshUniformVecs = r->worldLocation + 4;
     mdk::log3dsPrintf("pass program: %s; vertex uniforms c0-c%d",
                       r->passReady ? "ready" : "UNAVAILABLE", (int)r->vshUniformVecs - 1);
+    // THE DEDUPE (03_frame.inc) reads citro3d's uniform array as the registers'
+    // value. A vertex shader's float CONSTANT is uploaded straight to its register
+    // at a bind and bypasses that array, so the line says where the constants of
+    // every vertex shader in the DVLB sit against the scene's uniforms: below
+    // c<vshUniformVecs> would be a register two programs disagree about (installEye
+    // re-sends the uniforms every eye, so even then only an in-eye switch could
+    // see it). Measured in the shbin when this landed: c94/c95.
+    {
+        int lowest = C3D_FVUNIF_COUNT;
+        for (u32 i = 0; i < r->dvlb->numDVLE; i++) {
+            const DVLE_s& dvle = r->dvlb->DVLE[i];
+            if (dvle.type != VERTEX_SHDR) {
+                continue;
+            }
+            for (u32 c = 0; c < dvle.constTableSize; c++) {
+                const DVLE_constEntry_s& entry = dvle.constTableData[c];
+                if (entry.type == DVLE_CONST_FLOAT24 && (int)entry.id < lowest) {
+                    lowest = (int)entry.id;
+                }
+            }
+        }
+        mdk::log3dsPrintf("draw dedupe: %s; vertex-shader constants from c%d (%s the uniforms "
+                          "c0-c%d)",
+                          kDrawDedupe ? "on" : "OFF (harness DRAWDEDUPE=0)", lowest,
+                          lowest >= r->vshUniformVecs ? "clear of" : "INSIDE",
+                          (int)r->vshUniformVecs - 1);
+    }
     mdk::log3dsPrintf("shadow programs: lit+shadow %s (sun=%d sky=%d ground=%d camera=%d "
                       "params=%d mtx=%d lut=%d), caster %s (mvp=%d)",
                       r->shadowProgramReady ? "ready" : "UNAVAILABLE",

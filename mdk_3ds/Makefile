@@ -171,6 +171,21 @@ $(error GSPASSALL=$(GSPASSALL) needs AUTOQUIT: the probe is a harness-build feat
 endif
 DEFINES += -DMDK_HW_GSPASSALL=1
 endif
+# `make AUTOQUIT=90 DRAWDEDUPE=0` turns the per-draw state dedupe off (a harness
+# aid, for the owner's A/B profile): every per-draw combiner, buffer table,
+# uniform and texture write is then sent on every draw, as before the dedupe
+# (03_frame.inc, THE DEDUPE). DRAWDEDUPE=1, or unset, is the shipped dedupe.
+# Only renderer_c3d.cpp reads it: touch it (or `make clean`) after changing it.
+ifneq ($(strip $(DRAWDEDUPE)),)
+ifndef AUTOQUIT
+$(error DRAWDEDUPE=$(DRAWDEDUPE) needs AUTOQUIT: the A/B switch is a harness-build feature)
+endif
+ifeq ($(strip $(DRAWDEDUPE)),0)
+DEFINES += -DMDK_HW_DRAWDEDUPE_OFF=1
+else ifneq ($(strip $(DRAWDEDUPE)),1)
+$(error DRAWDEDUPE=$(DRAWDEDUPE): use 0 (off, the A/B) or 1 (on, the default))
+endif
+endif
 # `make AUTOQUIT=90 GLOWPROBE=1` adds one halo in front of the camera every
 # frame (a harness aid): the glow billboards' path drawn on hardware without a
 # script's explosion. Only main_3ds.cpp reads it: touch it after changing it.
