@@ -127,6 +127,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->enableEdgeSmoothing = value;
     } else if (keyIs(begin, keyEnd, "shadowMapFlipBytes")) {
         toggles->shadowMapFlipBytes = value;
+    } else if (keyIs(begin, keyEnd, "edgeSmoothing2x2")) {
+        toggles->edgeSmoothing2x2 = value;
     }
 }
 
@@ -165,6 +167,8 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "enableHdTextures", toggles.enableHdTextures);
     appendToggle(&out, "enableLighting", toggles.enableLighting);
     appendToggle(&out, "enableEdgeSmoothing", toggles.enableEdgeSmoothing);
+    // 3DS: 2x2 rather than the default 2x1 (render_types.h).
+    appendToggle(&out, "edgeSmoothing2x2", toggles.edgeSmoothing2x2);
     // A diagnostic, not a look (render_types.h): written so it can be found.
     appendToggle(&out, "shadowMapFlipBytes", toggles.shadowMapFlipBytes);
     // 0 = automatic (render_types.h).

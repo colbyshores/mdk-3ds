@@ -1148,7 +1148,7 @@ static void drawGlow(RendererC3D* r) {
             r->glowScratchTiled = static_cast<u32*>(linearAlloc(scratchBytes));
         }
         if (!r->glowScratch || !r->glowScratchTiled) {
-            mdk::log3dsPrintf("glow: scale-2 scratch allocation FAILED; glow off this session");
+            mdk::log3dsPrintf("glow: smoothing scratch allocation FAILED; glow off this session");
             r->glowRefused = true;
             r->glowLive = false;
             return;
@@ -1156,12 +1156,13 @@ static void drawGlow(RendererC3D* r) {
         const u32 rgba = GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
                          GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8);
         // Step 2 (above): NEVER flag bit 5 (tiled to tiled) -- it hangs the
-        // console's transfer engine. Tiled to linear with 2x2 averaging, both
+        // console's transfer engine. Tiled to linear with the display's own
+        // averaging (2x2, or 2x1: transferScaling), both
         // dimensions the input's (the engine halves the output itself: see
         // writeScreenshotBmp) ...
         const u32 full = GX_BUFFER_DIM(r->targetWidth, r->targetHeight);
         GX_DisplayTransfer(source, full, r->glowScratch, full,
-                           rgba | GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_XY));
+                           rgba | transferScaling(r->targetScaleX, r->targetScaleY));
         // ... then linear back to tiled, unscaled, for the tile-row copy below.
         const u32 half = GX_BUFFER_DIM(kScreenWidth, kScreenHeight);
         GX_DisplayTransfer(r->glowScratch, half, r->glowScratchTiled, half,

@@ -529,29 +529,46 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, r->targetWidth, r->targetHeight);
 }
 
-// The eye targets' scale follows enableEdgeSmoothing (buildEyeTargets). Called
-// between frames only. A scale-2 build that fails (VRAM) falls back to scale 1
-// and is not retried until the toggle goes off and on again; a scale-1 build
-// that fails leaves no target to draw into, and the renderer stops (ready=false)
-// rather than draw into a deleted one.
+// The eye targets' scale follows enableEdgeSmoothing and edgeSmoothing2x2
+// (buildEyeTargets). Called between frames only. A refused build steps down --
+// 2x2 to 2x1 (half its VRAM), 2x1 to 1x1 -- and each refusal is latched until
+// the setting that asked for it goes off (a full VRAM is one line, not a
+// rebuild every frame); a 1x1 build that fails leaves no target to draw into,
+// and the renderer stops (ready=false) rather than draw into a deleted one.
 static void applyEdgeSmoothing(RendererC3D* r) {
     if (!r->toggles.enableEdgeSmoothing) {
         r->smoothingRefused = false;
     }
-    const int want = (r->toggles.enableEdgeSmoothing && !r->smoothingRefused) ? 2 : 1;
-    if (want == r->targetScale && r->targetLeft) {
+    if (!r->toggles.edgeSmoothing2x2) {
+        r->smoothing2x2Refused = false;
+    }
+    // 2x1 by default, 2x2 when the config asks (edgeSmoothing2x2): measured on
+    // the Old 3DS, 2x2 cost ~22 ms of an 80 ms stereo frame (2026-11-18), 2x1
+    // ~12 (2026-11-19).
+    const bool smooth = r->toggles.enableEdgeSmoothing && !r->smoothingRefused;
+    const bool fine = smooth && r->toggles.edgeSmoothing2x2 && !r->smoothing2x2Refused;
+    const int wantX = smooth ? 2 : 1;
+    const int wantY = fine ? 2 : 1;
+    if (wantX == r->targetScaleX && wantY == r->targetScaleY && r->targetLeft) {
         return;
     }
     releaseGlow(r);
     releaseShadowMap(r);
     releaseEyeTargets(r);
-    if (buildEyeTargets(r, want)) {
+    if (buildEyeTargets(r, wantX, wantY)) {
         return;
     }
-    if (want > 1) {
+    if (fine) {
+        r->smoothing2x2Refused = true;
+        mdk::log3dsPrintf("smoothing: 2x2 REFUSED, trying 2x1");
+        if (buildEyeTargets(r, 2, 1)) {
+            return;
+        }
+    }
+    if (smooth) {
         r->smoothingRefused = true;
-        mdk::log3dsPrintf("smoothing: scale %d REFUSED, back to scale 1", want);
-        if (buildEyeTargets(r, 1)) {
+        mdk::log3dsPrintf("smoothing: 2x1 REFUSED, back to 1x1");
+        if (buildEyeTargets(r, 1, 1)) {
             return;
         }
     }
@@ -1086,7 +1103,8 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // 240x400, so the file shows exactly what the screen shows.
     const int32_t srcW = kScreenWidth;    // 240, portrait width
     const int32_t srcH = kScreenHeight;   // 400, portrait height
-    const int32_t scale = r->targetScale;
+    const int32_t scaleX = r->targetScaleX;
+    const int32_t scaleY = r->targetScaleY;
     const size_t bytes = (size_t)srcW * (size_t)srcH * 4;
     u32* pixels = (u32*)linearAlloc(bytes);
     if (!pixels) {
@@ -1096,13 +1114,12 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     const u32 flags = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) |
                       GX_TRANSFER_RAW_COPY(0) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
                       GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-                      GX_TRANSFER_SCALING(scale > 1 ? GX_TRANSFER_SCALE_XY
-                                                    : GX_TRANSFER_SCALE_NO);
+                      transferScaling(scaleX, scaleY);
     // BOTH dimensions are the INPUT's, as citro3d's own display output passes
     // them: the transfer engine halves the output dimension itself when it
     // scales (measured: passing the panel's 240x400 as the output read a
     // quarter of the target, unscaled, twice).
-    const u32 dim = GX_BUFFER_DIM(srcW * scale, srcH * scale);
+    const u32 dim = GX_BUFFER_DIM(srcW * scaleX, srcH * scaleY);
     // SYNCHRONOUS: C3D_SyncDisplayTransfer waits for citro3d's queue to drain
     // (the frame's draws and the panel transfers), THEN runs this transfer and
     // waits for ITS completion. A bare GX_DisplayTransfer + PPF wait here could be
@@ -1270,8 +1287,9 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     }
     r->programSwitches = 0;
     if (r->glowLive && (r->frame % 300) == 0) {
-        mdk::log3dsPrintf("glow: frame %d: %d passes (%d eyes, scale %d)", (int)r->frame,
-                          (int)r->glowPasses, (int)r->eyes.passes, (int)r->targetScale);
+        mdk::log3dsPrintf("glow: frame %d: %d passes (%d eyes, scale %dx%d)", (int)r->frame,
+                          (int)r->glowPasses, (int)r->eyes.passes, (int)r->targetScaleX,
+                          (int)r->targetScaleY);
     }
     r->glowPasses = 0;
     r->canvasQuadsThisFrame = 0;

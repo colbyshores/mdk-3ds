@@ -282,19 +282,25 @@ struct HdCopy {
 struct RendererC3D {
     C3D_RenderTarget* targetLeft = nullptr;
     C3D_RenderTarget* targetRight = nullptr;
-    // EDGE SMOOTHING (enableEdgeSmoothing, SPEC.md 7.9): the eye targets' scale.
-    // 1 is the panel's own 240x400; 2 is a 480x800 target the display transfer
-    // averages 2x2 into the panel (buildEyeTargets, 02_lifecycle.inc). The
-    // viewport, the scissor and the capture read these, never kScreenWidth.
+    // EDGE SMOOTHING (enableEdgeSmoothing, SPEC.md 7.9): the eye targets' scale
+    // per axis. 1x1 is the panel's own 240x400; 2x1 a 480x400 target (the
+    // framebuffer's 240-wide axis doubled) the display transfer averages 2x1
+    // into the panel -- the 3DS default (config edgeSmoothing2x2 = 0); 2x2 a
+    // 480x800 target averaged 2x2 (edgeSmoothing2x2 = 1). buildEyeTargets,
+    // 02_lifecycle.inc. targetScale is the larger of the two (> 1: smoothed).
+    // The viewport, the scissor and the capture read these, never kScreenWidth.
     int targetScale = 1;
+    int targetScaleX = 1;
+    int targetScaleY = 1;
     int targetWidth = kScreenWidth;
     int targetHeight = kScreenHeight;
-    // At scale 2 the right eye borrows the left eye's depth buffer (VRAM), so the
+    // Smoothed, the right eye borrows the left eye's depth buffer (VRAM), so the
     // second eye pass clears it first (mdk_render_end_frame).
     bool targetsShareDepth = false;
     // A scale-2 build that failed: stay at scale 1 until the toggle goes off, so
     // a full VRAM is one refusal line, not a rebuild attempt every frame.
     bool smoothingRefused = false;
+    bool smoothing2x2Refused = false; // 2x2 refused: 2x1 until edgeSmoothing2x2 goes off
     // The target installEye selected last: the glow pass copies from it.
     C3D_RenderTarget* eyeTarget = nullptr;
 

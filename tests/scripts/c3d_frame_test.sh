@@ -1503,7 +1503,10 @@ def adjudicate(text, quiet=False):
             if re.search(r"BIT\(\s*5\s*\)|1u?\s*<<\s*5\b|0x20\b", t)]
     glow_xfers = [t for t in transfers if t in glow_body]
     glow_retile = any("GX_TRANSFER_OUT_TILED(1)" in t for t in glow_xfers)
-    glow_shrink = any("GX_TRANSFER_SCALE_XY" in t and "OUT_TILED" not in t for t in glow_xfers)
+    # (The shrink takes the display's own averaging: transferScaling, 2x2 or 2x1.)
+    glow_shrink = any(("GX_TRANSFER_SCALE_XY" in t or
+                       "transferScaling(r->targetScaleX, r->targetScaleY)" in t)
+                      and "OUT_TILED" not in t for t in glow_xfers)
     rep.check("no-tiled-to-tiled-display-transfer",
               not bit5 and "BIT(5)" not in glow_body and glow_retile and glow_shrink,
               "%d GX_DisplayTransfer call(s), %d with bit 5 (tiled to tiled): %s; the glow "
@@ -2952,8 +2955,8 @@ ARMS = [
      "sun-shadow-map-written-by-a-measured-path"),
     # The shrink as it was written first: one tiled-to-tiled transfer.
     ("glow-shrinks-tiled-to-tiled",
-     lambda s: s.replace("                           rgba | GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_XY));",
-                         "                           BIT(5) | rgba | GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_XY));", 1),
+     lambda s: s.replace("                           rgba | transferScaling(r->targetScaleX, r->targetScaleY));",
+                         "                           BIT(5) | rgba | transferScaling(r->targetScaleX, r->targetScaleY));", 1),
      "no-tiled-to-tiled-display-transfer"),
     ("glow-pass-unflushed",
      lambda s: s.replace("        GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);\n", "", 1),

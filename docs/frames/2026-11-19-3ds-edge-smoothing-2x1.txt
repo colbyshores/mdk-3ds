@@ -1,0 +1,8 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-19T08:20:54Z at 20f337c
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: 3DS edge smoothing 2x1 (480x400 eye targets, SCALE_X) by default, 2x2
+behind config.ini edgeSmoothing2x2: the Old 3DS stereo frame 63.7 -> 53.8 ms
+p50, and the sun's map back to 512. 3DS-only; this Linux frame is
+byte-identical to the previous pin. Evidence:
+docs/evidence/2026-11-19-3ds-edge-smoothing-2x1.txt.

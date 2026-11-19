@@ -1,0 +1,57 @@
+2026-11-19  3DS edge smoothing 2x1 by default (2x2 behind edgeSmoothing2x2)
+==========================================================================
+
+HARDWARE. Old 3DS appliance old3ds-lan167 (CFGU model 0, 268 MHz, L2 none),
+stereo ON, level 8, every enhancement on (the card has no config.ini), the
+single-pass sun shadows of 20f337c. hw_cycle.sh FRESH on every run.
+
+WHY. The per-toggle profile (2026-11-18-3ds-enhanced-cost-per-toggle.txt):
+edge smoothing at 2x2 (480x800 eye targets the display transfer averages
+2x2) cost ~22 ms of the Old 3DS's 80 ms stereo frame, and its 4.5 MB of eye
+targets left the sun's map at 256 and the glow 714 KB of VRAM. The vault's
+3ds-hardware-aa-via-display-transfer-downscale.md names 2x1 (SCALE_X: the
+framebuffer's 240-wide axis doubled, 480x400) the pragmatic default, 2x2 only
+with fill headroom; its many-pass note's "supersampling is nearly free" was a
+New 3DS measurement and does not hold on this console.
+
+WHAT. buildEyeTargets(r, sx, sy) and transferScaling(sx, sy): 1x1, 2x1
+(SCALE_X) or 2x2 (SCALE_XY); targetScaleX/Y beside targetScale (the larger).
+applyEdgeSmoothing: 2x1 with enableEdgeSmoothing, 2x2 when config.ini's
+edgeSmoothing2x2 = 1 (the PC ignores it). The glow's shrink and the capture
+readback take the same scaling as the display. The right eye still borrows
+the left eye's depth whenever the targets are scaled.
+
+MEASURED (hw_cycle --profile; p50 is the 0.1 ms bucket's upper edge):
+  2x2 (20f337c)    p50 63.7 ms  mean 77.1 ms  begin 21.0  draw 15.7  end 19.6
+  2x1              p50 53.8 ms  mean 67.2 ms  begin 14.1  draw 14.7  end 19.3
+  -> ~10 ms a frame; ~18.6 fps against 12.5 at the start of 2026-11-18's
+  measurements (80.3 ms).
+VRAM after the eye targets: 2x2 1,683,456 free (the map 256); 2x1 3,987,456
+free -- the sun's map is 512 again ("shadows: map 512x512 (VRAM, 2938880
+free)") and the glow keeps 2.2 MB.
+
+THE LOOK (hw_cycle --capture, CAPTURE=60 FIXED=1, the console's left eye):
+  docs/evidence/2026-11-19-3ds-edge-smoothing-2x1-vs-2x2-console.png
+  docs/evidence/2026-11-19-3ds-edge-smoothing-2x1-vs-2x2-console-zoom.png
+At the panel's size the two read the same; zoomed, 2x1 steps a little more on
+near-horizontal edges (it averages one axis only) and its shadow edges are
+crisper (the map is 512, not 256). The owner judges on the console:
+`edgeSmoothing2x2=1` in sdmc:/3ds/mdk/config.ini brings 2x2 back.
+
+TESTS. tests/formats/lighting_tests.cpp: edgeSmoothing2x2 off by default,
+written, read back. The c3d_frame pins hold (the glow's shrink is still
+tiled -> linear with scaling, no bit 5).
+
+REVIEW (independent, read-only, Fable): no blocker; transfer dims, bit 5,
+viewport/scissor, the canvas mapping, the glow's scratch and copy, the depth
+borrow, runtime toggling and the config checked. Fixed:
+- a refused 2x2 fell straight to 1x1 and stayed there: it now steps down to
+  2x1 first, each refusal latched until the setting that asked for it goes off;
+- the capture readback's scale names shadowed its loop's sx/sy: renamed;
+- the glow's shrink re-derived the scaling flag: it calls transferScaling;
+- stale "scale-2" log text.
+Recorded, not done: at 2x1 the right eye could own its depth (four 768 KB
+buffers fit) and skip a split and a depth fill per stereo frame -- an A/B
+for later, against the map's and the glow's VRAM; there is no in-game menu
+row for 2x2 (config.ini only, like shadowMapSize); the glow's two 768 KB
+scratch buffers stay until exit when smoothing goes off (older than this).

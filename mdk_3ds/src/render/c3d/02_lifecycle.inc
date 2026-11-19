@@ -17,11 +17,21 @@
 // buffer (4.5 MB in all) and mdk_render_end_frame clears it between the passes.
 // A target created without depth does not own (or free) the buffer it borrows:
 // citro3d frees only what it allocated (C3Di_RenderTargetDestroy's ownsDepth).
-static u32 displayTransferFlags(int scale) {
+// The transfer engine's averaging for a target scaled (sx, sy): 2x2 is
+// SCALE_XY, 2x1 (the framebuffer's 240-wide axis only) is SCALE_X -- the
+// transfer's X is the framebuffer's width (gx.h: "if you activate 2x1 AA the
+// destination dimensions are w=240*2 and h=400"; the vault's
+// 3ds-hardware-aa-via-display-transfer-downscale.md).
+static u32 transferScaling(int sx, int sy) {
+    return GX_TRANSFER_SCALING(sx > 1 && sy > 1 ? GX_TRANSFER_SCALE_XY
+                               : sx > 1         ? GX_TRANSFER_SCALE_X
+                                                : GX_TRANSFER_SCALE_NO);
+}
+
+static u32 displayTransferFlags(int sx, int sy) {
     return (GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
             GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-            GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) |
-            GX_TRANSFER_SCALING(scale > 1 ? GX_TRANSFER_SCALE_XY : GX_TRANSFER_SCALE_NO));
+            GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) | transferScaling(sx, sy));
 }
 
 // Outside a frame only: C3D_RenderTargetDelete waits for the GPU queue (and
@@ -85,18 +95,19 @@ static void releaseGlow(RendererC3D* r) {
     r->glowRefused = false;
 }
 
-// Both eyes at `scale`, or neither (false, nothing held). The caller has released
-// the previous pair: the VRAM is not big enough for both generations at once.
-static bool buildEyeTargets(RendererC3D* r, int scale) {
-    const int w = kScreenWidth * scale;
-    const int h = kScreenHeight * scale;
+// Both eyes at (sx, sy), or neither (false, nothing held). The caller has
+// released the previous pair: the VRAM is not big enough for both generations at
+// once.
+static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
+    const int w = kScreenWidth * sx;
+    const int h = kScreenHeight * sy;
     C3D_RenderTarget* left = C3D_RenderTargetCreate(w, h, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
     if (!left) {
         mdk::log3dsPrintf("C3D_RenderTargetCreate(left %dx%d) FAILED (vram free %u)", w, h,
                           (unsigned)vramSpaceFree());
         return false;
     }
-    const bool share = scale > 1;
+    const bool share = sx > 1 || sy > 1;
     C3D_RenderTarget* right = share
         ? C3D_RenderTargetCreate(w, h, GPU_RB_RGBA8, -1)
         : C3D_RenderTargetCreate(w, h, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
@@ -109,15 +120,17 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
     if (share) {
         C3D_FrameBufDepth(&right->frameBuf, left->frameBuf.depthBuf, GPU_RB_DEPTH24_STENCIL8);
     }
-    C3D_RenderTargetSetOutput(left, GFX_TOP, GFX_LEFT, displayTransferFlags(scale));
-    C3D_RenderTargetSetOutput(right, GFX_TOP, GFX_RIGHT, displayTransferFlags(scale));
+    C3D_RenderTargetSetOutput(left, GFX_TOP, GFX_LEFT, displayTransferFlags(sx, sy));
+    C3D_RenderTargetSetOutput(right, GFX_TOP, GFX_RIGHT, displayTransferFlags(sx, sy));
     r->targetLeft = left;
     r->targetRight = right;
-    r->targetScale = scale;
+    r->targetScale = sx > sy ? sx : sy;
+    r->targetScaleX = sx;
+    r->targetScaleY = sy;
     r->targetWidth = w;
     r->targetHeight = h;
     r->targetsShareDepth = share;
-    mdk::log3dsPrintf("targets: %dx%d per eye, scale %d%s (vram free %u)", w, h, scale,
+    mdk::log3dsPrintf("targets: %dx%d per eye, scale %dx%d%s (vram free %u)", w, h, sx, sy,
                       share ? ", right eye borrows the left depth" : "",
                       (unsigned)vramSpaceFree());
     return true;
@@ -157,7 +170,7 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
     // The top screen's eye pair, at scale 1 (the panel's own 240x400 portrait;
     // the projection rotates it). The toggles arrive after create, and the first
     // begin_frame rebuilds them at scale 2 when enableEdgeSmoothing is on.
-    if (!buildEyeTargets(r, 1)) {
+    if (!buildEyeTargets(r, 1, 1)) {
         C3D_Fini();
         delete r;
         return nullptr;

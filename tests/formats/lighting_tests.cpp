@@ -262,6 +262,17 @@ MDK_TEST(EnhancedConfigRoundTrips) {
                                            &flippedBack));
         MDK_CHECK(flippedBack.shadowMapFlipBytes && flippedBack.enableSkyShadows);
     }
+    // The 3DS edge smoothing's 2x2 (not a toggle of its own): off by default
+    // (2x1), written, read back.
+    MDK_CHECK(!toggles.edgeSmoothing2x2 && !back.edgeSmoothing2x2);
+    MDK_CHECK(text.find("edgeSmoothing2x2=0\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles fine;
+        fine.edgeSmoothing2x2 = true;
+        mdk::EnhancedToggles fineBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(fine).c_str(), &fineBack));
+        MDK_CHECK(fineBack.edgeSmoothing2x2 && fineBack.enableEdgeSmoothing);
+    }
     // The 3DS shadow map's side (not a toggle): 0 = automatic by default,
     // written, read back; only 128/256/512 are taken, anything else is 0.
     MDK_CHECK(toggles.shadowMapSize == 0 && back.shadowMapSize == 0);
