@@ -40,7 +40,15 @@ static bool drawSampleArmed() {
 // that alpha -- INTERPOLATE is src0 * src2 + src1 * (1 - src2). Off, the uniform
 // is 0 (ex2(0) = 1) and the stage passes its input through. Cached on hazeOn;
 // installEye resets both every eye.
+//
+// THE FOG UNIT'S HAZE (config hazeFog, fogLive): the same decision, made by the
+// PICA's fixed-function fog instead -- the uniform stays 0 and stage 2 a
+// passthrough, and the fog mode follows `on` (setFog).
 static void setHaze(RendererC3D* r, bool on) {
+    if (r->fogLive) {
+        setFog(r, on);
+        return;
+    }
     if (on == r->hazeOn) {
         return;
     }
@@ -57,6 +65,20 @@ static void setHaze(RendererC3D* r, bool on) {
         C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
     }
     r->hazeOn = on;
+}
+
+// The fog unit on or off (the haze through the fog unit, pica_matrix.h): mixes
+// the haze colour (C3D_FogColor, installEye) into the combiner's output by
+// 1 - the table (C3D_FogLutBind, installEye) at the fragment's W-buffer depth.
+// Cached on fogOn; installEye writes it off every eye, and every pass that is
+// not a hazed scene draw turns it off (the canvas and the diagnostic through
+// setHaze, the glow, the billboards, the caster pass, the shadow tests).
+static void setFog(RendererC3D* r, bool on) {
+    if (on == r->fogOn) {
+        return;
+    }
+    C3D_FogGasMode(on ? GPU_FOG : GPU_NO_FOG, GPU_PLAIN_DENSITY, false);
+    r->fogOn = on;
 }
 
 // THE SHADOWED LIT DRAW'S COMBINER (Enhanced Mode enableSkyShadows, one pass:
@@ -77,7 +99,50 @@ static void setHaze(RendererC3D* r, bool on) {
 // 0-2 and the units are written once per run of these draws; stage 3 follows
 // the haze, cached on shadowLitHaze. The caches of the ordinary layout
 // (lightStageOn, hazeOn) are made to say "not installed" while it is here.
+//
+// THE SCALAR LAYOUT (config hazeFog, shadowScalar: mdk_litshadowq.g.pica). The
+// haze is the fog unit's, so the vertex alpha carries q = survive * (1 - R), R
+// the triangle's luma ratio F_shadow / F_lit, and there is no lookup: units 0
+// (the map) and 1 (the surface) only -- unit 2 keeps the idle texture.
+//
+//   stage 0  RGB = F_lit / 2, A = (1 - shadow) * q
+//   stage 1  RGB = previous * (1 - A)              F_lit * (1 - A) / 2
+//            A = the surface's alpha               (the alpha test's)
+//   stage 2  RGB = surface * previous, x2          (clamped after the shadow,
+//                                                  as the tint layout's is)
+//
+// With the fog live the haze is the fog unit's in either layout, and stage 3
+// stays a passthrough.
 static void installShadowLitStages(RendererC3D* r, bool haze) {
+    if (!r->shadowLitStages && r->shadowScalar) {
+        C3D_TexBind(0, &r->shadowTex);
+        C3D_TexShadowParams(false, 0.0f);   // orthographic: no divide; the bias is the GS's
+        C3D_TexEnv* amount = C3D_GetTexEnv(0);
+        C3D_TexEnvInit(amount);
+        C3D_TexEnvSrc(amount, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+        C3D_TexEnvFunc(amount, C3D_RGB, GPU_REPLACE);
+        C3D_TexEnvSrc(amount, C3D_Alpha, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+        C3D_TexEnvOpAlpha(amount, GPU_TEVOP_A_ONE_MINUS_SRC_ALPHA, GPU_TEVOP_A_SRC_ALPHA,
+                          GPU_TEVOP_A_SRC_ALPHA);
+        C3D_TexEnvFunc(amount, C3D_Alpha, GPU_MODULATE);
+        C3D_TexEnv* light = C3D_GetTexEnv(1);
+        C3D_TexEnvInit(light);
+        C3D_TexEnvSrc(light, C3D_RGB, GPU_PREVIOUS, GPU_PREVIOUS, GPU_PREVIOUS);
+        C3D_TexEnvOpRgb(light, GPU_TEVOP_RGB_SRC_COLOR, GPU_TEVOP_RGB_ONE_MINUS_SRC_ALPHA,
+                        GPU_TEVOP_RGB_SRC_COLOR);
+        C3D_TexEnvFunc(light, C3D_RGB, GPU_MODULATE);
+        C3D_TexEnvSrc(light, C3D_Alpha, GPU_TEXTURE1, GPU_TEXTURE1, GPU_TEXTURE1);
+        C3D_TexEnvFunc(light, C3D_Alpha, GPU_REPLACE);
+        C3D_TexEnv* surface = C3D_GetTexEnv(2);
+        C3D_TexEnvInit(surface);
+        C3D_TexEnvSrc(surface, C3D_RGB, GPU_TEXTURE1, GPU_PREVIOUS, GPU_PREVIOUS);
+        C3D_TexEnvFunc(surface, C3D_RGB, GPU_MODULATE);
+        C3D_TexEnvScale(surface, C3D_RGB, GPU_TEVSCALE_2);
+        r->shadowLitStages = true;
+        r->shadowLitHaze = -1;
+        r->lightStageOn = false;   // stage 1 is not the ordinary light stage
+        r->hazeOn = false;         // stage 2 is not the ordinary haze stage
+    }
     if (!r->shadowLitStages) {
         C3D_TexBind(0, &r->shadowTex);
         C3D_TexShadowParams(false, 0.0f);   // orthographic: no divide; the bias is the GS's
@@ -108,7 +173,12 @@ static void installShadowLitStages(RendererC3D* r, bool haze) {
         r->lightStageOn = false;   // stage 1 is not the ordinary light stage
         r->hazeOn = false;         // stage 2 is not the ordinary haze stage
     }
-    const int8_t want = haze ? 1 : 0;
+    // The combiner haze only without the fog; with it, stage 3 passes through
+    // and the fog unit takes the haze.
+    const int8_t want = (haze && !r->fogLive) ? 1 : 0;
+    if (r->fogLive) {
+        setFog(r, haze);
+    }
     if (want != r->shadowLitHaze) {
         C3D_TexEnv* stage = C3D_GetTexEnv(3);
         C3D_TexEnvInit(stage);
@@ -757,8 +827,10 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         r->gsInList = true;
     }
 #endif
+    // (The shadowed program is the frame's layout's: the one-scalar one under
+    // config hazeFog, prepareShadows' shadowScalar.)
     shaderProgram_s* const wanted =
-        shadowLit ? &r->programShadow
+        shadowLit ? (r->shadowScalar ? &r->programShadowQ : &r->programShadow)
         : lit     ? &r->programLit
                   : (r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program);
     if (wanted != r->boundProgram) {
@@ -774,7 +846,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (shadowLit) {
         r->shadowReceivers++;
     }
-    if (r->boundProgram == &r->programShadow) {
+    if (r->boundProgram == &r->programShadow || r->boundProgram == &r->programShadowQ) {
         r->drawsShadowLit++;
     } else if (r->boundProgram == &r->programLit) {
         r->drawsLit++;
@@ -818,6 +890,9 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (!shadowLit) {
         setHaze(r, r->hazeLive && draw->material.shading != mdk::Shading::Original &&
                        draw->material.pass != mdk::Pass::Overlay);
+    }
+    if (r->fogOn) {
+        r->drawsFogged++;
     }
     if (r->boundProgram && r->boundProgram->geometryShader) {
         // The geometry shader decides the primitives (it emits each triangle).
@@ -1163,6 +1238,8 @@ static void drawGlow(RendererC3D* r) {
     C3D_RenderTarget* eye = r->eyeTarget;
     leaveShadowLitStages(r);
     frameSplit(r);
+    // The glow takes no haze: its passes and its add over the eye unfogged.
+    setFog(r, false);
     u32* source = static_cast<u32*>(eye->frameBuf.colorBuf);
     if (r->targetScale > 1) {
         const size_t scratchBytes = (size_t)kScreenWidth * kScreenHeight * 4;

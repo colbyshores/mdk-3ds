@@ -326,6 +326,60 @@ uint32_t hazeColourWord(const Colour& colour) {
     return word;
 }
 
+float hazeFogDepthOffset(float farPlane) {
+    return farPlane > 0.0f ? kHazeFogDepthSpan / farPlane : 0.0f;
+}
+
+float wBufferDepth(float zNdc, float w, float scale, float offset) {
+    return (zNdc * scale + offset) * w;
+}
+
+namespace {
+
+// One entry's value in the table's 1/2048 steps, rounded, within the 11 bits.
+int32_t fogTableStep(float density, float depthOffset, int32_t entry) {
+    const float depth = (float)entry / (float)kHazeFogEntries;
+    const float eye = depthOffset > 0.0f ? depth / depthOffset : 0.0f;
+    const float kept = density > 0.0f ? expf(-density * eye) : 1.0f;
+    int32_t step = (int32_t)(kept * 2048.0f + 0.5f);
+    if (step < 0) step = 0;
+    if (step > 2047) step = 2047;
+    return step;
+}
+
+} // namespace
+
+void hazeFogTable(float density, float depthOffset, uint32_t words[kHazeFogEntries]) {
+    // Integer entries (T2): the 129th value only closes the last difference.
+    int32_t value = fogTableStep(density, depthOffset, 0);
+    for (int32_t i = 0; i < kHazeFogEntries; i++) {
+        const int32_t next = fogTableStep(density, depthOffset, i + 1);
+        const int32_t difference = next - value;   // within +-2047: fits 13 signed bits
+        words[i] = ((uint32_t)value << 13) | ((uint32_t)difference & 0x1FFFu);
+        value = next;
+    }
+}
+
+float fogTableKept(const uint32_t words[kHazeFogEntries], float depth) {
+    // The stored depth is clamped to [0, 1] before the unit reads it.
+    float index = depth * (float)kHazeFogEntries;
+    if (index < 0.0f) index = 0.0f;
+    if (index > (float)kHazeFogEntries) index = (float)kHazeFogEntries;
+    int32_t entry = (int32_t)index;   // index >= 0: truncation is floor
+    if (entry > kHazeFogEntries - 1) entry = kHazeFogEntries - 1;
+    const float fraction = index - (float)entry;
+    const uint32_t word = words[entry];
+    const int32_t value = (int32_t)(word >> 13) & 0x7FF;
+    int32_t difference = (int32_t)(word & 0x1FFFu);
+    if (difference & 0x1000) {
+        difference -= 0x2000;   // the 13-bit field is signed
+    }
+    float kept = ((float)value + (float)difference * fraction) / 2048.0f;
+    if (kept < 0.0f) kept = 0.0f;
+    if (kept > 1.0f) kept = 1.0f;
+    return kept;
+}
+
 void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
                          int32_t paddedHeight) {
     if (!tiled || width <= 0 || height <= 0 || width > paddedWidth || height > paddedHeight) {

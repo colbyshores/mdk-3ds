@@ -132,6 +132,7 @@ static mdk::pica::ShadowByteOrder shadowByteOrder(const RendererC3D* r);
 static void installLitUniforms(RendererC3D* r);
 static void installShadowUniforms(RendererC3D* r);
 static void leaveShadowLitStages(RendererC3D* r);
+static void setFog(RendererC3D* r, bool on);
 static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw);
 static void installAlphaTest(RendererC3D* r, int reference, bool force);
 
@@ -497,6 +498,18 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
     C3D_TexEnvInit(C3D_GetTexEnv(2));
     r->hazeOn = false;
+    // THE FOG UNIT (config hazeFog; pica_matrix.h, THE HAZE THROUGH THE FOG
+    // UNIT): off, every eye, written whatever the cache says; a draw the haze
+    // applies to turns it on through setFog. When the frame's haze is the fog
+    // unit's, its table and its colour are installed here too (the table is
+    // re-sent with the eye's first draw: 128 words), and the depth map below is
+    // the W-buffer that indexes the table by eye depth.
+    C3D_FogGasMode(GPU_NO_FOG, GPU_PLAIN_DENSITY, false);
+    r->fogOn = false;
+    if (r->fogLive) {
+        C3D_FogLutBind(&r->hazeFogLut);
+        C3D_FogColor(mdk::pica::hazeColourWord(r->lighting.haze_colour) & 0x00FFFFFFu);
+    }
     // Stages 3-5 and the combiner buffer belong to the glow pass alone, which
     // resets them after itself; written here too, every eye, because an
     // unwritten PICA register is frame state nobody set (AGENTS.md P2).
@@ -517,8 +530,15 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
         C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation, &worldMtx);
         r->worldIsIdentity = true;
     }
-    C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
-                 mdk::pica::kDepthMapOffset);
+    if (r->fogLive) {
+        // The W-buffer while the fog unit hazes (scale 0: the stored depth is
+        // eye depth * hazeFogOffset, 0 at the eye, kHazeFogDepthSpan at the far
+        // plane, increasing -- GPU_LEQUAL and the clear to 1.0 hold as before).
+        C3D_DepthMap(false, 0.0f, r->hazeFogOffset);
+    } else {
+        C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
+                     mdk::pica::kDepthMapOffset);
+    }
 
     // The viewport is a HARDWARE CLIP RECTANGLE. A zero-area viewport
     // SILENTLY DROPS the draw -- the "invisible 3D trap". The full target
@@ -733,6 +753,7 @@ static void testNativeShadowWrites(RendererC3D* r) {
         C3D_TexEnvBufUpdate(C3D_Both, 0);
         r->hazeOn = false;
         r->lightStageOn = false;
+        setFog(r, false);
         C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
                      mdk::pica::kDepthMapOffset);
         installDepthState(r, mdk::pica::DepthState{false, false});
@@ -1314,12 +1335,16 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
         }
     }
     if ((r->frame % 300) == 0) {
-        mdk::log3dsPrintf("programs: frame %d: %d lit, %d lit+shadow, %d pass-through, %d plain "
-                          "draws (both eyes)",
+        mdk::log3dsPrintf("programs: frame %d: %d lit, %d lit+shadow (%s layout), %d pass-through, "
+                          "%d plain draws (both eyes); haze %s, %d draws fogged",
                           (int)r->frame, (int)r->drawsLit, (int)r->drawsShadowLit,
-                          (int)r->drawsPass, (int)r->drawsPlain);
+                          r->shadowScalar ? "scalar" : "tint", (int)r->drawsPass,
+                          (int)r->drawsPlain,
+                          r->fogLive ? "fog unit" : (r->hazeLive ? "combiner" : "off"),
+                          (int)r->drawsFogged);
     }
     r->drawsLit = r->drawsShadowLit = r->drawsPass = r->drawsPlain = 0;
+    r->drawsFogged = 0;
     // The halos are this frame's: a frame whose game hands none over (no
     // runtime) must not draw the last frame's again (review, 2026-11-19).
     r->glowQuadCount = 0;
@@ -1450,6 +1475,8 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     r->cameraPos[0] = cam->position.x;
     r->cameraPos[1] = cam->position.y;
     r->cameraPos[2] = cam->position.z;
+    // The far plane, for the fog unit's W-buffer and table (prepareHaze).
+    r->farPlane = cam->far_plane;
 }
 
  void mdk_render_set_lighting(MdkRenderer rr, const mdk::Lighting* light) {
@@ -1731,10 +1758,16 @@ static void prepareShadows(RendererC3D* r) {
     r->shadowHoleCasters = 0;
     r->shadowReceivers = 0;
     r->shadowLitLive = false;
+    // THE LAYOUT (config hazeFog): the one-scalar program (no tint lookup) when
+    // it is ready and the vertex alpha is free -- the haze is the fog unit's,
+    // or there is none; else the tint layout (prepareHaze runs first).
+    r->shadowScalar = r->toggles.hazeFog && r->shadowQReady && (r->fogLive || !r->hazeLive);
     // The tint first: without it no lit draw can take the shadow, and a map
-    // cast for no receiver is a pass for nothing (review, 2026-11-19).
+    // cast for no receiver is a pass for nothing (review, 2026-11-19). The
+    // scalar layout reads none.
     r->shadowLive = r->litLive && r->shadowProgramReady && r->casterProgramReady &&
-                    r->unitIdleReady && r->toggles.enableSkyShadows && ensureShadowTint(r) &&
+                    r->unitIdleReady && r->toggles.enableSkyShadows &&
+                    (r->shadowScalar || ensureShadowTint(r)) &&
                     r->lighting.shadows && r->lighting.shadow_distance > 0.0f &&
                     ensureShadowMap(r);
     if (!r->shadowLive) {
@@ -1914,6 +1947,9 @@ static void castShadows(RendererC3D* r) {
     // (Stages 1-5 pass through, and the two caches that describe them say so.)
     r->hazeOn = false;
     r->lightStageOn = false;
+    // No fog over the map (its depth map is the Z-buffer's, below, whatever the
+    // eyes use).
+    setFog(r, false);
     C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
                  mdk::pica::kDepthMapOffset);
     // The ramp keeps the nearer caster with the map's own depth buffer; native
@@ -2007,6 +2043,36 @@ static void prepareHaze(RendererC3D* r) {
     r->hazeLive = mdk::pica::hazeApplies(r->toggles.enableHaze, r->lighting, mdk::Shading::Lit,
                                          mdk::Pass::Solid);
     r->hazeExponent = r->hazeLive ? mdk::pica::hazeExponent(r->lighting.haze_density) : 0.0f;
+    // THE FOG UNIT TAKES IT (config hazeFog, the default): the W-buffer's offset
+    // for the camera's far plane, and the table for the rig's density -- remade
+    // only when either changes (two compares a frame, not in a loop), with one
+    // line. A far plane that is not positive keeps the combiner haze.
+    r->fogLive = false;
+    if (!r->hazeLive || !r->toggles.hazeFog) {
+        return;
+    }
+    const float offset = mdk::pica::hazeFogDepthOffset(r->farPlane);
+    if (offset <= 0.0f) {
+        return;
+    }
+    const float density = r->lighting.haze_density;
+    if (density != r->hazeFogKey[0] || r->farPlane != r->hazeFogKey[1]) {
+        mdk::pica::hazeFogTable(density, offset, r->hazeFogLut.data);
+        r->hazeFogKey[0] = density;
+        r->hazeFogKey[1] = r->farPlane;
+        mdk::log3dsPrintf("haze fog: density %.5f far %.0f: W-buffer depth = eye depth * %.4e; "
+                          "%d entries of %.0f units; keeps %.4f at the eye, %.4f at 1000, %.4f "
+                          "at the far plane; colour 0x%06lx",
+                          density, r->farPlane, offset, (int)mdk::pica::kHazeFogEntries,
+                          r->farPlane / (float)mdk::pica::kHazeFogEntries,
+                          mdk::pica::fogTableKept(r->hazeFogLut.data, 0.0f),
+                          mdk::pica::fogTableKept(r->hazeFogLut.data, 1000.0f * offset),
+                          mdk::pica::fogTableKept(r->hazeFogLut.data, r->farPlane * offset),
+                          (unsigned long)(mdk::pica::hazeColourWord(r->lighting.haze_colour) &
+                                          0x00FFFFFFu));
+    }
+    r->hazeFogOffset = offset;
+    r->fogLive = true;
 }
 
 void mdk_render_set_enhanced_toggles(MdkRenderer rr, const mdk::EnhancedToggles* toggles) {

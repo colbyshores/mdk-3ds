@@ -322,6 +322,32 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
             shaderProgramFree(&r->programShadow);
         }
     }
+    // ... and THE ONE-SCALAR SHADOWED LIT PROGRAM (config hazeFog): the sixth
+    // DVLE, mdk_litshadowq.g.pica, whose uniforms are declared in the shadowed
+    // program's order so one installShadowUniforms writes either. A location that
+    // differs refuses it (the frames then keep the tint layout).
+    if (r->shadowProgramReady && r->dvlb->numDVLE >= 6 &&
+        R_SUCCEEDED(shaderProgramInit(&r->programShadowQ))) {
+        const Result qVsh = shaderProgramSetVsh(&r->programShadowQ, &r->dvlb->DVLE[0]);
+        const Result qGsh = shaderProgramSetGsh(&r->programShadowQ, &r->dvlb->DVLE[5], 12);
+        if (R_SUCCEEDED(qVsh) && R_SUCCEEDED(qGsh)) {
+            shaderInstance_s* gs = r->programShadowQ.geometryShader;
+            r->shadowQReady =
+                shaderInstanceGetUniformLocation(gs, "sunDir") == r->shadowSunDirLocation &&
+                shaderInstanceGetUniformLocation(gs, "sunColour") == r->shadowSunColourLocation &&
+                shaderInstanceGetUniformLocation(gs, "skyColour") == r->shadowSkyLocation &&
+                shaderInstanceGetUniformLocation(gs, "groundColour") == r->shadowGroundLocation &&
+                shaderInstanceGetUniformLocation(gs, "camera") == r->shadowCameraLocation &&
+                shaderInstanceGetUniformLocation(gs, "params") == r->shadowParamsLocation &&
+                shaderInstanceGetUniformLocation(gs, "sunMtx") == r->shadowSunMtxLocation;
+        }
+        if (!r->shadowQReady) {
+            shaderProgramFree(&r->programShadowQ);
+        }
+    }
+    mdk::log3dsPrintf("shadow programs: one-scalar lit+shadow (hazeFog) %s",
+                      r->shadowQReady ? "ready (the shadowed program's uniform registers)"
+                                      : "UNAVAILABLE (the tint layout only)");
     // ... and THE CASTER PROGRAM: the DVLB's fourth DVLE, mdk_caster.v.pica, a
     // vertex shader on its own. Sun shadows need both.
     if (r->shadowProgramReady && r->dvlb->numDVLE >= 4 &&
@@ -467,6 +493,9 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     if (r->dvlb) {
         if (r->casterProgramReady) {
             shaderProgramFree(&r->programCaster);
+        }
+        if (r->shadowQReady) {
+            shaderProgramFree(&r->programShadowQ);
         }
         if (r->shadowProgramReady) {
             shaderProgramFree(&r->programShadow);

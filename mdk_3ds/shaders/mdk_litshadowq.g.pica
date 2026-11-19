@@ -1,0 +1,212 @@
+; ============================================================================
+; mdk_litshadowq.g.pica -- the lit program WITH the sun's shadow, in ONE pass,
+; carrying the shadow as ONE SCALAR per vertex (config hazeFog = 1, the
+; default; mdk_litshadow.g.pica is the hazeFog = 0 layout, kept for the A/B).
+;
+; mdk_litshadow.g.pica makes colour = surface * mix(F_lit, F_shadow, k) with
+; F_shadow read from a lookup texture on unit 2 (a third fetch per lit pixel),
+; because the vertex colour's alpha was the combiner haze's. With the haze in
+; the PICA's fog unit (pica_matrix.h, THE HAZE THROUGH THE FOG UNIT) that alpha
+; is free, and the shadow rides in it instead:
+;
+;   mix(F_lit, F_shadow, k) = F_lit * (1 - k * (1 - F_shadow / F_lit))
+;
+; per channel. Here the ratio is ONE number for the triangle,
+;
+;   R = luma(F_shadow) / luma(F_lit)        (Rec. 709 weights, on the sRGB
+;                                            values the combiner multiplies)
+;
+; so the vertex carries q = survive * (1 - R) and the combiner (06_draw.inc,
+; the lit-shadow stages, scalar layout) makes
+;
+;   A = (1 - shadow) * q
+;   colour = surface * F_lit * (1 - A) * 2      (then the fog unit's haze)
+;
+; with two textures: the map on unit 0 and the surface on unit 1.
+;
+; THE APPROXIMATION. Exact where F_shadow / F_lit is the same in every channel;
+; elsewhere the shadow keeps the light's luma ratio but not its colour shift
+; (a warm sun over a cool sky: the PC's shadow is bluer than the lit side, this
+; one is the lit side's hue, darker). With R from luma, a white surface's
+; shadowed luma is the PC's exactly. A face the sun does not reach has
+; F_lit = F_shadow, R = 1, q = 0: the map changes nothing there, as before.
+;
+; THE UNIFORMS are mdk_litshadow.g.pica's, declared in the same order so the
+; two programs share their registers (installShadowUniforms writes either;
+; 02_lifecycle.inc refuses this program if a location differs). lutMap is not
+; read here.
+;
+; INPUTS (the vertex shader's outputs, three vertices of four registers):
+;   v0-v3   first vertex:  clip position, colour (unused: the haze is the fog
+;                          unit's), texcoord, world position
+;   v4-v7   second vertex
+;   v8-v11  third vertex
+; ============================================================================
+
+.gsh point c0
+
+; Uniforms (written at every bind: installShadowUniforms).
+.fvec sunDir        ; xyz: the direction the sun SHINES
+.fvec sunColour     ; rgb
+.fvec skyColour     ; rgb
+.fvec groundColour  ; rgb
+.fvec camera        ; xyz: the eye's world position
+.fvec params        ; x exposure, y normal offset (world units), z depth bias (w unused)
+.fvec lutMap        ; NOT READ: keeps sunMtx at mdk_litshadow.g.pica's registers
+.fvec sunMtx[4]     ; world -> (u, v, depth, 1) of the shadow map, a row a register
+
+.constf consts(0.0, 1.0, 0.5, 0.45454545)   ; 0, 1, 1/2, 1/GAMMA (2.2)
+.constf consts2(2.0, -1.0, 1.0e-12, 10.0)   ; 2, -1, the degenerate floor, 1 / fade width
+.constf consts3(0.9, 0.0, 0.0, 0.0)         ; x: where the edge fade starts
+.constf luma(0.2126, 0.7152, 0.0722, 0.0)   ; Rec. 709 luma weights
+.alias zeros consts.xxxx
+.alias ones  consts.yyyy
+.alias half  consts.zzzz
+.alias invGamma consts.wwww
+.alias two   consts2.xxxx
+.alias minus1 consts2.yyyy
+.alias tiny  consts2.zzzz
+.alias invFade consts2.wwww
+.alias fadeStart consts3.xxxx
+
+.out outpos position
+.out outclr color
+.out outtc0 texcoord0
+.out outtcw texcoord0w
+.out outtc1 texcoord1
+
+.entry lqmain
+.proc lqmain
+    ; THE FACE NORMAL, turned to the camera: mdk_c3d.g.pica's, line for line
+    ; (every scalar in all four lanes, for the reason given there).
+    mov r0, v7
+    add r0, -v3, r0
+    mov r1, v11
+    add r1, -v3, r1
+    mul r2, r0.yzxw, r1.zxyw
+    mul r3, r0.zxyw, r1.yzxw
+    add r2, r2, -r3
+    mov r2.w, zeros
+    dp3 r3, r2, r2
+    max r3, tiny, r3
+    rsq r3, r3
+    mul r2, r2, r3
+    add r4, camera, -v3
+    dp3 r5, r2, r4
+    slt r5, zeros, r5
+    mul r5, two, r5
+    add r5, minus1, r5
+    mul r2, r2, r5                 ; r2 = n
+
+    ; THE LIGHT, as mdk_c3d.g.pica: F_lit / 2, clamped at 1.
+    mov r6, r2.zzzz
+    mul r6, half, r6
+    add r6, half, r6               ; t, every lane
+    mov r7, groundColour
+    add r7, skyColour, -r7
+    mul r7, r7, r6
+    add r7, groundColour, r7       ; mix(ground, sky, t): the hemisphere
+    mul r11, params.xxxx, r7       ; exposure * hemisphere: the shadow's light
+    dp3 r8, -sunDir, r2
+    max r8, zeros, r8              ; facing
+    mul r3, sunColour, r8
+    add r7, r7, r3
+    mul r7, params.xxxx, r7        ; * exposure
+    max r7, zeros, r7
+    lg2 r13.x, r7.x
+    lg2 r13.y, r7.y
+    lg2 r13.z, r7.z
+    mul r13, invGamma, r13
+    ex2 r12.x, r13.x
+    ex2 r12.y, r13.y
+    ex2 r12.z, r13.z
+    mul r12, half, r12
+    min r12, ones, r12             ; F_lit / 2
+
+    ; THE SHADOW'S LIGHT, the same curve without the sun: F_shadow / 2.
+    max r11, zeros, r11
+    lg2 r13.x, r11.x
+    lg2 r13.y, r11.y
+    lg2 r13.z, r11.z
+    mul r13, invGamma, r13
+    ex2 r11.x, r13.x
+    ex2 r11.y, r13.y
+    ex2 r11.z, r13.z
+    mul r11, half, r11
+    min r11, ones, r11             ; F_shadow / 2
+
+    ; 1 - R, R = luma(F_shadow) / luma(F_lit), clamped to [0, 1].
+    dp3 r11, luma, r11
+    dp3 r13, luma, r12
+    max r13, tiny, r13
+    rcp r13, r13
+    mul r11, r11, r13
+    min r11, ones, r11
+    add r11, ones, -r11            ; 1 - R, every lane
+
+    ; The normal offset, in world units.
+    mul r14, params.yyyy, r2
+    mov r14.w, zeros
+
+    ; EMIT the triangle.
+    mov r0, v3
+    call litqvertex
+    setemit 0
+    mov outpos, v0
+    mov outtc0, r1
+    mov outtcw, r1.z
+    mov outtc1, v2
+    mov outclr, r15
+    emit
+
+    mov r0, v7
+    call litqvertex
+    setemit 1
+    mov outpos, v4
+    mov outtc0, r1
+    mov outtcw, r1.z
+    mov outtc1, v6
+    mov outclr, r15
+    emit
+
+    mov r0, v11
+    call litqvertex
+    setemit 2, prim
+    mov outpos, v8
+    mov outtc0, r1
+    mov outtcw, r1.z
+    mov outtc1, v10
+    mov outclr, r15
+    emit
+
+    end
+.end
+
+; One vertex. IN: r0 = world position (w 1), r11 = 1 - R, r12 = F_lit / 2,
+; r14 = the normal offset.
+; OUT: r1 = (u, v, depth, 1) in the map, r15 = (F_lit / 2, q). Uses r3, r5.
+.proc litqvertex
+    add r0, r14, r0
+    mov r0.w, ones
+    dp4 r1.x, sunMtx[0], r0
+    dp4 r1.y, sunMtx[1], r0
+    dp4 r1.z, sunMtx[2], r0
+    add r1.z, -params.zzzz, r1.z   ; the depth bias: towards the sun
+    max r1.z, zeros, r1.z
+    mov r1.w, ones
+
+    ; edge = max(|2u - 1|, |2v - 1|); survive = 1 - clamp((edge - 0.9) * 10, 0, 1).
+    mul r3, two, r1
+    add r3, minus1, r3
+    mov r5, r3
+    max r3, -r5, r3                ; |.|
+    max r3.x, r3.y, r3.x
+    add r3.x, -fadeStart, r3.x
+    mul r3.x, invFade, r3.x
+    max r3.x, zeros, r3.x
+    min r3.x, ones, r3.x
+    add r3.x, ones, -r3.x          ; survive
+
+    mov r15, r12
+    mul r15.w, r11.x, r3.x         ; q = survive * (1 - R)
+.end

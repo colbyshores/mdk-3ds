@@ -1,0 +1,7 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-19T16:38:42Z at 9a9a819
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: 3DS experiment (config hazeFog): the haze through the PICA fog unit on
+a W-buffer and the sun shadow as one scalar per vertex (no tint lookup). The
+PC ignores the key; this Linux frame is byte-identical to the previous pin.
+The 3DS picture and cost are unmeasured (no emulator or console this batch).

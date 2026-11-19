@@ -963,6 +963,85 @@ void testTheHazeIsThePcCurveOnTheRightDraws() {
     PICA_CHECK(mdk::pica::hazeColourWord(wild) == 0xFF33FF00u);
 }
 
+void testTheHazeThroughTheFogUnit() {
+    // THE CAMERA the game builds (camera_builder.cpp: near 0.5, far 20000, the
+    // oracle's right-handed [0, 1] projection) through the scene's own recipe.
+    const float n = 0.5f, f = 20000.0f;
+    float projection[16];
+    memset(projection, 0, sizeof(projection));
+    projection[0] = 1.0f;
+    projection[5] = 1.0f;
+    projection[10] = -f / (f - n);
+    projection[11] = -1.0f;
+    projection[14] = -n * f / (f - n);
+    float eye[16];
+    mdk::pica::eyeViewProjection(kIdentity, projection, 0.0f, eye);
+
+    const float offset = mdk::pica::hazeFogDepthOffset(f);
+    PICA_CHECK(offset > 0.0f);
+    PICA_CHECK(mdk::pica::hazeFogDepthOffset(0.0f) == 0.0f);
+    PICA_CHECK(mdk::pica::hazeFogDepthOffset(-5.0f) == 0.0f);
+
+    // THE W-BUFFER WITH SCALE 0 STORES w * offset: linear in eye depth, inside
+    // [0, 1] from the near plane to the far one, increasing (GPU_LEQUAL keeps
+    // the nearer), and the far plane under the cleared buffer's 1.0.
+    const float density = 0.0002f;   // level_light.cpp kHazeDensity
+    uint32_t table[mdk::pica::kHazeFogEntries];
+    mdk::pica::hazeFogTable(density, offset, table);
+    float last = -1.0f;
+    float worst = 0.0f;
+    for (int i = 0; i <= 400; i++) {
+        // Eye depths from the near plane to the far one, 50 units apart.
+        const float d = i == 0 ? n : (float)i * 50.0f;
+        const float p[4] = {0.0f, 0.0f, -d, 1.0f};
+        float clip[4];
+        xform(eye, p, clip);
+        PICA_CHECK(fabsf(clip[3] - d) <= d * 1e-6f);   // clip.w IS the eye depth
+        const float stored = mdk::pica::wBufferDepth(clip[2] / clip[3], clip[3], 0.0f, offset);
+        PICA_CHECK(fabsf(stored - d * offset) <= d * offset * 1e-6f);
+        PICA_CHECK(stored > last);
+        PICA_CHECK(stored >= 0.0f && stored < 1.0f);
+        last = stored;
+        // THE TABLE IS THE PC'S CURVE at that pixel: exp(-density * depth), the
+        // same as the combiner haze's ex2(hazeExponent * depth) at a vertex,
+        // within 1e-3 (a quarter of an 8-bit step of the colour's distance to the
+        // haze) -- the 11-bit steps and 128 straight slices of 156 units.
+        const float kept = mdk::pica::fogTableKept(table, stored);
+        const float pc = expf(-density * d);
+        const float combiner = exp2f(mdk::pica::hazeExponent(density) * d);
+        const float err = fabsf(kept - pc);
+        if (err > worst) worst = err;
+        PICA_CHECK(err < 1e-3f);
+        PICA_CHECK(fabsf(kept - combiner) < 1e-3f);
+    }
+    printf("  fog table: worst |kept - exp(-density * depth)| %.6f over 0.5..20000\n", worst);
+
+    // THE WORDS: value in bits 13-23 (1/2048), signed difference in bits 0-12,
+    // and every difference lands on the next entry's value (no seam between
+    // slices); the first entry keeps (all but) the whole colour.
+    PICA_CHECK((table[0] >> 13) == 2047u);
+    for (int i = 0; i + 1 < mdk::pica::kHazeFogEntries; i++) {
+        const int32_t value = (int32_t)(table[i] >> 13);
+        int32_t difference = (int32_t)(table[i] & 0x1FFFu);
+        if (difference & 0x1000) difference -= 0x2000;
+        PICA_CHECK((table[i] >> 24) == 0u);
+        PICA_CHECK(difference <= 0);   // the haze only thickens with distance
+        PICA_CHECK(value + difference == (int32_t)(table[i + 1] >> 13));
+    }
+    // The far plane keeps exp(-0.0002 * 20000) = exp(-4), as the PC does.
+    PICA_CHECK(fabsf(mdk::pica::fogTableKept(table, f * offset) - expf(-4.0f)) < 1e-3f);
+    // Out of range reads the ends, as the hardware's clamp does.
+    PICA_CHECK(mdk::pica::fogTableKept(table, -1.0f) == mdk::pica::fogTableKept(table, 0.0f));
+    PICA_CHECK(mdk::pica::fogTableKept(table, 2.0f) == mdk::pica::fogTableKept(table, 1.0f));
+
+    // NO DENSITY, NO HAZE: every entry keeps the (11-bit) whole colour.
+    uint32_t clear[mdk::pica::kHazeFogEntries];
+    mdk::pica::hazeFogTable(0.0f, offset, clear);
+    for (int i = 0; i < mdk::pica::kHazeFogEntries; i++) {
+        PICA_CHECK(clear[i] == (2047u << 13));
+    }
+}
+
 void testTheFilteredEdge() {
     // THE ALPHA-TEST REFERENCE, per draw: the oracle's discard with filtering
     // off; the PC's half cover (keep alpha >= 0.5, i.e. byte > 127) for a
@@ -1750,6 +1829,7 @@ int runPicaMatrixTests() {
     testTheTexelTileOrder();
     testSceneUvRunsFromTheLastRow();
     testTheHazeIsThePcCurveOnTheRightDraws();
+    testTheHazeThroughTheFogUnit();
     testTheFilteredEdge();
     testTheMipChain();
     testTheHdResidencyPolicy();

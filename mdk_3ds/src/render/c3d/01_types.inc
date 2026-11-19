@@ -588,6 +588,14 @@ struct RendererC3D {
     int shadowSunDirLocation = -1, shadowSunColourLocation = -1, shadowSkyLocation = -1;
     int shadowGroundLocation = -1, shadowCameraLocation = -1, shadowParamsLocation = -1;
     int shadowSunMtxLocation = -1, shadowLutMapLocation = -1;
+    // THE ONE-SCALAR SHADOWED LIT PROGRAM (config hazeFog; DVLE[5],
+    // mdk_litshadowq.g.pica): the shadow as q = survive * (1 - R) in the vertex
+    // alpha, two textures (map, surface), no tint lookup. Its uniforms are
+    // programShadow's registers (checked at init). shadowScalar is the frame's
+    // choice of layout (prepareShadows).
+    shaderProgram_s programShadowQ;
+    bool shadowQReady = false;
+    bool shadowScalar = false;
     // THE SHADOW TINT (pica::sunShadowTintTexel): F_shadow(t) / 2 along u, the
     // edge fade's survival in alpha along v, on texture unit 2 for the shadowed
     // lit draws; refilled when the rig's sky, ground or exposure change.
@@ -597,9 +605,11 @@ struct RendererC3D {
     // The frame's shadowed lit draws may run (prepareShadows): the map was made
     // for this frame, the program and the tint are ready.
     bool shadowLitLive = false;
-    // The combiner holds the shadowed lit draw's four stages (06_draw.inc
-    // installShadowLitStages) and units 1 and 2 hold its textures; every other
-    // layout puts stages 1-3 and units 1-2 back first (leaveShadowLitStages).
+    // The combiner holds the shadowed lit draw's stages (06_draw.inc
+    // installShadowLitStages: four with the tint, three in the scalar layout)
+    // and units 1 and 2 hold its textures; every other layout puts stages 1-3
+    // and units 1-2 back first (leaveShadowLitStages). The layout is the frame's
+    // (shadowScalar), and installEye leaves it every eye.
     bool shadowLitStages = false;
     int8_t shadowLitHaze = -1;      // stage 3's haze in that layout: -1 unknown, 0 off, 1 on
     // An 8x8 opaque white texture: what units 1 and 2 are left holding when no
@@ -658,6 +668,19 @@ struct RendererC3D {
     float hazeExponent = 0.0f;
     bool hazeLive = false;
     bool hazeOn = false;
+    // THE HAZE THROUGH THE FOG UNIT (config hazeFog; pica_matrix.h): the
+    // frame's decision (prepareHaze: the haze is live and the toggle on), the
+    // W-buffer's offset for the camera's far plane, the table (rebuilt when the
+    // density or the far plane change, which the key records), and the fog
+    // mode's cache (installEye resets it every eye; setFog is its one writer
+    // inside the eye loop). The camera's far plane comes with the camera.
+    bool fogLive = false;
+    bool fogOn = false;
+    float hazeFogOffset = 0.0f;
+    float hazeFogKey[2] = {-1.0f, -1.0f};   // density, far plane of the table
+    C3D_FogLut hazeFogLut = {};
+    float farPlane = 0.0f;
+    int32_t drawsFogged = 0;                 // draws with the fog on, both eyes (census)
     // The alpha-test reference installed (installAlphaTest's cache).
     int alphaReference = 0;
 

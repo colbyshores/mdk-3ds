@@ -751,6 +751,9 @@ EyePlan eyePlan(float slider, float separation);
 // runs on the PICA; the CPU writes one uniform when it changes. Per vertex
 // against the PC's per pixel, and eye depth against its Euclidean distance,
 // are the two approximations.
+//
+// This is now the config `hazeFog = 0` path: the default takes the fog unit
+// after all, through the W-buffer (THE HAZE THROUGH THE FOG UNIT, below).
 // ---------------------------------------------------------------------------
 
 // The shader's haze.x for a density: -density * log2(e), so ex2(x * depth) is
@@ -766,6 +769,67 @@ bool hazeApplies(bool toggleOn, const Lighting& lighting, Shading shading, Pass 
 // The combiner constant's word for an opaque colour: 0xAABBGGRR (R in the low
 // byte), the layout C3D_TexEnvColor takes.
 uint32_t hazeColourWord(const Colour& colour);
+
+// ---------------------------------------------------------------------------
+// THE HAZE THROUGH THE FOG UNIT (config `hazeFog`, the default; 0 is the
+// combiner haze above, kept for the owner's A/B).
+//
+// WHY THE FOG UNIT WORKS AFTER ALL. The note above is right about the Z-buffer:
+// a 128-entry table indexed by the stored z/w puts the whole visible world in
+// its first entry. But the PICA's other depth mode, the W-BUFFER
+// (`C3D_DepthMap(false, scale, offset)`), stores `(z/w * scale + offset) * w` =
+// `z * scale + w * offset` (3dbrew GPUREG_DEPTHMAP_ENABLE; Azahar
+// sw_rasterizer.cpp: "W-Buffer (z * scale + w * offset = (z / w * scale +
+// offset) * w)"), and the fog unit indexes its table by THAT stored depth. With
+// scale 0 the stored depth is `w * offset`, and clip.w is the eye depth -- the
+// very number the vertex shader's haze takes (mdk_c3d.v.pica `dp4 r2.x,
+// mvp[3]`). So `offset = span / far` makes the stored depth LINEAR in eye
+// depth, 0 at the eye and `span` at the far plane, and the table's 128 entries
+// are 128 even slices of the view: at far 20000, 156 units an entry.
+//
+// The haze then runs PER PIXEL in the fog unit, after the combiner, exactly
+// where the combiner haze's INTERPOLATE stood (fog mixes the fog colour into
+// the colour by `1 - table`, rgb only), and frees the vertex colour's alpha.
+//
+// THE COST TO THE DEPTH BUFFER, while the fog is live (and only then: the
+// original look and every frame without a live haze keep the pinned Z-buffer
+// above). A 24-bit W-buffer resolves `far / 2^24` = 0.0012 units everywhere: far
+// better than the Z-buffer's beyond ~100 units (where its step is z^2 / (near *
+// 2^24)), worse near the eye. The depth pull moves a layer 1/256 of its
+// distance (render/depth_pull.cpp): at the near plane (0.5) that is 0.002 units,
+// 1.6 steps -- still separable, but the margin there is thin.
+// ---------------------------------------------------------------------------
+
+// The table's entries, and the share of [0, 1] the far plane stores at: a hair
+// under 1 so rounding can never put a visible fragment past the buffer's top.
+constexpr int32_t kHazeFogEntries = 128;
+constexpr float kHazeFogDepthSpan = 0.999f;
+
+// The W-buffer's offset for a far plane (`C3D_DepthMap(false, 0, offset)`):
+// stored depth = eye depth * offset. 0 for a far plane that is not positive (the
+// caller then keeps the Z-buffer and the combiner haze).
+float hazeFogDepthOffset(float farPlane);
+
+// The depth the PICA stores in its W-buffer mode for a fragment with converted
+// NDC z `zNdc` and clip w `w` -- the model of the mode above, as storedDepth is
+// of the Z-buffer's.
+float wBufferDepth(float zNdc, float w, float scale, float offset);
+
+// THE TABLE, in the fog unit's own words: entry i's 11-bit value (bits 13-23)
+// is the colour kept at stored depth i / 128, and its 13-bit signed difference
+// (bits 0-12) the step to entry i + 1 (both in 1/2048), so the unit's
+// `value + difference * fraction` meets the next entry exactly. kept =
+// exp(-density * eye depth) -- the PC's curve (enhanced.frag:187), as
+// hazeExponent's -- with eye depth = stored depth / offset. Rounded to the
+// nearest step (citro3d's FogLut_FromArray truncates); the last entry's
+// difference reaches the far plane's value. Cold: once per rig or far change.
+void hazeFogTable(float density, float depthOffset, uint32_t words[kHazeFogEntries]);
+
+// What the fog unit keeps of a colour at stored depth `depth` with that table:
+// the hardware's lookup (index = depth * 128, the entry's value plus its
+// difference times the fraction, clamped to [0, 1]; Azahar sw_rasterizer.cpp).
+// For the host test and the rig-change log line, never per fragment.
+float fogTableKept(const uint32_t words[kHazeFogEntries], float depth);
 
 // ---------------------------------------------------------------------------
 // THE FILTERED EDGE (Enhanced Mode, SPEC.md 7.9 `enableFiltering`)

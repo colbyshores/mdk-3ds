@@ -1385,7 +1385,10 @@ def adjudicate(text, quiet=False):
                       r"mdk::pica::castsSunShadow\(draw->material\.pass, draw->material\.shading,"
                       r"\s*draw->primitive\);", rec_body) is not None
     unit1 = "C3D_TexBind(shadowLit ? 1 : 0, texture);" in rec_body
-    program = re.search(r"shadowLit\s*\?\s*&r->programShadow", rec_body) is not None
+    # (Either shadowed program, by the frame's layout: the order is pinned by
+    # `scalar-shadow-layout-two-textures-and-a-free-alpha` below.)
+    program = re.search(r"shadowLit\s*\?\s*\(r->shadowScalar\s*\?\s*&r->programShadow\w*\s*:"
+                        r"\s*&r->programShadow\w*\)", rec_body) is not None
     stages = re.search(r"if\s*\(shadowLit\)\s*\{\s*installShadowLitStages\(r,", rec_body) is not None
     leaves = re.search(r"if\s*\(!shadowLit\)\s*\{\s*leaveShadowLitStages\(r\);", rec_body) is not None
     haze_guard = re.search(r"if\s*\(!shadowLit\)\s*\{\s*setHaze\(", rec_body) is not None
@@ -1405,6 +1408,97 @@ def adjudicate(text, quiet=False):
                  "yes" if unit1 else "NO", "yes" if program else "NO",
                  "yes" if stages else "NO", "yes" if leaves else "NO",
                  "yes" if haze_guard else "NO", "yes" if units else "NO"))
+
+    # THE HAZE THROUGH THE FOG UNIT (config hazeFog; pica_matrix.h, THE HAZE
+    # THROUGH THE FOG UNIT). The fog unit is frame-wide fixed function, so the
+    # rule "the haze only on the draws the PC hazes" is now a property of WHO
+    # turns it on:
+    #   - one writer turns it ON (setFog), and its callers pass `on` (setHaze),
+    #     `haze` (installShadowLitStages) or false -- nothing else;
+    #   - setHaze hands its decision to setFog when the fog is live, and
+    #     drawRecorded's decision still excludes Original shading and Overlay;
+    #   - the shadowed draws hand it the frame's haze (a Lit, non-Overlay draw);
+    #   - installEye writes it OFF every eye, unconditionally, and with the fog
+    #     live installs the table and the colour; the glow and the caster pass
+    #     turn it off before they draw;
+    #   - the W-buffer is the eyes' depth map ONLY while the fog is live (the
+    #     original look keeps the pinned Z-buffer), and the fog is live only for
+    #     a live haze with the toggle on.
+    fog_on = [line for _, line in calls(text, r"C3D_FogGasMode\(")
+              if not re.search(r"C3D_FogGasMode\(\s*GPU_NO_FOG\b", line)]
+    setfog_b = body(text, "setFog") or ""
+    one_writer = (len(fog_on) == 1
+                  and "C3D_FogGasMode(on ? GPU_FOG : GPU_NO_FOG, GPU_PLAIN_DENSITY, false);" in setfog_b)
+    fog_args = sorted(set(re.search(r"setFog\(r,\s*([^)]*)\)", line).group(1).strip()
+                          for _, line in call_sites(text, "setFog")
+                          if re.search(r"setFog\(r,\s*([^)]*)\)", line)))
+    args_ok = set(fog_args) <= {"on", "haze", "false"}
+    sethaze_b = body(text, "setHaze") or ""
+    routed = re.search(r"\{\s*if\s*\(r->fogLive\)\s*\{\s*setFog\(r,\s*on\);\s*return;",
+                       sethaze_b) is not None
+    rec_b = body(text, "drawRecorded") or ""
+    draw_rule = re.search(r"setHaze\(r,\s*r->hazeLive\s*&&\s*draw->material\.shading\s*!=\s*"
+                          r"mdk::Shading::Original\s*&&\s*draw->material\.pass\s*!=\s*"
+                          r"mdk::Pass::Overlay\);", rec_b) is not None
+    shadow_rule = "installShadowLitStages(r, r->hazeLive);" in rec_b
+    eye_b = body(text, "installEye") or ""
+    eye_off = re.search(r"\n    C3D_FogGasMode\(GPU_NO_FOG, GPU_PLAIN_DENSITY, false\);\s*"
+                        r"r->fogOn = false;", eye_b) is not None
+    eye_table = re.search(r"if\s*\(r->fogLive\)\s*\{\s*C3D_FogLutBind\(&r->hazeFogLut\);\s*"
+                          r"C3D_FogColor\(", eye_b) is not None
+    glow_off = "setFog(r, false);" in (body(text, "drawGlow") or "")
+    cast_off = "setFog(r, false);" in (body(text, "castShadows") or "")
+    wmap = re.search(r"if\s*\(r->fogLive\)\s*\{(?:\s*//[^\n]*)*\s*"
+                     r"C3D_DepthMap\(false,\s*0\.0f,\s*r->hazeFogOffset\);\s*\}\s*else\s*\{\s*"
+                     r"C3D_DepthMap\(mdk::pica::kDepthMapIsZBuffer,", eye_b) is not None
+    wmaps = len(calls(text, r"C3D_DepthMap\(\s*false"))
+    prep_b = body(text, "prepareHaze") or ""
+    gate_at = prep_b.find("if (!r->hazeLive || !r->toggles.hazeFog) {")
+    live_at = prep_b.find("r->fogLive = true;")
+    gated = 0 <= gate_at < live_at and prep_b.count("r->fogLive = true;") == 1
+    rep.check("haze-fog-only-on-the-hazed-scene-draws",
+              one_writer and args_ok and routed and draw_rule and shadow_rule and eye_off
+              and eye_table and glow_off and cast_off and wmap and wmaps == 1 and gated,
+              "fog turned on only by setFog: %s (%d site(s)); setFog's arguments %s; setHaze "
+              "routes to it: %s; the draw rule excludes Original and Overlay: %s; the shadowed "
+              "draw takes the frame's haze: %s; installEye writes it off: %s and installs the "
+              "table: %s; the glow / the caster pass turn it off: %s / %s; the W-buffer only "
+              "with the fog live: %s (%d W-buffer map(s)); the fog live only for a live haze "
+              "with the toggle: %s"
+              % ("yes" if one_writer else "NO", len(fog_on), ", ".join(fog_args) or "none",
+                 "yes" if routed else "NO", "yes" if draw_rule else "NO",
+                 "yes" if shadow_rule else "NO", "yes" if eye_off else "NO",
+                 "yes" if eye_table else "NO", "yes" if glow_off else "NO",
+                 "yes" if cast_off else "NO", "yes" if wmap else "NO", wmaps,
+                 "yes" if gated else "NO"))
+
+    # THE SCALAR SHADOW LAYOUT (config hazeFog: mdk_litshadowq.g.pica). Its whole
+    # point is the lookup it does not take, so the scalar branch of
+    # installShadowLitStages binds the map on unit 0 and NOTHING on unit 2 (unit
+    # 1 is drawRecorded's surface, unit 2 keeps the idle texture) and reads no
+    # TEXTURE2; the shadowed draw goes through the scalar program exactly when the
+    # frame chose that layout; and the frame chooses it only when the vertex
+    # alpha is free -- the haze is the fog unit's, or there is none -- because
+    # that alpha is where the shadow rides.
+    inst_b = body(text, "installShadowLitStages") or ""
+    sc = re.search(r"if\s*\(!r->shadowLitStages\s*&&\s*r->shadowScalar\)\s*\{", inst_b)
+    sc_span = block_span_from(inst_b, sc.end() - 1) if sc else None
+    sc_body = inst_b[sc_span[0]:sc_span[1]] if sc_span else ""
+    sc_units = (sc_body != "" and "C3D_TexBind(0, &r->shadowTex);" in sc_body
+                and "C3D_TexBind(2" not in sc_body and "GPU_TEXTURE2" not in sc_body
+                and "C3D_TexBind(1" not in sc_body)
+    sc_program = re.search(r"shadowLit\s*\?\s*\(r->shadowScalar\s*\?\s*&r->programShadowQ\s*:"
+                           r"\s*&r->programShadow\)", rec_b) is not None
+    shad_b = body(text, "prepareShadows") or ""
+    sc_choice = ("r->shadowScalar = r->toggles.hazeFog && r->shadowQReady && "
+                 "(r->fogLive || !r->hazeLive);") in shad_b
+    rep.check("scalar-shadow-layout-two-textures-and-a-free-alpha",
+              sc_units and sc_program and sc_choice,
+              "the scalar layout binds the map on unit 0 and nothing on units 1-2, reads no "
+              "TEXTURE2: %s; its draw goes through the scalar program: %s; chosen only with "
+              "the vertex alpha free: %s"
+              % ("yes" if sc_units else "NO", "yes" if sc_program else "NO",
+                 "yes" if sc_choice else "NO"))
 
     # HOW THE SUN'S MAP IS WRITTEN, AND WHY IT IS NOT ONE WAY (measured
     # 2026-11-18; 03_frame.inc testNativeShadowWrites). The Old 3DS lands the
@@ -3031,7 +3125,8 @@ ARMS = [
      lambda s: s.replace("C3D_TexBind(shadowLit ? 1 : 0, texture);", "C3D_TexBind(0, texture);", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("shadowed-lit-draw-through-the-plain-lit-program",
-     lambda s: s.replace("shadowLit ? &r->programShadow", "shadowLit ? &r->programLit", 1),
+     lambda s: s.replace("shadowLit ? (r->shadowScalar ? &r->programShadowQ : &r->programShadow)",
+                         "shadowLit ? &r->programLit", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("shadowed-lit-draw-on-every-lit-surface",
      lambda s: s.replace("    const bool shadowLit = lit && r->shadowLitLive &&\n"
@@ -3051,6 +3146,46 @@ ARMS = [
     ("the-glow-runs-over-the-shadowed-layout",
      lambda s: s.replace("    leaveShadowLitStages(r);\n    frameSplit(r);\n", "    frameSplit(r);\n", 1),
      "no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw"),
+    # THE HAZE THROUGH THE FOG UNIT, each broken the one plausible way.
+    ("fog-on-for-original-shading",
+     lambda s: s.replace("setHaze(r, r->hazeLive && draw->material.shading != mdk::Shading::Original &&\n"
+                         "                       draw->material.pass != mdk::Pass::Overlay);",
+                         "setHaze(r, r->hazeLive && draw->material.pass != mdk::Pass::Overlay);", 1),
+     "haze-fog-only-on-the-hazed-scene-draws"),
+    ("fog-forced-on-whatever-the-draw",
+     lambda s: s.replace("        setFog(r, on);\n        return;", "        setFog(r, true);\n        return;", 1),
+     "haze-fog-only-on-the-hazed-scene-draws"),
+    ("fog-left-on-from-the-last-eye",
+     lambda s: s.replace("    C3D_FogGasMode(GPU_NO_FOG, GPU_PLAIN_DENSITY, false);\n    r->fogOn = false;\n", "", 1),
+     "haze-fog-only-on-the-hazed-scene-draws"),
+    ("fog-over-the-glow",
+     lambda s: s.replace("    // The glow takes no haze: its passes and its add over the eye unfogged.\n"
+                         "    setFog(r, false);\n", "", 1),
+     "haze-fog-only-on-the-hazed-scene-draws"),
+    ("fog-over-the-shadow-map",
+     lambda s: s.replace("    // eyes use).\n    setFog(r, false);\n", "    // eyes use).\n", 1),
+     "haze-fog-only-on-the-hazed-scene-draws"),
+    ("w-buffer-for-the-original-look",
+     lambda s: s.replace("    if (r->fogLive) {\n        // The W-buffer while the fog unit hazes",
+                         "    if (r->toggles.hazeFog) {\n        // The W-buffer while the fog unit hazes", 1),
+     "haze-fog-only-on-the-hazed-scene-draws"),
+    ("fog-live-without-the-toggle",
+     lambda s: s.replace("    if (!r->hazeLive || !r->toggles.hazeFog) {\n", "    if (!r->hazeLive) {\n", 1),
+     "haze-fog-only-on-the-hazed-scene-draws"),
+    ("scalar-layout-binds-the-tint-on-unit-2",
+     lambda s: s.replace("    if (!r->shadowLitStages && r->shadowScalar) {\n"
+                         "        C3D_TexBind(0, &r->shadowTex);\n",
+                         "    if (!r->shadowLitStages && r->shadowScalar) {\n"
+                         "        C3D_TexBind(0, &r->shadowTex);\n"
+                         "        C3D_TexBind(2, &r->shadowTint);\n", 1),
+     "scalar-shadow-layout-two-textures-and-a-free-alpha"),
+    ("scalar-layout-draws-through-the-tint-program",
+     lambda s: s.replace("(r->shadowScalar ? &r->programShadowQ : &r->programShadow)",
+                         "(r->shadowScalar ? &r->programShadow : &r->programShadowQ)", 1),
+     "scalar-shadow-layout-two-textures-and-a-free-alpha"),
+    ("scalar-layout-under-the-combiner-haze",
+     lambda s: s.replace(" && r->shadowQReady && (r->fogLive || !r->hazeLive);", " && r->shadowQReady;", 1),
+     "scalar-shadow-layout-two-textures-and-a-free-alpha"),
     # THE GEOMETRY-STAGE RULE's five plausible "simplifications", each of which
     # the emulator renders correctly and the console hangs on or degrades.
     ("plain-program-bound-in-geometry-mode-without-a-split",

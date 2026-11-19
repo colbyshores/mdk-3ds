@@ -264,6 +264,11 @@ struct EnhancedToggles {
     bool glowBloom = false;           // 3DS: the glow as the PC's bloom, ported (~10 ms on
                                       // the Old 3DS), instead of the default additive
                                       // billboards on bright effects; the PC ignores it
+    bool hazeFog = true;              // 3DS: the haze through the PICA's fog unit (per pixel,
+                                      // a W-buffer while it is live) and the sun shadow's
+                                      // one-scalar layout it frees the vertex alpha for (no
+                                      // tint lookup); 0 = the combiner haze and the tint
+                                      // lookup, for the owner's A/B. The PC ignores it
 
     // NOT A LOOK: a diagnostic of the 3DS sun shadow, off by default. The caster
     // pass writes the shadow map's four bytes in the order the GPU's shadow unit

@@ -284,6 +284,20 @@ MDK_TEST(EnhancedConfigRoundTrips) {
         MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(bloom).c_str(), &bloomBack));
         MDK_CHECK(bloomBack.glowBloom && bloomBack.enableGlowBillboards);
     }
+    // The 3DS haze through the fog unit (not a toggle of its own): on by
+    // default, written, and the combiner haze read back when it is off.
+    MDK_CHECK(toggles.hazeFog && back.hazeFog);
+    MDK_CHECK(text.find("hazeFog=1\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles combiner;
+        combiner.hazeFog = false;
+        mdk::EnhancedToggles combinerBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(combiner).c_str(),
+                                           &combinerBack));
+        MDK_CHECK(!combinerBack.hazeFog && combinerBack.enableHaze);
+        mdk::EnhancedToggles typed;
+        MDK_CHECK(mdk::parseEnhancedConfig("hazeFog=0\n", &typed) && !typed.hazeFog);
+    }
     // How often the 3DS redraws the shadow map (not a toggle): 0 = automatic by
     // default, written, read back; only 1-4 are taken, anything else is 0.
     MDK_CHECK(toggles.shadowMapRefresh == 0 && back.shadowMapRefresh == 0);
