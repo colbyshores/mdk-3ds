@@ -1323,6 +1323,133 @@ def adjudicate(text, quiet=False):
                  b_reset, b_count, b_begin, "yes" if rec_prim else "NO",
                  "yes" if rec_pass else "NO"))
 
+    # THE VERTEX LIGHT (config vertexLight; mdk_vlit.v.pica). The lit programs'
+    # light moved to the vertex shader, from face normals made at mesh creation.
+    # Three things the emulator cannot show and a tidy-up could break:
+    #   * THE NORMALS ARE GEOMETRY, MADE ONCE: makeFaceNormals is called from
+    #     mdk_render_create_mesh only, after the vertices are written; the
+    #     per-frame update (objects, effects, Kurt, the canvas) computes none and
+    #     invalidates any a mesh had (its draws keep the geometry shader).
+    #     faceNormalAttribute runs inside makeFaceNormals only.
+    #   * THE GEOMETRY-STAGE RULE HOLDS FOR ITS FOUR PROGRAMS: drawRecorded picks
+    #     the pass-through variant exactly when the list is in geometry mode (a
+    #     no-GS variant there is a split per lit run, or past the cap a hang's
+    #     shape); the no-GS variants are made with no geometry shader and the
+    #     pass variants with DVLE[4] / DVLE[7]; no program of the four is bound
+    #     anywhere but through drawRecorded's `wanted` (bindProgram); and leaving
+    #     geometry mode re-sends the light's vertex uniforms (vshUniformVecs is
+    #     raised to the shadowed shader's sunMtx and the normal matrix).
+    #   * THE THIRD ATTRIBUTE NEVER OUTLIVES ITS DRAW: the face normal's loader
+    #     and buffer are added for a vertex-lit draw only; every other function
+    #     that binds a buffer either installs the two-loader layout itself
+    #     (AttrInfo_Init, and then clears the cache) or puts it back through
+    #     installVertexLayout. A loader the bound buffers do not cover reads
+    #     memory no draw owns.
+    create_body = text[fn_body_span(text, "mdk_render_create_mesh")[0]:
+                       fn_body_span(text, "mdk_render_create_mesh")[1]] \
+        if fn_body_span(text, "mdk_render_create_mesh") else ""
+    update_body = blank_comments(body(text, "mdk_render_update_mesh") or "")
+    make_calls = call_sites(text, "makeFaceNormals")
+    create_range = line_range(text, fn_body_span(text, "mdk_render_create_mesh"))
+    make_in_create = [loc for ln, loc in make_calls
+                      if create_range and create_range[0] <= ln <= create_range[1]]
+    upd_at = create_body.find("mdk_render_update_mesh(")
+    make_at = create_body.find("makeFaceNormals(")
+    attr_calls = call_sites(text, "faceNormalAttribute")
+    make_range = line_range(text, body_span(text, "makeFaceNormals"))
+    attr_stray = [loc for ln, loc in attr_calls
+                  if not (make_range and make_range[0] <= ln <= make_range[1])]
+    upd_clean = ("makeFaceNormals" not in update_body
+                 and "faceNormalAttribute" not in update_body
+                 and re.search(r"mesh\.normalsValid\s*=\s*false\s*;", update_body) is not None)
+    rep.check("vertex-light-normals-made-only-at-mesh-creation",
+              len(make_calls) == 1 and len(make_in_create) == 1 and 0 <= upd_at < make_at
+              and len(attr_calls) == 1 and not attr_stray and upd_clean,
+              "%d makeFaceNormals call(s), %d inside mdk_render_create_mesh after its vertices "
+              "(update at %d, normals at %d); %d faceNormalAttribute call(s), outside "
+              "makeFaceNormals: %s; the per-frame update computes none and invalidates them: %s"
+              % (len(make_calls), len(make_in_create), upd_at, make_at, len(attr_calls),
+                 "none" if not attr_stray else "; ".join(attr_stray),
+                 "yes" if upd_clean else "NO"))
+
+    rec_body = body(text, "drawRecorded") or ""
+    vl_pick = re.search(r"shaderProgram_s\*\s*const\s+vlProgram\s*=\s*"
+                        r"shadowLit\s*\?\s*\(\s*r->gsInList\s*\?\s*&r->programVlShadowPass\s*:"
+                        r"\s*&r->programVlShadow\s*\)\s*"
+                        r":\s*\(\s*r->gsInList\s*\?\s*&r->programVlPass\s*:\s*&r->programVl\s*\)\s*;",
+                        rec_body) is not None
+    vl_wanted = re.search(r"const\s+wanted\s*=\s*vsLit\s*\?\s*vlProgram\s*:", rec_body) is not None
+    vl_refs = sites(text, r"&r->programVl(?:Pass|Shadow|ShadowPass)?\b")
+    allowed = [rg for rg in (line_range(text, body_span(text, fn))
+                             for fn in ("drawRecorded",)) if rg]
+    life_sp = fn_body_span(text, "mdk_render_create")
+    if life_sp:
+        allowed.append(line_range(text, life_sp))
+    end_sp = body_span(text, "mdk_render_destroy")
+    if end_sp:
+        allowed.append(line_range(text, end_sp))
+    vl_stray = [loc for ln, loc in vl_refs if not any(a <= ln <= b for a, b in allowed)]
+    rec_vl_binds = [loc for ln, loc in vl_refs
+                    if any(a <= ln <= b for a, b in allowed[:1]) and "bindProgram" in loc]
+    no_gs = ("shaderProgramSetGsh(&r->programVl," not in text
+             and "shaderProgramSetGsh(&r->programVlShadow," not in text)
+    pass_gs = (re.search(r"shaderProgramSetGsh\(&r->programVlPass,\s*&r->dvlb->DVLE\[4\],\s*12\)",
+                         text) is not None
+               and re.search(r"shaderProgramSetGsh\(&r->programVlShadowPass,\s*"
+                             r"&r->dvlb->DVLE\[7\],\s*12\)", text) is not None)
+    vecs = (re.search(r"r->vshUniformVecs\s*=\s*r->vlSunMtxLocation\s*\+\s*4\s*;", text) is not None
+            and re.search(r"r->vshUniformVecs\s*=\s*r->vlNormalMtxLocation\s*\+\s*3\s*;", text)
+            is not None)
+    rep.check("vertex-light-programs-keep-the-geometry-stage-rule",
+              vl_pick and vl_wanted and not vl_stray and not rec_vl_binds and no_gs and pass_gs
+              and vecs,
+              "drawRecorded takes the pass-through variant exactly in geometry mode: %s, through "
+              "`wanted`: %s; vertex-light program references outside create/destroy/drawRecorded: "
+              "%s; bound directly in drawRecorded: %s; no-GS variants made without a geometry "
+              "shader %s, pass variants with DVLE[4]/DVLE[7] %s; leaving geometry mode re-sends "
+              "the light's uniforms %s"
+              % ("yes" if vl_pick else "NO", "yes" if vl_wanted else "NO",
+                 "none" if not vl_stray else "; ".join(vl_stray),
+                 "none" if not rec_vl_binds else "; ".join(rec_vl_binds),
+                 "yes" if no_gs else "NO", "yes" if pass_gs else "NO", "yes" if vecs else "NO"))
+
+    # Every function body that binds a vertex buffer, by name.
+    fn_names = sorted(set(re.findall(r"(?m)^[ \t]*(?:static[ \t]+)?[A-Za-z_][A-Za-z0-9_:*]*"
+                                     r"[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\([^;{]*\)[ \t]*\{",
+                                     blank_cached(text))))
+    unsafe = []
+    for fn in fn_names:
+        sp = fn_body_span(text, fn)
+        if not sp:
+            continue
+        fb = text[sp[0]:sp[1]]
+        if "BufInfo_Add(" not in fb or fn == "drawRecorded":
+            continue
+        own = "AttrInfo_Init(" in fb and "r->layoutNormals = false;" in fb
+        # One restore per buffer bound (drawGlow binds two).
+        back = len(re.findall(r"BufInfo_Add\([^;]*;\s*if\s*\(\s*r->layoutNormals\s*\)\s*\{\s*"
+                              r"installVertexLayout\(r,\s*false\);", fb)) == fb.count("BufInfo_Add(")
+        if not (own or back):
+            unsafe.append(fn)
+    eye_b = body(text, "installEye") or ""
+    eye_reset = 0 <= eye_b.find("AttrInfo_Init(attrInfo);") < eye_b.find("r->layoutNormals = false;")
+    vl_buf = re.search(r"if\s*\(\s*vsLit\s*\)\s*\{\s*BufInfo_Add\(bufInfo,\s*mesh\.normals,",
+                       rec_body) is not None
+    vl_layout = re.search(r"if\s*\(\s*vsLit\s*!=\s*r->layoutNormals\s*\)\s*\{\s*"
+                          r"installVertexLayout\(r,\s*vsLit\);", rec_body) is not None
+    layout_b = body(text, "installVertexLayout") or ""
+    third = re.search(r"if\s*\(\s*normals\s*\)\s*\{\s*AttrInfo_AddLoader\(attrInfo,\s*2,", layout_b)
+    rep.check("vertex-light-third-attribute-only-for-its-draw",
+              not unsafe and eye_reset and vl_buf and vl_layout and third is not None
+              and "r->layoutNormals = normals;" in layout_b,
+              "functions binding a buffer without a two-loader layout of their own or a "
+              "restore: %s; installEye clears the cache after its loaders: %s; drawRecorded adds "
+              "the normal buffer only for a vertex-lit draw %s and matches the layout to it %s; "
+              "installVertexLayout's third loader only on request %s"
+              % ("none" if not unsafe else ", ".join(unsafe), "yes" if eye_reset else "NO",
+                 "yes" if vl_buf else "NO", "yes" if vl_layout else "NO",
+                 "yes" if third else "NO"))
+
     # EDGE SMOOTHING'S BORROWED DEPTH. At scale 2 the right eye shares the left
     # eye's depth buffer (02_lifecycle.inc buildEyeTargets), so installing the
     # right eye must SPLIT the frame (submitting the left eye's commands) and THEN
@@ -3079,6 +3206,43 @@ ARMS = [
                          "    if (r->litBound) {\n"
                          "        // The geometry shader decides the primitives", 1),
      "geometry-programs-are-left-only-through-a-split"),
+    # THE VERTEX LIGHT's plausible tidy-ups, each invisible in the emulator.
+    ("face-normals-recomputed-in-the-per-frame-update",
+     lambda s: s.replace("    mesh.normalsValid = false;\n}\n",
+                         "    makeFaceNormals(renderer, mesh, v, n);\n}\n", 1),
+     "vertex-light-normals-made-only-at-mesh-creation"),
+    ("updated-mesh-keeps-its-stale-face-normals",
+     lambda s: s.replace("    mesh.normalsValid = false;\n}\n", "}\n", 1),
+     "vertex-light-normals-made-only-at-mesh-creation"),
+    ("vertex-lit-draw-without-a-geometry-shader-in-geometry-mode",
+     lambda s: s.replace(": (r->gsInList ? &r->programVlPass : &r->programVl);",
+                         ": &r->programVl;", 1),
+     "vertex-light-programs-keep-the-geometry-stage-rule"),
+    ("vertex-lit-shadowed-draw-without-a-geometry-shader-in-geometry-mode",
+     lambda s: s.replace("shadowLit ? (r->gsInList ? &r->programVlShadowPass : &r->programVlShadow)",
+                         "shadowLit ? &r->programVlShadow", 1),
+     "vertex-light-programs-keep-the-geometry-stage-rule"),
+    ("vertex-light-uniforms-not-resent-leaving-geometry-mode",
+     lambda s: s.replace("        r->vshUniformVecs = r->vlSunMtxLocation + 4;\n", "", 1),
+     "vertex-light-programs-keep-the-geometry-stage-rule"),
+    ("the-glow-billboards-inherit-the-normal-loader",
+     lambda s: s.replace("    BufInfo_Add(bufInfo, r->glowQuadMesh, 5 * sizeof(float), 2, 0x10);\n"
+                         "    if (r->layoutNormals) {\n"
+                         "        installVertexLayout(r, false);\n"
+                         "    }\n",
+                         "    BufInfo_Add(bufInfo, r->glowQuadMesh, 5 * sizeof(float), 2, 0x10);\n", 1),
+     "vertex-light-third-attribute-only-for-its-draw"),
+    ("eye-install-forgets-the-layout-cache",
+     lambda s: s.replace("    // 06_draw.inc installVertexLayout. The normal matrix is written by the first\n"
+                         "    // vertex-lit draw of the eye.)\n"
+                         "    r->layoutNormals = false;\n",
+                         "    // 06_draw.inc installVertexLayout. The normal matrix is written by the first\n"
+                         "    // vertex-lit draw of the eye.)\n", 1),
+     "vertex-light-third-attribute-only-for-its-draw"),
+    ("normal-buffer-bound-for-every-draw",
+     lambda s: s.replace("    if (vsLit) {\n        BufInfo_Add(bufInfo, mesh.normals,",
+                         "    if (mesh.normals) {\n        BufInfo_Add(bufInfo, mesh.normals,", 1),
+     "vertex-light-third-attribute-only-for-its-draw"),
     ("program-bound-at-create-as-well",
      lambda s: s.replace(SHADER_OK_LINE,
                          "    C3D_BindProgram(&r->program);\n" + SHADER_OK_LINE, 1),

@@ -284,6 +284,21 @@ MDK_TEST(EnhancedConfigRoundTrips) {
         MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(bloom).c_str(), &bloomBack));
         MDK_CHECK(bloomBack.glowBloom && bloomBack.enableGlowBillboards);
     }
+    // The 3DS light's vertex-shader path (not a toggle of its own): ON by
+    // default, written, and read back when it is off.
+    MDK_CHECK(toggles.vertexLight && back.vertexLight);
+    MDK_CHECK(text.find("vertexLight=1\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles geometry;
+        geometry.vertexLight = false;
+        const std::string geometryText = mdk::writeEnhancedConfig(geometry);
+        MDK_CHECK(geometryText.find("vertexLight=0\n") != std::string::npos);
+        mdk::EnhancedToggles geometryBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(geometryText.c_str(), &geometryBack));
+        MDK_CHECK(!geometryBack.vertexLight && geometryBack.enableLighting);
+        mdk::EnhancedToggles typed;
+        MDK_CHECK(mdk::parseEnhancedConfig("vertexLight=0\n", &typed) && !typed.vertexLight);
+    }
     // How often the 3DS redraws the shadow map (not a toggle): 0 = automatic by
     // default, written, read back; only 1-4 are taken, anything else is 0.
     MDK_CHECK(toggles.shadowMapRefresh == 0 && back.shadowMapRefresh == 0);

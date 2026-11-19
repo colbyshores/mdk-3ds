@@ -131,6 +131,8 @@ static bool makeShadowRamp(RendererC3D* r);
 static mdk::pica::ShadowByteOrder shadowByteOrder(const RendererC3D* r);
 static void installLitUniforms(RendererC3D* r);
 static void installShadowUniforms(RendererC3D* r);
+static void prepareVertexLight(RendererC3D* r);
+static void installVertexLightUniforms(RendererC3D* r, bool shadowed);
 static void leaveShadowLitStages(RendererC3D* r);
 static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw);
 static void installAlphaTest(RendererC3D* r, int reference, bool force);
@@ -380,6 +382,11 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // geometry vanishes with no error at all.
     AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
     AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord
+    // (A vertex-lit draw adds the face normal's loader and puts this back:
+    // 06_draw.inc installVertexLayout. The normal matrix is written by the first
+    // vertex-lit draw of the eye.)
+    r->layoutNormals = false;
+    r->normalIsIdentity = false;
 
     // The combiner. The original look is an unlit, untextured surface for
     // now; the textured path replaces this when the palette expansion
@@ -723,6 +730,7 @@ static void testNativeShadowWrites(RendererC3D* r) {
         AttrInfo_Init(attrInfo);
         AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);
         AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);
+        r->layoutNormals = false;
         C3D_BufInfo* bufInfo = C3D_GetBufInfo();
         BufInfo_Init(bufInfo);
         BufInfo_Add(bufInfo, quad, 5 * sizeof(float), 2, 0x10);
@@ -1224,6 +1232,9 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // before either eye: both eyes read the one map.
     prepareShadows(r);
     castShadows(r);
+    // ... and whether the light may run in the vertex shader (config
+    // vertexLight), which needs the shadow's decision.
+    prepareVertexLight(r);
     // The glow (Enhanced Mode enableGlowBillboards) follows the enhanced rig, as
     // the PC's post pass does; a session whose glow memory failed stays off.
     // Billboards by default (the owner's 2026-11-18 decision); the PC's bloom,
@@ -1318,8 +1329,24 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
                           "draws (both eyes)",
                           (int)r->frame, (int)r->drawsLit, (int)r->drawsShadowLit,
                           (int)r->drawsPass, (int)r->drawsPlain);
+        // The vertex light's share (config vertexLight): its draws with no
+        // geometry shader, its draws through a pass-through one (the list was
+        // already in geometry mode), and the lit draws the geometry shader kept
+        // while it was live -- streamed meshes (no face normals) and draws off a
+        // triple of their mesh. `lit` and `lit+shadow` above are the geometry
+        // shader's own.
+        mdk::log3dsPrintf("programs: frame %d: vertex light %s: %d vertex-lit, %d vertex-lit+shadow, "
+                          "%d vertex-lit via pass GS, %d vertex-lit+shadow via pass GS; GS kept "
+                          "%d streamed, %d misaligned (both eyes)",
+                          (int)r->frame, r->vlLive ? "live" : "off", (int)r->drawsVertexLit,
+                          (int)r->drawsVertexShadowLit, (int)r->drawsVertexLitPass,
+                          (int)r->drawsVertexShadowLitPass, (int)r->vertexLightStreamed,
+                          (int)r->vertexLightMisaligned);
     }
     r->drawsLit = r->drawsShadowLit = r->drawsPass = r->drawsPlain = 0;
+    r->drawsVertexLit = r->drawsVertexShadowLit = 0;
+    r->drawsVertexLitPass = r->drawsVertexShadowLitPass = 0;
+    r->vertexLightStreamed = r->vertexLightMisaligned = 0;
     // The halos are this frame's: a frame whose game hands none over (no
     // runtime) must not draw the last frame's again (review, 2026-11-19).
     r->glowQuadCount = 0;
@@ -1828,6 +1855,41 @@ static void installShadowUniforms(RendererC3D* r) {
     C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation, &sunMtx);
 }
 
+// THE VERTEX LIGHT, decided once a frame (config vertexLight; mdk_vlit.v.pica):
+// the lit draws whose mesh has face normals take the light in the vertex shader
+// instead of the geometry shader. Only with the light itself live, and only if
+// every lit draw the frame may shadow has its vertex-shader program too.
+static void prepareVertexLight(RendererC3D* r) {
+    r->vlLive = r->litLive && r->vlReady && r->toggles.vertexLight &&
+                (!r->shadowLitLive || r->vlShadowReady);
+}
+
+// The vertex light's uniforms, written AT EVERY BIND of one of its programs,
+// the lit programs' discipline (installLitUniforms): the frame's values
+// prepareLighting and prepareShadows made for the geometry shaders, into the
+// VERTEX shader's registers c14-c19 (and, shadowed, the lookup's map c20 and
+// the sun's matrix c21-c24). They are vertex uniforms, so no bind clears them --
+// but a geometry-mode list sends them to three of the four units only, and
+// bindProgram re-sends c0 to vshUniformVecs (which covers these) on leaving it.
+static void installVertexLightUniforms(RendererC3D* r, bool shadowed) {
+    const int locations[6] = {r->vlSunDirLocation, r->vlSunColourLocation, r->vlSkyLocation,
+                              r->vlGroundLocation, r->vlCameraLocation, r->vlParamsLocation};
+    const float (*values)[4] = shadowed ? r->shadowUniforms : r->litUniforms;
+    for (int i = 0; i < 6; i++) {
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, locations[i], values[i][0], values[i][1], values[i][2],
+                      values[i][3]);
+    }
+    if (shadowed) {
+        float lutMap[4];
+        mdk::pica::sunShadowTintMap(lutMap);
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->vlLutMapLocation, lutMap[0], lutMap[1], lutMap[2],
+                      lutMap[3]);
+        C3D_Mtx sunMtx;
+        memcpy(sunMtx.m, r->shadowSunMtx, sizeof(r->shadowSunMtx));
+        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->vlSunMtxLocation, &sunMtx);
+    }
+}
+
 // THE CASTER PASS (Enhanced Mode enableSkyShadows): the frame's opaque Lit
 // triangles -- the PC's casters, 11_shadow_post.inc drawShadowMap -- drawn from
 // the sun into the shadow map, once per frame, before the eyes.
@@ -1881,6 +1943,7 @@ static void castShadows(RendererC3D* r) {
     AttrInfo_Init(attrInfo);
     AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
     AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord (not read)
+    r->layoutNormals = false;
     // NATIVE (testNativeShadowWrites measured that the writes land): the PICA
     // writes each fragment's depth itself and keeps the nearer, so no ramp and
     // no depth test; the combiner's output is black because its GREEN is the

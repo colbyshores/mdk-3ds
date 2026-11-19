@@ -1722,6 +1722,113 @@ void testTheSunsShadow() {
     PICA_CHECK(mdk::pica::kGlowVramBytes >= glowTexels * 4u);
 }
 
+// THE VERTEX LIGHT'S FACE NORMAL (config vertexLight; mdk_vlit.v.pica). The
+// geometry shader took a triangle's normal as cross(w1 - w0, w2 - w0) of its
+// WORLD positions; the vertex shader takes the mesh-space normal made at
+// creation (faceNormalAttribute) through normalMtx (faceNormalMatrix, uploaded
+// through pica::registers) and normalises it. The two must be the same
+// direction for any world -- a rotation, a non-uniform scale, a mirror, a
+// translation -- or a placed object's light would turn with the wrong axis.
+// The shader's arithmetic is emulated here from the REGISTER words, as the
+// shader reads them (W, Z, Y, X: testTheShaderReadsTheRegistersTheWayTheMatrix-
+// MeansThem), so a transposed upload fails too.
+void shaderNormal(const float regs[16], const float n[3], float out[3]) {
+    for (int row = 0; row < 3; row++) {
+        const float* reg = &regs[row * 4];
+        // dp3 normalMtx[row], innrm: .x is the register's last word.
+        out[row] = reg[3] * n[0] + reg[2] * n[1] + reg[1] * n[2];
+    }
+    const float length = sqrtf(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+    for (int c = 0; c < 3; c++) {
+        out[c] /= length;
+    }
+}
+
+void geometryShaderNormal(const float world[16], const float p[3][3], float out[3]) {
+    float w[3][4];
+    for (int v = 0; v < 3; v++) {
+        const float point[4] = {p[v][0], p[v][1], p[v][2], 1.0f};
+        xform(world, point, w[v]);
+    }
+    const float a[3] = {w[1][0] - w[0][0], w[1][1] - w[0][1], w[1][2] - w[0][2]};
+    const float b[3] = {w[2][0] - w[0][0], w[2][1] - w[0][1], w[2][2] - w[0][2]};
+    out[0] = a[1] * b[2] - a[2] * b[1];
+    out[1] = a[2] * b[0] - a[0] * b[2];
+    out[2] = a[0] * b[1] - a[1] * b[0];
+    const float length = sqrtf(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+    for (int c = 0; c < 3; c++) {
+        out[c] /= length;
+    }
+}
+
+void testTheVertexLightsFaceNormal() {
+    // The attribute: an xy-plane triangle wound counter-clockwise faces +z, at
+    // the shorts' full scale and the bytes'; w is 0; no area is the zero normal.
+    {
+        const float p0[3] = {0.0f, 0.0f, 0.0f};
+        const float p1[3] = {2.0f, 0.0f, 0.0f};
+        const float p2[3] = {0.0f, 3.0f, 0.0f};
+        int16_t n[4] = {9, 9, 9, 9};
+        mdk::pica::faceNormalAttribute(p0, p1, p2, 32767.0f, n);
+        PICA_CHECK(n[0] == 0 && n[1] == 0 && n[2] == 32767 && n[3] == 0);
+        mdk::pica::faceNormalAttribute(p0, p2, p1, 127.0f, n);   // the other winding
+        PICA_CHECK(n[0] == 0 && n[1] == 0 && n[2] == -127 && n[3] == 0);
+        mdk::pica::faceNormalAttribute(p0, p1, p1, 32767.0f, n);  // a zero-area triangle
+        PICA_CHECK(n[0] == 0 && n[1] == 0 && n[2] == 0 && n[3] == 0);
+        mdk::pica::faceNormalAttribute(p0, p0, p0, 127.0f, n);
+        PICA_CHECK(n[0] == 0 && n[1] == 0 && n[2] == 0 && n[3] == 0);
+    }
+    // The identity's normal matrix is the identity (rows x, y, z; nothing in w).
+    {
+        float identity[16] = {0};
+        identity[0] = identity[5] = identity[10] = identity[15] = 1.0f;
+        float n[16];
+        mdk::pica::faceNormalMatrix(identity, n);
+        for (int k = 0; k < 16; k++) {
+            PICA_CHECK(n[k] == ((k == 0 || k == 5 || k == 10) ? 1.0f : 0.0f));
+        }
+    }
+    // Any world: the quantised attribute through the uploaded matrix is the
+    // geometry shader's normal, to the shorts' precision (and the bytes' to
+    // theirs). Worlds: a turn about z with a translation; a non-uniform scale
+    // under a turn about x; a mirror (x negated) with a shear.
+    const float c = cosf(0.7f), s = sinf(0.7f);
+    const float worlds[3][16] = {
+        {c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 40, -7, 3, 1},
+        {3.0f, 0, 0, 0, 0, 0.5f * c, 0.5f * s, 0, 0, -2.0f * s, 2.0f * c, 0, 1, 2, 3, 1},
+        {-1.0f, 0, 0, 0, 0.4f, 1.0f, 0, 0, 0, 0, 1.5f, 0, -5, 0, 9, 1},
+    };
+    const float triangles[3][3][3] = {
+        {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}},
+        {{2, 1, -1}, {3, 4, 0}, {-1, 2, 5}},
+        {{10, 0, 3}, {10, 4, 3}, {12, 0, -1}},
+    };
+    for (int w = 0; w < 3; w++) {
+        float normalMatrix[16];
+        mdk::pica::faceNormalMatrix(worlds[w], normalMatrix);
+        float regs[16];
+        mdk::pica::registers(normalMatrix, regs);
+        for (int t = 0; t < 3; t++) {
+            float expected[3];
+            geometryShaderNormal(worlds[w], triangles[t], expected);
+            const float scales[2] = {32767.0f, 127.0f};
+            const float tolerance[2] = {1.0e-4f, 2.0e-2f};
+            for (int q = 0; q < 2; q++) {
+                int16_t attribute[4];
+                mdk::pica::faceNormalAttribute(triangles[t][0], triangles[t][1], triangles[t][2],
+                                               scales[q], attribute);
+                const float local[3] = {(float)attribute[0], (float)attribute[1],
+                                        (float)attribute[2]};
+                float got[3];
+                shaderNormal(regs, local, got);
+                for (int k = 0; k < 3; k++) {
+                    PICA_CHECK(fabsf(got[k] - expected[k]) < tolerance[q]);
+                }
+            }
+        }
+    }
+}
+
 int runPicaMatrixTests() {
     testIdentityRecognition();
     testTheGlowQuadMapsThePanelOntoThePicture();
@@ -1754,6 +1861,7 @@ int runPicaMatrixTests() {
     testTheMipChain();
     testTheHdResidencyPolicy();
     testTheSunsShadow();
+    testTheVertexLightsFaceNormal();
     return failures;
 }
 

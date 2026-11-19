@@ -302,6 +302,55 @@ void mdk_render_release_palette(MdkRenderer r, MdkPaletteId p) {
     renderer->palettes[(size_t)p].clear();
 }
 
+// THE VERTEX LIGHT'S FACE NORMALS (config vertexLight; mdk_vlit.v.pica), made
+// ONCE, here, for a mesh made with its vertices (the arena's, the sky's): each
+// triple of vertices from vertex 0 is a triangle, and its three vertices carry
+// its normal (pica::faceNormalAttribute). COLD: a level load's work, the same
+// geometry the vertices are. NEVER for a streamed mesh (mdk_render_update_mesh:
+// objects, effects, Kurt, the canvas) -- per-frame CPU work is what this path
+// exists to avoid; those draws keep the geometry shader. A mesh whose normals
+// cannot be made is drawn the geometry shader's way too, with one line.
+static void makeFaceNormals(RendererC3D* renderer, C3dMesh& mesh, const mdk::Vertex* v,
+                            int32_t n) {
+    if (!renderer->vlReady || n < 3) {
+        return;
+    }
+    mesh.normals = linearAlloc((size_t)n * (size_t)kVertexNormalBytes);
+    if (!mesh.normals) {
+        mdk::log3dsPrintf("vertex light: linearAlloc(%u) FAILED for a mesh's face normals "
+                          "(%d vertices); its lit draws keep the geometry shader",
+                          (unsigned)((size_t)n * (size_t)kVertexNormalBytes), (int)n);
+        return;
+    }
+    const int32_t whole = n - n % 3;
+    for (int32_t first = 0; first < whole; first += 3) {
+        const float p0[3] = {v[first].pos.x, v[first].pos.y, v[first].pos.z};
+        const float p1[3] = {v[first + 1].pos.x, v[first + 1].pos.y, v[first + 1].pos.z};
+        const float p2[3] = {v[first + 2].pos.x, v[first + 2].pos.y, v[first + 2].pos.z};
+        int16_t normal[4];
+        mdk::pica::faceNormalAttribute(p0, p1, p2, kVertexNormalScale, normal);
+        for (int32_t k = first; k < first + 3; k++) {
+            if (kVertexNormalBytes == 4) {
+                int8_t* out = static_cast<int8_t*>(mesh.normals) + (size_t)k * 4u;
+                for (int c = 0; c < 4; c++) {
+                    out[c] = (int8_t)normal[c];
+                }
+            } else {
+                memcpy(static_cast<int16_t*>(mesh.normals) + (size_t)k * 4u, normal,
+                       sizeof(normal));
+            }
+        }
+    }
+    // A tail that is not a whole triangle: no normal (a draw there is not
+    // whole triangles, and is not lit).
+    memset(static_cast<uint8_t*>(mesh.normals) + (size_t)whole * (size_t)kVertexNormalBytes, 0,
+           (size_t)(n - whole) * (size_t)kVertexNormalBytes);
+    // Published to the GPU's view once (the vertices' own rule, in the update
+    // below; the frame end flushes the linear heap as well).
+    GSPGPU_FlushDataCache(mesh.normals, (u32)n * (u32)kVertexNormalBytes);
+    mesh.normalsValid = true;
+}
+
 MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* v, int32_t n) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || !renderer->ready || n <= 0 || !v) {
@@ -337,6 +386,7 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* v, int32_t n)
     renderer->meshes.push_back(mesh);
     const MdkMeshId id = (MdkMeshId)(renderer->meshes.size() - 1);
     mdk_render_update_mesh(r, id, v, n);
+    makeFaceNormals(renderer, renderer->meshes[(size_t)id], v, n);
     return id;
 }
 
@@ -440,6 +490,10 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
     // capacity the frame did not use.
     GSPGPU_FlushDataCache(mesh.data, (u32)n * 5u * sizeof(float));
     mesh.count = n;
+    // New vertices: a face normal made for the old ones no longer describes
+    // them, and none is made here (makeFaceNormals: never per frame). The draws
+    // of an updated mesh keep the geometry shader.
+    mesh.normalsValid = false;
 }
 
 void mdk_render_release_mesh(MdkRenderer r, MdkMeshId m) {
@@ -479,6 +533,11 @@ static void settleDeferredMeshes(RendererC3D* renderer) {
             linearFree(mesh.data);
             mesh.data = nullptr;
         }
+        if (mesh.normals) {
+            linearFree(mesh.normals);
+            mesh.normals = nullptr;
+        }
+        mesh.normalsValid = false;
         mesh.releasePending = false;
         mesh.capacity = 0;
     }

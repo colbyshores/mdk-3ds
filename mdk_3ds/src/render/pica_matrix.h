@@ -1011,5 +1011,34 @@ uint8_t sunShadowTintAlpha(int32_t y);
 // rows, so t = 0 and t = 1 read exactly the first and last column.
 void sunShadowTintMap(float out[4]);
 
+// ---------------------------------------------------------------------------
+// THE VERTEX LIGHT (config vertexLight; mdk_vlit.v.pica). The lit programs'
+// light moved from the geometry shader to the vertex shader: the geometry
+// shader took each triangle's face normal from its three world positions, and
+// the vertex shader cannot see the triangle, so the normal is made ONCE, when a
+// mesh is created (geometry data, like the positions; never per frame), and
+// carried as a fourth vertex attribute.
+//
+// faceNormalAttribute: the face normal of the triangle (p0, p1, p2) -- the
+// geometry shader's cross(p1 - p0, p2 - p0), normalised -- quantised to the
+// attribute's signed integers: x, y, z scaled by `scale` (32767 for shorts, 127
+// for bytes) and rounded, w 0. A triangle with no area gets (0, 0, 0, 0), which
+// the shader lights as the geometry shader lit it (a zero normal: the
+// hemisphere's middle and no sun). The shader normalises again, so the scale is
+// the quantisation step and nothing else.
+void faceNormalAttribute(const float p0[3], const float p1[3], const float p2[3], float scale,
+                         int16_t out[4]);
+// faceNormalMatrix: the matrix the vertex shader turns a mesh-space face normal
+// into the world's with (its uniform normalMtx), in the engine's row-major,
+// row-vector layout like `world` (so pica::registers puts its rows in the
+// shader's order): the COFACTOR matrix of world's upper-left 3x3, zero
+// elsewhere. For row vectors (a * W) x (b * W) = (a x b) * cof(W), so the
+// transformed normal is EXACTLY the direction of the cross product of the
+// transformed edges -- the geometry shader's normal -- for any world, a
+// non-uniform scale or a mirror included (its length and sign are the shader's
+// to fix: it normalises and turns the normal to the camera). The identity for
+// the identity.
+void faceNormalMatrix(const float world[16], float out[16]);
+
 } // namespace pica
 } // namespace mdk

@@ -1,0 +1,6 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-19T16:55:38Z at 9a9a819
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: the 3DS light in the vertex shader from face normals made at mesh
+creation (experiment, config vertexLight). 3DS only; this Linux frame is
+pixel-identical to the previous pin (captured headless on DISPLAY=:99).

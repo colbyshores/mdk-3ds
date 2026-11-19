@@ -1,0 +1,56 @@
+; ============================================================================
+; mdk_passls.g.pica -- the PASS-THROUGH geometry shader for the vertex-lit
+; shadowed program (mdk_vlitshadow.v.pica): each triangle out exactly as the
+; vertex shader made it, with that shader's packed layout. The DVLB's eighth
+; DVLE.
+;
+; WHY IT EXISTS: mdk_pass.g.pica's reason (a program without a geometry shader
+; must not draw after one with one in the same command list -- 03_frame.inc
+; bindProgram, THE GEOMETRY-STAGE RULE). Once an eye's list is in geometry
+; mode, the vertex-lit shadowed draws go through this program; mdk_pass.g.pica
+; cannot carry them, because it declares only position, colour and texcoord0.
+;
+; The vertex shader's outputs, three vertices of four registers:
+;   v0-v3   position, colour, (map u, v, depth, 1), (surface u, v, lookup u, v)
+;   (and v4-v7, v8-v11)
+;
+; The packed registers go out whole: picasso writes a whole register through a
+; masked alias (decoded from the DVLB: `mov o2.xyzw, v2`), so one move fills
+; both of its semantics (texcoord0 + texcoord0w in o2, texcoord1 + texcoord2 in
+; o3). outmapw and outlut are declared for the output table, not written.
+; ============================================================================
+
+.gsh point c0
+
+.out outpos  position
+.out outclr  color
+.out outmap  texcoord0  o2.xy
+.out outmapw texcoord0w o2.z
+.out outsurf texcoord1  o3.xy
+.out outlut  texcoord2  o3.zw
+
+.entry plsmain
+.proc plsmain
+    setemit 0
+    mov outpos, v0
+    mov outclr, v1
+    mov outmap, v2
+    mov outsurf, v3
+    emit
+
+    setemit 1
+    mov outpos, v4
+    mov outclr, v5
+    mov outmap, v6
+    mov outsurf, v7
+    emit
+
+    setemit 2, prim
+    mov outpos, v8
+    mov outclr, v9
+    mov outmap, v10
+    mov outsurf, v11
+    emit
+
+    end
+.end

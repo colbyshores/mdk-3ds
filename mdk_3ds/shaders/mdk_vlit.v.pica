@@ -1,0 +1,166 @@
+; ============================================================================
+; mdk_vlit.v.pica -- the lit program's light in the VERTEX shader (Enhanced
+; Mode enableLighting, config vertexLight; SPEC.md 7.9). The DVLB's sixth DVLE.
+;
+; mdk_c3d.g.pica lights each TRIANGLE in the geometry shader, which runs on the
+; PICA's ONE geometry unit (measured on the Old 3DS: the light's arithmetic
+; there is ~6 ms of a stereo frame). This program does the same arithmetic per
+; VERTEX, on the vertex units (four with no geometry shader bound, three in
+; geometry mode), from a face normal the backend computed ONCE, when the mesh
+; was created (05_resources.inc mdk_render_create_mesh: geometry data, made with
+; the vertices, never per frame). The three vertices of a triangle carry the
+; same normal, so they compute the same light: the colour the rasteriser
+; interpolates is constant over the triangle, which is the flat light the
+; geometry shader emits.
+;
+; THE ARITHMETIC IS mdk_c3d.g.pica's, LINE FOR LINE, from the normal on:
+;
+;     n     = normalize(normalMtx * nLocal), turned to face the camera
+;     light = mix(ground, sky, n.z * 0.5 + 0.5) + sun * max(n . -sunDir, 0)
+;     F / 2 = min(to_srgb(exposure * light) / 2, 1)       (to_srgb: ex2(lg2 / 2.2))
+;
+; and the colour's w is the haze's kept fraction, as mdk_c3d.v.pica makes it.
+;
+; THE NORMAL MATRIX (normalMtx, three rows) is the COFACTOR matrix of the draw's
+; world 3x3 (pica::faceNormalMatrix): cross(Wa, Wb) = cof(W) (a x b), so the
+; transformed normal is exactly the geometry shader's cross product of the
+; world-space edges, for any world (a non-uniform scale included). The identity
+; for every arena batch. Its length does not matter: it is normalised here.
+;
+; TURNED TO THE CAMERA PER VERTEX. The geometry shader tests the camera against
+; the triangle's FIRST vertex; each vertex here tests it against its own. For a
+; planar triangle n . (camera - p) is the same at every point of the plane, so
+; the three agree; they can differ only by rounding when the camera lies in the
+; triangle's plane, where the triangle is edge-on and covers no pixels.
+;
+; THE OUTPUT LAYOUT IS mdk_c3d.v.pica's: four registers (position, colour,
+; texcoord, a dummy), because in geometry mode this shader feeds the
+; pass-through geometry shader (mdk_pass.g.pica: v0-v3 per vertex, input
+; stride 12) and that program is how a list already in geometry mode takes this
+; light without leaving it (03_frame.inc bindProgram, THE GEOMETRY-STAGE RULE).
+;
+; THE UNIFORM LAYOUT: c0-c10 are mdk_c3d.v.pica's (mvp, uvtransform, tint,
+; haze, world), in the same registers, so the backend's per-draw writes serve
+; every vertex shader; c11-c19 are this light's, in the same registers as
+; mdk_vlitshadow.v.pica's (the backend checks both at create).
+;
+; Attributes: v0 = position (float3), v1 = texcoord (float2), v2 = the face
+; normal (four signed shorts or bytes, w 0: 06_draw.inc installVertexLayout).
+; ============================================================================
+
+.constf vlConsts(0.0, 1.0, 0.5, 0.45454545)   ; 0, 1, 1/2, 1/GAMMA (2.2)
+.constf vlConsts2(2.0, -1.0, 1.0e-12, 0.0)    ; 2, -1, the degenerate-normal floor
+.alias zeros vlConsts.xxxx
+.alias ones  vlConsts.yyyy
+.alias half  vlConsts.zzzz
+.alias invGamma vlConsts.wwww
+.alias two   vlConsts2.xxxx
+.alias minus1 vlConsts2.yyyy
+.alias tiny  vlConsts2.zzzz
+
+.out outpos position
+.out outclr color
+.out outtexcoord texcoord0
+.out outworld dummy        ; the pass-through geometry shader's stride: not rasterised
+
+.alias inpos v0
+.alias intex v1
+.alias innrm v2
+
+; c0-c10: mdk_c3d.v.pica's, in its order.
+.fvec mvp[4]
+.fvec uvtransform
+.fvec tint
+.fvec haze
+.fvec world[4]
+; c11-c19: the light (06_draw.inc installVertexLightUniforms, at every bind).
+.fvec normalMtx[3]  ; the world's cofactor rows (pica::faceNormalMatrix)
+.fvec sunDir        ; xyz: the direction the sun SHINES
+.fvec sunColour     ; rgb
+.fvec skyColour     ; rgb
+.fvec groundColour  ; rgb
+.fvec camera        ; xyz: the eye's world position
+.fvec params        ; x exposure (y, z: the shadowed variant's)
+
+.entry vlmain
+.proc vlmain
+    ; THE POSITION, as mdk_c3d.v.pica.
+    mov r0.xyz, inpos
+    mov r0.w,   ones
+    dp4 r1.x, mvp[0], r0
+    dp4 r1.y, mvp[1], r0
+    dp4 r1.z, mvp[2], r0
+    dp4 r1.w, mvp[3], r0
+    mov outpos, r1
+
+    ; THE HAZE'S KEPT FRACTION in the colour's w (mdk_c3d.v.pica: ex2 of the
+    ; haze exponent times the eye depth, times the tint's alpha).
+    mul r2.x, haze.x, r1.w
+    ex2 r2.x, r2.x
+    mov r15, tint
+    mul r15.w, r15.w, r2.x
+
+    ; THE TEXTURE COORDINATE, scaled and offset for the padded texture.
+    mov r1, uvtransform
+    mov r2, intex
+    mul r2.x, r2.x, r1.x
+    mul r2.y, r2.y, r1.y
+    add r2.x, r2.x, r1.z
+    add r2.y, r2.y, r1.w
+    mov outtexcoord, r2
+
+    ; THE WORLD POSITION (the camera test's point).
+    dp4 r4.x, world[0], r0
+    dp4 r4.y, world[1], r0
+    dp4 r4.z, world[2], r0
+    mov r4.w, ones
+
+    ; THE FACE NORMAL in the world, normalised (every lane, as the GS's).
+    dp3 r2.x, normalMtx[0], innrm
+    dp3 r2.y, normalMtx[1], innrm
+    dp3 r2.z, normalMtx[2], innrm
+    mov r2.w, zeros
+    dp3 r3, r2, r2
+    max r3, tiny, r3
+    rsq r3, r3
+    mul r2, r2, r3
+
+    ; TURNED TO THE CAMERA.
+    add r5, camera, -r4
+    dp3 r5, r2, r5
+    slt r5, zeros, r5              ; 1 if facing the camera, else 0
+    mul r5, two, r5
+    add r5, minus1, r5             ; +1 / -1
+    mul r2, r2, r5
+
+    ; THE LIGHT: hemisphere by n.z, plus the sun by n . -sunDir.
+    mov r6, r2.zzzz
+    mul r6, half, r6
+    add r6, half, r6               ; t = n.z * 0.5 + 0.5, every lane
+    mov r7, groundColour
+    add r7, skyColour, -r7
+    mul r7, r7, r6
+    add r7, groundColour, r7       ; mix(ground, sky, t)
+    dp3 r8, -sunDir, r2
+    max r8, zeros, r8              ; facing
+    mul r3, sunColour, r8
+    add r7, r7, r3                 ; + sun * facing
+    mul r7, params.xxxx, r7        ; * exposure
+
+    ; TO sRGB, then F / 2 clamped at 1 (the light stage scales x2).
+    max r7, zeros, r7
+    lg2 r13.x, r7.x
+    lg2 r13.y, r7.y
+    lg2 r13.z, r7.z
+    mul r13, invGamma, r13
+    ex2 r14.x, r13.x
+    ex2 r14.y, r13.y
+    ex2 r14.z, r13.z
+    mul r14, half, r14
+    min r14, ones, r14
+
+    mov r15.xyz, r14.xyz
+    mov outclr, r15
+    mov outworld, r4
+    end
+.end

@@ -1,0 +1,191 @@
+; ============================================================================
+; mdk_vlitshadow.v.pica -- the lit program WITH the sun's shadow, in the VERTEX
+; shader (Enhanced Mode enableLighting + enableSkyShadows, config vertexLight).
+; The DVLB's seventh DVLE.
+;
+; mdk_litshadow.g.pica's arithmetic per vertex instead of per triangle, from the
+; face normal made at mesh creation (mdk_vlit.v.pica says how and why; its light
+; is this shader's, line for line). The outputs are what installShadowLitStages'
+; combiner reads (06_draw.inc), unchanged:
+;
+;   colour      F_lit / 2 (rgb), the haze's kept fraction (w)
+;   texcoord0   the vertex's place in the sun's map (u, v), and in texcoord0w
+;               its depth from the sun: unit 0 compares
+;   texcoord1   the surface's own texcoord: the surface texture is on unit 1
+;   texcoord2   (t, survive): the lookup texture's coordinate
+;
+; FOUR OUTPUT REGISTERS, PACKED. The geometry shader had six (texcoord0w and
+; texcoord2 each a register of their own); a vertex shader in geometry mode
+; hands the geometry shader three vertices' outputs in its sixteen input
+; registers, so six a vertex would not fit, and four is the layout the
+; pass-through programs share. texcoord0w rides in o2.z beside texcoord0's
+; o2.xy, and texcoord2 in o3.zw beside texcoord1's o3.xy: the semantics are per
+; COMPONENT (libctru's DVLE_GenerateOutmap), so the rasteriser sees the same
+; six inputs. In geometry mode the program's geometry shader is
+; mdk_passls.g.pica, which forwards the same packing.
+;
+; THE MAP COORDINATE is the geometry shader's: the world position pushed along
+; the (camera-facing) normal by the PC's ShadowNormalOffset (params.y), through
+; the sun's matrix, pulled towards the sun by the depth bias (params.z), and the
+; map edge's fade from where it lands -- per vertex there as here.
+;
+; Uniform layout: mdk_vlit.v.pica's c0-c19 in the same registers, then lutMap
+; (c20) and sunMtx (c21-c24).
+; ============================================================================
+
+.constf vlsConsts(0.0, 1.0, 0.5, 0.45454545)   ; 0, 1, 1/2, 1/GAMMA (2.2)
+.constf vlsConsts2(2.0, -1.0, 1.0e-12, 10.0)   ; 2, -1, the degenerate floor, 1 / fade width
+.constf vlsConsts3(0.9, 0.0, 0.0, 0.0)         ; x: where the edge fade starts
+.alias zeros vlsConsts.xxxx
+.alias ones  vlsConsts.yyyy
+.alias half  vlsConsts.zzzz
+.alias invGamma vlsConsts.wwww
+.alias two   vlsConsts2.xxxx
+.alias minus1 vlsConsts2.yyyy
+.alias tiny  vlsConsts2.zzzz
+.alias invFade vlsConsts2.wwww
+.alias fadeStart vlsConsts3.xxxx
+
+.out outpos position
+.out outclr color
+.out outmap  texcoord0  o2.xy
+.out outmapw texcoord0w o2.z
+.out outsurf texcoord1  o3.xy
+.out outlut  texcoord2  o3.zw
+
+.alias inpos v0
+.alias intex v1
+.alias innrm v2
+
+; c0-c10: mdk_c3d.v.pica's, in its order.
+.fvec mvp[4]
+.fvec uvtransform
+.fvec tint
+.fvec haze
+.fvec world[4]
+; c11-c19: mdk_vlit.v.pica's, in its order.
+.fvec normalMtx[3]
+.fvec sunDir
+.fvec sunColour
+.fvec skyColour
+.fvec groundColour
+.fvec camera
+.fvec params        ; x exposure, y normal offset (world units), z depth bias
+; c20-c24: the shadow's.
+.fvec lutMap        ; the lookup's texel centres: u = t * x + y, v = survive * z + w
+.fvec sunMtx[4]     ; world -> (u, v, depth, 1) of the shadow map, a row a register
+
+.entry vlsmain
+.proc vlsmain
+    ; THE POSITION, as mdk_c3d.v.pica.
+    mov r0.xyz, inpos
+    mov r0.w,   ones
+    dp4 r1.x, mvp[0], r0
+    dp4 r1.y, mvp[1], r0
+    dp4 r1.z, mvp[2], r0
+    dp4 r1.w, mvp[3], r0
+    mov outpos, r1
+
+    ; THE HAZE'S KEPT FRACTION in the colour's w.
+    mul r2.x, haze.x, r1.w
+    ex2 r2.x, r2.x
+    mov r15, tint
+    mul r15.w, r15.w, r2.x
+
+    ; THE SURFACE'S TEXTURE COORDINATE into r11.xy (texcoord1).
+    mov r1, uvtransform
+    mov r11, intex
+    mul r11.x, r11.x, r1.x
+    mul r11.y, r11.y, r1.y
+    add r11.x, r11.x, r1.z
+    add r11.y, r11.y, r1.w
+
+    ; THE WORLD POSITION.
+    dp4 r4.x, world[0], r0
+    dp4 r4.y, world[1], r0
+    dp4 r4.z, world[2], r0
+    mov r4.w, ones
+
+    ; THE FACE NORMAL, normalised and turned to the camera (mdk_vlit.v.pica).
+    dp3 r2.x, normalMtx[0], innrm
+    dp3 r2.y, normalMtx[1], innrm
+    dp3 r2.z, normalMtx[2], innrm
+    mov r2.w, zeros
+    dp3 r3, r2, r2
+    max r3, tiny, r3
+    rsq r3, r3
+    mul r2, r2, r3
+    add r5, camera, -r4
+    dp3 r5, r2, r5
+    slt r5, zeros, r5
+    mul r5, two, r5
+    add r5, minus1, r5
+    mul r2, r2, r5                 ; r2 = n
+
+    ; THE LIGHT: F_lit / 2, clamped at 1.
+    mov r6, r2.zzzz
+    mul r6, half, r6
+    add r6, half, r6               ; t, every lane (kept for the lookup)
+    mov r7, groundColour
+    add r7, skyColour, -r7
+    mul r7, r7, r6
+    add r7, groundColour, r7       ; mix(ground, sky, t)
+    dp3 r8, -sunDir, r2
+    max r8, zeros, r8              ; facing
+    mul r3, sunColour, r8
+    add r7, r7, r3
+    mul r7, params.xxxx, r7        ; * exposure
+    max r7, zeros, r7
+    lg2 r13.x, r7.x
+    lg2 r13.y, r7.y
+    lg2 r13.z, r7.z
+    mul r13, invGamma, r13
+    ex2 r12.x, r13.x
+    ex2 r12.y, r13.y
+    ex2 r12.z, r13.z
+    mul r12, half, r12
+    min r12, ones, r12             ; F_lit / 2
+    mov r15.xyz, r12.xyz
+    mov outclr, r15
+
+    ; THE LOOKUP'S u: t onto the texel centres, into r11.z.
+    mul r9, lutMap.xxxx, r6
+    add r11.z, lutMap.yyyy, r9
+
+    ; THE MAP COORDINATE: the world position pushed along the normal.
+    mul r14, params.yyyy, r2
+    mov r14.w, zeros
+    add r0, r14, r4
+    mov r0.w, ones
+    dp4 r1.x, sunMtx[0], r0
+    dp4 r1.y, sunMtx[1], r0
+    dp4 r1.z, sunMtx[2], r0
+    add r1.z, -params.zzzz, r1.z   ; the depth bias: towards the sun
+    max r1.z, zeros, r1.z
+    mov r1.w, ones
+    ; ONE MOVE FILLS BOTH SEMANTICS: picasso writes the whole register through a
+    ; masked alias (decoded from the DVLB: `mov o2.xyzw, r1`), so o2 = (u, v,
+    ; depth, 1) is texcoord0 in xy and texcoord0w in z. outmapw is declared for
+    ; the output table, not written.
+    mov outmap, r1
+
+    ; edge = max(|2u - 1|, |2v - 1|); survive = 1 - clamp((edge - 0.9) * 10, 0, 1),
+    ; onto the lookup's rows, into r11.w.
+    mul r3, two, r1
+    add r3, minus1, r3
+    mov r5, r3
+    max r3, -r5, r3                ; |.|
+    max r3.x, r3.y, r3.x
+    add r3.x, -fadeStart, r3.x
+    mul r3.x, invFade, r3.x
+    max r3.x, zeros, r3.x
+    min r3.x, ones, r3.x
+    add r3.x, ones, -r3.x          ; 1 - fade
+    mul r3.x, lutMap.z, r3.x
+    add r11.w, lutMap.w, r3.x
+
+    ; o3 = (surface u, v, lookup u, v): texcoord1 in xy, texcoord2 in zw, in one
+    ; move for the same reason (outlut is declared, not written).
+    mov outsurf, r11
+    end
+.end

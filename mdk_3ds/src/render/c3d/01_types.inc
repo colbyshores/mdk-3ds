@@ -185,6 +185,21 @@ struct C3dTexture {
 };
 
 // A mesh: the vertices, in LINEAR memory, where the GPU reads them.
+// THE VERTEX LIGHT'S NORMAL ATTRIBUTE (C3dMesh::normals): four signed shorts a
+// vertex by default (8 bytes; the normal to 1/32767), four signed bytes with
+// `make VLNORMAL=byte` (4 bytes; to 1/127) -- the attribute bandwidth against
+// the normal's precision, an A/B for the console. w is 0 either way, and the
+// shader normalises, so the scale is only the quantisation step.
+#if defined(MDK_VLIGHT_BYTE_NORMALS)
+static const GPU_FORMATS kVertexNormalFormat = GPU_BYTE;
+static const int32_t kVertexNormalBytes = 4;
+static const float kVertexNormalScale = 127.0f;
+#else
+static const GPU_FORMATS kVertexNormalFormat = GPU_SHORT;
+static const int32_t kVertexNormalBytes = 8;
+static const float kVertexNormalScale = 32767.0f;
+#endif
+
 struct C3dMesh {
     void* data = nullptr;
     int32_t capacity = 0;
@@ -194,6 +209,15 @@ struct C3dMesh {
     // a frame that may be on the GPU. Freed at the next frame boundary, exactly
     // like a texture's releasePending (AGENTS.md P3).
     bool releasePending = false;
+    // THE VERTEX LIGHT'S FACE NORMALS (config vertexLight; mdk_vlit.v.pica): one
+    // attribute a vertex, parallel to `data`, the normal of the triangle the
+    // vertex belongs to counting triples from vertex 0 (pica::faceNormalAttribute).
+    // Made ONCE, by mdk_render_create_mesh, from the vertices it was created
+    // with -- geometry data, never per frame. A dynamic mesh has none, and an
+    // update clears `normalsValid` (the normals would describe the old
+    // vertices): those draws keep the geometry shader. Freed with `data`.
+    void* normals = nullptr;
+    bool normalsValid = false;
 };
 
 // The one frame whose geometry is censused (see `Census`). It has to be a frame
@@ -335,6 +359,12 @@ struct RendererC3D {
     // THE DRAW CENSUS by program (both eyes), logged every 300 frames: which
     // program each queued draw went through (drawRecorded).
     int32_t drawsLit = 0, drawsShadowLit = 0, drawsPass = 0, drawsPlain = 0;
+    // ... and the vertex light's (config vertexLight): its four programs, and the
+    // lit draws it could not take while it was live -- a streamed mesh's (no
+    // normals) and a draw whose first vertex is not on a triple of the mesh.
+    int32_t drawsVertexLit = 0, drawsVertexShadowLit = 0;
+    int32_t drawsVertexLitPass = 0, drawsVertexShadowLitPass = 0;
+    int32_t vertexLightStreamed = 0, vertexLightMisaligned = 0;
     int32_t billboardsPeak = 0;    // the most halos in one frame since the last log line
     int32_t glowQuadsDropped = 0;  // halos past kMaxGlowQuads since the last log line
     float* glowLevelQuad = nullptr;
@@ -652,6 +682,34 @@ struct RendererC3D {
     // and the four registers of world -> (u, v, depth, 1).
     float shadowUniforms[6][4] = {};
     float shadowSunMtx[16] = {};    // already in register order (pica::registers)
+    // THE VERTEX LIGHT (config vertexLight; mdk_vlit.v.pica, 06_draw.inc
+    // drawRecorded): the lit programs' light in the vertex shader, from the face
+    // normals mdk_render_create_mesh made. Four programs, chosen like the
+    // pass-through one (THE GEOMETRY-STAGE RULE, 03_frame.inc bindProgram): with
+    // no geometry shader while the command list has not used one, and through a
+    // pass-through geometry shader once it has --
+    //   programVl            DVLE[5] alone
+    //   programVlPass        DVLE[5] + mdk_pass.g.pica (DVLE[4])
+    //   programVlShadow      DVLE[6] alone (the sun's shadow too)
+    //   programVlShadowPass  DVLE[6] + mdk_passls.g.pica (DVLE[7])
+    // vlReady: the first two made, their uniforms where mdk_c3d.v.pica's are;
+    // vlShadowReady: the other two as well. vlLive is decided once a frame
+    // (prepareVertexLight). Optional: without them the geometry shader lights.
+    shaderProgram_s programVl;
+    shaderProgram_s programVlPass;
+    shaderProgram_s programVlShadow;
+    shaderProgram_s programVlShadowPass;
+    bool vlReady = false;
+    bool vlShadowReady = false;
+    bool vlLive = false;
+    // The light's VERTEX uniforms (the same registers in both vertex shaders).
+    int vlNormalMtxLocation = -1, vlSunDirLocation = -1, vlSunColourLocation = -1;
+    int vlSkyLocation = -1, vlGroundLocation = -1, vlCameraLocation = -1;
+    int vlParamsLocation = -1, vlLutMapLocation = -1, vlSunMtxLocation = -1;
+    bool normalIsIdentity = false;  // normalMtx holds the identity (cache; installEye clears)
+    // The attribute loaders carry the face normal (cache of the context's
+    // C3D_AttrInfo: 06_draw.inc installVertexLayout).
+    bool layoutNormals = false;
     int32_t shadowCasters = 0;      // draws the caster pass made this frame
     int32_t shadowHoleCasters = 0;  // casters left out: their textures have holes
     int32_t shadowReceivers = 0;    // lit draws that took the shadow this frame (both eyes)

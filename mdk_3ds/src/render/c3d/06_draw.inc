@@ -147,6 +147,25 @@ static void leaveShadowLitStages(RendererC3D* r) {
     r->shadowLitHaze = -1;
 }
 
+// THE VERTEX LAYOUT: the two attribute loaders every draw has (the position and
+// the texture coordinate, installEye's), plus -- for a vertex-lit draw only (config
+// vertexLight; mdk_vlit.v.pica) -- a third, the face normal, from its own buffer
+// (01_types.inc C3dMesh::normals). The context has ONE C3D_AttrInfo, and a loader
+// the draw's buffers do not cover reads nothing the draw owns, so every draw
+// path that binds a two-attribute buffer puts the two-loader layout back first
+// (layoutNormals is the cache: drawRecorded, drawDiagnostic, drawGlow,
+// drawGlowBillboards).
+static void installVertexLayout(RendererC3D* r, bool normals) {
+    C3D_AttrInfo* attrInfo = C3D_GetAttrInfo();
+    AttrInfo_Init(attrInfo);
+    AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
+    AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord
+    if (normals) {
+        AttrInfo_AddLoader(attrInfo, 2, kVertexNormalFormat, 4);   // the face normal (w 0)
+    }
+    r->layoutNormals = normals;
+}
+
 static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (draw->mesh < 0 || (size_t)draw->mesh >= r->meshes.size()) {
         return;
@@ -302,9 +321,28 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // only a whole number of triangles goes through one.
     const bool overlay = draw->material.pass == mdk::Pass::Overlay;
     const bool wholeTriangles = (draw->vertex_count % 3) == 0;
-    const bool lit = r->litLive && draw->material.shading == mdk::Shading::Lit && !overlay &&
-                     draw->primitive == mdk::Primitive::Triangles && wholeTriangles &&
-                     gsAllowed(r) && !(renderDebugFlags() & kRenderDebugFlat);
+    const bool lightable = r->litLive && draw->material.shading == mdk::Shading::Lit && !overlay &&
+                           draw->primitive == mdk::Primitive::Triangles && wholeTriangles &&
+                           !(renderDebugFlags() & kRenderDebugFlat);
+    // THE VERTEX LIGHT (config vertexLight; mdk_vlit.v.pica): the same light in
+    // the VERTEX shader, for a draw whose mesh carries face normals (made once,
+    // at its creation) and whose first vertex starts a triple of that mesh (the
+    // normals were made triple by triple from vertex 0). Every other lit draw --
+    // a streamed mesh's, a misaligned one -- keeps the geometry shader. Its
+    // programs need no geometry shader of their own: with none bound the list
+    // stays out of geometry mode, and once in it they ride the pass-through one
+    // (below) as the unlit draws do, so they are not held to gsAllowed.
+    const bool vlAligned = (draw->first_vertex % 3) == 0;
+    const bool vsLit = lightable && r->vlLive && mesh.normals != nullptr && mesh.normalsValid &&
+                       vlAligned;
+    const bool lit = lightable && (vsLit || gsAllowed(r));
+    if (lightable && r->vlLive && !vsLit) {
+        if (!(mesh.normals != nullptr && mesh.normalsValid)) {
+            r->vertexLightStreamed++;
+        } else {
+            r->vertexLightMisaligned++;
+        }
+    }
     const bool shadowLit = lit && r->shadowLitLive &&
                            mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,
                                                      draw->primitive);
@@ -436,6 +474,16 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     C3D_BufInfo* bufInfo = C3D_GetBufInfo();
     BufInfo_Init(bufInfo);
     BufInfo_Add(bufInfo, mesh.data, 5 * sizeof(float), 2, 0x10);
+    // A vertex-lit draw (decided above, with the light): the face normal is
+    // attribute 2, from its own buffer, vertex for vertex beside the mesh's
+    // (C3D_DrawArrays' first vertex indexes both). Every other draw has the two
+    // loaders its one buffer covers.
+    if (vsLit) {
+        BufInfo_Add(bufInfo, mesh.normals, kVertexNormalBytes, 1, 0x2);
+    }
+    if (vsLit != r->layoutNormals) {
+        installVertexLayout(r, vsLit);
+    }
 
     r->drawCount++;
     r->triangleCount += draw->vertex_count / 3;
@@ -757,20 +805,30 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         r->gsInList = true;
     }
 #endif
+    // THE VERTEX LIGHT'S PROGRAM, by the same rule as the pass-through one: no
+    // geometry shader while the list has not used one (all four vertex units),
+    // the pass-through geometry shader once it has (the list stays in geometry
+    // mode, no split).
+    shaderProgram_s* const vlProgram =
+        shadowLit ? (r->gsInList ? &r->programVlShadowPass : &r->programVlShadow)
+                  : (r->gsInList ? &r->programVlPass : &r->programVl);
     shaderProgram_s* const wanted =
-        shadowLit ? &r->programShadow
+        vsLit     ? vlProgram
+        : shadowLit ? &r->programShadow
         : lit     ? &r->programLit
                   : (r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program);
     if (wanted != r->boundProgram) {
         bindProgram(r, wanted);
-        if (shadowLit) {
+        if (vsLit) {
+            installVertexLightUniforms(r, shadowLit);
+        } else if (shadowLit) {
             installShadowUniforms(r);
         } else if (lit) {
             installLitUniforms(r);
         }
         r->programSwitches++;
     }
-    r->litBound = lit && !shadowLit;
+    r->litBound = lit && !shadowLit && !vsLit;
     if (shadowLit) {
         r->shadowReceivers++;
     }
@@ -780,6 +838,14 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         r->drawsLit++;
     } else if (r->boundProgram == &r->programPass) {
         r->drawsPass++;
+    } else if (r->boundProgram == &r->programVl) {
+        r->drawsVertexLit++;
+    } else if (r->boundProgram == &r->programVlShadow) {
+        r->drawsVertexShadowLit++;
+    } else if (r->boundProgram == &r->programVlPass) {
+        r->drawsVertexLitPass++;
+    } else if (r->boundProgram == &r->programVlShadowPass) {
+        r->drawsVertexShadowLitPass++;
     } else {
         r->drawsPlain++;
     }
@@ -792,6 +858,20 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
             mdk::pica::registers(draw->world, worldMtx.m);
             C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation, &worldMtx);
             r->worldIsIdentity = identity;
+        }
+    }
+    if (vsLit) {
+        // The world's cofactor rows (pica::faceNormalMatrix), which turn the
+        // mesh's face normal into the world's; the identity (every arena batch)
+        // written only when it is not there.
+        const bool identity = mdk::pica::isIdentity(draw->world);
+        if (!identity || !r->normalIsIdentity) {
+            float normalMatrix[16];
+            mdk::pica::faceNormalMatrix(draw->world, normalMatrix);
+            C3D_Mtx normalMtx;
+            mdk::pica::registers(normalMatrix, normalMtx.m);
+            C3D_FVUnifMtx3x4(GPU_VERTEX_SHADER, r->vlNormalMtxLocation, &normalMtx);
+            r->normalIsIdentity = identity;
         }
     }
     if (shadowLit) {
@@ -964,6 +1044,9 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
     C3D_BufInfo* info = C3D_GetBufInfo();
     BufInfo_Init(info);
     BufInfo_Add(info, marker, 5 * sizeof(float), 2, 0x10);
+    if (r->layoutNormals) {
+        installVertexLayout(r, false);
+    }
 
     // THE CANVAS'S STATE, each of it the same call drawRecorded makes for an
     // Overlay quad -- except the uv uniform below, which stays the identity: the
@@ -1216,6 +1299,9 @@ static void drawGlow(RendererC3D* r) {
     C3D_BufInfo* info = C3D_GetBufInfo();
     BufInfo_Init(info);
     BufInfo_Add(info, r->glowLevelQuad, 5 * sizeof(float), 2, 0x10);
+    if (r->layoutNormals) {
+        installVertexLayout(r, false);
+    }
     for (int stage = 1; stage <= 5; stage++) {
         C3D_TexEnvInit(C3D_GetTexEnv(stage));
     }
@@ -1278,6 +1364,9 @@ static void drawGlow(RendererC3D* r) {
     info = C3D_GetBufInfo();
     BufInfo_Init(info);
     BufInfo_Add(info, r->glowQuad, 5 * sizeof(float), 2, 0x10);
+    if (r->layoutNormals) {
+        installVertexLayout(r, false);
+    }
     glowDrawState(r, &r->glowSmall[mdk::pica::kGlowSmallMix]);
 
     // THE SHINE, s*(u) = P * min(1, u / u0) + Q * u (pica_matrix.h, THE GLOW).
@@ -1472,6 +1561,9 @@ static void drawGlowBillboards(RendererC3D* r) {
     C3D_BufInfo* bufInfo = C3D_GetBufInfo();
     BufInfo_Init(bufInfo);
     BufInfo_Add(bufInfo, r->glowQuadMesh, 5 * sizeof(float), 2, 0x10);
+    if (r->layoutNormals) {
+        installVertexLayout(r, false);
+    }
     for (int32_t q = 0; q < r->glowQuadCount; q++) {
         const float* c = r->glowQuads[q].colour;
         C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, c[0], c[1], c[2], 1.0f);

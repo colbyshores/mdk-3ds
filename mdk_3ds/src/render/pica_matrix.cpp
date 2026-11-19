@@ -657,5 +657,49 @@ void sunShadowTintMap(float out[4]) {
     out[3] = 0.5f / (float)kShadowTintHeight;
 }
 
+void faceNormalAttribute(const float p0[3], const float p1[3], const float p2[3], float scale,
+                         int16_t out[4]) {
+    const float ax = p1[0] - p0[0], ay = p1[1] - p0[1], az = p1[2] - p0[2];
+    const float bx = p2[0] - p0[0], by = p2[1] - p0[1], bz = p2[2] - p0[2];
+    const float nx = ay * bz - az * by;
+    const float ny = az * bx - ax * bz;
+    const float nz = ax * by - ay * bx;
+    const float length = sqrtf(nx * nx + ny * ny + nz * nz);
+    out[3] = 0;
+    // A zero-area triangle (and a NaN, which no comparison passes) has no
+    // direction: the zero normal, as the geometry shader's floor makes it.
+    if (!(length > 0.0f)) {
+        out[0] = out[1] = out[2] = 0;
+        return;
+    }
+    const float k = scale / length;
+    // Rounded to nearest, away from zero at the half: |n * k| <= scale, so the
+    // result fits the attribute's integers.
+    const float n[3] = {nx * k, ny * k, nz * k};
+    for (int i = 0; i < 3; i++) {
+        out[i] = (int16_t)(n[i] >= 0.0f ? (int32_t)(n[i] + 0.5f) : -(int32_t)(0.5f - n[i]));
+    }
+}
+
+void faceNormalMatrix(const float world[16], float out[16]) {
+    // m[r][c] = world[r * 4 + c]; the cofactor C[r][c] = (-1)^(r+c) * minor(r, c).
+    const float* m = world;
+    const float a = m[0], b = m[1], c = m[2];
+    const float d = m[4], e = m[5], f = m[6];
+    const float g = m[8], h = m[9], i = m[10];
+    for (int k = 0; k < 16; k++) {
+        out[k] = 0.0f;
+    }
+    out[0] = e * i - f * h;
+    out[1] = -(d * i - f * g);
+    out[2] = d * h - e * g;
+    out[4] = -(b * i - c * h);
+    out[5] = a * i - c * g;
+    out[6] = -(a * h - b * g);
+    out[8] = b * f - c * e;
+    out[9] = -(a * f - c * d);
+    out[10] = a * e - b * d;
+}
+
 } // namespace pica
 } // namespace mdk

@@ -196,6 +196,15 @@ endif
 ifneq ($(SHADOWPROBE),)
 DEFINES += -DMDK_SHADOW_PROBE=$(SHADOWPROBE)
 endif
+# `make VLNORMAL=byte` (an experiment's A/B, not a look): the vertex light's face
+# normals as four signed BYTES a vertex (4 bytes) instead of four signed shorts
+# (8 bytes) -- the attribute bandwidth against the normal's precision (1/127).
+# Only renderer_c3d.cpp reads it: `make clean` after changing it.
+ifeq ($(strip $(VLNORMAL)),byte)
+DEFINES += -DMDK_VLIGHT_BYTE_NORMALS=1
+else ifneq ($(strip $(VLNORMAL)),)
+$(error VLNORMAL=$(VLNORMAL): only VLNORMAL=byte is an option (the default is shorts))
+endif
 # `make AUTOQUIT=90 FIXED=1` gives every frame exactly one 1/60 s step (the
 # Linux --fixed-step), for frame-exact 3DS-vs-Linux comparisons with CAPTURE.
 # Only main_3ds.cpp reads it: touch it after changing FIXED.
@@ -272,13 +281,21 @@ SHADER_CPICA := $(CURDIR)/shaders/mdk_caster.v.pica
 # ... and the pass-through geometry shader: the fifth DVLE (mdk_pass.g.pica says
 # why: the PICA must not leave geometry mode inside a command list).
 SHADER_PPICA := $(CURDIR)/shaders/mdk_pass.g.pica
+# ... and THE VERTEX LIGHT (config vertexLight): the lit vertex shader (sixth),
+# the shadowed one (seventh), and the pass-through geometry shader for the
+# shadowed one's packed layout (eighth). mdk_vlit.v.pica says why.
+SHADER_VPICA  := $(CURDIR)/shaders/mdk_vlit.v.pica
+SHADER_VSPICA := $(CURDIR)/shaders/mdk_vlitshadow.v.pica
+SHADER_PSPICA := $(CURDIR)/shaders/mdk_passls.g.pica
+SHADER_ALL   := $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA) \
+                $(SHADER_VPICA) $(SHADER_VSPICA) $(SHADER_PSPICA)
 SHADER_SHBIN := $(BUILD)/mdk_c3d.shbin
 SHADER_HDR   := $(BUILD)/mdk_c3d_shbin.h
 SHADER_OBJ   := $(BUILD)/mdk_c3d_shbin.o
 
-$(SHADER_SHBIN): $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA) | $(BUILD)
-	@echo "PICA $(notdir $(SHADER_PICA)) $(notdir $(SHADER_GPICA)) $(notdir $(SHADER_SPICA)) $(notdir $(SHADER_CPICA)) $(notdir $(SHADER_PPICA))"
-	@$(PICASSO) -o $@ $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA)
+$(SHADER_SHBIN): $(SHADER_ALL) | $(BUILD)
+	@echo "PICA $(notdir $(SHADER_ALL))"
+	@$(PICASSO) -o $@ $(SHADER_ALL)
 
 # &: (grouped target, GNU Make 4.3+) is load-bearing here, NOT stylistic: with
 # a plain ':', two targets sharing one recipe are not atomic, so `make -j` can

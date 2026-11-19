@@ -346,9 +346,121 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
             shaderProgramFree(&r->programPass);
         }
     }
-    // The vertex shader's uniform registers run from c0 to the world matrix's
-    // last row (mdk_c3d.v.pica: mvp c0-3, uvtransform, tint, haze, world c7-10).
+    // THE VERTEX LIGHT'S PROGRAMS (config vertexLight; 01_types.inc has the
+    // four). Each vertex shader must keep mdk_c3d.v.pica's uniforms in its
+    // registers -- the per-draw writes (the matrix, the uv transform, the tint,
+    // the haze, the world) go to one register file whichever shader is bound --
+    // and the two must agree on the light's; a shader that does not is refused,
+    // and the geometry shader lights instead.
+    if (r->litReady && r->passReady && r->dvlb->numDVLE >= 6) {
+        bool made = R_SUCCEEDED(shaderProgramInit(&r->programVl));
+        if (made) {
+            made = R_SUCCEEDED(shaderProgramSetVsh(&r->programVl, &r->dvlb->DVLE[5]));
+            if (!made) {
+                shaderProgramFree(&r->programVl);
+            }
+        }
+        bool madePass = made && R_SUCCEEDED(shaderProgramInit(&r->programVlPass));
+        if (madePass) {
+            madePass = R_SUCCEEDED(shaderProgramSetVsh(&r->programVlPass, &r->dvlb->DVLE[5])) &&
+                       R_SUCCEEDED(shaderProgramSetGsh(&r->programVlPass, &r->dvlb->DVLE[4], 12));
+            if (!madePass) {
+                shaderProgramFree(&r->programVlPass);
+            }
+        }
+        if (made && madePass) {
+            shaderInstance_s* vs = r->programVl.vertexShader;
+            r->vlNormalMtxLocation = shaderInstanceGetUniformLocation(vs, "normalMtx");
+            r->vlSunDirLocation = shaderInstanceGetUniformLocation(vs, "sunDir");
+            r->vlSunColourLocation = shaderInstanceGetUniformLocation(vs, "sunColour");
+            r->vlSkyLocation = shaderInstanceGetUniformLocation(vs, "skyColour");
+            r->vlGroundLocation = shaderInstanceGetUniformLocation(vs, "groundColour");
+            r->vlCameraLocation = shaderInstanceGetUniformLocation(vs, "camera");
+            r->vlParamsLocation = shaderInstanceGetUniformLocation(vs, "params");
+            r->vlReady =
+                shaderInstanceGetUniformLocation(vs, "mvp") == r->mvpLocation &&
+                shaderInstanceGetUniformLocation(vs, "uvtransform") == r->uvLocation &&
+                shaderInstanceGetUniformLocation(vs, "tint") == r->tintLocation &&
+                shaderInstanceGetUniformLocation(vs, "haze") == r->hazeLocation &&
+                shaderInstanceGetUniformLocation(vs, "world") == r->worldLocation &&
+                r->vlNormalMtxLocation >= 0 && r->vlSunDirLocation >= 0 &&
+                r->vlSunColourLocation >= 0 && r->vlSkyLocation >= 0 &&
+                r->vlGroundLocation >= 0 && r->vlCameraLocation >= 0 && r->vlParamsLocation >= 0;
+            if (!r->vlReady) {
+                shaderProgramFree(&r->programVlPass);
+                shaderProgramFree(&r->programVl);
+            }
+        } else if (made) {
+            shaderProgramFree(&r->programVl);
+        }
+    }
+    // ... and the shadowed pair, when the geometry shader's shadowed program is
+    // there too (the sun's shadow needs its caster pass and its map either way).
+    if (r->vlReady && r->shadowProgramReady && r->dvlb->numDVLE >= 8) {
+        bool made = R_SUCCEEDED(shaderProgramInit(&r->programVlShadow));
+        if (made) {
+            made = R_SUCCEEDED(shaderProgramSetVsh(&r->programVlShadow, &r->dvlb->DVLE[6]));
+            if (!made) {
+                shaderProgramFree(&r->programVlShadow);
+            }
+        }
+        bool madePass = made && R_SUCCEEDED(shaderProgramInit(&r->programVlShadowPass));
+        if (madePass) {
+            madePass =
+                R_SUCCEEDED(shaderProgramSetVsh(&r->programVlShadowPass, &r->dvlb->DVLE[6])) &&
+                R_SUCCEEDED(shaderProgramSetGsh(&r->programVlShadowPass, &r->dvlb->DVLE[7], 12));
+            if (!madePass) {
+                shaderProgramFree(&r->programVlShadowPass);
+            }
+        }
+        if (made && madePass) {
+            shaderInstance_s* vs = r->programVlShadow.vertexShader;
+            r->vlLutMapLocation = shaderInstanceGetUniformLocation(vs, "lutMap");
+            r->vlSunMtxLocation = shaderInstanceGetUniformLocation(vs, "sunMtx");
+            r->vlShadowReady =
+                shaderInstanceGetUniformLocation(vs, "mvp") == r->mvpLocation &&
+                shaderInstanceGetUniformLocation(vs, "uvtransform") == r->uvLocation &&
+                shaderInstanceGetUniformLocation(vs, "tint") == r->tintLocation &&
+                shaderInstanceGetUniformLocation(vs, "haze") == r->hazeLocation &&
+                shaderInstanceGetUniformLocation(vs, "world") == r->worldLocation &&
+                shaderInstanceGetUniformLocation(vs, "normalMtx") == r->vlNormalMtxLocation &&
+                shaderInstanceGetUniformLocation(vs, "sunDir") == r->vlSunDirLocation &&
+                shaderInstanceGetUniformLocation(vs, "sunColour") == r->vlSunColourLocation &&
+                shaderInstanceGetUniformLocation(vs, "skyColour") == r->vlSkyLocation &&
+                shaderInstanceGetUniformLocation(vs, "groundColour") == r->vlGroundLocation &&
+                shaderInstanceGetUniformLocation(vs, "camera") == r->vlCameraLocation &&
+                shaderInstanceGetUniformLocation(vs, "params") == r->vlParamsLocation &&
+                r->vlLutMapLocation >= 0 && r->vlSunMtxLocation >= 0;
+            if (!r->vlShadowReady) {
+                shaderProgramFree(&r->programVlShadowPass);
+                shaderProgramFree(&r->programVlShadow);
+            }
+        } else if (made) {
+            shaderProgramFree(&r->programVlShadow);
+        }
+    }
+    // The vertex shaders' uniform registers run from c0 to the world matrix's
+    // last row (mdk_c3d.v.pica: mvp c0-3, uvtransform, tint, haze, world c7-10)
+    // -- and on to the vertex light's last (normalMtx c11-13 ... params c19, then
+    // the shadowed one's lutMap c20 and sunMtx c21-24) when those programs are
+    // made: leaving geometry mode re-sends every one of them (bindProgram).
     r->vshUniformVecs = r->worldLocation + 4;
+    if (r->vlReady && r->vlParamsLocation + 1 > r->vshUniformVecs) {
+        r->vshUniformVecs = r->vlParamsLocation + 1;
+    }
+    if (r->vlShadowReady && r->vlSunMtxLocation + 4 > r->vshUniformVecs) {
+        r->vshUniformVecs = r->vlSunMtxLocation + 4;
+    }
+    if (r->vlReady && r->vlNormalMtxLocation + 3 > r->vshUniformVecs) {
+        r->vshUniformVecs = r->vlNormalMtxLocation + 3;
+    }
+    mdk::log3dsPrintf("vertex light programs: lit %s, lit+shadow %s (normalMtx=%d sunDir=%d "
+                      "params=%d lut=%d sunMtx=%d), face normals as %s",
+                      r->vlReady ? "ready" : "UNAVAILABLE",
+                      r->vlShadowReady ? "ready" : "UNAVAILABLE", (int)r->vlNormalMtxLocation,
+                      (int)r->vlSunDirLocation, (int)r->vlParamsLocation,
+                      (int)r->vlLutMapLocation, (int)r->vlSunMtxLocation,
+                      kVertexNormalBytes == 4 ? "4 bytes" : "4 shorts");
     mdk::log3dsPrintf("pass program: %s; vertex uniforms c0-c%d",
                       r->passReady ? "ready" : "UNAVAILABLE", (int)r->vshUniformVecs - 1);
     mdk::log3dsPrintf("shadow programs: lit+shadow %s (sun=%d sky=%d ground=%d camera=%d "
@@ -465,6 +577,14 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     releaseShadowMap(r);
     releaseEyeTargets(r);
     if (r->dvlb) {
+        if (r->vlShadowReady) {
+            shaderProgramFree(&r->programVlShadowPass);
+            shaderProgramFree(&r->programVlShadow);
+        }
+        if (r->vlReady) {
+            shaderProgramFree(&r->programVlPass);
+            shaderProgramFree(&r->programVl);
+        }
         if (r->casterProgramReady) {
             shaderProgramFree(&r->programCaster);
         }

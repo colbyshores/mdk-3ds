@@ -264,6 +264,11 @@ struct EnhancedToggles {
     bool glowBloom = false;           // 3DS: the glow as the PC's bloom, ported (~10 ms on
                                       // the Old 3DS), instead of the default additive
                                       // billboards on bright effects; the PC ignores it
+    bool vertexLight = true;          // 3DS: the light (enableLighting) in the VERTEX
+                                      // shader from face normals made at mesh creation,
+                                      // not per triangle in the geometry shader -- the
+                                      // owner's A/B of the two GPU paths (streamed meshes
+                                      // keep the geometry shader); the PC ignores it
 
     // NOT A LOOK: a diagnostic of the 3DS sun shadow, off by default. The caster
     // pass writes the shadow map's four bytes in the order the GPU's shadow unit
