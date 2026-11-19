@@ -131,6 +131,7 @@ static bool makeShadowRamp(RendererC3D* r);
 static mdk::pica::ShadowByteOrder shadowByteOrder(const RendererC3D* r);
 static void installLitUniforms(RendererC3D* r);
 static void installShadowUniforms(RendererC3D* r);
+static void leaveShadowLitStages(RendererC3D* r);
 static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw);
 static void installAlphaTest(RendererC3D* r, int reference, bool force);
 
@@ -321,6 +322,9 @@ static void bindProgram(RendererC3D* r, shaderProgram_s* program) {
 }
 
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
+    // The last eye may have ended in the shadowed lit draw's layout (units 1-2,
+    // stages 1-3): put back before this eye's own stages are installed.
+    leaveShadowLitStages(r);
     // THE BORROWED DEPTH (edge smoothing, buildEyeTargets): at scale 2 the right
     // eye draws against the left eye's depth buffer, which still holds the left
     // eye's scene. The split submits the left eye's commands to the GX queue
@@ -614,6 +618,7 @@ static void testSampleShadowMap(RendererC3D* r, C3D_Tex* tex, C3D_RenderTarget* 
     C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation + 1, 0.0f, 0.0f, 0.0f, 0.5f);
     C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation + 2, 0.0f, 0.0f, 0.0f, 0.75f);
     C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation + 3, 0.0f, 0.0f, 0.0f, 1.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowLutMapLocation, 0.0f, 0.0f, 0.0f, 0.0f);
     C3D_TexBind(0, tex);
     C3D_TexShadowParams(false, 0.0f);
     C3D_TexEnvInit(env);
@@ -1210,7 +1215,7 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
         replayQueue(r);
         if (eye == 0 && r->shadowLive && (r->frame == 30 || (r->frame % 600) == 0)) {
             mdk::log3dsPrintf("shadows: frame %lu: %d caster draws into the map (%d more left "
-                              "out: their textures have holes), %d receiver draws an eye",
+                              "out: their textures have holes), %d shadowed lit draws (both eyes)",
                               (unsigned long)r->frame, (int)r->shadowCasters,
                               (int)r->shadowHoleCasters, (int)r->shadowReceivers);
         }
@@ -1627,14 +1632,56 @@ static bool ensureShadowMap(RendererC3D* r) {
     return true;
 }
 
+// THE SHADOW TINT, made on first use (linear heap, 2 KB) and refilled when the
+// rig's sky, ground or exposure differ from what it holds: inside a frame,
+// after C3D_FrameBegin has waited for the last frame's queue, so nothing still
+// reads it. Seven float compares a frame, not in any loop.
+static bool ensureShadowTint(RendererC3D* r) {
+    if (!r->shadowTintReady) {
+        r->shadowTintReady = C3D_TexInit(&r->shadowTint, (u16)mdk::pica::kShadowTintWidth,
+                                         (u16)mdk::pica::kShadowTintHeight, GPU_RGBA8);
+        if (!r->shadowTintReady) {
+            return false;
+        }
+        // LINEAR along t (the hemisphere is smooth) and down the edge fade;
+        // clamped, so t = 0 / 1 and the fade's ends read their own texels.
+        C3D_TexSetFilter(&r->shadowTint, GPU_LINEAR, GPU_LINEAR);
+        C3D_TexSetWrap(&r->shadowTint, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        r->shadowTintRig[0] = -1.0f;   // filled below
+    }
+    const mdk::Lighting& l = r->lighting;
+    const float rig[7] = {l.sky.r, l.sky.g, l.sky.b, l.ground.r, l.ground.g, l.ground.b,
+                          l.exposure};
+    if (memcmp(rig, r->shadowTintRig, sizeof(rig)) != 0) {
+        // One colour per column (the powf), then down the rows (the alpha).
+        uint8_t* texels = static_cast<uint8_t*>(r->shadowTint.data);
+        for (int x = 0; x < mdk::pica::kShadowTintWidth; x++) {
+            uint8_t rgba[4];
+            mdk::pica::sunShadowTintColumn(x, &rig[0], &rig[3], rig[6], rgba);
+            for (int y = 0; y < mdk::pica::kShadowTintHeight; y++) {
+                rgba[3] = mdk::pica::sunShadowTintAlpha(y);
+                const size_t slot = mdk::pica::textureTexelIndex(
+                    (uint32_t)x, (uint32_t)y, (uint32_t)mdk::pica::kShadowTintWidth);
+                mdk::pica::texelBytes(texels + slot * 4u, rgba[0], rgba[1], rgba[2], rgba[3]);
+            }
+        }
+        C3D_TexFlush(&r->shadowTint);
+        memcpy(r->shadowTintRig, rig, sizeof(rig));
+    }
+    return true;
+}
+
 // The frame's sun shadow, decided once before the eye loop: whether there is
-// one, the caster pass's matrix, and the receive program's uniforms.
+// one, the caster pass's matrix, and the shadowed lit program's uniforms.
 static void prepareShadows(RendererC3D* r) {
     r->shadowCasters = 0;
     r->shadowHoleCasters = 0;
     r->shadowReceivers = 0;
+    r->shadowLitLive = false;
+    // The tint first: without it no lit draw can take the shadow, and a map
+    // cast for no receiver is a pass for nothing (review, 2026-11-19).
     r->shadowLive = r->litLive && r->shadowProgramReady && r->casterProgramReady &&
-                    r->toggles.enableSkyShadows &&
+                    r->unitIdleReady && r->toggles.enableSkyShadows && ensureShadowTint(r) &&
                     r->lighting.shadows && r->lighting.shadow_distance > 0.0f &&
                     ensureShadowMap(r);
     if (!r->shadowLive) {
@@ -1656,29 +1703,28 @@ static void prepareShadows(RendererC3D* r) {
         {l.ground.r, l.ground.g, l.ground.b, 0.0f},
         {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2], 1.0f},
 #if defined(MDK_SHADOW_PROBE)
-        // The harness's probes (make SHADOWPROBE=n). 8: every receiver at the
-        // map's far end (all shadow, if the unit compares at all). 20-29: every
-        // receiver at ONE depth, (n - 20) / 10 + 0.05 (0.999 for 29): what the
-        // map holds in front of that depth shows as shadow. 5: the geometry
-        // shader puts (u, v, depth) in the colour.
+        // The harness's probe (make SHADOWPROBE=8): every receiver pushed to the
+        // map's far end (all shadow, if the unit compares at all).
         {l.exposure, mdk::pica::sunShadowNormalOffset(r->shadowMapSize),
-         MDK_SHADOW_PROBE == 8 ? -2.0f
-         : MDK_SHADOW_PROBE == 29 ? 0.999f
-         : MDK_SHADOW_PROBE >= 20 ? (float)(MDK_SHADOW_PROBE - 20) * 0.1f + 0.05f
-         : mdk::pica::sunShadowDepthBias(r->shadowMapSize),
-         MDK_SHADOW_PROBE == 5 ? 1.0f : MDK_SHADOW_PROBE >= 20 ? 2.0f : 0.0f},
+         MDK_SHADOW_PROBE == 8 ? -2.0f : mdk::pica::sunShadowDepthBias(r->shadowMapSize), 0.0f},
 #else
         {l.exposure, mdk::pica::sunShadowNormalOffset(r->shadowMapSize),
          mdk::pica::sunShadowDepthBias(r->shadowMapSize), 0.0f},
 #endif
     };
     memcpy(r->shadowUniforms, values, sizeof(values));
+    // The lit draws take the shadow in their own pass (06_draw.inc drawRecorded).
+    r->shadowLitLive = true;
 }
 
-// The receive program's uniforms, written AT EVERY BIND of it, for the reason
-// installLitUniforms gives: binding a program with no geometry shader clears
-// the geometry stage's uniforms.
+// The shadowed lit program's uniforms, written AT EVERY BIND of it, for the
+// reason installLitUniforms gives: binding a program with no geometry shader
+// clears the geometry stage's uniforms.
 static void installShadowUniforms(RendererC3D* r) {
+    float lutMap[4];
+    mdk::pica::sunShadowTintMap(lutMap);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowLutMapLocation, lutMap[0], lutMap[1], lutMap[2],
+                  lutMap[3]);
     const int locations[6] = {r->shadowSunDirLocation, r->shadowSunColourLocation,
                               r->shadowSkyLocation, r->shadowGroundLocation,
                               r->shadowCameraLocation, r->shadowParamsLocation};
@@ -1717,6 +1763,7 @@ static void castShadows(RendererC3D* r) {
     if (!r->shadowLive) {
         return;
     }
+    leaveShadowLitStages(r);
     const u32 size = (u32)r->shadowMapSize;
 #if defined(MDK_SHADOW_PROBE)
     // 10: the map cleared to the NEAREST depth and nothing cast (all shadow, if

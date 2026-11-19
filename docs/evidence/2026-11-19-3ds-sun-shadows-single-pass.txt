@@ -1,0 +1,104 @@
+2026-11-19  3DS sun shadows in ONE pass: the receive pass folded into the lit draw
+==================================================================================
+
+HARDWARE + EMULATOR. Old 3DS appliance old3ds-lan167 (CFGU model 0, 268 MHz,
+L2 none, stereo ON, hw_cycle.sh FRESH); Mandarine r1.2.1 (md5 0d2adab6...) on
+DISPLAY=:99 via compare_linux.sh. Branch experimental/3ds-perf-glow-shadows.
+
+WHY. The per-toggle profile (2026-11-18-3ds-enhanced-cost-per-toggle.txt) put
+the sun's shadow at ~24 ms of an 80 ms stereo frame on the Old 3DS, and none of
+it in the map (128 against 256: the same frame). It was the RECEIVE PASS: every
+opaque Lit mesh drawn a second time per eye -- vertex and geometry shader again,
+depth EQUAL, a multiply blend over the picture.
+
+THE HARDWARE PATH (researched before it was built; sources below). The map is a
+GPU_TEX_SHADOW_2D texture (C3D_TexInitShadow), written natively with
+GPU_FRAGOPMODE_SHADOW on the console. A shadow texture is compared only on
+texture unit 0 (3dbrew: "Texture 0 only"; Azahar: "Only unit 0 respects the
+texturing type"); the comparison returns ONE value -- 1 in the light, 0 in the
+shadow, 2x2-blended -- in all four channels, and the combiner can read it as
+GPU_TEXTURE0 (wwylele's hardware test gist does exactly that). The fragment
+lighting unit's own shadow input (C3D_LightEnvShadowMode / LightShadowEnable)
+exists but shadows only the light's diffuse term in linear space, which cannot
+make this port's per-triangle sRGB light; it was not used. No project on the
+NAS, and no devkitPro example, uses either path: this is the first.
+
+THE DESIGN. What a Lit surface is in the shadow, F_shadow = to_srgb(exposure *
+hemisphere), depends on ONE number per triangle (t = n.z * 0.5 + 0.5; sky,
+ground and exposure are the rig's), so it is a LOOKUP: a 128x8 RGBA8 texture on
+unit 2, F_shadow(t) / 2 along u and the map's edge fade along v (alpha),
+refilled on the CPU only when the rig changes (pica::sunShadowTintTexel; the
+t = 0 row is the LAST memory row, pica::sceneUvFromTop's rule).
+mdk_litshadow.g.pica (the DVLB's third DVLE, replacing mdk_shadow.g.pica) is
+the lit geometry shader plus the old receiver's map coordinate (texcoord0 +
+texcoord0w), the surface's texcoord on texcoord1 and the lookup's on
+texcoord2. The combiner (06_draw.inc installShadowLitStages):
+    stage 0  A = (1 - shadow) * survive
+    stage 1  rgb = mix(F_lit, F_shadow, A) / 2, alpha = the surface's
+    stage 2  surface * that, x2
+    stage 3  the haze (setHaze's stage 2, moved one stage on)
+= the old two passes' texture * F_lit * mix(1, F_shadow / F_lit, A), in one
+draw. A face the sun does not reach has F_lit = F_shadow, so the map changes
+nothing there. Units 1 and 2 cannot be unbound in citro3d (C3D_TexBind(1,
+NULL) reads through the pointer), so every other layout puts an 8x8 white
+texture on them (leaveShadowLitStages: installEye, the canvas, the glow, the
+caster pass and every unshadowed draw). Shader binary: 233 -> 219 of 512
+instructions, 29 of 128 operand descriptors (the old receiver's slot reused,
+and the new shader is shorter than the old receiver).
+
+THE LOOK, unchanged:
+  emulator, level 8 frame 60, every enhancement on: against the two-pass
+    capture, max difference 3/255, 6 pixels over 2;
+  console (hw_cycle --capture, stereo): against the two-pass console capture,
+    max difference 2/255 (25,555 pixels by 1-2: 8-bit rounding), the native
+    decision and "native writes verified ... 6024 texels" as before.
+
+THE COST (hw_cycle --profile, level 8, everything on, stereo):
+  two passes (6bb2d5d)         p50 80.3 ms   mean 94.5 ms
+  ONE PASS                     p50 63.7 ms   mean 77.1 ms
+  sun shadows off              p50 56.0 ms   mean 69.1 ms
+  -> the shadow's cost ~24 ms -> ~8 ms.
+  WHERE THE REMAINING ~8 ms GOES (make ... SHADOWPROBE=10: the map cleared,
+  NOTHING cast, the lookup kept):
+  one pass, no casters drawn   p50 59.8 ms   mean 72.8 ms
+  -> the caster pass (the map remade every frame, ~220 draws) ~4 ms; the
+     lookup inside the lit draws (two more fetches a fragment, both eyes, at
+     edge smoothing 2x2) ~4 ms. Caching the map across frames is worth ~4 ms
+     at most; the lookup shrinks with the eye targets' size.
+
+TESTS. tests/scripts/pica_matrix_tests.cpp: the tint at t = 0 and 1 against
+the formula, the rows' survival (t = 0 at the last row), the tint equal to the
+old pass's F_lit * R, the lutMap on the texel centres. c3d_frame_test.sh:
+`sun-shadow-cast-once-and-taken-in-the-lit-draw` (no second pass; casters only;
+surface on unit 1; the shadowed program; its stages; every other draw leaves
+the layout; setHaze never over it; map on 0, tint on 2) and
+`no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw` (the four unit
+1/2 binds, every combiner path leaving the layout), nine arms between them; the suite 52 checks, 130 arms.
+
+RETIRED. The receive pass (receiveShadows), mdk_shadow.g.pica, and the
+SHADOWPROBE combiner probes 1-5 and the one-depth sweep 20-29 (they lived in the
+old shader); probes 8 and 10 remain. pica::kDepthShadowReceive and
+kBlendShadowMultiply are now used only by their host tests.
+
+REVIEW (independent, read-only, Fable): no blocker; the combiner, the haze,
+the texcoord routing (citro3d's texConfig leaves bit 13 clear: unit 2 reads
+texcoord2), the six GS outputs (under 7), every state path and the lifetimes
+checked. Fixed:
+- the tint is a linear lookup of a steep curve: 64 -> 128 columns (~9/255 ->
+  under half that at a near-black ground);
+- its refill computed powf per texel: once per column now (384 powf);
+- a frame whose tint could not be made cast the map for no receiver: the tint
+  is part of shadowLive now;
+- the SHADOWPROBE comment, and the shadow log now says "(both eyes)".
+Not changed, recorded: once any shadowed draw has run, units 1 and 2 hold the
+8x8 idle texture for the rest of the session (citro3d cannot unbind them), so
+every later fragment pays two tiny fetches even with the shadow toggled off --
+an A/B of "shadows off" should be a fresh boot, as every profile here is.
+drawDiagnostic (an rdebug aid) may sample whatever unit 0 holds when its
+white texture is missing: older than this change.
+
+SOURCES: wwylele's shadow-sampling and shadow-map gists
+(gist.github.com/wwylele/fe123dc04b6c952b2b34437fa538c275, .../8d35017e6b9d54e243007a4201422b4b);
+3dbrew GPU/Internal_Registers; Azahar (sw_rasterizer.cpp, glsl_fs_shader_gen.cpp,
+regs_lighting.h); citro3d lightenv.c / light.c / texture.c; the vault's
+60-references/3ds-platform/pica200/05-textures-and-combiners.md.

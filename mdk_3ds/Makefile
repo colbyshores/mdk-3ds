@@ -162,11 +162,12 @@ $(error TOGGLES=$(TOGGLES) needs AUTOQUIT: the config override is a harness-buil
 endif
 DEFINES += -DMDK_HW_TOGGLES='$(TOGGLES)'
 endif
-# `make SHADOWPROBE=n` (a harness aid, never a release): the sun shadow's receive
-# pass draws one of its terms alone instead of the shadow -- 1 a constant half
-# grey (does the pass reach pixels?), 2 the map's answer, 3 the factor R, 4 the
-# amount q (06_draw.inc receiveShadows). Only renderer_c3d.cpp reads it: touch it
-# after changing SHADOWPROBE.
+# `make SHADOWPROBE=n` (a harness aid, never a release): 8 pushes every receiver
+# to the map's far end (all shadow, if the unit compares at all); 10 clears the
+# map to the nearest depth and casts nothing (all shadow, and the caster pass's
+# cost removed: the 2026-11-19 profile split). The receive pass's combiner probes
+# went with it (the shadow is taken in the lit draw now). Only renderer_c3d.cpp
+# reads it: touch it after changing SHADOWPROBE.
 # `make TOGGLEWALK=1` (a harness aid, never a release): boot in the original
 # look and switch the config's enhancements on one at a time, 120 frames apart,
 # logging each before its first frame (main_3ds.cpp), so a console that hangs
@@ -244,10 +245,10 @@ BIN2S   := $(DEVKITPRO)/tools/bin/bin2s
 # program's geometry shader (Enhanced Mode lighting, mdk_c3d.g.pica).
 SHADER_PICA  := $(CURDIR)/shaders/mdk_c3d.v.pica
 SHADER_GPICA := $(CURDIR)/shaders/mdk_c3d.g.pica
-# The shadow receive program's geometry shader (Enhanced Mode sun shadows): the
-# DVLB's third DVLE. The ORDER on the picasso line below is the DVLE order the
+# The lit program WITH the sun's shadow, one pass (Enhanced Mode sun shadows):
+# the DVLB's third DVLE. The ORDER on the picasso line below is the DVLE order the
 # backend indexes by (02_lifecycle.inc).
-SHADER_SPICA := $(CURDIR)/shaders/mdk_shadow.g.pica
+SHADER_SPICA := $(CURDIR)/shaders/mdk_litshadow.g.pica
 # ... and the shadow caster pass's vertex shader: the fourth DVLE.
 SHADER_CPICA := $(CURDIR)/shaders/mdk_caster.v.pica
 # ... and the pass-through geometry shader: the fifth DVLE (mdk_pass.g.pica says

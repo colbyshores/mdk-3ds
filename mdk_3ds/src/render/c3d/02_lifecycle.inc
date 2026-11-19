@@ -281,9 +281,10 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
                       r->litReady ? "ready" : "UNAVAILABLE", (int)r->sunDirLocation,
                       (int)r->skyLocation, (int)r->groundLocation, (int)r->cameraLocation,
                       (int)r->lightParamsLocation, (int)r->worldLocation);
-    // THE SHADOW RECEIVE PROGRAM (Enhanced Mode enableSkyShadows): the same vertex
-    // shader plus the DVLB's third DVLE, mdk_shadow.g.pica, with the same input
-    // stride. Optional, like the lit program: without it there are no sun shadows.
+    // THE SHADOWED LIT PROGRAM (Enhanced Mode enableSkyShadows): the same vertex
+    // shader plus the DVLB's third DVLE, mdk_litshadow.g.pica -- the light AND the
+    // sun's shadow in one pass -- with the same input stride. Optional, like the
+    // lit program: without it there are no sun shadows.
     if (r->litReady && r->dvlb->numDVLE >= 3 &&
         R_SUCCEEDED(shaderProgramInit(&r->programShadow))) {
         const Result shadowVsh = shaderProgramSetVsh(&r->programShadow, &r->dvlb->DVLE[0]);
@@ -297,11 +298,12 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
             r->shadowCameraLocation = shaderInstanceGetUniformLocation(gs, "camera");
             r->shadowParamsLocation = shaderInstanceGetUniformLocation(gs, "params");
             r->shadowSunMtxLocation = shaderInstanceGetUniformLocation(gs, "sunMtx");
+            r->shadowLutMapLocation = shaderInstanceGetUniformLocation(gs, "lutMap");
             r->shadowProgramReady =
                 r->shadowSunDirLocation >= 0 && r->shadowSunColourLocation >= 0 &&
                 r->shadowSkyLocation >= 0 && r->shadowGroundLocation >= 0 &&
                 r->shadowCameraLocation >= 0 && r->shadowParamsLocation >= 0 &&
-                r->shadowSunMtxLocation >= 0;
+                r->shadowSunMtxLocation >= 0 && r->shadowLutMapLocation >= 0;
         }
         if (!r->shadowProgramReady) {
             shaderProgramFree(&r->programShadow);
@@ -336,13 +338,23 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
     r->vshUniformVecs = r->worldLocation + 4;
     mdk::log3dsPrintf("pass program: %s; vertex uniforms c0-c%d",
                       r->passReady ? "ready" : "UNAVAILABLE", (int)r->vshUniformVecs - 1);
-    mdk::log3dsPrintf("shadow programs: receive %s (sun=%d sky=%d ground=%d camera=%d params=%d "
-                      "mtx=%d), caster %s (mvp=%d)",
+    mdk::log3dsPrintf("shadow programs: lit+shadow %s (sun=%d sky=%d ground=%d camera=%d "
+                      "params=%d mtx=%d lut=%d), caster %s (mvp=%d)",
                       r->shadowProgramReady ? "ready" : "UNAVAILABLE",
                       (int)r->shadowSunDirLocation, (int)r->shadowSkyLocation,
                       (int)r->shadowGroundLocation, (int)r->shadowCameraLocation,
                       (int)r->shadowParamsLocation, (int)r->shadowSunMtxLocation,
+                      (int)r->shadowLutMapLocation,
                       r->casterProgramReady ? "ready" : "UNAVAILABLE", (int)r->casterMvpLocation);
+    // THE IDLE TEXTURE for units 1 and 2 (01_types.inc unitIdle): 8x8 opaque
+    // white, linear heap, made once. Without it the shadowed lit draws are off
+    // (they would leave a surface bound on unit 1 for every later fragment).
+    r->unitIdleReady = C3D_TexInit(&r->unitIdle, 8, 8, GPU_RGBA8);
+    if (r->unitIdleReady) {
+        memset(r->unitIdle.data, 0xFF, 8 * 8 * 4);
+        C3D_TexFlush(&r->unitIdle);
+        C3D_TexSetFilter(&r->unitIdle, GPU_NEAREST, GPU_NEAREST);
+    }
     mdk::log3dsPrintf("uniforms: mvp=%d uvtransform=%d tint=%d haze=%d", (int)r->mvpLocation,
                       (int)r->uvLocation, (int)r->tintLocation, (int)r->hazeLocation);
     // A NAME THE SHADER DOES NOT EXPORT is not a location, and citro3d does not
@@ -461,6 +473,16 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
     // may still have been reading it (AGENTS.md P3).
     if (r->glowScratchTiled) {
         linearFree(r->glowScratchTiled);
+    }
+    // The tint and the idle texture: linear heap, sampled by the queue C3D_Fini
+    // has just waited for.
+    if (r->shadowTintReady) {
+        C3D_TexDelete(&r->shadowTint);
+        r->shadowTintReady = false;
+    }
+    if (r->unitIdleReady) {
+        C3D_TexDelete(&r->unitIdle);
+        r->unitIdleReady = false;
     }
     if (r->copyDrain) {
         linearFree(r->copyDrain);

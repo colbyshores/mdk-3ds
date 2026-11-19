@@ -984,5 +984,32 @@ bool castsSunShadow(Pass pass, Shading shading, Primitive primitive);
 // suite: the shader cannot be run there, its arithmetic can.
 float sunShadowRatio(float lit, float shadowed);
 
+// THE SHADOW TINT: the single-pass receiver's lookup (mdk_litshadow.g.pica,
+// texture unit 2). What a Lit surface's light is in the sun's shadow depends on
+// ONE number per triangle -- t = n.z * 0.5 + 0.5, the hemisphere's -- because
+// sky, ground and exposure are the rig's: F_shadow(t) = to_srgb(exposure *
+// mix(ground, sky, t)), halved and clamped at 1 like the lit program's F (its
+// light stage scales x2). Along u: t from 0 (column 0) to 1 (the last column).
+// Along v: the alpha is how much of the shadow survives the map's edge fade,
+// 1 at t = 1 and 0 at t = 0 -- and the PICA samples t = 0 at the LAST memory
+// row (sceneUvFromTop), so memory row y holds alpha (H - 1 - y) / (H - 1).
+// RGBA8, made and refilled on the CPU when the rig changes (cold: a level's
+// rig, 1024 texels, 384 powf -- one colour per column). 128 columns: the
+// sampler interpolates linearly between them, and x^(1/2.2) is steep near
+// black (review, 2026-11-19: 64 columns erred ~9/255 at a near-black ground).
+constexpr int32_t kShadowTintWidth = 128;
+constexpr int32_t kShadowTintHeight = 8;
+void sunShadowTintTexel(int32_t x, int32_t y, const float sky[3], const float ground[3],
+                        float exposure, uint8_t rgba[4]);
+// The same, split for a fill: column x's colour (rgb) once, then row y's
+// alpha. sunShadowTintTexel is the two together.
+void sunShadowTintColumn(int32_t x, const float sky[3], const float ground[3], float exposure,
+                         uint8_t rgb[3]);
+uint8_t sunShadowTintAlpha(int32_t y);
+// The geometry shader's lutMap uniform: u = t * out[0] + out[1] and
+// v = survive * out[2] + out[3] land on the texel CENTRES of the end columns and
+// rows, so t = 0 and t = 1 read exactly the first and last column.
+void sunShadowTintMap(float out[4]);
+
 } // namespace pica
 } // namespace mdk

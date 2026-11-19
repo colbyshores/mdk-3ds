@@ -625,5 +625,37 @@ float sunShadowRatio(float lit, float shadowed) {
     return ratio > 1.0f ? 1.0f : ratio;
 }
 
+void sunShadowTintColumn(int32_t x, const float sky[3], const float ground[3], float exposure,
+                         uint8_t rgb[3]) {
+    const float kInvGamma = 0.45454545f;
+    const float t = (float)x / (float)(kShadowTintWidth - 1);
+    for (int c = 0; c < 3; c++) {
+        const float light = exposure * (ground[c] + (sky[c] - ground[c]) * t);
+        float f = 0.5f * powf(light > 0.0f ? light : 0.0f, kInvGamma);
+        if (f > 1.0f) {
+            f = 1.0f;
+        }
+        rgb[c] = (uint8_t)(f * 255.0f + 0.5f);
+    }
+}
+
+uint8_t sunShadowTintAlpha(int32_t y) {
+    const int32_t survive = (kShadowTintHeight - 1) - y;
+    return (uint8_t)((survive * 255 + (kShadowTintHeight - 1) / 2) / (kShadowTintHeight - 1));
+}
+
+void sunShadowTintTexel(int32_t x, int32_t y, const float sky[3], const float ground[3],
+                        float exposure, uint8_t rgba[4]) {
+    sunShadowTintColumn(x, sky, ground, exposure, rgba);
+    rgba[3] = sunShadowTintAlpha(y);
+}
+
+void sunShadowTintMap(float out[4]) {
+    out[0] = (float)(kShadowTintWidth - 1) / (float)kShadowTintWidth;
+    out[1] = 0.5f / (float)kShadowTintWidth;
+    out[2] = (float)(kShadowTintHeight - 1) / (float)kShadowTintHeight;
+    out[3] = 0.5f / (float)kShadowTintHeight;
+}
+
 } // namespace pica
 } // namespace mdk

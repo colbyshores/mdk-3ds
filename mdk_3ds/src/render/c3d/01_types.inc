@@ -553,15 +553,36 @@ struct RendererC3D {
     // bind of the lit program can write them again (installLitUniforms).
     float litUniforms[6][4] = {};
     // THE SUN'S SHADOW (Enhanced Mode enableSkyShadows; pica_matrix.h, THE SUN'S
-    // SHADOW). The receive program is the lit program's vertex shader plus
-    // mdk_shadow.g.pica; the map is a PICA shadow texture in VRAM with its own
+    // SHADOW). The receiving program -- the lit program WITH the shadow, one pass
+    // (programShadow) -- is the lit program's vertex shader plus
+    // mdk_litshadow.g.pica; the map is a PICA shadow texture in VRAM with its own
     // render target, made on first use. Optional at every step: a program or a
     // map that cannot be made leaves the frame without sun shadows, with one line.
     shaderProgram_s programShadow;
     bool shadowProgramReady = false;
     int shadowSunDirLocation = -1, shadowSunColourLocation = -1, shadowSkyLocation = -1;
     int shadowGroundLocation = -1, shadowCameraLocation = -1, shadowParamsLocation = -1;
-    int shadowSunMtxLocation = -1;
+    int shadowSunMtxLocation = -1, shadowLutMapLocation = -1;
+    // THE SHADOW TINT (pica::sunShadowTintTexel): F_shadow(t) / 2 along u, the
+    // edge fade's survival in alpha along v, on texture unit 2 for the shadowed
+    // lit draws; refilled when the rig's sky, ground or exposure change.
+    C3D_Tex shadowTint;
+    bool shadowTintReady = false;
+    float shadowTintRig[7] = {-1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+    // The frame's shadowed lit draws may run (prepareShadows): the map was made
+    // for this frame, the program and the tint are ready.
+    bool shadowLitLive = false;
+    // The combiner holds the shadowed lit draw's four stages (06_draw.inc
+    // installShadowLitStages) and units 1 and 2 hold its textures; every other
+    // layout puts stages 1-3 and units 1-2 back first (leaveShadowLitStages).
+    bool shadowLitStages = false;
+    int8_t shadowLitHaze = -1;      // stage 3's haze in that layout: -1 unknown, 0 off, 1 on
+    // An 8x8 opaque white texture: what units 1 and 2 are left holding when no
+    // draw wants them. citro3d cannot unbind them (C3D_TexBind(1, NULL) reads
+    // through the null pointer) and a bound unit is sampled by every fragment,
+    // so it is the smallest texture there is, not the last surface.
+    C3D_Tex unitIdle;
+    bool unitIdleReady = false;
     // The caster pass's own program (mdk_caster.v.pica: no geometry shader) and
     // the ramp texture that turns a depth into the map's bytes.
     shaderProgram_s programCaster;
@@ -594,7 +615,7 @@ struct RendererC3D {
     float shadowSunMtx[16] = {};    // already in register order (pica::registers)
     int32_t shadowCasters = 0;      // draws the caster pass made this frame
     int32_t shadowHoleCasters = 0;  // casters left out: their textures have holes
-    int32_t shadowReceivers = 0;    // draws the receive pass made, first eye
+    int32_t shadowReceivers = 0;    // lit draws that took the shadow this frame (both eyes)
     float hazeExponent = 0.0f;
     bool hazeLive = false;
     bool hazeOn = false;

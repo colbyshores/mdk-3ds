@@ -1090,23 +1090,23 @@ def adjudicate(text, quiet=False):
     # only from the replay. drawGlow (Enhanced Mode glow) is the third: replayQueue
     # calls it once per eye, before the Overlay pass, so it lands in every eye (its
     # small passes draw into its own textures, then it returns to the eye).
-    # The sun shadow (Enhanced Mode enableSkyShadows) adds two: castShadows, the
+    # The sun shadow (Enhanced Mode enableSkyShadows) adds one: castShadows, the
     # caster pass -- once per FRAME, before the eye loop, into the shadow map and
-    # not into an eye at all -- and receiveShadows, which replayQueue calls once
-    # per eye after the opaque passes. Their places are pinned by
-    # `sun-shadow-cast-once-and-received-per-eye` below. And one more, outside any
+    # not into an eye at all. The shadow is TAKEN inside drawRecorded (the
+    # shadowed lit draw, one pass); both are pinned by
+    # `sun-shadow-cast-once-and-taken-in-the-lit-draw` below. And one more, outside any
     # eye and any game frame: testNativeShadowWrites, the once-per-session test
     # of the PICA's own shadow writes, which draws one quad into an 8x8 texture of
     # its own in a frame of its own before the first frame that wants a shadow.
     allowed = [line_range(text, body_span(text, n))
                for n in ("drawRecorded", "drawDiagnostic", "drawGlow", "castShadows",
-                         "receiveShadows", "testNativeShadowWrites", "testSampleShadowMap")]
+                         "testNativeShadowWrites", "testSampleShadowMap")]
     stray = [loc for ln, loc in sites(text, EMIT_DRAW)
              if not any(r and r[0] <= ln <= r[1] for r in allowed)]
     rep.check("emission-sites-closed",
               not stray and all(allowed),
               "%d draw call(s) outside drawRecorded/drawDiagnostic/drawGlow/castShadows/"
-              "receiveShadows/testNativeShadowWrites/testSampleShadowMap: %s (an immediate draw "
+              "testNativeShadowWrites/testSampleShadowMap: %s (an immediate draw "
               "anywhere else is outside the per-eye replay, so it lands in one target or "
               "none)" % (len(stray), "none" if not stray else "; ".join(stray)))
 
@@ -1352,51 +1352,57 @@ def adjudicate(text, quiet=False):
               "(anywhere else it lands in one eye, or over the canvas)"
               % (len(glow_calls), "yes" if glow_gate else "NO"))
 
-    # THE SUN SHADOW'S TWO PASSES, each in its one place (Enhanced Mode
-    # enableSkyShadows; 03_frame.inc castShadows, 06_draw.inc receiveShadows).
+    # THE SUN SHADOW: MADE ONCE A FRAME, TAKEN IN THE LIT DRAW ITSELF (Enhanced
+    # Mode enableSkyShadows; 03_frame.inc castShadows, 06_draw.inc
+    # installShadowLitStages). Measured on the Old 3DS, 2026-11-18: the old
+    # per-eye receive pass (every opaque Lit mesh drawn again, depth EQUAL, a
+    # multiply blend) was ~24 ms of an 80 ms stereo frame; one pass is the fix.
     #   - The map is made ONCE A FRAME, before either eye: castShadows is called
     #     from mdk_render_end_frame after prepareShadows and before the eye loop's
-    #     installEye (inside the loop it would be made twice in stereo, and after
-    #     installEye it would leave the eye's target unselected for the replay).
-    #     It selects its own target before it draws and flushes it after, because
-    #     the eyes read the map as a texture in the same command list.
-    #   - The shadow is laid on once per eye, from replayQueue, when the Mirror
-    #     pass is reached: after the two opaque passes, before anything
-    #     translucent (later, the multiply would darken glass and sprites).
-    #   - The receive pass tests for depth EQUALITY and never writes, multiplies,
-    #     and puts the scene's program and depth state back.
+    #     installEye, selects its own target before it draws and flushes it after
+    #     (the eyes read the map as a texture in the same command list).
+    #   - There is no second pass: no receiveShadows, no depth-EQUAL state.
+    #   - A Lit draw takes the shadow exactly when it is one of the sun's casters
+    #     (pica::castsSunShadow) and the frame has it (shadowLitLive), through the
+    #     shadowed lit program, with its surface on unit 1 (unit 0 is the only one
+    #     that compares a shadow map) and installShadowLitStages' combiner, which
+    #     puts the map on unit 0 and the tint on unit 2; setHaze (stage 2) never
+    #     runs over that layout, and every other draw leaves it first.
     end_body = body(text, "mdk_render_end_frame") or ""
     cast_calls = call_sites(text, "castShadows")
-    receive_calls = call_sites(text, "receiveShadows")
     prepare_at = end_body.find("prepareShadows(r);")
     cast_at = end_body.find("castShadows(r);")
     loop_at = end_body.find("installEye(r, eye == 0")
-    receive_gate = re.search(r"if\s*\(\s*pass\s*==\s*static_cast<int32_t>\(mdk::Pass::Mirror\)\s*\)"
-                             r"\s*\{\s*receiveShadows\(r\);", replay_body)
     cast_body = body(text, "castShadows") or ""
     cast_target = cast_body.find("C3D_FrameDrawOn(r->shadowTarget);")
     cast_draw = cast_body.find("C3D_DrawArrays(")
     cast_flush = cast_body.find("GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);")
-    receive_body = body(text, "receiveShadows") or ""
-    r_equal = receive_body.find("installDepthState(r, mdk::pica::kDepthShadowReceive);")
-    r_blend = receive_body.find("writeBlendState(r, mdk::pica::kBlendShadowMultiply,")
-    r_draw = receive_body.find("C3D_DrawArrays(")
-    r_program = receive_body.rfind("bindProgram(r, r->passReady ? &r->programPass : &r->program);")
-    r_depth = receive_body.rfind("installDepthState(r, mdk::pica::DepthState{true, true});")
-    rep.check("sun-shadow-cast-once-and-received-per-eye",
-              len(cast_calls) == 1 and len(receive_calls) == 1
-              and 0 <= prepare_at < cast_at < loop_at
-              and receive_gate is not None
-              and 0 <= cast_target < cast_draw < cast_flush
-              and 0 <= r_equal < r_draw and 0 <= r_blend < r_draw
-              and r_draw < r_program and r_draw < r_depth,
-              "%d castShadows / %d receiveShadows call site(s); end_frame order prepare %d < "
-              "cast %d < eye loop %d; replay gate on the Mirror pass: %s; caster target %d < "
-              "draw %d < flush %d; receive depth-equal %d and multiply %d before its draw %d, "
-              "scene program %d and depth %d after"
-              % (len(cast_calls), len(receive_calls), prepare_at, cast_at, loop_at,
-                 "yes" if receive_gate else "NO", cast_target, cast_draw, cast_flush,
-                 r_equal, r_blend, r_draw, r_program, r_depth))
+    no_second_pass = "receiveShadows" not in text and "kDepthShadowReceive" not in text
+    rec_body = body(text, "drawRecorded") or ""
+    takes = re.search(r"const bool shadowLit = lit && r->shadowLitLive &&\s*"
+                      r"mdk::pica::castsSunShadow\(draw->material\.pass, draw->material\.shading,"
+                      r"\s*draw->primitive\);", rec_body) is not None
+    unit1 = "C3D_TexBind(shadowLit ? 1 : 0, texture);" in rec_body
+    program = re.search(r"shadowLit\s*\?\s*&r->programShadow", rec_body) is not None
+    stages = re.search(r"if\s*\(shadowLit\)\s*\{\s*installShadowLitStages\(r,", rec_body) is not None
+    leaves = re.search(r"if\s*\(!shadowLit\)\s*\{\s*leaveShadowLitStages\(r\);", rec_body) is not None
+    haze_guard = re.search(r"if\s*\(!shadowLit\)\s*\{\s*setHaze\(", rec_body) is not None
+    install_b = body(text, "installShadowLitStages") or ""
+    units = ("C3D_TexBind(0, &r->shadowTex);" in install_b
+             and "C3D_TexBind(2, &r->shadowTint);" in install_b)
+    rep.check("sun-shadow-cast-once-and-taken-in-the-lit-draw",
+              len(cast_calls) == 1 and 0 <= prepare_at < cast_at < loop_at
+              and 0 <= cast_target < cast_draw < cast_flush and no_second_pass
+              and takes and unit1 and program and stages and leaves and haze_guard and units,
+              "%d castShadows call site(s); end_frame order prepare %d < cast %d < eye loop %d; "
+              "caster target %d < draw %d < flush %d; no second pass: %s; the shadowed lit "
+              "draw: casters only %s, surface on unit 1 %s, its program %s, its stages %s, "
+              "others leave the layout %s, setHaze guarded %s, map on 0 and tint on 2 %s"
+              % (len(cast_calls), prepare_at, cast_at, loop_at, cast_target, cast_draw,
+                 cast_flush, "yes" if no_second_pass else "NO", "yes" if takes else "NO",
+                 "yes" if unit1 else "NO", "yes" if program else "NO",
+                 "yes" if stages else "NO", "yes" if leaves else "NO",
+                 "yes" if haze_guard else "NO", "yes" if units else "NO"))
 
     # HOW THE SUN'S MAP IS WRITTEN, AND WHY IT IS NOT ONE WAY (measured
     # 2026-11-18; 03_frame.inc testNativeShadowWrites). The Old 3DS lands the
@@ -1510,16 +1516,26 @@ def adjudicate(text, quiet=False):
     # filter for a linear texture and a no-op for a VRAM one -- a CPU path in an
     # enhancement the owner allows only on the PICA200. C3D_TexBind on unit 1 or 2
     # reads the texture before any check, so a NULL unbind is a data abort on the
-    # console, and a bound unit is sampled on every later fragment -- so this
-    # backend binds unit 0 only.
+    # console, and a bound unit is sampled on every later fragment -- so units 1
+    # and 2 are bound in exactly four places, all the shadowed lit draw's: its
+    # surface (drawRecorded, unit 1), its tint (installShadowLitStages, unit 2),
+    # and the idle 8x8 texture both units go back to (leaveShadowLitStages); and
+    # every path that installs a combiner of its own leaves that layout first.
     mipgen = calls(text, r"C3D_TexGenerateMipmap\(")
     high_units = calls(text, r"C3D_TexBind\(\s*(?!0\s*,)[^,]+,")
-    rep.check("no-cpu-mipmaps-and-no-texture-units-above-0",
-              not mipgen and not high_units,
-              "%d C3D_TexGenerateMipmap call(s), %d C3D_TexBind on unit 1/2: %s"
-              % (len(mipgen), len(high_units),
-                 "none" if not (mipgen or high_units)
-                 else "; ".join(loc for _, loc in mipgen + high_units)))
+    high_text = sorted(re.search(r"C3D_TexBind\(\s*(?!0\s*,)[^;]*;", line).group(0)
+                       for _, line in high_units)
+    expected_high = sorted(["C3D_TexBind(2, &r->shadowTint);", "C3D_TexBind(1, &r->unitIdle);",
+                            "C3D_TexBind(2, &r->unitIdle);",
+                            "C3D_TexBind(shadowLit ? 1 : 0, texture);"])
+    leavers = [n for n in ("installEye", "castShadows", "drawGlow", "drawRecorded")
+               if "leaveShadowLitStages(r);" not in (body(text, n) or "")]
+    rep.check("no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw",
+              not mipgen and high_text == expected_high and not leavers,
+              "%d C3D_TexGenerateMipmap call(s); %d C3D_TexBind on unit 1/2 (%s); combiner "
+              "paths that do not leave the shadowed layout first: %s"
+              % (len(mipgen), len(high_units), "; ".join(high_text) or "none",
+                 ", ".join(leavers) or "none"))
 
     # THE BACKEND'S OWN REFUSED-MESH LINE IS AN EDGE TRIGGER TOO. Review-14's related
     # observation: the frontend's copy of this latch is pinned three times over and
@@ -2893,19 +2909,19 @@ ARMS = [
      lambda s: s.replace("    // THE BLUR (steps 4-6), through the identity matrix",
                          "    C3D_TexGenerateMipmap(&r->glowTex, GPU_TEXFACE_2D);\n"
                          "    // THE BLUR (steps 4-6), through the identity matrix", 1),
-     "no-cpu-mipmaps-and-no-texture-units-above-0"),
+     "no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw"),
     ("glow-unbinds-unit-1-with-null",
      lambda s: s.replace("    C3D_TexEnvBufUpdate(C3D_Both, 0);\n    r->lightStageOn = false;\n    r->hazeOn = false;",
                          "    C3D_TexBind(1, nullptr);\n    C3D_TexEnvBufUpdate(C3D_Both, 0);\n"
                          "    r->lightStageOn = false;\n    r->hazeOn = false;", 1),
-     "no-cpu-mipmaps-and-no-texture-units-above-0"),
+     "no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw"),
     ("glow-leaves-the-small-viewport",
      lambda s: s.replace("    C3D_FrameDrawOn(eye);\n    C3D_SetViewport(0, 0, (u32)r->targetWidth, (u32)r->targetHeight);",
                          "    C3D_FrameDrawOn(eye);", 1),
      "glow-restores-the-frame-state"),
     ("glow-copies-before-the-split",
-     lambda s: s.replace("    C3D_RenderTarget* eye = r->eyeTarget;\n    frameSplit(r);\n",
-                         "    C3D_RenderTarget* eye = r->eyeTarget;\n", 1),
+     lambda s: s.replace("    leaveShadowLitStages(r);\n    frameSplit(r);\n",
+                         "    leaveShadowLitStages(r);\n", 1),
      "glow-splits-before-copying-and-flushes-each-pass"),
     # The sun map's write paths (sun-shadow-map-written-by-a-measured-path).
     ("caster-alpha-made-constant-again",
@@ -2996,30 +3012,40 @@ ARMS = [
                          "        ? (Result)0", 1),
      "shader-uploaded-exactly-once-at-create"),
     # The sun shadow's passes, each moved or broken the one plausible way.
-    ("sun-shadow-received-after-the-translucent-passes",
-     lambda s: s.replace(
-         "        if (pass == static_cast<int32_t>(mdk::Pass::Mirror)) {\n            receiveShadows(r);",
-         "        if (pass == static_cast<int32_t>(mdk::Pass::Overlay)) {\n            receiveShadows(r);",
-         1),
-     "sun-shadow-cast-once-and-received-per-eye"),
     ("sun-shadow-map-made-inside-the-eye-loop",
      lambda s: s.replace("    prepareShadows(r);\n    castShadows(r);\n", "    prepareShadows(r);\n", 1)
                 .replace("        replayQueue(r);\n", "        castShadows(r);\n        replayQueue(r);\n", 1),
-     "sun-shadow-cast-once-and-received-per-eye"),
-    ("sun-shadow-received-with-the-scenes-depth-test",
-     lambda s: s.replace("    installDepthState(r, mdk::pica::kDepthShadowReceive);",
-                         "    installDepthState(r, mdk::pica::DepthState{true, false});", 1),
-     "sun-shadow-cast-once-and-received-per-eye"),
+     "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("sun-shadow-map-not-flushed-before-the-eyes-read-it",
      lambda s: s.replace(
          "    // the GPU still holds of it goes to memory first (the glow's rule).\n"
-         "    GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);\n", 
+         "    GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);\n",
          "    // the GPU still holds of it goes to memory first (the glow's rule).\n", 1),
-     "sun-shadow-cast-once-and-received-per-eye"),
-    ("sun-shadow-leaves-the-receive-program-bound",
-     lambda s: s.replace(
-         "    bindProgram(r, r->passReady ? &r->programPass : &r->program);\n", "", 1),
-     "sun-shadow-cast-once-and-received-per-eye"),
+     "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
+    ("shadowed-lit-draw-keeps-the-surface-on-unit-0",
+     lambda s: s.replace("C3D_TexBind(shadowLit ? 1 : 0, texture);", "C3D_TexBind(0, texture);", 1),
+     "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
+    ("shadowed-lit-draw-through-the-plain-lit-program",
+     lambda s: s.replace("shadowLit ? &r->programShadow", "shadowLit ? &r->programLit", 1),
+     "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
+    ("shadowed-lit-draw-on-every-lit-surface",
+     lambda s: s.replace("    const bool shadowLit = lit && r->shadowLitLive &&\n"
+                         "                           mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,\n"
+                         "                                                     draw->primitive);",
+                         "    const bool shadowLit = lit && r->shadowLitLive;", 1),
+     "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
+    ("shadowed-lit-draw-hazed-over-its-surface-stage",
+     lambda s: s.replace("    if (!shadowLit) {\n        setHaze(", "    {\n        setHaze(", 1),
+     "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
+    ("unshadowed-draw-inherits-the-shadowed-layout",
+     lambda s: s.replace("    if (!shadowLit) {\n        leaveShadowLitStages(r);\n    }\n", "", 1),
+     "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
+    ("shadowed-layout-leaves-the-surface-on-unit-1",
+     lambda s: s.replace("    C3D_TexBind(1, &r->unitIdle);\n", "", 1),
+     "no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw"),
+    ("the-glow-runs-over-the-shadowed-layout",
+     lambda s: s.replace("    leaveShadowLitStages(r);\n    frameSplit(r);\n", "    frameSplit(r);\n", 1),
+     "no-cpu-mipmaps-and-units-1-2-only-for-the-shadowed-lit-draw"),
     # THE GEOMETRY-STAGE RULE's five plausible "simplifications", each of which
     # the emulator renders correctly and the console hangs on or degrades.
     ("plain-program-bound-in-geometry-mode-without-a-split",

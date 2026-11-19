@@ -1629,6 +1629,46 @@ void testTheSunsShadow() {
     }
 
     // --- the factor the receive pass multiplies by ---
+    // THE SHADOW TINT (single-pass receiver): F_shadow / 2 along t, the edge
+    // fade's survival down the rows (t = 0 at the LAST memory row), and the map
+    // onto the texel centres. The tint is what the old receive pass's R scaled
+    // the lit colour to: F_lit * R = F_shadow, so tint / F_lit is the ratio.
+    {
+        const float sky[3] = {0.66f, 0.59f, 0.48f};
+        const float ground[3] = {0.57f, 0.30f, 0.25f};
+        const float exposure = 1.763f;
+        uint8_t first[4];
+        uint8_t last[4];
+        uint8_t top[4];
+        mdk::pica::sunShadowTintTexel(0, mdk::pica::kShadowTintHeight - 1, sky, ground, exposure, first);
+        mdk::pica::sunShadowTintTexel(mdk::pica::kShadowTintWidth - 1, mdk::pica::kShadowTintHeight - 1,
+                                      sky, ground, exposure, last);
+        mdk::pica::sunShadowTintTexel(0, 0, sky, ground, exposure, top);
+        for (int c = 0; c < 3; c++) {
+            const float atGround = 0.5f * powf(exposure * ground[c], 0.45454545f);
+            const float atSky = 0.5f * powf(exposure * sky[c], 0.45454545f);
+            PICA_CHECK(fabsf((float)first[c] / 255.0f - (atGround > 1.0f ? 1.0f : atGround)) < 1.0f / 255.0f);
+            PICA_CHECK(fabsf((float)last[c] / 255.0f - (atSky > 1.0f ? 1.0f : atSky)) < 1.0f / 255.0f);
+            PICA_CHECK(top[c] == first[c]);   // the colour does not change down the rows
+        }
+        PICA_CHECK(first[3] == 0);     // the last memory row is t = 0: nothing survives
+        PICA_CHECK(top[3] == 255);     // the first is t = 1: the whole shadow
+        // The tint is the old pass's F_lit * R, for a face the sun lights.
+        const float shadowed = exposure * ground[0];
+        const float litLight = shadowed + exposure * 0.53f * 0.7f;
+        const float fLit = 0.5f * powf(litLight, 0.45454545f);
+        PICA_CHECK(fabsf(fLit * mdk::pica::sunShadowRatio(litLight, shadowed) -
+                         (float)first[0] / 255.0f) < 1.0f / 255.0f);
+        // The lutMap lands t = 0 / 1 on the end texels' centres.
+        float map[4];
+        mdk::pica::sunShadowTintMap(map);
+        const float w = (float)mdk::pica::kShadowTintWidth;
+        const float h = (float)mdk::pica::kShadowTintHeight;
+        PICA_CHECK(fabsf(map[1] - 0.5f / w) < 1e-6f);
+        PICA_CHECK(fabsf(map[0] + map[1] - (w - 0.5f) / w) < 1e-6f);
+        PICA_CHECK(fabsf(map[3] - 0.5f / h) < 1e-6f);
+        PICA_CHECK(fabsf(map[2] + map[3] - (h - 0.5f) / h) < 1e-6f);
+    }
     PICA_CHECK(mdk::pica::sunShadowRatio(0.8f, 0.8f) == 1.0f);          // no sun on the face
     PICA_CHECK(fabsf(mdk::pica::sunShadowRatio(1.0f, 0.5f) - powf(0.5f, 0.45454545f)) < 1.0e-5f);
     PICA_CHECK(mdk::pica::sunShadowRatio(1.0f, 0.5f) < 1.0f);

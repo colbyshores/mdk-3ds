@@ -1,0 +1,204 @@
+; ============================================================================
+; mdk_litshadow.g.pica -- the lit program WITH the sun's shadow, in ONE pass
+; (Enhanced Mode enableLighting + enableSkyShadows, SPEC.md 7.9).
+;
+; mdk_c3d.g.pica lights a triangle: F_lit = to_srgb(exposure * (hemisphere +
+; sun * facing)), and the combiner draws texture * F_lit. In the sun's shadow
+; the same surface is texture * F_shadow, F_shadow = to_srgb(exposure *
+; hemisphere) -- and the hemisphere is a function of ONE number per triangle,
+; t = n.z * 0.5 + 0.5 (sky, ground and exposure are uniforms). So F_shadow is a
+; lookup: a small texture on unit 2, F_shadow(t) / 2 in rgb along u, built on
+; the CPU whenever the rig changes (03_frame.inc, the shadow tint). This shader
+; emits, per vertex:
+;
+;   colour      F_lit / 2 (rgb), the haze's kept fraction (w) -- as mdk_c3d.g
+;   texcoord0   the vertex's place in the sun's map (u, v), and in texcoord0w
+;               its depth from the sun: unit 0 samples the SHADOW MAP and the
+;               PICA compares (1 in the light, 0 in the shadow)
+;   texcoord1   the surface's own texcoord: the surface texture is on unit 1
+;   texcoord2   (t, 1 - edge): the lookup texture's u, and v = how much of the
+;               shadow survives the map's edge fade (its alpha is v)
+;
+; and the combiner (06_draw.inc, the lit-shadow stages) makes
+;
+;   k = (1 - shadow) * (1 - edge)
+;   F = mix(F_lit, F_shadow, k)
+;   colour = texture * F * 2, then the haze.
+;
+; Which is what the old two passes made (the lit draw, then a depth-EQUAL
+; redraw multiplying by mix(1, F_shadow / F_lit, k)), in one draw: no second
+; geometry pass per eye, no depth-equal pass, no multiply blend. A surface
+; that faces away from the sun has F_lit = F_shadow, so whatever the map says
+; there changes nothing, as on the PC.
+;
+; The receiver's place in the map is mdk_shadow.g.pica's: the world position
+; pushed along the face normal by the PC's ShadowNormalOffset (params.y) and
+; pulled towards the sun by its depth bias (params.z).
+;
+; INPUTS (the vertex shader's outputs, three vertices of four registers):
+;   v0-v3   first vertex:  clip position, colour (tint rgb, w: haze kept),
+;                          texcoord, world position
+;   v4-v7   second vertex
+;   v8-v11  third vertex
+; ============================================================================
+
+.gsh point c0
+
+; Uniforms (written at every bind: installLitShadowUniforms).
+.fvec sunDir        ; xyz: the direction the sun SHINES
+.fvec sunColour     ; rgb
+.fvec skyColour     ; rgb
+.fvec groundColour  ; rgb
+.fvec camera        ; xyz: the eye's world position
+.fvec params        ; x exposure, y normal offset (world units), z depth bias (w unused)
+.fvec lutMap        ; the lookup's texel centres: u = t * x + y, v = survive * z + w
+.fvec sunMtx[4]     ; world -> (u, v, depth, 1) of the shadow map, a row a register
+
+.constf consts(0.0, 1.0, 0.5, 0.45454545)   ; 0, 1, 1/2, 1/GAMMA (2.2)
+.constf consts2(2.0, -1.0, 1.0e-12, 10.0)   ; 2, -1, the degenerate floor, 1 / fade width
+.constf consts3(0.9, 0.0, 0.0, 0.0)         ; x: where the edge fade starts
+.alias zeros consts.xxxx
+.alias ones  consts.yyyy
+.alias half  consts.zzzz
+.alias invGamma consts.wwww
+.alias two   consts2.xxxx
+.alias minus1 consts2.yyyy
+.alias tiny  consts2.zzzz
+.alias invFade consts2.wwww
+.alias fadeStart consts3.xxxx
+
+.out outpos position
+.out outclr color
+.out outtc0 texcoord0
+.out outtcw texcoord0w
+.out outtc1 texcoord1
+.out outtc2 texcoord2
+
+.entry lsmain
+.proc lsmain
+    ; THE FACE NORMAL, turned to the camera: mdk_c3d.g.pica's, line for line
+    ; (every scalar in all four lanes, for the reason given there).
+    mov r0, v7
+    add r0, -v3, r0
+    mov r1, v11
+    add r1, -v3, r1
+    mul r2, r0.yzxw, r1.zxyw
+    mul r3, r0.zxyw, r1.yzxw
+    add r2, r2, -r3
+    mov r2.w, zeros
+    dp3 r3, r2, r2
+    max r3, tiny, r3
+    rsq r3, r3
+    mul r2, r2, r3
+    add r4, camera, -v3
+    dp3 r5, r2, r4
+    slt r5, zeros, r5
+    mul r5, two, r5
+    add r5, minus1, r5
+    mul r2, r2, r5                 ; r2 = n
+
+    ; THE LIGHT, as mdk_c3d.g.pica: F_lit / 2, clamped at 1.
+    mov r6, r2.zzzz
+    mul r6, half, r6
+    add r6, half, r6               ; t, every lane (kept for the lookup)
+    mov r7, groundColour
+    add r7, skyColour, -r7
+    mul r7, r7, r6
+    add r7, groundColour, r7       ; mix(ground, sky, t)
+    dp3 r8, -sunDir, r2
+    max r8, zeros, r8              ; facing
+    mul r3, sunColour, r8
+    add r7, r7, r3
+    mul r7, params.xxxx, r7        ; * exposure
+    max r7, zeros, r7
+    lg2 r13.x, r7.x
+    lg2 r13.y, r7.y
+    lg2 r13.z, r7.z
+    mul r13, invGamma, r13
+    ex2 r12.x, r13.x
+    ex2 r12.y, r13.y
+    ex2 r12.z, r13.z
+    mul r12, half, r12
+    min r12, ones, r12             ; F_lit / 2
+
+    ; The lookup's u: t onto the texel centres.
+    mul r9, lutMap.xxxx, r6
+    add r9, lutMap.yyyy, r9        ; u in every lane
+
+    ; The normal offset, in world units.
+    mul r14, params.yyyy, r2
+    mov r14.w, zeros
+
+    ; EMIT the triangle.
+    mov r0, v3
+    mov r4, v1
+    call litshadowvertex
+    setemit 0
+    mov outpos, v0
+    mov outtc0, r1
+    mov outtcw, r1.z
+    mov outtc1, v2
+    mov outtc2, r10
+    mov outclr, r15
+    emit
+
+    mov r0, v7
+    mov r4, v5
+    call litshadowvertex
+    setemit 1
+    mov outpos, v4
+    mov outtc0, r1
+    mov outtcw, r1.z
+    mov outtc1, v6
+    mov outtc2, r10
+    mov outclr, r15
+    emit
+
+    mov r0, v11
+    mov r4, v9
+    call litshadowvertex
+    setemit 2, prim
+    mov outpos, v8
+    mov outtc0, r1
+    mov outtcw, r1.z
+    mov outtc1, v10
+    mov outtc2, r10
+    mov outclr, r15
+    emit
+
+    end
+.end
+
+; One vertex. IN: r0 = world position (w 1), r4 = its colour (w: haze kept),
+; r9 = the lookup's u, r12 = F_lit / 2, r14 = the normal offset.
+; OUT: r1 = (u, v, depth, 1) in the map, r10 = the lookup's (u, v),
+; r15 = (F_lit / 2, haze kept). Uses r3, r5.
+.proc litshadowvertex
+    add r0, r14, r0
+    mov r0.w, ones
+    dp4 r1.x, sunMtx[0], r0
+    dp4 r1.y, sunMtx[1], r0
+    dp4 r1.z, sunMtx[2], r0
+    add r1.z, -params.zzzz, r1.z   ; the depth bias: towards the sun
+    max r1.z, zeros, r1.z
+    mov r1.w, ones
+
+    ; edge = max(|2u - 1|, |2v - 1|); survive = 1 - clamp((edge - 0.9) * 10, 0, 1).
+    mul r3, two, r1
+    add r3, minus1, r3
+    mov r5, r3
+    max r3, -r5, r3                ; |.|
+    max r3.x, r3.y, r3.x
+    add r3.x, -fadeStart, r3.x
+    mul r3.x, invFade, r3.x
+    max r3.x, zeros, r3.x
+    min r3.x, ones, r3.x
+    add r3.x, ones, -r3.x          ; 1 - fade
+    mul r3.x, lutMap.z, r3.x
+    add r3.x, lutMap.w, r3.x       ; onto the lookup's rows
+    mov r10, r9
+    mov r10.y, r3.x
+
+    mov r15, r12
+    mov r15.w, r4.w                ; the haze's kept fraction
+.end

@@ -59,6 +59,94 @@ static void setHaze(RendererC3D* r, bool on) {
     r->hazeOn = on;
 }
 
+// THE SHADOWED LIT DRAW'S COMBINER (Enhanced Mode enableSkyShadows, one pass:
+// mdk_litshadow.g.pica). Units: 0 the shadow map (the only unit that compares
+// a shadow texture: 1 in the light, 0 in the shadow, in every channel), 1 the
+// surface, 2 the shadow tint (F_shadow / 2 in rgb, the edge fade's survival in
+// alpha). The vertex colour is F_lit / 2 with the haze's kept fraction in alpha.
+//
+//   stage 0  A = (1 - shadow) * survive            how much shadow lands here
+//   stage 1  RGB = tint * A + F_lit * (1 - A)      mix(F_lit, F_shadow, A) / 2
+//            A = the surface's alpha               (the alpha test's)
+//   stage 2  RGB = surface * previous, x2          the light, as stage 1 is
+//                                                  for an unshadowed lit draw
+//   stage 3  the haze, by the vertex alpha         as setHaze's stage 2
+//
+// what the old two passes made (the lit draw, then a depth-EQUAL redraw that
+// multiplied the picture by mix(1, F_shadow / F_lit, A)) in one draw. Stages
+// 0-2 and the units are written once per run of these draws; stage 3 follows
+// the haze, cached on shadowLitHaze. The caches of the ordinary layout
+// (lightStageOn, hazeOn) are made to say "not installed" while it is here.
+static void installShadowLitStages(RendererC3D* r, bool haze) {
+    if (!r->shadowLitStages) {
+        C3D_TexBind(0, &r->shadowTex);
+        C3D_TexShadowParams(false, 0.0f);   // orthographic: no divide; the bias is the GS's
+        C3D_TexBind(2, &r->shadowTint);
+        C3D_TexEnv* amount = C3D_GetTexEnv(0);
+        C3D_TexEnvInit(amount);
+        C3D_TexEnvSrc(amount, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+        C3D_TexEnvFunc(amount, C3D_RGB, GPU_REPLACE);
+        C3D_TexEnvSrc(amount, C3D_Alpha, GPU_TEXTURE0, GPU_TEXTURE2, GPU_TEXTURE2);
+        C3D_TexEnvOpAlpha(amount, GPU_TEVOP_A_ONE_MINUS_SRC_ALPHA, GPU_TEVOP_A_SRC_ALPHA,
+                          GPU_TEVOP_A_SRC_ALPHA);
+        C3D_TexEnvFunc(amount, C3D_Alpha, GPU_MODULATE);
+        C3D_TexEnv* light = C3D_GetTexEnv(1);
+        C3D_TexEnvInit(light);
+        C3D_TexEnvSrc(light, C3D_RGB, GPU_TEXTURE2, GPU_PRIMARY_COLOR, GPU_PREVIOUS);
+        C3D_TexEnvOpRgb(light, GPU_TEVOP_RGB_SRC_COLOR, GPU_TEVOP_RGB_SRC_COLOR,
+                        GPU_TEVOP_RGB_SRC_ALPHA);
+        C3D_TexEnvFunc(light, C3D_RGB, GPU_INTERPOLATE);
+        C3D_TexEnvSrc(light, C3D_Alpha, GPU_TEXTURE1, GPU_TEXTURE1, GPU_TEXTURE1);
+        C3D_TexEnvFunc(light, C3D_Alpha, GPU_REPLACE);
+        C3D_TexEnv* surface = C3D_GetTexEnv(2);
+        C3D_TexEnvInit(surface);
+        C3D_TexEnvSrc(surface, C3D_RGB, GPU_TEXTURE1, GPU_PREVIOUS, GPU_PREVIOUS);
+        C3D_TexEnvFunc(surface, C3D_RGB, GPU_MODULATE);
+        C3D_TexEnvScale(surface, C3D_RGB, GPU_TEVSCALE_2);
+        r->shadowLitStages = true;
+        r->shadowLitHaze = -1;
+        r->lightStageOn = false;   // stage 1 is not the ordinary light stage
+        r->hazeOn = false;         // stage 2 is not the ordinary haze stage
+    }
+    const int8_t want = haze ? 1 : 0;
+    if (want != r->shadowLitHaze) {
+        C3D_TexEnv* stage = C3D_GetTexEnv(3);
+        C3D_TexEnvInit(stage);
+        if (haze) {
+            C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, r->hazeExponent, 0.0f, 0.0f, 0.0f);
+            C3D_TexEnvSrc(stage, C3D_RGB, GPU_PREVIOUS, GPU_CONSTANT, GPU_PRIMARY_COLOR);
+            C3D_TexEnvOpRgb(stage, GPU_TEVOP_RGB_SRC_COLOR, GPU_TEVOP_RGB_SRC_COLOR,
+                            GPU_TEVOP_RGB_SRC_ALPHA);
+            C3D_TexEnvFunc(stage, C3D_RGB, GPU_INTERPOLATE);
+            C3D_TexEnvColor(stage, mdk::pica::hazeColourWord(r->lighting.haze_colour));
+        } else {
+            C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+        }
+        r->shadowLitHaze = want;
+    }
+}
+
+// Back to the ordinary layout: stages 1-3 pass through, the haze uniform is 0,
+// the caches say so, and units 1 and 2 hold the idle texture (citro3d cannot
+// unbind them). A no-op outside the shadowed layout. Every path that installs
+// its own combiner calls it first (installEye, the canvas, the glow, the
+// caster pass, and every unshadowed draw).
+static void leaveShadowLitStages(RendererC3D* r) {
+    if (!r->shadowLitStages) {
+        return;
+    }
+    C3D_TexEnvInit(C3D_GetTexEnv(1));
+    C3D_TexEnvInit(C3D_GetTexEnv(2));
+    C3D_TexEnvInit(C3D_GetTexEnv(3));
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+    r->hazeOn = false;
+    r->lightStageOn = false;
+    C3D_TexBind(1, &r->unitIdle);
+    C3D_TexBind(2, &r->unitIdle);
+    r->shadowLitStages = false;
+    r->shadowLitHaze = -1;
+}
+
 static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (draw->mesh < 0 || (size_t)draw->mesh >= r->meshes.size()) {
         return;
@@ -197,7 +285,30 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
                         draw->material.shading != mdk::Shading::Original;
     texture->maxLevel = (u8)(mipped ? mipLevels : 0);
     C3D_TexSetFilterMipmap(texture, filter);
-    C3D_TexBind(0, texture);
+    // THE LIGHT AND THE SUN'S SHADOW, decided here because the shadow moves the
+    // surface to unit 1 (unit 0 is the only one that compares a shadow map).
+    // A Lit surface is drawn with the lit program -- the geometry shader lights
+    // each triangle by its face normal (mdk_c3d.g.pica) -- and, when it is one
+    // of the sun's casters/receivers (pica::castsSunShadow: opaque Lit
+    // triangles) and the frame has the shadow, with the SHADOWED lit program
+    // instead (mdk_litshadow.g.pica, installShadowLitStages): the light and the
+    // shadow in ONE pass. Sprites (Kurt, effects), the sky and the canvas are
+    // not lit, as on the PC (enhanced.frag modes 2-4).
+    // Only a TRIANGLE mesh: a Lines mesh (the glass frames' outlines) is drawn
+    // as triangles from its vertex pairs here (this GPU has no line primitive),
+    // and the geometry shader would light that line data as if it were
+    // triangles (measured: the lamp's wire frame went red/green/black). A
+    // program with a geometry shader takes the vertices three at a time, so
+    // only a whole number of triangles goes through one.
+    const bool overlay = draw->material.pass == mdk::Pass::Overlay;
+    const bool wholeTriangles = (draw->vertex_count % 3) == 0;
+    const bool lit = r->litLive && draw->material.shading == mdk::Shading::Lit && !overlay &&
+                     draw->primitive == mdk::Primitive::Triangles && wholeTriangles &&
+                     gsAllowed(r) && !(renderDebugFlags() & kRenderDebugFlat);
+    const bool shadowLit = lit && r->shadowLitLive &&
+                           mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,
+                                                     draw->primitive);
+    C3D_TexBind(shadowLit ? 1 : 0, texture);
 
     // THE UV TRANSFORM, in uniform register 4.
     //
@@ -273,17 +384,24 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // nothing: `C3D_GetTexEnv` marks the stage dirty on every call (measured from
     // the linked libcitro3dd.a: it sets bit 26+id of the context's dirty word),
     // so this block already re-sends the combiner on every draw either way.
-    const bool overlay = draw->material.pass == mdk::Pass::Overlay;
     // THE CUT for this draw (pica::alphaTestReferenceFor): the half cover for a
     // filtered scene draw, the oracle's discard for the canvas and for nearest.
     installAlphaTest(r, mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,
                                                          draw->material.pass), false);
-    C3D_TexEnv* env = C3D_GetTexEnv(0);
-    C3D_TexEnvInit(env);
-    if (overlay) {
+    // A shadowed lit draw's stages are installShadowLitStages' (below, with the
+    // light); every other draw leaves that layout first.
+    if (!shadowLit) {
+        leaveShadowLitStages(r);
+    }
+    C3D_TexEnv* env = shadowLit ? nullptr : C3D_GetTexEnv(0);
+    if (shadowLit) {
+        // (stage 0 is installShadowLitStages')
+    } else if (overlay) {
+        C3D_TexEnvInit(env);
         C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
         C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
     } else if (renderDebugFlags() & kRenderDebugFlat) {
+        C3D_TexEnvInit(env);
         // rdebug `flat`: the texture is ignored; a constant colour per pass
         // (Solid red, DoubleSided green, Blended blue, others yellow), opaque.
         uint32_t c = 0xFF00FFFFu;  // ABGR: yellow
@@ -294,6 +412,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
         C3D_TexEnvColor(env, c);
     } else {
+        C3D_TexEnvInit(env);
         C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
         C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
     }
@@ -622,36 +741,29 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         }
     }
 
-    // THE LIGHT (SPEC.md 7.9 enableLighting): a Lit surface is drawn with
-    // the lit program -- the geometry shader lights each triangle by its face
-    // normal (mdk_c3d.g.pica) -- and combiner stage 1 multiplies the texture by
-    // that light. Sprites (Kurt, effects), the sky and the canvas are not lit, as
-    // on the PC (enhanced.frag modes 2-4). Both switches are cached.
-    // Only a TRIANGLE mesh: a Lines mesh (the glass frames' outlines) is drawn
-    // as triangles from its vertex pairs here (this GPU has no line primitive,
-    // see below), and the geometry shader would light that line data as if it
-    // were triangles (measured: the lamp's wire frame went red/green/black).
-    // A program with a geometry shader takes the vertices three at a time, so
-    // only a whole number of triangles goes through one (a Lines mesh drawn
-    // from its vertex pairs need not be).
-    const bool wholeTriangles = (count % 3) == 0;
-    const bool lit = r->litLive && draw->material.shading == mdk::Shading::Lit && !overlay &&
-                     draw->primitive == mdk::Primitive::Triangles && wholeTriangles &&
-                     gsAllowed(r) && !(renderDebugFlags() & kRenderDebugFlat);
+    // THE LIGHT'S PROGRAM (decided with `lit` and `shadowLit` above), and
+    // combiner stage 1 multiplies the texture by that light. Both switches are
+    // cached.
     // THE GEOMETRY-STAGE RULE (03_frame.inc bindProgram): once this command
     // list has used a geometry program, an unlit draw goes through the
     // pass-through one -- the same picture, and no split to leave geometry mode.
     shaderProgram_s* const wanted =
-        lit ? &r->programLit
-            : (r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program);
+        shadowLit ? &r->programShadow
+        : lit     ? &r->programLit
+                  : (r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program);
     if (wanted != r->boundProgram) {
         bindProgram(r, wanted);
-        if (lit) {
+        if (shadowLit) {
+            installShadowUniforms(r);
+        } else if (lit) {
             installLitUniforms(r);
         }
         r->programSwitches++;
     }
-    r->litBound = lit;
+    r->litBound = lit && !shadowLit;
+    if (shadowLit) {
+        r->shadowReceivers++;
+    }
     if (lit) {
         // The world position the geometry shader takes its normal from; the
         // identity (every arena batch) is written only when it is not there.
@@ -663,7 +775,9 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
             r->worldIsIdentity = identity;
         }
     }
-    if (lit != r->lightStageOn) {
+    if (shadowLit) {
+        installShadowLitStages(r, r->hazeLive);   // a Lit, non-Overlay draw: hazed when the frame is
+    } else if (lit != r->lightStageOn) {
         C3D_TexEnv* light = C3D_GetTexEnv(1);
         C3D_TexEnvInit(light);
         if (lit) {
@@ -681,8 +795,11 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // prepareHaze has already decided the toggle and the rig for the frame, so
     // the per-draw test is two enum compares behind one bool (no float compare
     // per draw: AGENTS.md R3).
-    setHaze(r, r->hazeLive && draw->material.shading != mdk::Shading::Original &&
-                   draw->material.pass != mdk::Pass::Overlay);
+    // (A shadowed lit draw's haze is its stage 3, installShadowLitStages'.)
+    if (!shadowLit) {
+        setHaze(r, r->hazeLive && draw->material.shading != mdk::Shading::Original &&
+                       draw->material.pass != mdk::Pass::Overlay);
+    }
     if (r->boundProgram && r->boundProgram->geometryShader) {
         // The geometry shader decides the primitives (it emits each triangle).
         C3D_DrawArrays(GPU_GEOMETRY_PRIM, first, count);
@@ -847,7 +964,8 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 0.0f, 0.0f, 1.0f, 1.0f);
     r->tintIsWhite = false;
     // The canvas takes no haze and no light, and the last queued draw may have
-    // left either on.
+    // left either on -- or the shadowed lit draw's whole layout.
+    leaveShadowLitStages(r);
     setHaze(r, false);
     bindProgram(r, &r->program);
     r->litBound = false;
@@ -1018,6 +1136,7 @@ static void drawGlow(RendererC3D* r) {
         return;
     }
     C3D_RenderTarget* eye = r->eyeTarget;
+    leaveShadowLitStages(r);
     frameSplit(r);
     u32* source = static_cast<u32*>(eye->frameBuf.colorBuf);
     if (r->targetScale > 1) {
@@ -1186,168 +1305,6 @@ static void drawGlow(RendererC3D* r) {
     r->hazeOn = false;
 }
 
-// THE RECEIVE PASS (Enhanced Mode enableSkyShadows): the sun's shadow laid on
-// the eye's picture, once per eye, after the opaque passes and before anything
-// translucent -- mdk_shadow.g.pica has the arithmetic.
-//
-// Every opaque Lit triangle mesh the eye has just drawn is drawn AGAIN with the
-// receive program: the same vertex shader, so the same clip positions, tested
-// for depth EQUALITY and never written -- so only the surface that won a pixel
-// touches it, and a cut-out's holes (which wrote no depth) are left alone. The
-// one texture is the shadow map on unit 0 (the only unit a PICA shadow texture
-// can be read on); what it answers is 1 in the light and 0 in the shadow, and
-// the combiner turns that into the factor the blend multiplies the picture by:
-//
-//     stage 0:  A = (1 - map) * q          how much shadow reaches this pixel
-//     stage 1:  R * A + 1 * (1 - A)        = mix(1, R, A)
-//     blend:    picture := picture * that  (pica::kBlendShadowMultiply)
-//
-// R (rgb) and q (alpha) are the vertex colour: the geometry shader's.
-//
-// WHAT IS NOT SHADOWED, AND IS ON THE PC: a blended Lit surface (the multiply
-// would darken what is seen through it) and the point lights' share of the
-// light, which this backend does not draw at all.
-//
-// Everything this pass changes is put back, or its cache made to say so,
-// before the next draw: the program, stages 0-2, the haze uniform, the depth
-// and blend state, the matrix and the world uniform.
-static void receiveShadows(RendererC3D* r) {
-    if (!r->shadowLive || !gsAllowed(r)) {
-        return;
-    }
-    bindProgram(r, &r->programShadow);
-    installShadowUniforms(r);
-    r->litBound = false;           // not the lit program: the next lit draw binds it
-
-    // The haze's kept fraction rides in the vertex colour's alpha (the vertex
-    // shader computes it from this uniform), so it is set as the scene's
-    // hazed draws set it; the stage that mixes the haze in is not used here.
-    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, r->hazeLive ? r->hazeExponent : 0.0f,
-                  0.0f, 0.0f, 0.0f);
-    if (!r->tintIsWhite) {
-        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
-        r->tintIsWhite = true;
-    }
-
-    // The map on unit 0, compared without a perspective divide (the sun's
-    // projection is orthographic); the bias is the geometry shader's.
-    C3D_TexBind(0, &r->shadowTex);
-    C3D_TexShadowParams(false, 0.0f);
-
-    C3D_TexEnv* amount = C3D_GetTexEnv(0);
-    C3D_TexEnvInit(amount);
-    C3D_TexEnvSrc(amount, C3D_RGB, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-    C3D_TexEnvOpRgb(amount, GPU_TEVOP_RGB_ONE_MINUS_SRC_COLOR, GPU_TEVOP_RGB_SRC_ALPHA,
-                    GPU_TEVOP_RGB_SRC_ALPHA);
-    C3D_TexEnvFunc(amount, C3D_RGB, GPU_MODULATE);
-    C3D_TexEnvSrc(amount, C3D_Alpha, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
-    C3D_TexEnvFunc(amount, C3D_Alpha, GPU_REPLACE);
-    C3D_TexEnvColor(amount, 0xFFFFFFFFu);   // alpha 1: the alpha test passes
-    C3D_TexEnv* factor = C3D_GetTexEnv(1);
-    C3D_TexEnvInit(factor);
-    C3D_TexEnvSrc(factor, C3D_RGB, GPU_PRIMARY_COLOR, GPU_CONSTANT, GPU_PREVIOUS);
-    C3D_TexEnvFunc(factor, C3D_RGB, GPU_INTERPOLATE);
-    C3D_TexEnvColor(factor, 0xFFFFFFFFu);   // the 1 of mix(1, R, A)
-#ifdef MDK_SHADOW_PROBE
-    // THE HARNESS'S PROBES (make SHADOWPROBE=n): the pass draws one of its terms
-    // alone. 1 = a constant half grey (does the pass reach pixels at all?),
-    // 2 = the map's answer, 3 = the factor R, 5 = the (u, v, depth) the geometry
-    // shader put in the colour. (8, 10 and 20-29 change what is compared, not
-    // the combiner: 03_frame.inc.)
-    if (MDK_SHADOW_PROBE == 1) {
-        C3D_TexEnvSrc(factor, C3D_RGB, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
-        C3D_TexEnvFunc(factor, C3D_RGB, GPU_REPLACE);
-        C3D_TexEnvColor(factor, 0xFF808080u);
-    } else if (MDK_SHADOW_PROBE == 2) {
-        C3D_TexEnvSrc(factor, C3D_RGB, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
-        C3D_TexEnvFunc(factor, C3D_RGB, GPU_REPLACE);
-    } else if (MDK_SHADOW_PROBE == 3) {
-        C3D_TexEnvSrc(factor, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-        C3D_TexEnvFunc(factor, C3D_RGB, GPU_REPLACE);
-    } else if (MDK_SHADOW_PROBE == 5) {
-        // The vertex's (u, v, depth) in the map, which the geometry shader put
-        // in the colour (params.w).
-        C3D_TexEnvSrc(factor, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-        C3D_TexEnvFunc(factor, C3D_RGB, GPU_REPLACE);
-    }
-#endif
-    C3D_TexEnvInit(C3D_GetTexEnv(2));
-    installAlphaTest(r, 0, false);
-    installDepthState(r, mdk::pica::kDepthShadowReceive);
-    writeBlendState(r, mdk::pica::kBlendShadowMultiply, -3, -3);
-
-    for (int32_t pass = static_cast<int32_t>(mdk::Pass::Solid);
-         pass <= static_cast<int32_t>(mdk::Pass::DoubleSided); pass++) {
-        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
-        for (size_t i = 0; i < bucket.size(); i++) {
-            const mdk::MeshDraw* draw = &bucket[i];
-            if (!mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,
-                                           draw->primitive)) {
-                continue;   // what casts is what receives: the opaque Lit triangles
-            }
-            if (draw->mesh < 0 || (size_t)draw->mesh >= r->meshes.size()) {
-                continue;
-            }
-            const C3dMesh& mesh = r->meshes[(size_t)draw->mesh];
-            // A whole number of triangles only: the geometry shader takes the
-            // vertices three at a time (drawRecorded's rule, review finding 3).
-            if (!mesh.valid || mesh.count <= 0 || draw->first_vertex < 0 ||
-                draw->vertex_count <= 0 || (draw->vertex_count % 3) != 0 ||
-                draw->first_vertex + draw->vertex_count > mesh.count) {
-                continue;
-            }
-            // The matrix and the world, by drawRecorded's own caches.
-            float composed[16];
-            const float* upload = r->eyeVp;
-            const bool identity = mdk::pica::isIdentity(draw->world);
-            if (!identity) {
-                mdk::pica::drawMatrix(draw->world, r->eyeVp, composed);
-                upload = composed;
-            }
-            const bool frameMatrix = upload == r->eyeVp;
-            if (!frameMatrix || !r->matrixIsFrame) {
-                C3D_Mtx gpuMtx;
-                mdk::pica::registers(upload, gpuMtx.m);
-                C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
-                r->matrixIsFrame = frameMatrix;
-            }
-            if (!identity || !r->worldIsIdentity) {
-                C3D_Mtx worldMtx;
-                mdk::pica::registers(draw->world, worldMtx.m);
-                C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation, &worldMtx);
-                r->worldIsIdentity = identity;
-            }
-            const GPU_CULLMODE wantedCull =
-                draw->material.pass == mdk::Pass::Solid ? kSolidCull : GPU_CULL_NONE;
-            if (r->cullMode != wantedCull) {
-                C3D_CullFace(wantedCull);
-                r->cullMode = wantedCull;
-            }
-            C3D_BufInfo* bufInfo = C3D_GetBufInfo();
-            BufInfo_Init(bufInfo);
-            BufInfo_Add(bufInfo, mesh.data, 5 * sizeof(float), 2, 0x10);
-            C3D_DrawArrays(GPU_GEOMETRY_PRIM, draw->first_vertex, draw->vertex_count);
-            r->shadowReceivers++;
-        }
-    }
-
-    // BACK TO THE FRAME'S STATE. Stage 0, the texture on unit 0, the alpha test
-    // and the blend are written by the next draw itself (the blend's cache is
-    // made to miss); the rest is put back here. The scene goes on in geometry
-    // mode when it can (03_frame.inc bindProgram): the next unlit draw would
-    // bind the pass-through program anyway.
-    bindProgram(r, r->passReady ? &r->programPass : &r->program);
-    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
-    r->hazeOn = false;
-    C3D_TexEnvInit(C3D_GetTexEnv(1));
-    r->lightStageOn = false;
-    installDepthState(r, mdk::pica::DepthState{true, true});
-    if (r->cullMode != kSolidCull) {
-        C3D_CullFace(kSolidCull);
-        r->cullMode = kSolidCull;
-    }
-}
-
 // One replay of everything the frame has queued, in the oracle's pass order
 // (draw_queue.h), into whatever target is current. It is separate from the
 // frame end because a stereo frame replays the SAME queue once per eye: the
@@ -1371,11 +1328,6 @@ static void replayQueue(RendererC3D* r) {
         // pass sits (SPEC.md 6: post -> frame -> canvas).
         if (pass == static_cast<int32_t>(mdk::Pass::Overlay)) {
             drawGlow(r);
-        }
-        // The sun's shadow lands on the opaque passes, before anything
-        // translucent is drawn over them (receiveShadows).
-        if (pass == static_cast<int32_t>(mdk::Pass::Mirror)) {
-            receiveShadows(r);
         }
         const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
         for (size_t i = 0; i < bucket.size(); i++) {
