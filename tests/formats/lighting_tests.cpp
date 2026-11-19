@@ -250,6 +250,18 @@ MDK_TEST(EnhancedConfigRoundTrips) {
               !back.enableMipmaps && !back.enableHdTextures && !back.enableLighting &&
               !back.enableEdgeSmoothing);
     MDK_CHECK(text.find("enableEdgeSmoothing=0\n") != std::string::npos);
+    // The sun shadow's diagnostic (not a look): off by default, written, and
+    // read back when it is on.
+    MDK_CHECK(!toggles.shadowMapFlipBytes && !back.shadowMapFlipBytes);
+    MDK_CHECK(text.find("shadowMapFlipBytes=0\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles flipped;
+        flipped.shadowMapFlipBytes = true;
+        mdk::EnhancedToggles flippedBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(flipped).c_str(),
+                                           &flippedBack));
+        MDK_CHECK(flippedBack.shadowMapFlipBytes && flippedBack.enableSkyShadows);
+    }
     MDK_CHECK(text.find("enableLighting=0\n") != std::string::npos);
     MDK_CHECK(text.find("enableHdTextures=0\n") != std::string::npos);
     MDK_CHECK(text.find("enableMipmaps=0\n") != std::string::npos);

@@ -1,0 +1,46 @@
+; ============================================================================
+; mdk_pass.g.pica -- the PASS-THROUGH geometry shader: each triangle out exactly
+; as the vertex shader made it (position, colour, texcoord; the world position
+; is dropped, as the rasteriser drops it without a geometry shader).
+;
+; WHY IT EXISTS (hardware, 2026-11-18, mdk_3ds/tools/gstest). On the PICA200 a
+; program WITHOUT a geometry shader must not draw after a program WITH one in
+; the same command list: the GPU locks up (the Old 3DS appliance and a New 3DS
+; both; the emulator does not care). Geometry -> geometry is fine, plain ->
+; geometry is fine, and geometry -> plain is fine once the list is split. So
+; once an eye's scene has used the lit or shadow program, its unlit draws go
+; through THIS program instead of the plain one, and the frame leaves geometry
+; mode once, with a split, where the scene ends (03_frame.inc bindProgram).
+;
+; The vertex shader's outputs, three vertices of four registers:
+;   v0-v3   position, colour, texcoord, world   (and v4-v7, v8-v11)
+; ============================================================================
+
+.gsh point c0
+
+.out outpos position
+.out outclr color
+.out outtc  texcoord0
+
+.entry pmain
+.proc pmain
+    setemit 0
+    mov outpos, v0
+    mov outtc, v2
+    mov outclr, v1
+    emit
+
+    setemit 1
+    mov outpos, v4
+    mov outtc, v6
+    mov outclr, v5
+    emit
+
+    setemit 2, prim
+    mov outpos, v8
+    mov outtc, v10
+    mov outclr, v9
+    emit
+
+    end
+.end

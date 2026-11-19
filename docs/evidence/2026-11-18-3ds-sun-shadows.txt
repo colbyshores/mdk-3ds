@@ -1,0 +1,244 @@
+2026-11-18  3DS Enhanced Mode: the sun's shadows on the PICA200 (enableSkyShadows)
+================================================================================
+
+SPEC. SPEC.md 7.9, enhancement 6 of the owner's order (haze, filtering + mips,
+lighting, edge smoothing, glow, SUN SHADOWS, HD textures). HARDWARE, EMULATOR and
+HOST evidence. The Old 3DS appliance (old3ds-lan167) was handed back to MDK by the
+owner mid-day; the console results are in sections 2, 4 and 6, and they overturned
+two things the emulator alone had decided. The faults the console found in the
+other enhancements on the way are in 2026-11-18-3ds-console-hangs.txt.
+
+Instruments: Mandarine r1.2.1 (20250128-418c25c, md5 0d2adab6...), OpenGL on
+llvmpipe, via mdk_3ds/tools/compare_linux.sh -> emurun.sh, DISPLAY=:99; the
+appliance via mdk_3ds/tools/hw_cycle.sh (--capture reads the left eye back on the
+console, AGENTS.md P10). The PC reference is this repository's Linux build,
+`--enhanced`, same config.ini, 400x240, true aspect.
+
+1. WHAT THE PC DOES, AND WHAT THE PICA DOES INSTEAD
+---------------------------------------------------
+PC (enhanced.frag, 11_shadow_post.inc): the frame's opaque Lit triangles through
+sunShadowMatrix (an orthographic view along the sun, 600 world units square
+around the camera, 8000 deep) into a 2048x2048 depth map; every lit pixel
+compares its depth with the map's (2x2, blended) and the sun's share of its
+light is multiplied by the answer.
+
+3DS, two passes, every one of them on the GPU:
+- THE CASTER PASS, once a frame, before the eyes (03_frame.inc castShadows).
+  The same casters, through the same matrix, into a PICA shadow texture: 512
+  texels a side, or 256 when VRAM is short (section 5). Solid casters are culled
+  as the PC culls them, which matters (section 3).
+- THE RECEIVE PASS, once per eye, after the opaque passes (06_draw.inc
+  receiveShadows). Every opaque Lit triangle mesh is drawn again -- same vertex
+  shader, depth test EQUAL, nothing written to depth -- with the shadow map on
+  texture unit 0 and a second geometry shader (mdk_shadow.g.pica) that works
+  out, per triangle, R = F_shadow / F_lit: what the lit program's colour has to
+  be multiplied by to become the colour the same surface has without the sun.
+  The combiner makes mix(1, R, shadow) and the blend multiplies the picture by
+  it. The haze's share of a pixel is left alone, and the shadow fades out over
+  the last tenth of the map, as the PC's does.
+The self-shadow guards are the PC's scaled to the map's texel: the PC pushes a
+receiver 0.5 world units along its normal against a 0.29-unit texel; here that
+is 2 units at 512 and 4 at 256 (the same 1.7 texels).
+
+2. HOW THE MAP IS WRITTEN: TWO WAYS, CHOSEN BY MEASURING THE GPU
+----------------------------------------------------------------
+A shadow texel is (depth24 << 8) | softness; in memory, per texel, the bytes are
+[depth high, depth mid, depth low, softness] (both instruments, read back).
+The caster pass has two ways to write it, and each instrument fails one:
+- NATIVE: GPU_FRAGOPMODE_SHADOW, the PICA's own mode -- the fragment's 24-bit
+  depth goes into the map, the nearer kept, combiner green 0 (a hard shadow).
+- THE RAMP: an ordinary draw whose vertex shader (mdk_caster.v.pica) hands the
+  depth over as texture coordinates, s = depth and t = 256 * depth (REPEAT), into
+  a 512x256 NEAREST ramp texture holding the bytes; the map's own 16-bit depth
+  buffer keeps the nearer caster. (The 512 columns and the half-step correction:
+  pica_matrix.h, THE DEPTH RAMP.)
+What was measured:
+- EMULATOR: native writes into the real 256x256 caster pass land NOWHERE (0
+  texels, read back; the first version of this work found the same with probes,
+  history in git). The ramp works.
+- CONSOLE: the ramp does NOT: the console does not repeat t = 256 * depth. Its
+  map, read back over HTTP and compared byte for byte with the emulator's (level
+  8 frame 60): the depth's middle byte 0 in every written texel, the high byte
+  rounded to the nearest step -- the depth good to 1/256 of the range (31 world
+  units), and the sunlit floor in front of Kurt shadowed itself (16,547 pixels
+  darkened where the emulator darkens 3,062). Native writes DO land: 13,285
+  texels, exactly the emulator ramp map's texels, depths equal to 1/65536 (and
+  with the low byte the ramp cannot give).
+So the renderer asks the GPU, and measures BOTH paths:
+- testNativeShadowWrites, once, outside any frame, before the first frame that
+  wants a shadow, into an 8x8 bare shadow target and 8x8 probes, read back:
+  THE RAMP: one quad through the caster program and the ramp at a depth whose
+  middle byte is 0x37; exact when all 64 texels carry it.
+  NATIVE: sample the map behind a receiver (lit), write a quad natively, sample
+  again (dark): it works when all 64 texels moved and all 64 receivers went dark.
+  The decision: the ramp where it is exact (it is what the emulator's real pass
+  needs); native where the ramp is not and native works; else the ramp, logged
+  as NEITHER. A native session frees the ramp.
+    console:  "the ramp does not work (0 of 64 texels carry the middle byte,
+               first FF000080); native writes WORK (64 of 64 written ...; 64 of
+               64 receivers behind them dark ...); the caster pass uses native
+               writes"
+    emulator: "the ramp WORKS (64 of 64 ..., first FF003780); native writes
+               WORK (...); the caster pass uses the ramp"
+  (The emulator's native writes pass this test and still land NOWHERE in the
+  real 256x256 pass, which is why the ramp is preferred where it is exact, not
+  native where it works.)
+- a native session's first frames have their real map read back after
+  C3D_FrameEnd: written texels -> verified; three frames in a row with casters
+  drawn and nothing written -> the ramp, for good (the map released and remade
+  with its depth buffer). Console: "native writes verified in the caster pass
+  (186 casters, 6024 texels written)".
+THE STALE COMBINER. The first version of the native test set the caster's
+combiner through a TexEnv pointer fetched BEFORE the sampling draw; citro3d
+marks a stage dirty only in C3D_GetTexEnv, so the edit after the draw was never
+uploaded and the caster drew with the sampler's combiner (softness 0xFE on the
+console). The pointer is fetched again after every draw that precedes an edit.
+A native map's target has no depth buffer (the test measured a bare one; the
+native writes keep the nearer depth themselves), which saves 128 KB of VRAM.
+
+THE CASTER'S ALPHA. After the first independent review its alpha was made a
+constant 255 (to keep the alpha test from dropping casters near the sun). In the
+byte order the map uses, the alpha IS the depth's high byte, so every depth was
+written as the far plane and there was no shadow at all: level 8 frame 60, the
+shadow on and off, 0 pixels apart (the second review found it; the evidence
+pictures were older than the change). The alpha is the ramp's again and the
+caster pass runs with the alpha test OFF (casters whose textures have holes are
+not drawn into the map at all); a pin with an arm now holds it.
+
+3. PICTURES AGAINST THE PC (EMULATOR)
+-------------------------------------
+The measure: the pixels the sun's shadow changes -- a frame with the shadow
+against the same frame without it, more than 8/255 apart -- on the PC and on the
+3DS build, and how far the two sets agree (intersection over union).
+Frame 60, 400x240, the level's start:
+  scene                                  PC      3DS     both    IoU     map
+  level 8, lighting + shadows only       2,942   3,277   2,797   0.817   512
+  level 8, every enhancement on          2,924   3,062   2,501   0.718   256
+  level 3, lighting + shadows only         100      83      80   0.777   512
+  (levels 4-7: the PC shows no sun shadow at the start; they are not scenes)
+  docs/evidence/2026-11-18-3ds-sun-shadows-L8-linux-3ds-mask.png
+  docs/evidence/2026-11-18-3ds-sun-shadows-L8-all-on-linux-3ds-mask.png
+The every-enhancement row was measured again on the final tree: 3,062 pixels,
+the same set.
+What did NOT match until it was fixed, each measured on level 8:
+- every lit surface the map covers half dark: the ramp in the wrong byte order;
+- the canyon wall striped: the PC's 0.5-unit guards against a 1.17-unit texel;
+- 9,939 shadow pixels against the PC's 2,942 (IoU 0.28): the casters drawn
+  two-sided; with the PC's cull 3,277, IoU 0.82.
+
+4. THE CONSOLE: THE SAME SHADOW
+-------------------------------
+Level 8 frame 60, every enhancement on, fixed clock, the console's left eye read
+back (`hw_cycle.sh --capture`), the shadow set measured against the console's
+own capture with the shadow off:
+  console (native writes, stereo)    3,138 pixels
+  emulator (ramp, mono)              3,062 pixels    both 2,686, IoU 0.764
+The remaining disagreement is the stereo eye's offset (the console's left eye,
+the emulator's mono camera) and the shadows' edges. Byte order: settled on the
+console -- the receive pass reads the native map correctly, and the
+`shadowMapFlipBytes` config key matters only to the ramp.
+  docs/evidence/2026-11-18-3ds-sun-shadows-L8-console.png
+  (the console without and with the shadow, and the two shadow sets: white both,
+  blue the console only, red the emulator only)
+
+5. MEMORY
+---------
+VRAM (6 MB): the map 512x512 RGBA8 (1.0 MB), or 256x256 (0.25 MB), plus, for the
+ramp only, its 16-bit depth (0.5 / 0.125 MB). Linear heap: the 512x256 ramp
+(0.5 MB, made in both modes). Every enhancement on at edge-smoothing scale 2:
+the map leaves the glow its 768 KiB and is 256 ("1421312 free" native on the
+console). GX queue: one entry a frame for the map's clear.
+
+6. WHAT IT COSTS ON THE OLD 3DS
+-------------------------------
+Draws: level 8's opening has 219 opaque Lit draws; with the shadow on they are
+drawn again into the map (no geometry shader) and again per eye by the receive
+pass (geometry shader, depth-equal, one texture): 3x the lit geometry in mono, 5x
+in stereo.
+PROFILE (hw_cycle.sh --profile, make AUTOQUIT=90 PROFILE=1 LEVEL=8, every
+enhancement on, edge smoothing 2x, glow 2 passes, native shadow map 256): Old 3DS
+appliance, CFGU model 0, 268 MHz, L2 none, stereo ON, 957 frames in 90 s:
+  frame period mean 94.1 ms, p50 <= 80.1 ms (steady state 76-81 ms, ~12.5 fps,
+  every 60th-frame sample 76-113 ms); p95 is past the histogram's 100 ms top
+  bucket; max 3,347 ms (one stall, not located; frames 2-4 at 243-250 ms are the
+  start's level load settling);
+  per frame: begin (the wait for the previous frame's GPU work) 26.8 ms, draw
+  16.5 ms, end 26.6 ms, simulation 8.9 ms (5.4 steps of 1.65 ms).
+  The game's audio drops ~1 of 4 queued buffers at this frame rate (ndsp
+  "dropped=59" per 60 frames, dspdropped 0): an Enhanced-Mode-everything-on
+  cost: the shorter-frame console runs today (33 ms and less) drop none.
+The original look on the same console, level 7, stereo: ~21 ms; the light
+alone ~24 ms (the toggle walk, 2026-11-18-3ds-console-hangs.txt section 4).
+
+7. TESTS
+--------
+tests/scripts/pica_matrix_tests.cpp testTheSunsShadow (host): the caster and map
+matrices against the PC's own sunShadowMatrix at five points; the ramp at twelve
+depths in both byte orders against the map's word; a surface does not shadow
+itself and one 8 units nearer the sun does; the ramp's two coordinates
+disagreeing at a step's boundary, fifteen boundaries, both ways; the guards at
+2048 / 512 / 256; the factor R with and without the lit program's clamp; who
+casts; what has holes; the blend, the depth state, the VRAM arithmetic.
+tests/scripts/c3d_frame_test.sh: `sun-shadow-cast-once-and-received-per-eye`
+(five arms) and `sun-shadow-map-written-by-a-measured-path` (the caster's alpha,
+native mode on only around the casters, the bare native target, three empty
+native frames settling it without leaving native mode, every readback through
+readBack, the test leaving native mode; six arms). 52 checks, 126 arms.
+tests/formats/lighting_tests.cpp: the config key round-trips.
+
+8. REVIEW AND VERIFICATION
+--------------------------
+Three independent read-only reviews (Fable), each of the code as it then
+stood; nothing in them was built or run by the reviewer.
+REVIEW 1 (the hang fixes + the first shadow pass): no blocker in the geometry
+  rule, the GX budget, the glow re-tile or the allocator. HIGH: the caster's
+  constant alpha wrote every depth as the far plane (section 2) -- FIXED, pinned.
+  LOW: the receive pass lacked the whole-triangle guard -- FIXED. LOW: the split
+  cap is per frame, not per eye -- OPEN (section 9 of the hangs file). LOW:
+  casters/receivers drawn for draws the scene skipped -- OPEN, cosmetic.
+REVIEW 2 (the native path, first version): no blocker. One empty frame
+  demoted a console to the ramp for good -> three frames running (and now see
+  review 3); the verified flag set before its allocation -> set after; native
+  mode still allocated and required the ramp -> the ramp only when not native;
+  a could-not-run test was sticky -> retried up to three times; the test's blend
+  state inherited -> written; C3D_CLEAR_ALL on a depth-less target -> colour-only
+  clear when native; stale comments -> rewritten. All seven FIXED.
+REVIEW 3 (this design: both paths measured): no blocker, no hang, no GX
+  overflow, no double free, no state leaking into the first real frame.
+  - HIGH: three empty native frames demoted to the ramp -- the path the test had
+    just measured broken on that device (native is chosen only there). FIXED:
+    three empty frames settle the check and the map STAYS native; pinned
+    (`native-map-demoted-to-the-broken-ramp`, `native-map-read-back-forever`).
+  - MEDIUM: a readback out of a frame can be read before its copy finishes
+    (C3D_SyncTextureCopy's PPF wait does not clear the event first; a frame's
+    unobserved display transfer leaves it set). FIXED: every readback goes
+    through readBack -- the destination pre-filled with the "did not work"
+    answer and a trailing 64-byte copy into a renderer-owned drain, so the wait
+    that returns is at the earliest the real copy's own; pinned
+    (`native-map-read-back-without-the-drain`). The screenshot path's display
+    transfer has the same exposure and is NOT changed (harness-only, and its
+    captures have matched the console's own screenshots).
+  - MEDIUM/LOW: a could-not-run try left a ramp-mode map (with a depth buffer)
+    that a later native answer kept. FIXED: a native answer releases any map.
+  - LOW: citro3d kept a pointer to the test's stack texture on unit 0. FIXED:
+    unit 0 unbound before the texture goes.
+  Re-measured after the fixes: section 4's console capture and the emulator's
+  ramp capture (level 8 frame 60), every enhancement on, after the fixes:
+    console (hw_cycle --capture, stereo): native chosen, "native writes
+      verified in the caster pass (186 casters, 6024 texels written)", FRESH;
+      the capture BYTE-IDENTICAL to the pre-fix one (md5 a47e6319...);
+    emulator (compare_linux.sh 8 60, DISPLAY=:99, MDK_COMPARE_TOGGLES all on):
+      the ramp chosen; the capture byte-identical to the pre-fix one.
+Gates on the final tree: tests/scripts (make test), c3d_frame_test.sh, and
+tools/check.sh (the R11 screen flagged the test's `v % kTestCorners`, a cold
+one-shot loop; rewritten as two loops rather than pinned).
+
+9. NOT DONE / NOT VERIFIED
+--------------------------
+- A caster's own texture: a surface whose texture has holes (a grating, a
+  fence) casts NOTHING here, where the PC casts its cut-out.
+- Blended Lit surfaces and the point lights' share of the light are not
+  shadowed (the point lights are not drawn on the 3DS at all yet).
+- The receive pass's edge fade is per vertex, and coplanar layered batches can
+  be multiplied twice (depth-equal); both from the first review, open.
+- The owner's New 3DS has not run shadows yet.

@@ -134,6 +134,10 @@ struct C3dTexture {
     // When this texture was last drawn, for the eviction order.
     uint32_t lastUsed = 0;
 
+    // The source has holes (pica::textureSourceHasHoles), decided when the
+    // source is taken: a surface drawn with it does not cast the sun's shadow.
+    bool hasHoles = false;
+
     // THE HD COPY this texture is linked to: an index into
     // RendererC3D::hdCopies, -1 for none (docs/HD_TEXTURES_3DS_SPEC.md). The
     // copies are keyed by FILE and owned by that table, not by the texture: a
@@ -305,6 +309,8 @@ struct RendererC3D {
     bool glowSmallMade[mdk::pica::kGlowSmallCount] = {};
     C3D_RenderTarget* glowTarget[mdk::pica::kGlowSmallCount] = {};
     u32* glowScratch = nullptr;
+    u32* glowScratchTiled = nullptr; // the shrink re-tiled (06_draw.inc drawGlow, step 2)
+    u32* copyDrain = nullptr;        // 64 bytes the readbacks' trailing copy lands in (readBack)
     float* glowQuad = nullptr;
     float* glowLevelQuad = nullptr;
     float glowQuadWidth = 0.0f;   // the canvas width the quad was built for
@@ -528,6 +534,17 @@ struct RendererC3D {
     bool lightStageOn = false; // combiner stage 1 multiplies by the light (cache)
     bool worldIsIdentity = true; // the world uniform holds the identity (cache)
     int32_t programSwitches = 0; // lit/unlit binds this frame, for the census
+    // THE GEOMETRY-STAGE RULE (03_frame.inc bindProgram): the pass-through
+    // program (VS + mdk_pass.g.pica, DVLE[4]) for unlit scene draws once the
+    // command list is in geometry mode; the program bound; whether a program
+    // with a geometry shader has been bound since the command list began; and
+    // the splits made this frame to leave geometry mode (each a GX queue entry).
+    shaderProgram_s programPass;
+    bool passReady = false;
+    shaderProgram_s* boundProgram = nullptr;
+    bool gsInList = false;
+    int32_t geometrySplits = 0;
+    int32_t vshUniformVecs = 0; // the vertex shader's uniform registers, c0 up
     int worldLocation = 0;     // the VS's world matrix (registers 7-10)
     int sunDirLocation = -1, sunColourLocation = -1, skyLocation = -1, groundLocation = -1;
     int cameraLocation = -1, lightParamsLocation = -1;
@@ -535,6 +552,48 @@ struct RendererC3D {
     // The frame's six geometry-shader uniforms (prepareLighting), kept so every
     // bind of the lit program can write them again (installLitUniforms).
     float litUniforms[6][4] = {};
+    // THE SUN'S SHADOW (Enhanced Mode enableSkyShadows; pica_matrix.h, THE SUN'S
+    // SHADOW). The receive program is the lit program's vertex shader plus
+    // mdk_shadow.g.pica; the map is a PICA shadow texture in VRAM with its own
+    // render target, made on first use. Optional at every step: a program or a
+    // map that cannot be made leaves the frame without sun shadows, with one line.
+    shaderProgram_s programShadow;
+    bool shadowProgramReady = false;
+    int shadowSunDirLocation = -1, shadowSunColourLocation = -1, shadowSkyLocation = -1;
+    int shadowGroundLocation = -1, shadowCameraLocation = -1, shadowParamsLocation = -1;
+    int shadowSunMtxLocation = -1;
+    // The caster pass's own program (mdk_caster.v.pica: no geometry shader) and
+    // the ramp texture that turns a depth into the map's bytes.
+    shaderProgram_s programCaster;
+    bool casterProgramReady = false;
+    int casterMvpLocation = -1;
+    C3D_Tex shadowRamp;
+    bool shadowRampReady = false;
+    int shadowRampOrder = -1;       // the pica::ShadowByteOrder its texels are in
+    // THE PICA'S OWN SHADOW WRITES (GPU_FRAGOPMODE_SHADOW), measured once
+    // outside any frame (03_frame.inc testNativeShadowWrites): where they land
+    // the caster pass uses them (24-bit depth); where they do not (the emulator
+    // on llvmpipe) it draws through the ramp.
+    bool shadowNativeTested = false;
+    int32_t shadowNativeTestRuns = 0;  // tries that could not run (retried, up to 3)
+    bool shadowNative = false;
+    bool shadowNativeVerified = false; // the real pass wrote texels (end_frame)
+    int32_t shadowNativeEmptyFrames = 0; // consecutive native frames that wrote none
+    int32_t shadowMapSize = 0;      // the map's side: 512, or 256 when VRAM is short
+    C3D_Tex shadowTex;
+    C3D_RenderTarget* shadowTarget = nullptr;
+    bool shadowMapReady = false;    // shadowTex and shadowTarget are made
+    bool shadowRefused = false;     // they could not be: off for the session
+    bool shadowLive = false;        // decided once per frame (prepareShadows)
+    float sunVp[16] = {};           // world -> the caster pass's clip (pica::sunCasterMatrix)
+    // The receive program's uniforms, written at every bind of it: the six of
+    // the light (the lit program's, with the offset and the bias in params)
+    // and the four registers of world -> (u, v, depth, 1).
+    float shadowUniforms[6][4] = {};
+    float shadowSunMtx[16] = {};    // already in register order (pica::registers)
+    int32_t shadowCasters = 0;      // draws the caster pass made this frame
+    int32_t shadowHoleCasters = 0;  // casters left out: their textures have holes
+    int32_t shadowReceivers = 0;    // draws the receive pass made, first eye
     float hazeExponent = 0.0f;
     bool hazeLive = false;
     bool hazeOn = false;

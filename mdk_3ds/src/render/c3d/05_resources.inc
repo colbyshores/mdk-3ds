@@ -43,6 +43,8 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
     // THE SOURCE IS KEPT. An evicted texture is made again from this, and
     // this is the only copy: the caller holds an id, not the pixels.
     texture.source.assign(px, px + (size_t)w * (size_t)h);
+    texture.hasHoles = mdk::pica::textureSourceHasHoles(texture.source.data(),
+                                                        texture.source.size(), true);
     texture.palette.assign(paletteRgba, paletteRgba + 256 * 4);
     texture.lastUsed = ++renderer->drawCounter;
     if (renderDebugFlags() & kRenderDebugTexLog) {
@@ -96,6 +98,8 @@ MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r, int32_t w, int32_t h,
     texture.indexed = false;
     // The source is kept, so an evicted texture can be made again.
     texture.source.assign(px, px + (size_t)w * (size_t)h * 4);
+    texture.hasHoles = mdk::pica::textureSourceHasHoles(texture.source.data(),
+                                                        texture.source.size(), false);
     texture.lastUsed = ++renderer->drawCounter;
 
     const int32_t id = acquireTextureSlot(renderer);
@@ -158,6 +162,8 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     // texture was expanded through is kept with the texture, so it can.
     const size_t bytes = (size_t)w * (size_t)h * (texture.indexed ? 1u : 4u);
     texture.source.assign(px, px + bytes);
+    texture.hasHoles = mdk::pica::textureSourceHasHoles(texture.source.data(),
+                                                        texture.source.size(), texture.indexed);
 
     // If the old GPU copy may still be in flight, keep it and replace it at
     // the next frame boundary. Otherwise the replacement can be made now.

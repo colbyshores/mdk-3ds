@@ -61,6 +61,7 @@
 #include "render/render_types.h"
 #include "render/draw_queue.h"
 #include "render/pica_matrix.h"
+#include "render/sun_shadow.h"
 #include "mdk_c3d_shbin.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"

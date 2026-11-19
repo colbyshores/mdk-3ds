@@ -74,6 +74,9 @@ cp "$CAP" "$OUT/3ds-L$LEVEL-f$FRAME.bmp"
 # A stereo run (emurun's MDK_EMU_STEREO) also captured the right eye beside it.
 RIGHT_CAP="$(dirname "$CAP")/hwcap.right.bmp.log"
 if [ -f "$RIGHT_CAP" ]; then cp "$RIGHT_CAP" "$OUT/3ds-L$LEVEL-f$FRAME-right.bmp"; fi
+# A harness build's shadow map, as the GPU wrote it (03_frame.inc, at the capture).
+SHADOW_MAP="$(dirname "$CAP")/shadowmap.bin.log"
+if [ -f "$SHADOW_MAP" ]; then cp "$SHADOW_MAP" "$OUT/3ds-L$LEVEL-f$FRAME-shadowmap.bin"; fi
 # The guest log too (its mem[...] probes carry the linear heap's free bytes, the
 # number an Enhanced Mode memory cost is read from).
 GUEST_LOG=$(find "$LANE_TMP" -name mdk.log | head -1)

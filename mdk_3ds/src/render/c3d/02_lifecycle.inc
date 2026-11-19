@@ -45,6 +45,26 @@ static void releaseEyeTargets(RendererC3D* r) {
 // between the eye buffers a rebuild needs contiguous (review, 2026-11-18: glow on
 // first, then edge smoothing, could otherwise fragment the VRAM into a refusal).
 // A refusal is forgotten too: it may have been the old layout's.
+// The sun shadow's map and its target, with the glow's for the glow's reason
+// (they sit in the same VRAM the eye buffers need contiguous), and a refusal is
+// forgotten with them. Outside a frame only: C3D_RenderTargetDelete waits on
+// the queue.
+static void releaseShadowMap(RendererC3D* r) {
+    if (r->shadowTarget) {
+        C3D_RenderTargetDelete(r->shadowTarget);
+        r->shadowTarget = nullptr;
+    }
+    if (r->shadowMapReady) {
+        C3D_TexDelete(&r->shadowTex);
+        r->shadowMapReady = false;
+    }
+    if (r->shadowRampReady) {
+        C3D_TexDelete(&r->shadowRamp);
+        r->shadowRampReady = false;
+    }
+    r->shadowRefused = false;
+}
+
 static void releaseGlow(RendererC3D* r) {
     for (int i = 0; i < mdk::pica::kGlowSmallCount; i++) {
         if (r->glowTarget[i]) {
@@ -261,6 +281,68 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
                       r->litReady ? "ready" : "UNAVAILABLE", (int)r->sunDirLocation,
                       (int)r->skyLocation, (int)r->groundLocation, (int)r->cameraLocation,
                       (int)r->lightParamsLocation, (int)r->worldLocation);
+    // THE SHADOW RECEIVE PROGRAM (Enhanced Mode enableSkyShadows): the same vertex
+    // shader plus the DVLB's third DVLE, mdk_shadow.g.pica, with the same input
+    // stride. Optional, like the lit program: without it there are no sun shadows.
+    if (r->litReady && r->dvlb->numDVLE >= 3 &&
+        R_SUCCEEDED(shaderProgramInit(&r->programShadow))) {
+        const Result shadowVsh = shaderProgramSetVsh(&r->programShadow, &r->dvlb->DVLE[0]);
+        const Result shadowGsh = shaderProgramSetGsh(&r->programShadow, &r->dvlb->DVLE[2], 12);
+        if (R_SUCCEEDED(shadowVsh) && R_SUCCEEDED(shadowGsh)) {
+            shaderInstance_s* gs = r->programShadow.geometryShader;
+            r->shadowSunDirLocation = shaderInstanceGetUniformLocation(gs, "sunDir");
+            r->shadowSunColourLocation = shaderInstanceGetUniformLocation(gs, "sunColour");
+            r->shadowSkyLocation = shaderInstanceGetUniformLocation(gs, "skyColour");
+            r->shadowGroundLocation = shaderInstanceGetUniformLocation(gs, "groundColour");
+            r->shadowCameraLocation = shaderInstanceGetUniformLocation(gs, "camera");
+            r->shadowParamsLocation = shaderInstanceGetUniformLocation(gs, "params");
+            r->shadowSunMtxLocation = shaderInstanceGetUniformLocation(gs, "sunMtx");
+            r->shadowProgramReady =
+                r->shadowSunDirLocation >= 0 && r->shadowSunColourLocation >= 0 &&
+                r->shadowSkyLocation >= 0 && r->shadowGroundLocation >= 0 &&
+                r->shadowCameraLocation >= 0 && r->shadowParamsLocation >= 0 &&
+                r->shadowSunMtxLocation >= 0;
+        }
+        if (!r->shadowProgramReady) {
+            shaderProgramFree(&r->programShadow);
+        }
+    }
+    // ... and THE CASTER PROGRAM: the DVLB's fourth DVLE, mdk_caster.v.pica, a
+    // vertex shader on its own. Sun shadows need both.
+    if (r->shadowProgramReady && r->dvlb->numDVLE >= 4 &&
+        R_SUCCEEDED(shaderProgramInit(&r->programCaster))) {
+        if (R_SUCCEEDED(shaderProgramSetVsh(&r->programCaster, &r->dvlb->DVLE[3]))) {
+            r->casterMvpLocation =
+                shaderInstanceGetUniformLocation(r->programCaster.vertexShader, "mvp");
+            r->casterProgramReady = r->casterMvpLocation >= 0;
+        }
+        if (!r->casterProgramReady) {
+            shaderProgramFree(&r->programCaster);
+        }
+    }
+    // THE PASS-THROUGH PROGRAM: the vertex shader plus the DVLB's fifth DVLE,
+    // mdk_pass.g.pica -- an unlit draw that keeps the PICA in geometry mode
+    // (03_frame.inc bindProgram has the hardware rule). Optional: without it
+    // every return from a geometry program to an unlit draw is a split.
+    if (r->litReady && r->dvlb->numDVLE >= 5 && R_SUCCEEDED(shaderProgramInit(&r->programPass))) {
+        r->passReady = R_SUCCEEDED(shaderProgramSetVsh(&r->programPass, &r->dvlb->DVLE[0])) &&
+                       R_SUCCEEDED(shaderProgramSetGsh(&r->programPass, &r->dvlb->DVLE[4], 12));
+        if (!r->passReady) {
+            shaderProgramFree(&r->programPass);
+        }
+    }
+    // The vertex shader's uniform registers run from c0 to the world matrix's
+    // last row (mdk_c3d.v.pica: mvp c0-3, uvtransform, tint, haze, world c7-10).
+    r->vshUniformVecs = r->worldLocation + 4;
+    mdk::log3dsPrintf("pass program: %s; vertex uniforms c0-c%d",
+                      r->passReady ? "ready" : "UNAVAILABLE", (int)r->vshUniformVecs - 1);
+    mdk::log3dsPrintf("shadow programs: receive %s (sun=%d sky=%d ground=%d camera=%d params=%d "
+                      "mtx=%d), caster %s (mvp=%d)",
+                      r->shadowProgramReady ? "ready" : "UNAVAILABLE",
+                      (int)r->shadowSunDirLocation, (int)r->shadowSkyLocation,
+                      (int)r->shadowGroundLocation, (int)r->shadowCameraLocation,
+                      (int)r->shadowParamsLocation, (int)r->shadowSunMtxLocation,
+                      r->casterProgramReady ? "ready" : "UNAVAILABLE", (int)r->casterMvpLocation);
     mdk::log3dsPrintf("uniforms: mvp=%d uvtransform=%d tint=%d haze=%d", (int)r->mvpLocation,
                       (int)r->uvLocation, (int)r->tintLocation, (int)r->hazeLocation);
     // A NAME THE SHADER DOES NOT EXPORT is not a location, and citro3d does not
@@ -355,8 +437,18 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
     // may still be reading (AGENTS.md P3); the heap itself goes when the
     // process exits, which is the only caller of this destructor.
     releaseGlow(r);
+    releaseShadowMap(r);
     releaseEyeTargets(r);
     if (r->dvlb) {
+        if (r->casterProgramReady) {
+            shaderProgramFree(&r->programCaster);
+        }
+        if (r->shadowProgramReady) {
+            shaderProgramFree(&r->programShadow);
+        }
+        if (r->passReady) {
+            shaderProgramFree(&r->programPass);
+        }
         if (r->litReady) {
             shaderProgramFree(&r->programLit);
         }
@@ -367,6 +459,13 @@ static bool buildEyeTargets(RendererC3D* r, int scale) {
     C3D_Fini();
     // The glow's linear memory after C3D_Fini, which waited for the queue that
     // may still have been reading it (AGENTS.md P3).
+    if (r->glowScratchTiled) {
+        linearFree(r->glowScratchTiled);
+    }
+    if (r->copyDrain) {
+        linearFree(r->copyDrain);
+        r->copyDrain = nullptr;
+    }
     if (r->glowScratch) {
         linearFree(r->glowScratch);
     }

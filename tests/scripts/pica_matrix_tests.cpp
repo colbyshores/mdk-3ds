@@ -48,6 +48,7 @@
 #include <string.h>
 
 #include "render/pica_matrix.h"
+#include "render/sun_shadow.h"
 
 namespace mdk {
 namespace {
@@ -1440,6 +1441,244 @@ void testTheGlowCurveIsReachableByTheCombiner() {
 
 namespace test {
 
+// ---------------------------------------------------------------------------
+// THE SUN'S SHADOW (Enhanced Mode enableSkyShadows): the two matrices against
+// the PC's own sun matrix, the ramp against the map's encoding in both byte
+// orders, the guards against self-shadowing, the factor, and the state.
+// ---------------------------------------------------------------------------
+void transformRow(const float m[16], const float p[3], float out[4]) {
+    for (int c = 0; c < 4; c++) {
+        out[c] = p[0] * m[0 * 4 + c] + p[1] * m[1 * 4 + c] + p[2] * m[2 * 4 + c] + m[3 * 4 + c];
+    }
+}
+
+// What the shadow unit makes of a texel: the depth (24 bits) and the softness.
+void decodeShadowTexel(const uint8_t rgba[4], mdk::pica::ShadowByteOrder order,
+                       uint32_t* depth, uint32_t* softness) {
+    if (order == mdk::pica::kShadowBytesReversed) {
+        *depth = ((uint32_t)rgba[3] << 16) | ((uint32_t)rgba[2] << 8) | rgba[1];
+        *softness = rgba[0];
+    } else {
+        *depth = ((uint32_t)rgba[0] << 16) | ((uint32_t)rgba[1] << 8) | rgba[2];
+        *softness = rgba[3];
+    }
+}
+
+void testTheSunsShadow() {
+    // --- the matrices, from the PC's sunShadowMatrix (level 3's own sun) ---
+    const mdk::Vec3 sun = {-0.33f, 0.47f, -0.82f};
+    const mdk::Vec3 centre = {12.0f, 500.0f, 150.0f};
+    float pc[16];
+    mdk::sunShadowMatrix(sun, centre, 300.0f, (uint32_t)mdk::pica::kSunShadowMapSize, pc);
+    float caster[16];
+    float map[16];
+    mdk::pica::sunCasterMatrix(pc, caster);
+    mdk::pica::sunMapMatrix(pc, map);
+    float mapRegisters[16];
+    mdk::pica::registers(map, mapRegisters);
+    const float points[5][3] = {{12.0f, 500.0f, 150.0f},   // the centre
+                                {100.0f, 600.0f, 100.0f},
+                                {-200.0f, 400.0f, 200.0f},
+                                {40.0f, 520.0f, 1500.0f},  // towards the sun
+                                {0.0f, 480.0f, -900.0f}};  // away from it
+    for (int i = 0; i < 5; i++) {
+        float atPc[4];
+        float atCaster[4];
+        float atMap[4];
+        transformRow(pc, points[i], atPc);
+        transformRow(caster, points[i], atCaster);
+        transformRow(map, points[i], atMap);
+        PICA_CHECK(atPc[3] == 1.0f);   // orthographic: no divide anywhere below
+        // The caster pass: the PC's x and y, and a clip z whose STORED depth (the
+        // backend's depth map) is the PC's 0-1 depth.
+        PICA_CHECK(atCaster[0] == atPc[0] && atCaster[1] == atPc[1] && atCaster[3] == 1.0f);
+        PICA_CHECK(fabsf(mdk::pica::storedDepth(atCaster[2]) - atPc[2]) < 1.0e-6f);
+        PICA_CHECK(atCaster[2] >= -1.0f && atCaster[2] <= 0.0f);   // inside the PICA's clip z
+        // The caster shader's own depth (clip z + w) is the same number.
+        PICA_CHECK(fabsf((atCaster[2] + atCaster[3]) - atPc[2]) < 1.0e-6f);
+        // The receive pass: the texel the caster pass put this point in (a
+        // texture target's clip x, y are its s, t: glowLevelCorner) and the
+        // same depth.
+        float cornerX = 0.0f;
+        float cornerY = 0.0f;
+        mdk::pica::glowLevelCorner(atMap[0], atMap[1], &cornerX, &cornerY);
+        PICA_CHECK(fabsf(cornerX - atCaster[0]) < 1.0e-5f && fabsf(cornerY - atCaster[1]) < 1.0e-5f);
+        PICA_CHECK(fabsf(atMap[2] - atPc[2]) < 1.0e-7f && atMap[3] == 1.0f);
+        // ... and the geometry shader reads those registers to the same three.
+        const float p[4] = {points[i][0], points[i][1], points[i][2], 1.0f};
+        PICA_CHECK(fabsf(shaderRow(mapRegisters, 0, p) - atMap[0]) < 1.0e-5f);
+        PICA_CHECK(fabsf(shaderRow(mapRegisters, 1, p) - atMap[1]) < 1.0e-5f);
+        PICA_CHECK(fabsf(shaderRow(mapRegisters, 2, p) - atMap[2]) < 1.0e-6f);
+    }
+    // The centre is the middle of the map (to the whole texel it is snapped to)
+    // and of its depth range.
+    {
+        float atMap[4];
+        transformRow(map, points[0], atMap);
+        const float texel = 1.0f / (float)mdk::pica::kSunShadowMapSize;
+        PICA_CHECK(fabsf(atMap[0] - 0.5f) <= texel && fabsf(atMap[1] - 0.5f) <= texel);
+        PICA_CHECK(fabsf(atMap[2] - 0.5f) < 1.0e-4f);
+    }
+
+    // --- the ramp: a depth sampled at (s, t) = (d, 256 d) is the map's word ---
+    const float depths[12] = {0.0f, 0.00001f, 0.25f, 0.4999f, 0.5f, 0.50001f, 0.5039f,
+                              128.0f / 256.0f + 255.5f / 65536.0f, 0.75f, 0.999f,
+                              0.99998f, 1.0f};
+    for (int orderIndex = 0; orderIndex < 2; orderIndex++) {
+        const mdk::pica::ShadowByteOrder order =
+            orderIndex == 0 ? mdk::pica::kShadowBytesPica : mdk::pica::kShadowBytesReversed;
+        for (int i = 0; i < 12; i++) {
+            const float d = depths[i];
+            // NEAREST: the column is floor(s * 512), clamped; the row is
+            // floor(frac(t) * 256) counted from the LAST memory row.
+            int column = (int)(d * (float)mdk::pica::kSunShadowRampWidth);
+            if (column > mdk::pica::kSunShadowRampWidth - 1) {
+                column = mdk::pica::kSunShadowRampWidth - 1;
+            }
+            const float t = d * 256.0f;
+            int rowFromBottom = (int)((t - floorf(t)) * 256.0f);
+            if (d >= 1.0f) {
+                rowFromBottom = 255;   // the clamped column's last row: depth 1 is the far plane
+            }
+            const int memoryRow = mdk::pica::kSunShadowRampHeight - 1 - rowFromBottom;
+            uint8_t rgba[4];
+            mdk::pica::sunShadowRampTexel(column, memoryRow, order, rgba);
+            uint32_t depth = 0;
+            uint32_t softness = 0;
+            decodeShadowTexel(rgba, order, &depth, &softness);
+            PICA_CHECK(softness == 0xFFu);   // "lit" answers 1, not a shade
+            // The depth's 16 high bits, the low byte 0: rounded DOWN, never up.
+            uint32_t want = (uint32_t)(d * 65536.0f);
+            if (want > 65535u) {
+                want = 65535u;
+            }
+            PICA_CHECK(depth == (want << 8));
+            PICA_CHECK(fabsf(mdk::pica::sunShadowStoredDepth(d) - (float)depth / 16777215.0f) <
+                       1.0e-6f);
+            PICA_CHECK(mdk::pica::sunShadowStoredDepth(d) <= d + 1.0e-7f);
+        }
+        // THE TWO COORDINATES DISAGREEING AT A STEP'S BOUNDARY (they are
+        // interpolated separately): the column from a depth a hair BELOW k/256
+        // with the row from a depth a hair ABOVE it, and the reverse. Either
+        // way the texel must be one of the two true neighbours -- the end of
+        // step k - 1 or the start of step k -- never a whole step away.
+        for (int k = 1; k < 256; k += 17) {
+            const float boundary = (float)k / 256.0f;
+            const float below = boundary - 1.0f / 131072.0f;   // half a 16-bit step
+            const float above = boundary + 1.0f / 131072.0f;
+            const int columnBelow = (int)(below * (float)mdk::pica::kSunShadowRampWidth);
+            const int columnAbove = (int)(above * (float)mdk::pica::kSunShadowRampWidth);
+            const int rowBelow = (int)((below * 256.0f - floorf(below * 256.0f)) * 256.0f);
+            const int rowAbove = (int)((above * 256.0f - floorf(above * 256.0f)) * 256.0f);
+            PICA_CHECK(columnBelow == 2 * k - 1 && columnAbove == 2 * k);
+            PICA_CHECK(rowBelow == 255 && rowAbove == 0);
+            const int pairs[4][2] = {{columnBelow, rowBelow},     // agree: the end of k - 1
+                                     {columnAbove, rowAbove},     // agree: the start of k
+                                     {columnBelow, rowAbove},     // the column lags
+                                     {columnAbove, rowBelow}};    // the row lags
+            const uint32_t endOfPrevious = ((uint32_t)(k - 1) << 16) | (255u << 8);
+            const uint32_t startOfThis = (uint32_t)k << 16;
+            for (int pair = 0; pair < 4; pair++) {
+                uint8_t rgba[4];
+                mdk::pica::sunShadowRampTexel(
+                    pairs[pair][0], mdk::pica::kSunShadowRampHeight - 1 - pairs[pair][1], order,
+                    rgba);
+                uint32_t depth = 0;
+                uint32_t softness = 0;
+                decodeShadowTexel(rgba, order, &depth, &softness);
+                PICA_CHECK(softness == 0xFFu);
+                PICA_CHECK(depth == (pair == 0 || pair == 3 ? endOfPrevious : startOfThis));
+            }
+        }
+        // The two orders are each other's reverse, byte for byte.
+        uint8_t a[4];
+        uint8_t b[4];
+        // (Column 75 is the second half of step 37; memory row 55 is row 200 from
+        // the bottom, in that half: the two agree.)
+        mdk::pica::sunShadowRampTexel(75, 55, mdk::pica::kShadowBytesPica, a);
+        mdk::pica::sunShadowRampTexel(75, 55, mdk::pica::kShadowBytesReversed, b);
+        PICA_CHECK(a[0] == b[3] && a[1] == b[2] && a[2] == b[1] && a[3] == b[0]);
+        PICA_CHECK(a[0] == 37 && a[1] == 200 && a[2] == 0 && a[3] == 0xFF);
+    }
+
+    // --- the guards: the PC's, scaled to the map's texel ---
+    PICA_CHECK(mdk::pica::sunShadowNormalOffset(mdk::pica::kSunShadowPcMapSize) == 0.5f);
+    PICA_CHECK(mdk::pica::sunShadowNormalOffset(512) == 2.0f);
+    PICA_CHECK(mdk::pica::sunShadowNormalOffset(256) == 4.0f);
+    PICA_CHECK(mdk::pica::sunShadowDepthBias(mdk::pica::kSunShadowPcMapSize) ==
+               0.5f / (2.0f * mdk::kSunShadowReach));
+    PICA_CHECK(mdk::pica::sunShadowDepthBias(512) == 2.0f / (2.0f * mdk::kSunShadowReach));
+    // The push is the same 1.7 texels at every size (a texel is 600 / size).
+    for (int size = 256; size <= 2048; size *= 2) {
+        const float texels = mdk::pica::sunShadowNormalOffset(size) / (600.0f / (float)size);
+        PICA_CHECK(fabsf(texels - 0.5f / (600.0f / 2048.0f)) < 1.0e-4f);
+    }
+    // A surface does not shadow itself: what the map stores for a depth is in
+    // front of that depth pulled by the bias only if something else is.
+    for (int i = 0; i < 12; i++) {
+        const float d = depths[i];
+        if (d < 0.001f) {
+            continue;   // nearer the sun than the bias: nothing is in front of it
+        }
+        const float receiver = d - mdk::pica::sunShadowDepthBias(512);
+        PICA_CHECK(mdk::pica::sunShadowStoredDepth(d) > receiver);              // itself: lit
+        PICA_CHECK(mdk::pica::sunShadowStoredDepth(d - 0.001f) <= receiver);    // 8 units nearer: shadow
+    }
+
+    // --- the factor the receive pass multiplies by ---
+    PICA_CHECK(mdk::pica::sunShadowRatio(0.8f, 0.8f) == 1.0f);          // no sun on the face
+    PICA_CHECK(fabsf(mdk::pica::sunShadowRatio(1.0f, 0.5f) - powf(0.5f, 0.45454545f)) < 1.0e-5f);
+    PICA_CHECK(mdk::pica::sunShadowRatio(1.0f, 0.5f) < 1.0f);
+    // Both past the lit program's white (F = 2 at 2^2.2): the shadow changes nothing.
+    PICA_CHECK(mdk::pica::sunShadowRatio(9.0f, 5.0f) == 1.0f);
+    // Only the lit one past it: the ratio is to the CLAMPED light.
+    PICA_CHECK(fabsf(mdk::pica::sunShadowRatio(9.0f, 1.0f) - 0.5f) < 1.0e-5f);
+    PICA_CHECK(mdk::pica::sunShadowRatio(0.0f, 0.0f) <= 1.0f);          // no division by zero
+    PICA_CHECK(mdk::pica::sunShadowRatio(0.5f, 1.0f) == 1.0f);          // never brightens
+
+    // --- who casts and receives, and what has holes ---
+    using mdk::Pass;
+    using mdk::Primitive;
+    using mdk::Shading;
+    PICA_CHECK(mdk::pica::castsSunShadow(Pass::Solid, Shading::Lit, Primitive::Triangles));
+    PICA_CHECK(mdk::pica::castsSunShadow(Pass::DoubleSided, Shading::Lit, Primitive::Triangles));
+    PICA_CHECK(!mdk::pica::castsSunShadow(Pass::Blended, Shading::Lit, Primitive::Triangles));
+    PICA_CHECK(!mdk::pica::castsSunShadow(Pass::Mirror, Shading::Lit, Primitive::Triangles));
+    PICA_CHECK(!mdk::pica::castsSunShadow(Pass::OnTop, Shading::Lit, Primitive::Triangles));
+    PICA_CHECK(!mdk::pica::castsSunShadow(Pass::Overlay, Shading::Lit, Primitive::Triangles));
+    PICA_CHECK(!mdk::pica::castsSunShadow(Pass::Solid, Shading::Original, Primitive::Triangles));
+    PICA_CHECK(!mdk::pica::castsSunShadow(Pass::Solid, Shading::Sprite, Primitive::Triangles));
+    PICA_CHECK(!mdk::pica::castsSunShadow(Pass::Solid, Shading::Lit, Primitive::Lines));
+    const uint8_t solidIndices[4] = {1, 2, 3, 255};
+    const uint8_t holedIndices[4] = {1, 2, 0, 255};
+    PICA_CHECK(!mdk::pica::textureSourceHasHoles(solidIndices, 4, true));
+    PICA_CHECK(mdk::pica::textureSourceHasHoles(holedIndices, 4, true));
+    const uint8_t solidRgba[8] = {0, 0, 0, 128, 0, 0, 0, 255};     // a black texel is not a hole
+    const uint8_t holedRgba[8] = {255, 255, 255, 255, 9, 9, 9, 127};
+    PICA_CHECK(!mdk::pica::textureSourceHasHoles(solidRgba, 8, false));
+    PICA_CHECK(mdk::pica::textureSourceHasHoles(holedRgba, 8, false));
+    PICA_CHECK(!mdk::pica::textureSourceHasHoles(nullptr, 8, true));
+    PICA_CHECK(!mdk::pica::textureSourceHasHoles(solidIndices, 0, true));
+
+    // --- the state: multiply, depth-equal, and the VRAM arithmetic ---
+    PICA_CHECK(mdk::pica::kBlendShadowMultiply.enable);
+    PICA_CHECK(mdk::pica::kBlendShadowMultiply.srcColour == mdk::pica::kBlendDstColour);
+    PICA_CHECK(mdk::pica::kBlendShadowMultiply.dstColour == mdk::pica::kBlendZero);
+    PICA_CHECK(mdk::pica::kBlendShadowMultiply.srcAlpha == mdk::pica::kBlendZero);
+    PICA_CHECK(mdk::pica::kBlendShadowMultiply.dstAlpha == mdk::pica::kBlendOne);
+    PICA_CHECK(mdk::pica::kDepthShadowReceive.test && !mdk::pica::kDepthShadowReceive.write &&
+               mdk::pica::kDepthShadowReceive.equal);
+    for (int pass = 0; pass < static_cast<int>(Pass::Count); pass++) {
+        PICA_CHECK(!mdk::pica::depthStateForPass(static_cast<Pass>(pass)).equal);
+    }
+    PICA_CHECK(mdk::pica::sunShadowVramBytes(512) == 1572864u);
+    PICA_CHECK(mdk::pica::sunShadowVramBytes(256) == 393216u);
+    // The glow's share covers its textures: 256x512 and levels 1-5 and the mix.
+    const size_t glowTexels = 256u * 512u + 128u * 256u + 64u * 128u + 32u * 64u + 16u * 32u +
+                              8u * 16u + 32u * 64u;
+    PICA_CHECK(mdk::pica::kGlowVramBytes >= glowTexels * 4u);
+}
+
 int runPicaMatrixTests() {
     testIdentityRecognition();
     testTheGlowQuadMapsThePanelOntoThePicture();
@@ -1471,6 +1710,7 @@ int runPicaMatrixTests() {
     testTheFilteredEdge();
     testTheMipChain();
     testTheHdResidencyPolicy();
+    testTheSunsShadow();
     return failures;
 }
 

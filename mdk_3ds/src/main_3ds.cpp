@@ -395,6 +395,25 @@ int main(int argc, char** argv) {
         }
     }
 
+#ifdef MDK_TOGGLE_WALK
+    // The toggle walk (a harness aid, `make TOGGLEWALK=1`, never a release):
+    // start in the ORIGINAL look and switch the configured enhancements on one
+    // at a time, logging each BEFORE the frame that first draws it, so a
+    // console that hangs names its culprit in the last line of mdk.log.
+    const mdk::EnhancedToggles walkTarget = enhancedToggles;
+    enhancedToggles.enableSkyShadows = false;
+    enhancedToggles.enableFragmentLights = false;
+    enhancedToggles.enableHaze = false;
+    enhancedToggles.enableMirrors = false;
+    enhancedToggles.enableGlowBillboards = false;
+    enhancedToggles.enableFiltering = false;
+    enhancedToggles.enableMipmaps = false;
+    enhancedToggles.enableHdTextures = false;
+    enhancedToggles.enableLighting = false;
+    enhancedToggles.enableEdgeSmoothing = false;
+    mdk::log3dsPrintf("walk: toggle walk build -- every enhancement off, then one at a time");
+#endif
+
     MdkRenderDesc desc;
     desc.width = 240;
     desc.height = 400;
@@ -1195,6 +1214,54 @@ int main(int argc, char** argv) {
             exitReason = "harness autoquit (MDK_AUTOQUIT)";
             break;
         }
+#ifdef MDK_TOGGLE_WALK
+        // One step every kWalkFrames: the next toggle the config asked for.
+        {
+            const uint32_t kWalkFrames = 120;
+            static const char* const kWalkNames[] = {
+                "filtering", "mipmaps", "haze", "lighting", "fragmentLights",
+                "mirrors", "hdTextures", "edgeSmoothing", "glow", "skyShadows"};
+            const uint32_t kWalkSteps = sizeof(kWalkNames) / sizeof(kWalkNames[0]);
+            static uint32_t walkStep = 0;
+            static uint32_t walkNext = kWalkFrames;
+            if (walkStep > 0u && frame + kWalkFrames / 2u == walkNext) {
+                mdk::log3dsPrintf("walk: %s survived %u frames", kWalkNames[walkStep - 1u],
+                                  (unsigned)(kWalkFrames / 2u));
+            }
+            if (frame == walkNext && walkStep < kWalkSteps) {
+                if (walkStep == 0u) {
+                    mdk::log3dsPrintf("walk: the original look survived %u frames",
+                                      (unsigned)frame);
+                }
+                bool* slot = nullptr;
+                bool want = false;
+                switch (walkStep) {
+                case 0: slot = &enhancedToggles.enableFiltering; want = walkTarget.enableFiltering; break;
+                case 1: slot = &enhancedToggles.enableMipmaps; want = walkTarget.enableMipmaps; break;
+                case 2: slot = &enhancedToggles.enableHaze; want = walkTarget.enableHaze; break;
+                case 3: slot = &enhancedToggles.enableLighting; want = walkTarget.enableLighting; break;
+                case 4: slot = &enhancedToggles.enableFragmentLights; want = walkTarget.enableFragmentLights; break;
+                case 5: slot = &enhancedToggles.enableMirrors; want = walkTarget.enableMirrors; break;
+                case 6: slot = &enhancedToggles.enableHdTextures; want = walkTarget.enableHdTextures; break;
+                case 7: slot = &enhancedToggles.enableEdgeSmoothing; want = walkTarget.enableEdgeSmoothing; break;
+                case 8: slot = &enhancedToggles.enableGlowBillboards; want = walkTarget.enableGlowBillboards; break;
+                default: slot = &enhancedToggles.enableSkyShadows; want = walkTarget.enableSkyShadows; break;
+                }
+                mdk::log3dsPrintf("walk: step %u: %s %s at frame %u", (unsigned)(walkStep + 1u),
+                                  kWalkNames[walkStep], want ? "ON" : "(left off by config.ini)",
+                                  (unsigned)frame);
+                if (want) {
+                    *slot = true;
+                    mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
+                }
+                walkStep++;
+                walkNext += kWalkFrames;
+                if (walkStep == kWalkSteps) {
+                    mdk::log3dsPrintf("walk: every step taken; the config's full set is on");
+                }
+            }
+        }
+#endif
 
         // The frame's clock FIRST: the look integrates over the time since the
         // previous frame, so the input poll needs the same delta the simulation is

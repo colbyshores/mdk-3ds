@@ -249,7 +249,14 @@ struct DepthState {
     // Does a passing fragment update the buffer? False is what lets a blended
     // surface be seen through.
     bool write = true;
+    // Does the test pass only at the SAME depth (GPU_EQUAL, not GPU_LEQUAL)?
+    // Only the sun shadow's receive pass asks: it draws a surface a second time
+    // over itself and must touch no pixel another surface won (kDepthShadowReceive).
+    bool equal = false;
 };
+
+// THE SUN SHADOW'S RECEIVE PASS: tested for equality, never written.
+constexpr DepthState kDepthShadowReceive = {true, false, true};
 
 // The oracle's rule, in one place so a host test can hold it to the C#.
 //
@@ -281,6 +288,7 @@ enum BlendFactor {
     kBlendOneMinusDstColour = 4,   // the glow's screen blend only (kBlendScreen)
     kBlendConstantAlpha = 5,       // the glow's level mix only (kBlendGlowMix)
     kBlendOneMinusConstantAlpha = 6,
+    kBlendDstColour = 7,           // the sun shadow's multiply only (kBlendShadowMultiply)
 };
 
 // What one draw does with what is already in the target.
@@ -320,6 +328,12 @@ const BlendState kBlendScreen = {true, kBlendOneMinusDstColour, kBlendOne, kBlen
 // level 3 so one texture unit reads both (06_draw.inc drawGlow).
 const BlendState kBlendGlowMix = {true, kBlendConstantAlpha, kBlendOneMinusConstantAlpha,
                                   kBlendZero, kBlendOne};
+
+// THE SUN SHADOW'S MULTIPLY: colour := colour * source (the receive pass's
+// source is 1 in the light and R = F_shadow / F_lit in the shadow, see
+// mdk_shadow.g.pica). Alpha is left as it was.
+const BlendState kBlendShadowMultiply = {true, kBlendDstColour, kBlendZero, kBlendZero,
+                                         kBlendOne};
 
 // ---------------------------------------------------------------------------
 // THE GLOW (Enhanced Mode enableGlowBillboards; the PC's post.frag shine).
@@ -854,6 +868,121 @@ int32_t hdEvictionVictim(const HdSlot* slots, int32_t count, uint32_t protectFro
 // to drop them.
 bool hdMayDispatch(size_t residentBytes, size_t readsInFlight, size_t largestBytes,
                    size_t budgetBytes, bool evictable);
+
+// ---------------------------------------------------------------------------
+// THE SUN'S SHADOW (Enhanced Mode enableSkyShadows; the PC's sunlight()).
+//
+// The PC renders the frame's Lit triangles through `sunShadowMatrix` (render/
+// sun_shadow.h: world -> x, y in [-1, 1] across the map, depth in [0, 1] along
+// the light) into a 2048x2048 depth map and compares each lit pixel with it.
+// The PICA does the same with its own shadow texture, in two passes
+// (03_frame.inc castShadows, 06_draw.inc receiveShadows); these are the numbers
+// and the two matrices both passes are made of, here so a host test can hold
+// them to the PC's.
+// ---------------------------------------------------------------------------
+
+// The map's side in texels. The PC's is 2048; the PICA's largest texture is
+// 1024 and its VRAM is 6 MB for both eyes' targets and the glow as well, so the
+// map is 512: a megabyte (RGBA8), a texel 1.17 world units wide at the retail
+// shadow distance of 300.
+constexpr int32_t kSunShadowMapSize = 512;
+
+// The VRAM a map of `mapSize` a side takes: its RGBA8 texels and the caster
+// pass's 16-bit depth buffer.
+constexpr size_t sunShadowVramBytes(int32_t mapSize) {
+    return (size_t)mapSize * (size_t)mapSize * 6u;
+}
+
+// The VRAM the glow's textures take (06_draw.inc ensureGlow): the 256x512
+// picture and its blur levels 1-5 and mix, RGBA8 -- 707,072 bytes -- rounded up
+// to 768 KiB for the allocator's alignment. The sun shadow's map leaves this
+// much for a glow that is wanted and not made yet.
+constexpr size_t kGlowVramBytes = 768u * 1024u;
+
+// THE DEPTH RAMP of the caster pass (mdk_caster.v.pica): a 512x256 RGBA8
+// texture whose texel is the shadow map's encoding of a depth -- the map's
+// word is (depth24 << 8) | 0xFF. Sampled NEAREST at s = depth and
+// t = depth * 256 (repeating), the row is the depth's middle byte and the
+// column gives its high byte; the low byte is 0, so a caster's stored depth is
+// its depth rounded DOWN to 1/65536 of the range (0.12 world units of 8000).
+//
+// WHY 512 COLUMNS FOR A 256-VALUE BYTE. s and t are two coordinates the
+// rasteriser interpolates separately, and at a depth just either side of a
+// multiple of 1/256 they can land on different sides of it: the column says
+// "the end of step k - 1" while the row says "just past the start of a step",
+// or the reverse. Taken at face value that texel's depth is wrong by a whole
+// step -- 31 world units -- a speck of false shadow or of leaked light. So the
+// column carries one bit more than the byte: WHICH HALF of its step the depth
+// is in. A row in the first quarter under a column in the second half can only
+// be the next step's start, and a row in the last quarter under a column in
+// the first half only the previous step's end; the texel holds the corrected
+// byte. Anywhere else the two agree and the correction does nothing.
+//
+// `x`, `y` are the texel's column and its row IN MEMORY (row 0 first); the
+// PICA's t runs from the LAST memory row (sceneUvFromTop), so the row that
+// t = (j + 0.5) / 256 samples is memory row 255 - j.
+constexpr int32_t kSunShadowRampWidth = 512;
+constexpr int32_t kSunShadowRampHeight = 256;
+// WHICH BYTE IS WHICH. A shadow map's word is (depth24 << 8) | softness, and a
+// PICA RGBA8 texel is read as the word A:B:G:R. kShadowBytesReversed is what the
+// shadow unit reads from that word: the depth's high, middle and low byte in A,
+// B and G, the softness in R -- MEASURED in Mandarine r1.2.1 (2026-11-18) and,
+// the emulator decoding `pixel >> 8` as the depth, the format's own layout --
+// and the console's: the map it writes natively, read back, has the same bytes
+// (03_frame.inc shadowByteOrder; 2026-11-18).
+// kShadowBytesPica is the other order, R, G, B the depth's high, middle and low
+// byte and A the softness: what the config's shadowMapFlipBytes writes.
+enum ShadowByteOrder { kShadowBytesPica = 0, kShadowBytesReversed = 1 };
+void sunShadowRampTexel(int32_t x, int32_t y, ShadowByteOrder order, uint8_t rgba[4]);
+// The depth (0-1) a ramp sample at depth `depth` stores in the map: for the
+// host suite, with the receive pass's comparison below.
+float sunShadowStoredDepth(float depth);
+
+// THE TWO GUARDS AGAINST A SURFACE SHADOWING ITSELF, the PC's scaled to the
+// map's texel. The PC pushes the receiver 0.5 world units along its face normal
+// (ShadowNormalOffset) and pulls its depth 0.5 units towards the sun
+// (0.5 / (2 * reach) of the range: 10_enhanced.inc u.shadow[2], u.shadow[1]) --
+// against a map whose texel is 600 / 2048 = 0.29 units, so the push is 1.7
+// texels. A 512 map's texel is 1.17 units, and the PC's 0.5 is less than half
+// of one: a surface at a grazing angle to the sun striped itself with shadow
+// (measured, level 3's canyon wall, 2026-11-18). Both are therefore the PC's
+// times the ratio of the two maps' sides, which keeps the push at the same 1.7
+// texels: 2 world units at 512, 4 at 256. The cost is the usual one -- a shadow
+// starts up to that far from the foot of what casts it.
+constexpr int32_t kSunShadowPcMapSize = 2048;
+float sunShadowNormalOffset(int32_t mapSize);
+float sunShadowDepthBias(int32_t mapSize);
+
+// World -> the CASTER pass's clip space: the sun matrix's x and y as they are
+// (a texture target's clip x, y are its s, t: glowLevelCorner), and its depth
+// d in [0, 1] as clip z = d - w, so the depth this backend's map stores
+// (z + 1, kDepthMapScale / kDepthMapOffset) IS d: 0 at the sun's near plane.
+void sunCasterMatrix(const float sun[16], float out[16]);
+
+// World -> the shadow map's (u, v, depth, 1): u = x / 2 + 1/2, v = y / 2 + 1/2
+// and the depth as it is -- the receive pass's texture coordinate, the same
+// point the caster pass put in that texel.
+void sunMapMatrix(const float sun[16], float out[16]);
+
+// Does a texture's source have HOLES -- an index-0 texel (transparent whatever
+// the palette says) or, for an RGBA source, an alpha below the half cover? The
+// caster pass draws no texture of a caster's own (its one unit is the depth
+// ramp), so it cannot cut a hole: a surface with holes is left out of the map
+// rather than cast as if it were solid. A fence then casts NO shadow where the
+// PC casts a fence's, which is the smaller wrong: level geometry carries whole
+// polygons of transparent texels, and solid they shadowed half a canyon floor
+// the PC leaves in the sun (measured, level 8, 2026-11-18).
+bool textureSourceHasHoles(const uint8_t* source, size_t byteCount, bool indexed);
+
+// Does a draw cast -- and so receive -- the sun's shadow? The PC's casters
+// (11_shadow_post.inc drawShadowMap): triangles, Lit, in an opaque pass.
+bool castsSunShadow(Pass pass, Shading shading, Primitive primitive);
+
+// The receive pass's factor for a surface whose lit and shadowed lights are
+// `lit` and `shadowed` (exposure * light, one channel): what the picture is
+// multiplied by in the shadow, as mdk_shadow.g.pica computes it. For the host
+// suite: the shader cannot be run there, its arithmetic can.
+float sunShadowRatio(float lit, float shadowed);
 
 } // namespace pica
 } // namespace mdk

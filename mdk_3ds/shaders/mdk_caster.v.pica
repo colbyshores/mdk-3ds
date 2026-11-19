@@ -1,0 +1,57 @@
+; ============================================================================
+; mdk_caster.v.pica -- the SHADOW CASTER pass's vertex shader (Enhanced Mode
+; enableSkyShadows, SPEC.md 7.9): a vertex through the sun's matrix, and its
+; DEPTH FROM THE SUN as a texture coordinate.
+;
+; WHY A TEXTURE COORDINATE. The PICA has a fragment mode that writes a
+; fragment's depth into a shadow map (GPU_FRAGOPMODE_SHADOW), and the caster
+; pass was first written with it: in the emulator this port is measured in, a
+; draw in that mode wrote nothing the shadow unit could read -- forced to depth
+; 0 it still shadowed nothing, while an ORDINARY black draw into the same map
+; shadowed everything (2026-11-18, the probes in docs/evidence). So the map is
+; made by ordinary drawing: the depth is turned into the map's bytes by a ramp
+; texture (03_frame.inc ensureShadowMap) sampled at
+;
+;     s = depth                  -> the texel column gives the depth's high byte
+;     t = depth * 256 (repeats)  -> the texel row is its middle byte
+;
+; (512 columns for the 256 values: pica_matrix.h, THE DEPTH RAMP, has why.)
+;
+; and an ordinary depth buffer keeps the caster nearest the sun. The shadow
+; unit reads the result exactly as it would read a map the special mode wrote
+; (depth in the texel's top three bytes, the fourth 0xFF).
+;
+; The depth is the stored one: clip z + w, 0 at the sun's near plane and 1 at
+; its far (pica::sunCasterMatrix; the sun's projection is orthographic, w = 1).
+;
+; Attributes: v0 = position (float3), v1 = texcoord (float2, not used: a caster
+; has no texture here, so a cut-out casts as if it were solid).
+; ============================================================================
+
+.constf casterConsts(0.0, 1.0, 256.0, 0.0)
+.alias  casterOnes casterConsts.yyyy
+
+.out outpos position
+.out outclr color
+.out outtexcoord texcoord0
+
+.alias inpos v0
+
+.fvec mvp[4]      ; world -> the caster pass's clip space, a row a register
+
+.entry castermain
+.proc castermain
+    mov r0.xyz, inpos
+    mov r0.w,   casterOnes
+    dp4 r1.x, mvp[0], r0
+    dp4 r1.y, mvp[1], r0
+    dp4 r1.z, mvp[2], r0
+    dp4 r1.w, mvp[3], r0
+    mov outpos, r1
+
+    add r2.x, r1.w, r1.z               ; depth = z + w, in [0, 1]
+    mul r2.y, casterConsts.zzzz, r2.x  ; * 256
+    mov outtexcoord, r2
+    mov outclr, casterOnes
+    end
+.end

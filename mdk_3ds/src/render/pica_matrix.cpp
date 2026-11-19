@@ -21,7 +21,10 @@
 
 #include "render/pica_matrix.h"
 
+#include <math.h>
 #include <string.h>
+
+#include "render/sun_shadow.h"
 
 namespace mdk {
 namespace pica {
@@ -511,6 +514,115 @@ void glowTexCoord(float fx, float fy, float* s, float* t) {
     // right and shifted by the 112 padding rows.
     *s = (1.0f - fy) * (240.0f / (float)kGlowTexWidth);
     *t = 1.0f - fx * (400.0f / (float)kGlowTexHeight);
+}
+
+void sunShadowRampTexel(int32_t x, int32_t y, ShadowByteOrder order, uint8_t rgba[4]) {
+    // The row is the depth's middle byte; the column is its high byte and, in
+    // its lowest bit, which half of that byte's step the depth is in.
+    const int32_t row = kSunShadowRampHeight - 1 - y;
+    int32_t step = x >> 1;
+    const bool secondHalf = (x & 1) != 0;
+    if (secondHalf && row < kSunShadowRampHeight / 4 && step < 255) {
+        step++;      // the row is already past the boundary the column has not reached
+    } else if (!secondHalf && row >= 3 * kSunShadowRampHeight / 4 && step > 0) {
+        step--;      // the row has not reached the boundary the column is past
+    }
+    const uint8_t high = (uint8_t)step;
+    const uint8_t middle = (uint8_t)row;
+    if (order == kShadowBytesReversed) {
+        rgba[0] = 0xFF;      // the softness
+        rgba[1] = 0;         // the depth's low byte
+        rgba[2] = middle;
+        rgba[3] = high;
+    } else {
+        rgba[0] = high;
+        rgba[1] = middle;
+        rgba[2] = 0;         // the depth's low byte
+        rgba[3] = 0xFF;      // the softness
+    }
+}
+
+float sunShadowStoredDepth(float depth) {
+    if (depth < 0.0f) {
+        depth = 0.0f;
+    }
+    // Column = floor(depth * 256) (clamped to the last), row = floor(frac(depth
+    // * 256) * 256): the 16 high bits of the 24-bit depth.
+    float scaled = depth * 65536.0f;
+    if (scaled > 65535.0f) {
+        scaled = 65535.0f;
+    }
+    const uint32_t high16 = (uint32_t)scaled;
+    return (float)(high16 << 8) / 16777215.0f;
+}
+
+float sunShadowNormalOffset(int32_t mapSize) {
+    if (mapSize <= 0) {
+        mapSize = kSunShadowMapSize;
+    }
+    return 0.5f * (float)kSunShadowPcMapSize / (float)mapSize;
+}
+
+float sunShadowDepthBias(int32_t mapSize) {
+    return sunShadowNormalOffset(mapSize) / (2.0f * kSunShadowReach);
+}
+
+void sunCasterMatrix(const float sun[16], float out[16]) {
+    // Row-vector layout: element [row * 4 + col]; a clip component is a COLUMN.
+    for (int row = 0; row < 4; row++) {
+        out[row * 4 + 0] = sun[row * 4 + 0];
+        out[row * 4 + 1] = sun[row * 4 + 1];
+        out[row * 4 + 2] = sun[row * 4 + 2] - sun[row * 4 + 3];
+        out[row * 4 + 3] = sun[row * 4 + 3];
+    }
+}
+
+void sunMapMatrix(const float sun[16], float out[16]) {
+    for (int row = 0; row < 4; row++) {
+        out[row * 4 + 0] = 0.5f * sun[row * 4 + 0] + 0.5f * sun[row * 4 + 3];
+        out[row * 4 + 1] = 0.5f * sun[row * 4 + 1] + 0.5f * sun[row * 4 + 3];
+        out[row * 4 + 2] = sun[row * 4 + 2];
+        out[row * 4 + 3] = sun[row * 4 + 3];
+    }
+}
+
+bool textureSourceHasHoles(const uint8_t* source, size_t byteCount, bool indexed) {
+    if (!source) {
+        return false;
+    }
+    if (indexed) {
+        return memchr(source, 0, byteCount) != nullptr;
+    }
+    for (size_t at = 3; at < byteCount; at += 4) {
+        if (source[at] < 128) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool castsSunShadow(Pass pass, Shading shading, Primitive primitive) {
+    return primitive == Primitive::Triangles && shading == Shading::Lit &&
+           (pass == Pass::Solid || pass == Pass::DoubleSided);
+}
+
+float sunShadowRatio(float lit, float shadowed) {
+    // F / 2 of each (to_srgb, halved, clamped at 1: the lit program's light
+    // stage scales by 2), then their quotient, never above 1.
+    const float kInvGamma = 0.45454545f;
+    float fShadow = 0.5f * powf(shadowed > 0.0f ? shadowed : 0.0f, kInvGamma);
+    float fLit = 0.5f * powf(lit > 0.0f ? lit : 0.0f, kInvGamma);
+    if (fShadow > 1.0f) {
+        fShadow = 1.0f;
+    }
+    if (fLit > 1.0f) {
+        fLit = 1.0f;
+    }
+    if (fLit < 1.0e-12f) {
+        fLit = 1.0e-12f;
+    }
+    const float ratio = fShadow / fLit;
+    return ratio > 1.0f ? 1.0f : ratio;
 }
 
 } // namespace pica

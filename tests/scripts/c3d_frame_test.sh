@@ -1090,13 +1090,23 @@ def adjudicate(text, quiet=False):
     # only from the replay. drawGlow (Enhanced Mode glow) is the third: replayQueue
     # calls it once per eye, before the Overlay pass, so it lands in every eye (its
     # small passes draw into its own textures, then it returns to the eye).
+    # The sun shadow (Enhanced Mode enableSkyShadows) adds two: castShadows, the
+    # caster pass -- once per FRAME, before the eye loop, into the shadow map and
+    # not into an eye at all -- and receiveShadows, which replayQueue calls once
+    # per eye after the opaque passes. Their places are pinned by
+    # `sun-shadow-cast-once-and-received-per-eye` below. And one more, outside any
+    # eye and any game frame: testNativeShadowWrites, the once-per-session test
+    # of the PICA's own shadow writes, which draws one quad into an 8x8 texture of
+    # its own in a frame of its own before the first frame that wants a shadow.
     allowed = [line_range(text, body_span(text, n))
-               for n in ("drawRecorded", "drawDiagnostic", "drawGlow")]
+               for n in ("drawRecorded", "drawDiagnostic", "drawGlow", "castShadows",
+                         "receiveShadows", "testNativeShadowWrites", "testSampleShadowMap")]
     stray = [loc for ln, loc in sites(text, EMIT_DRAW)
              if not any(r and r[0] <= ln <= r[1] for r in allowed)]
     rep.check("emission-sites-closed",
               not stray and all(allowed),
-              "%d draw call(s) outside drawRecorded/drawDiagnostic/drawGlow: %s (an immediate draw "
+              "%d draw call(s) outside drawRecorded/drawDiagnostic/drawGlow/castShadows/"
+              "receiveShadows/testNativeShadowWrites/testSampleShadowMap: %s (an immediate draw "
               "anywhere else is outside the per-eye replay, so it lands in one target or "
               "none)" % (len(stray), "none" if not stray else "; ".join(stray)))
 
@@ -1148,8 +1158,14 @@ def adjudicate(text, quiet=False):
     eye_calls = re.findall(r"installAlphaTest\(\s*r\s*,\s*mdk::pica::alphaTestReferenceFor\("
                            r"\s*r->toggles\.enableFiltering\s*,\s*mdk::Pass::Solid\s*\)\s*,"
                            r"\s*true\s*\)", eye_body)
+    # The second write in installAlphaTest is the test OFF, for a negative
+    # reference: the sun shadow's caster pass, whose alpha is a depth byte (the
+    # ramp) and not a coverage. Exactly that spelling, and only there.
+    atest_off = [loc for _, loc in atest if re.search(
+        r"C3D_AlphaTest\(\s*false\s*,\s*GPU_ALWAYS\s*,\s*0\s*\)", loc)]
     rep.check("alpha-test-single-writer-in-install-eye",
-              len(atest) == 1 and writer and not atest_stray and len(eye_calls) == 1,
+              (len(atest) == 1 or (len(atest) == 2 and len(atest_off) == 1))
+              and writer and not atest_stray and len(eye_calls) == 1,
               "%d C3D_AlphaTest call(s), %d outside installAlphaTest: %s; installEye's forced "
               "installAlphaTest(r, alphaTestReferenceFor(filtering, Solid), true) calls: %d "
               "(frame state one eye does not get is a hole in that eye)"
@@ -1221,20 +1237,89 @@ def adjudicate(text, quiet=False):
     # drawDiagnostic (the canvas) restores the base program, and drawGlow's shared
     # state (glowDrawState) does the same. Those are the only other binds allowed;
     # installEye keeps exactly one.
-    bind = call_sites(text, "C3D_BindProgram")
+    # Every bind goes through bindProgram (03_frame.inc: THE GEOMETRY-STAGE
+    # RULE), so the placement rule is about bindProgram's call sites, and the
+    # one raw C3D_BindProgram must be the helper's own.
+    raw_bind = call_sites(text, "C3D_BindProgram")
+    helper_range = line_range(text, body_span(text, "bindProgram"))
+    raw_bind_stray = [loc for ln, loc in raw_bind
+                      if not (helper_range and helper_range[0] <= ln <= helper_range[1])]
+    bind = call_sites(text, "bindProgram")
+    # The sun shadow's two passes bind their own programs inside the frame too:
+    # castShadows the caster program (installEye, which follows it, binds the
+    # scene's again) and receiveShadows the receive program and then the scene's.
     draw_ranges = [rg for rg in (line_range(text, body_span(text, fn))
-                                 for fn in ("drawRecorded", "drawDiagnostic", "drawGlow", "glowDrawState")) if rg]
+                                 for fn in ("drawRecorded", "drawDiagnostic", "drawGlow",
+                                            "glowDrawState", "castShadows",
+                                            "receiveShadows", "testNativeShadowWrites",
+                                            "testSampleShadowMap")) if rg]
     in_eye = [loc for ln, loc in bind if eye_range and eye_range[0] <= ln <= eye_range[1]]
     bind_stray = [loc for ln, loc in bind
                   if not (eye_range and eye_range[0] <= ln <= eye_range[1])
                   and not any(a <= ln <= b for a, b in draw_ranges)]
     rep.check("program-bound-only-where-an-eye-is-installed",
-              len(in_eye) == 1 and not bind_stray and eye_range,
-              "%d C3D_BindProgram call(s), %d outside installEye: %s (the bind is what "
+              len(in_eye) == 1 and not bind_stray and eye_range
+              and len(raw_bind) == 1 and not raw_bind_stray and helper_range,
+              "%d bindProgram call(s), %d outside installEye and the draw passes: %s; %d raw "
+              "C3D_BindProgram call(s), %d outside bindProgram: %s (the bind is what "
               "marks the shader dirty so UpdateContext configures it once per frame; a "
-              "bind outside the eye install runs outside the frame contract)"
+              "bind outside the eye install runs outside the frame contract, and a raw "
+              "one skips the geometry-stage rule)"
               % (len(bind), len(bind_stray),
-                 "none" if not bind_stray else "; ".join(bind_stray)))
+                 "none" if not bind_stray else "; ".join(bind_stray),
+                 len(raw_bind), len(raw_bind_stray),
+                 "none" if not raw_bind_stray else "; ".join(raw_bind_stray)))
+
+    # THE GEOMETRY-STAGE RULE (HARDWARE, measured 2026-11-18 on the Old 3DS with
+    # mdk_3ds/tools/gstest; 03_frame.inc bindProgram). A program without a
+    # geometry shader drawing after one with a geometry shader in the same
+    # command list locks the PICA up for good; the emulator does not model it, so
+    # this pin is the only thing short of a console that can see the rule broken.
+    #   * bindProgram splits the list (frameSplit) BEFORE binding a plain program
+    #     while the list has used a geometry one, and marks the vertex uniforms
+    #     dirty after it when leaving geometry mode (unit 3 kept the GS's);
+    #   * every C3D_FrameSplit is frameSplit's, which clears gsInList, and the
+    #     frame's begin clears it and the split count;
+    #   * drawRecorded draws GPU_GEOMETRY_PRIM exactly when the bound program has
+    #     a geometry shader, and an unlit draw in geometry mode goes through the
+    #     pass-through program (one split per eye, not one per lit run: the GX
+    #     queue's budget).
+    helper_body = body(text, "bindProgram") or ""
+    h_gate = re.search(r"if\s*\(\s*!geometry\s*&&\s*r->gsInList\s*\)\s*\{\s*frameSplit\(r\);",
+                       helper_body)
+    h_bind = helper_body.find("C3D_BindProgram(program);")
+    h_dirty = re.search(r"if\s*\(\s*leavingGeometry\b[^)]*\)\s*\{\s*"
+                        r"C3D_FVUnifWritePtr\(GPU_VERTEX_SHADER,\s*0,\s*r->vshUniformVecs\);",
+                        helper_body)
+    split_body = body(text, "frameSplit") or ""
+    raw_split = call_sites(text, "C3D_FrameSplit")
+    split_range = line_range(text, body_span(text, "frameSplit"))
+    split_stray = [loc for ln, loc in raw_split
+                   if not (split_range and split_range[0] <= ln <= split_range[1])]
+    begin_body = body(text, "mdk_render_begin_frame") or ""
+    b_begin = begin_body.find("C3D_FrameBegin(")
+    b_reset = begin_body.find("r->gsInList = false;")
+    b_count = begin_body.find("r->geometrySplits = 0;")
+    rec_body = body(text, "drawRecorded") or ""
+    rec_prim = re.search(r"if\s*\(\s*r->boundProgram\s*&&\s*r->boundProgram->geometryShader\s*\)"
+                         r"\s*\{[^}]*C3D_DrawArrays\(GPU_GEOMETRY_PRIM,", rec_body)
+    rec_pass = "r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program" in rec_body
+    rep.check("geometry-programs-are-left-only-through-a-split",
+              h_gate is not None and h_gate.start() < h_bind and h_dirty is not None
+              and h_bind < h_dirty.start()
+              and "r->gsInList = false;" in split_body and len(raw_split) == 1 and not split_stray
+              and 0 <= b_begin < b_reset and b_begin < b_count
+              and rec_prim is not None and rec_pass,
+              "bindProgram: split before a plain bind in geometry mode %s, then the bind %d, "
+              "then the vertex uniforms dirtied %s; %d raw C3D_FrameSplit call(s), outside "
+              "frameSplit: %s; frameSplit clears gsInList: %s; begin_frame clears it %d and "
+              "the split count %d after C3D_FrameBegin %d; drawRecorded picks the primitive "
+              "by the bound program: %s, unlit draws in geometry mode take the pass program: %s"
+              % ("yes" if h_gate else "NO", h_bind, "yes" if h_dirty else "NO",
+                 len(raw_split), "none" if not split_stray else "; ".join(split_stray),
+                 "yes" if "r->gsInList = false;" in split_body else "NO",
+                 b_reset, b_count, b_begin, "yes" if rec_prim else "NO",
+                 "yes" if rec_pass else "NO"))
 
     # EDGE SMOOTHING'S BORROWED DEPTH. At scale 2 the right eye shares the left
     # eye's depth buffer (02_lifecycle.inc buildEyeTargets), so installing the
@@ -1243,7 +1328,7 @@ def adjudicate(text, quiet=False):
     # at slider 60: without them the right eye lost 43% of its pixels; with the
     # clear but no split the fill would run before either eye's draws.
     eye_body = body(text, "installEye") or ""
-    split_at = eye_body.find("C3D_FrameSplit(0);")
+    split_at = eye_body.find("frameSplit(r);")
     clear_at = eye_body.find("C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH")
     drawon_at = eye_body.find("C3D_FrameDrawOn(target);")
     guarded = "target == r->targetRight && r->targetsShareDepth" in eye_body
@@ -1266,6 +1351,97 @@ def adjudicate(text, quiet=False):
               "%d drawGlow call site(s); inside replayQueue gated on the Overlay pass: %s "
               "(anywhere else it lands in one eye, or over the canvas)"
               % (len(glow_calls), "yes" if glow_gate else "NO"))
+
+    # THE SUN SHADOW'S TWO PASSES, each in its one place (Enhanced Mode
+    # enableSkyShadows; 03_frame.inc castShadows, 06_draw.inc receiveShadows).
+    #   - The map is made ONCE A FRAME, before either eye: castShadows is called
+    #     from mdk_render_end_frame after prepareShadows and before the eye loop's
+    #     installEye (inside the loop it would be made twice in stereo, and after
+    #     installEye it would leave the eye's target unselected for the replay).
+    #     It selects its own target before it draws and flushes it after, because
+    #     the eyes read the map as a texture in the same command list.
+    #   - The shadow is laid on once per eye, from replayQueue, when the Mirror
+    #     pass is reached: after the two opaque passes, before anything
+    #     translucent (later, the multiply would darken glass and sprites).
+    #   - The receive pass tests for depth EQUALITY and never writes, multiplies,
+    #     and puts the scene's program and depth state back.
+    end_body = body(text, "mdk_render_end_frame") or ""
+    cast_calls = call_sites(text, "castShadows")
+    receive_calls = call_sites(text, "receiveShadows")
+    prepare_at = end_body.find("prepareShadows(r);")
+    cast_at = end_body.find("castShadows(r);")
+    loop_at = end_body.find("installEye(r, eye == 0")
+    receive_gate = re.search(r"if\s*\(\s*pass\s*==\s*static_cast<int32_t>\(mdk::Pass::Mirror\)\s*\)"
+                             r"\s*\{\s*receiveShadows\(r\);", replay_body)
+    cast_body = body(text, "castShadows") or ""
+    cast_target = cast_body.find("C3D_FrameDrawOn(r->shadowTarget);")
+    cast_draw = cast_body.find("C3D_DrawArrays(")
+    cast_flush = cast_body.find("GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);")
+    receive_body = body(text, "receiveShadows") or ""
+    r_equal = receive_body.find("installDepthState(r, mdk::pica::kDepthShadowReceive);")
+    r_blend = receive_body.find("writeBlendState(r, mdk::pica::kBlendShadowMultiply,")
+    r_draw = receive_body.find("C3D_DrawArrays(")
+    r_program = receive_body.rfind("bindProgram(r, r->passReady ? &r->programPass : &r->program);")
+    r_depth = receive_body.rfind("installDepthState(r, mdk::pica::DepthState{true, true});")
+    rep.check("sun-shadow-cast-once-and-received-per-eye",
+              len(cast_calls) == 1 and len(receive_calls) == 1
+              and 0 <= prepare_at < cast_at < loop_at
+              and receive_gate is not None
+              and 0 <= cast_target < cast_draw < cast_flush
+              and 0 <= r_equal < r_draw and 0 <= r_blend < r_draw
+              and r_draw < r_program and r_draw < r_depth,
+              "%d castShadows / %d receiveShadows call site(s); end_frame order prepare %d < "
+              "cast %d < eye loop %d; replay gate on the Mirror pass: %s; caster target %d < "
+              "draw %d < flush %d; receive depth-equal %d and multiply %d before its draw %d, "
+              "scene program %d and depth %d after"
+              % (len(cast_calls), len(receive_calls), prepare_at, cast_at, loop_at,
+                 "yes" if receive_gate else "NO", cast_target, cast_draw, cast_flush,
+                 r_equal, r_blend, r_draw, r_program, r_depth))
+
+    # HOW THE SUN'S MAP IS WRITTEN, AND WHY IT IS NOT ONE WAY (measured
+    # 2026-11-18; 03_frame.inc testNativeShadowWrites). The Old 3DS lands the
+    # PICA's own shadow writes in the caster pass and does NOT repeat the ramp's
+    # t = 256 * depth (its map came back with the depth's middle byte 0, and the
+    # floor shadowed itself); the emulator does the opposite. So:
+    #   * the caster's alpha is the ramp's (in the default byte order it IS the
+    #     depth's high byte: a constant 255 wrote every depth as the far plane,
+    #     review finding 1) and the native combiner is constant black;
+    #   * native mode is on only for the casters, off again before the flush;
+    #   * a native map's target has no depth buffer (as the test measured it);
+    #   * the first native frames' maps are read back as evidence, and three
+    #     empty ones in a row settle it WITHOUT leaving native mode: native is
+    #     chosen only where the ramp measured broken, so demoting to it put a
+    #     console on the path that cannot work there (review, 2026-11-18);
+    #   * every readback goes through readBack (a trailing copy into the drain,
+    #     the destination pre-filled with "nothing seen").
+    cast_b = body(text, "castShadows") or ""
+    ca_alpha = re.search(r"C3D_TexEnvSrc\(ramp,\s*C3D_Alpha,\s*r->shadowNative\s*\?\s*GPU_CONSTANT"
+                         r"\s*:\s*GPU_TEXTURE0", cast_b) is not None
+    ca_on = cast_b.find("C3D_FragOpMode(GPU_FRAGOPMODE_SHADOW);")
+    ca_draw = cast_b.find("C3D_DrawArrays(")
+    ca_off = cast_b.find("C3D_FragOpMode(GPU_FRAGOPMODE_GL);")
+    ca_flush = cast_b.find("GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);")
+    native_target = len(re.findall(
+        r"C3D_RenderTargetCreateFromTex\(\s*&r->shadowTex,\s*GPU_TEXFACE_2D,\s*0,\s*"
+        r"r->shadowNative \? C3D_DEPTHTYPE\(-1\) : C3D_DEPTHTYPE\(GPU_RB_DEPTH16\)\);", text)) == 1
+    end_b = body(text, "mdk_render_end_frame") or ""
+    fallback = (re.search(r"else\s+if\s*\(\s*\+\+r->shadowNativeEmptyFrames\s*>=\s*3\s*\)\s*\{"
+                          r"(?:\s*//[^\n]*)*\s*r->shadowNativeVerified\s*=\s*true;", end_b) is not None
+                and "r->shadowNative = false" not in end_b
+                and end_b.count("readBack(r, r->shadowTex.data") >= 1
+                and "C3D_SyncTextureCopy" not in end_b)
+    test_b = body(text, "testNativeShadowWrites") or ""
+    test_restored = 0 <= test_b.find("C3D_FragOpMode(GPU_FRAGOPMODE_GL);") < test_b.find("C3D_FrameEnd(0);")
+    rep.check("sun-shadow-map-written-by-a-measured-path",
+              ca_alpha and 0 <= ca_on < ca_draw < ca_off < ca_flush and native_target
+              and fallback and test_restored,
+              "caster alpha from the ramp (native: constant): %s; native mode on %d < draw %d < "
+              "off %d < flush %d; native target without a depth buffer: %s; three empty native "
+              "frames settle it without leaving native mode, read back through readBack: %s; the test leaves native mode before "
+              "its frame ends: %s"
+              % ("yes" if ca_alpha else "NO", ca_on, ca_draw, ca_off, ca_flush,
+                 "yes" if native_target else "NO", "yes" if fallback else "NO",
+                 "yes" if test_restored else "NO"))
 
     # THE GLOW RESTORES WHAT THE SCENE'S CACHES DESCRIBE. It writes combiner
     # stages 1-5 and the combiner buffer, and draws into its own small targets;
@@ -1294,7 +1470,7 @@ def adjudicate(text, quiet=False):
     # drawn and copies last frame's picture), and every blur pass's draw must be
     # followed by a framebuffer flush and invalidate before the next pass samples
     # it (the passes do not split: citro3d's GX queue holds 32 entries).
-    split_at = glow_body.find("C3D_FrameSplit(0);")
+    split_at = glow_body.find("frameSplit(r);")
     copy_at = glow_body.find("GX_TextureCopy(")
     loop = re.search(r"for \(int i = 0; i < 7; i\+\+\) \{(.*?)\n    \}\n", glow_body, re.S)
     loop_ok = loop is not None and re.search(
@@ -1305,6 +1481,29 @@ def adjudicate(text, quiet=False):
               0 <= split_at < copy_at and loop_ok,
               "split at %d, copy at %d, every blur pass flushed: %s"
               % (split_at, copy_at, "yes" if loop_ok else "NO"))
+
+    # NO TILED-TO-TILED DISPLAY TRANSFER (HARDWARE, measured 2026-11-18 on the
+    # Old 3DS with mdk_3ds/tools/gstest T20/T23/T27): ANY GX_DisplayTransfer with
+    # flag bit 5 set stalls the console's transfer engine for good -- scaled or
+    # not, with OUT_TILED or without -- and the emulator accepts it. The glow's
+    # scale-2 shrink is two transfers instead (tiled->linear 2x2, linear->tiled),
+    # which ran 90 frames on the console (T24-T26) and give the emulator's glow
+    # frame pixel for pixel.
+    transfers = []
+    for m in re.finditer(r"GX_DisplayTransfer\(", text):
+        end = text.find(";", m.end())
+        transfers.append(text[m.start():end])
+    bit5 = [t.split("\n")[0] for t in transfers
+            if re.search(r"BIT\(\s*5\s*\)|1u?\s*<<\s*5\b|0x20\b", t)]
+    glow_xfers = [t for t in transfers if t in glow_body]
+    glow_retile = any("GX_TRANSFER_OUT_TILED(1)" in t for t in glow_xfers)
+    glow_shrink = any("GX_TRANSFER_SCALE_XY" in t and "OUT_TILED" not in t for t in glow_xfers)
+    rep.check("no-tiled-to-tiled-display-transfer",
+              not bit5 and "BIT(5)" not in glow_body and glow_retile and glow_shrink,
+              "%d GX_DisplayTransfer call(s), %d with bit 5 (tiled to tiled): %s; the glow "
+              "shrinks tiled->linear 2x2: %s and re-tiles linear->tiled: %s"
+              % (len(transfers), len(bit5), "none" if not bit5 else "; ".join(bit5),
+                 "yes" if glow_shrink else "NO", "yes" if glow_retile else "NO"))
 
     # TWO LIBRARY TRAPS THE EMULATOR CANNOT SHOW (review, 2026-11-18, from the
     # linked libcitro3d.a's disassembly). C3D_TexGenerateMipmap is a CPU box
@@ -2675,12 +2874,12 @@ ARMS = [
                          "mdk::pica::kDepthClearValue);\n", "", 1),
      "borrowed-depth-split-then-cleared-per-right-eye"),
     ("borrowed-depth-cleared-before-the-split",
-     lambda s: s.replace("        C3D_FrameSplit(0);\n"
+     lambda s: s.replace("        frameSplit(r);\n"
                          "        C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH, 0, "
                          "mdk::pica::kDepthClearValue);\n",
                          "        C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH, 0, "
                          "mdk::pica::kDepthClearValue);\n"
-                         "        C3D_FrameSplit(0);\n", 1),
+                         "        frameSplit(r);\n", 1),
      "borrowed-depth-split-then-cleared-per-right-eye"),
     ("glow-after-the-canvas",
      lambda s: s.replace("if (pass == static_cast<int32_t>(mdk::Pass::Overlay)) {\n            drawGlow(r);",
@@ -2705,9 +2904,41 @@ ARMS = [
                          "    C3D_FrameDrawOn(eye);", 1),
      "glow-restores-the-frame-state"),
     ("glow-copies-before-the-split",
-     lambda s: s.replace("    C3D_RenderTarget* eye = r->eyeTarget;\n    C3D_FrameSplit(0);\n",
+     lambda s: s.replace("    C3D_RenderTarget* eye = r->eyeTarget;\n    frameSplit(r);\n",
                          "    C3D_RenderTarget* eye = r->eyeTarget;\n", 1),
      "glow-splits-before-copying-and-flushes-each-pass"),
+    # The sun map's write paths (sun-shadow-map-written-by-a-measured-path).
+    ("caster-alpha-made-constant-again",
+     lambda s: s.replace("    C3D_TexEnvSrc(ramp, C3D_Alpha, r->shadowNative ? GPU_CONSTANT : GPU_TEXTURE0,",
+                         "    C3D_TexEnvSrc(ramp, C3D_Alpha, GPU_CONSTANT,", 1),
+     "sun-shadow-map-written-by-a-measured-path"),
+    ("caster-leaves-native-shadow-mode-on",
+     lambda s: s.replace("    if (r->shadowNative) {\n        C3D_FragOpMode(GPU_FRAGOPMODE_GL);\n    }\n",
+                         "", 1),
+     "sun-shadow-map-written-by-a-measured-path"),
+    ("native-map-target-given-a-depth-buffer",
+     lambda s: s.replace("r->shadowNative ? C3D_DEPTHTYPE(-1) : C3D_DEPTHTYPE(GPU_RB_DEPTH16)",
+                         "C3D_DEPTHTYPE(GPU_RB_DEPTH16)", 1),
+     "sun-shadow-map-written-by-a-measured-path"),
+    ("native-map-read-back-forever",
+     lambda s: s.replace("                r->shadowNativeVerified = true;\n                mdk::log3dsPrintf(\"shadows: native writes not seen",
+                         "                mdk::log3dsPrintf(\"shadows: native writes not seen", 1),
+     "sun-shadow-map-written-by-a-measured-path"),
+    ("native-map-demoted-to-the-broken-ramp",
+     lambda s: s.replace("                r->shadowNativeVerified = true;\n                mdk::log3dsPrintf(\"shadows: native writes not seen",
+                         "                r->shadowNativeVerified = true;\n                r->shadowNative = false;\n"
+                         "                releaseShadowMap(r);\n                mdk::log3dsPrintf(\"shadows: native writes not seen", 1),
+     "sun-shadow-map-written-by-a-measured-path"),
+    ("native-map-read-back-without-the-drain",
+     lambda s: s.replace("            const bool read = readBack(r, r->shadowTex.data, rowDim, copy, bytes, 0xFF);",
+                         "            C3D_SyncTextureCopy(static_cast<u32*>(r->shadowTex.data), rowDim, copy, rowDim,\n"
+                         "                                (u32)bytes, GX_TRANSFER_RAW_COPY(1));\n            const bool read = true;", 1),
+     "sun-shadow-map-written-by-a-measured-path"),
+    # The shrink as it was written first: one tiled-to-tiled transfer.
+    ("glow-shrinks-tiled-to-tiled",
+     lambda s: s.replace("                           rgba | GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_XY));",
+                         "                           BIT(5) | rgba | GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_XY));", 1),
+     "no-tiled-to-tiled-display-transfer"),
     ("glow-pass-unflushed",
      lambda s: s.replace("        GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);\n", "", 1),
      "glow-splits-before-copying-and-flushes-each-pass"),
@@ -2764,6 +2995,59 @@ ARMS = [
      lambda s: s.replace("        ? shaderProgramSetVsh(&r->program, &r->dvlb->DVLE[0])",
                          "        ? (Result)0", 1),
      "shader-uploaded-exactly-once-at-create"),
+    # The sun shadow's passes, each moved or broken the one plausible way.
+    ("sun-shadow-received-after-the-translucent-passes",
+     lambda s: s.replace(
+         "        if (pass == static_cast<int32_t>(mdk::Pass::Mirror)) {\n            receiveShadows(r);",
+         "        if (pass == static_cast<int32_t>(mdk::Pass::Overlay)) {\n            receiveShadows(r);",
+         1),
+     "sun-shadow-cast-once-and-received-per-eye"),
+    ("sun-shadow-map-made-inside-the-eye-loop",
+     lambda s: s.replace("    prepareShadows(r);\n    castShadows(r);\n", "    prepareShadows(r);\n", 1)
+                .replace("        replayQueue(r);\n", "        castShadows(r);\n        replayQueue(r);\n", 1),
+     "sun-shadow-cast-once-and-received-per-eye"),
+    ("sun-shadow-received-with-the-scenes-depth-test",
+     lambda s: s.replace("    installDepthState(r, mdk::pica::kDepthShadowReceive);",
+                         "    installDepthState(r, mdk::pica::DepthState{true, false});", 1),
+     "sun-shadow-cast-once-and-received-per-eye"),
+    ("sun-shadow-map-not-flushed-before-the-eyes-read-it",
+     lambda s: s.replace(
+         "    // the GPU still holds of it goes to memory first (the glow's rule).\n"
+         "    GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);\n", 
+         "    // the GPU still holds of it goes to memory first (the glow's rule).\n", 1),
+     "sun-shadow-cast-once-and-received-per-eye"),
+    ("sun-shadow-leaves-the-receive-program-bound",
+     lambda s: s.replace(
+         "    bindProgram(r, r->passReady ? &r->programPass : &r->program);\n", "", 1),
+     "sun-shadow-cast-once-and-received-per-eye"),
+    # THE GEOMETRY-STAGE RULE's five plausible "simplifications", each of which
+    # the emulator renders correctly and the console hangs on or degrades.
+    ("plain-program-bound-in-geometry-mode-without-a-split",
+     lambda s: s.replace("        frameSplit(r);\n        r->geometrySplits++;\n",
+                         "        r->geometrySplits++;\n", 1),
+     "geometry-programs-are-left-only-through-a-split"),
+    ("vertex-uniforms-not-redirtied-leaving-geometry-mode",
+     lambda s: s.replace("        C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, 0, r->vshUniformVecs);\n",
+                         "", 1),
+     "geometry-programs-are-left-only-through-a-split"),
+    ("eye-split-bypasses-the-helper",
+     lambda s: s.replace("        frameSplit(r);\n        C3D_FrameBufClear(",
+                         "        C3D_FrameSplit(0);\n        C3D_FrameBufClear(", 1),
+     "geometry-programs-are-left-only-through-a-split"),
+    ("geometry-mode-not-cleared-at-frame-begin",
+     lambda s: s.replace("    r->gsInList = false;\n    r->geometrySplits = 0;\n",
+                         "    r->geometrySplits = 0;\n", 1),
+     "geometry-programs-are-left-only-through-a-split"),
+    ("unlit-draws-in-geometry-mode-take-the-plain-program",
+     lambda s: s.replace("(r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program)",
+                         "&r->program", 1),
+     "geometry-programs-are-left-only-through-a-split"),
+    ("triangles-drawn-while-a-geometry-program-is-bound",
+     lambda s: s.replace("    if (r->boundProgram && r->boundProgram->geometryShader) {\n"
+                         "        // The geometry shader decides the primitives",
+                         "    if (r->litBound) {\n"
+                         "        // The geometry shader decides the primitives", 1),
+     "geometry-programs-are-left-only-through-a-split"),
     ("program-bound-at-create-as-well",
      lambda s: s.replace(SHADER_OK_LINE,
                          "    C3D_BindProgram(&r->program);\n" + SHADER_OK_LINE, 1),

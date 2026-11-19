@@ -1,5 +1,56 @@
 # Phase 2 continuation checkpoint
 
+## 3DS ENHANCED MODE ON THE CONSOLE: THREE HARDWARE FAULTS, FIXED (2026-11-18)
+
+Evidence: `docs/evidence/2026-11-18-3ds-console-hangs.txt`. HARDWARE (the Old
+3DS appliance, handed back by the owner for this, and the owner's New 3DS).
+
+- **The New 3DS did not start** (Luma dump 41): 124 MiB region, a 99 MiB main
+  heap asked for, a 96 MiB heap area. `heap_split.cpp` now overrides
+  `__system_allocateHeaps` and caps main at the area (`heap_split_policy.h`).
+- **A plain program after a geometry-shader program in one command list hangs
+  the PICA for good** (the lighting hung both consoles on frame 1). Measured
+  stage by stage with `mdk_3ds/tools/gstest`. Every bind now goes through
+  `bindProgram` (03_frame.inc), which splits the list on that transition; unlit
+  scene draws in geometry mode go through a pass-through GS (`mdk_pass.g.pica`),
+  so an eye leaves geometry mode once.
+- **Any display transfer with flag bit 5 (tiled to tiled) hangs the transfer
+  engine** (the glow). The shrink is tiled->linear 2x2 then linear->tiled now.
+- With all three fixed, every enhancement survived on the appliance in stereo
+  (the walk build, `make TOGGLEWALK=1`), first `FRESH` Enhanced Mode run.
+- Tools: `make TOGGLEWALK=1`; `mdk_3ds/tools/gstest`; GDB attached to a hung
+  process through Rosalina port 4000 (backtraces, the GX queue, the hung frame's
+  command list dumped and decoded). Use them before guessing.
+
+## 3DS ENHANCED MODE: THE SUN'S SHADOWS ON THE PICA200 (2026-11-18)
+
+Enhancement 6 of the owner's order, behind `enableSkyShadows`. Evidence:
+`docs/evidence/2026-11-18-3ds-sun-shadows.txt`. HARDWARE + EMULATOR + HOST.
+
+- **Two passes, all GPU.** `castShadows` (03_frame.inc): once a frame, before
+  the eyes, the opaque Lit triangles from the sun into a PICA shadow texture
+  (512, or 256 when VRAM is short). `receiveShadows` (06_draw.inc): once per
+  eye, after the opaque passes, the same meshes again, depth EQUAL, multiplying
+  the picture by mix(1, R, shadow) with R = F_shadow / F_lit per triangle from a
+  second geometry shader (`mdk_shadow.g.pica`). Texture unit 0 only.
+- **The map is written two ways, chosen by measuring the GPU.** The console
+  lands the PICA's own shadow writes (GPU_FRAGOPMODE_SHADOW) and cannot repeat
+  the ramp's t = 256 * depth (its map came back with the middle byte 0 and the
+  floor shadowed itself); the emulator lands the ramp and not native writes in
+  the real pass. `testNativeShadowWrites` asks once before the first shadow
+  frame, and the first native frame's map is read back: nothing written means
+  the ramp for good. Console: native, verified. Emulator: the ramp.
+- **Against the PC** (pixels the shadow changes, frame 60): level 8 lighting +
+  shadows IoU 0.82; everything on IoU 0.72; level 3 IoU 0.78. **On the console**
+  (level 8, everything on, stereo): 3,138 pixels against the emulator's 3,062,
+  IoU 0.764.
+- **The caster's alpha is the ramp's** (a constant 255 there wrote every depth
+  as the far plane: no shadow at all; review finding, pinned now).
+
+**Owed:** cut-out casters (a texture with holes casts nothing here); the receive
+pass's per-vertex edge fade and depth-equal double multiply (review); the
+owner's New 3DS run.
+
 ## ARENA STREAMING PHASE 5: THE MUSIC ARCHIVE IS NOT RESIDENT, AND THE LEVEL'S MUSIC PLAYS (2026-11-18)
 
 Spec: `docs/ARENA_STREAMING_SPEC.md` Phase 5. Evidence:

@@ -247,6 +247,15 @@ struct EnhancedToggles {
     bool enableEdgeSmoothing = true;  // 3DS: 2x2 supersampled eye targets that the display
                                       // transfer averages down (the PC's MSAA, by the PICA's
                                       // own downscale); the PC always multisamples
+
+    // NOT A LOOK: a diagnostic of the 3DS sun shadow, off by default. The caster
+    // pass writes the shadow map's four bytes in the order the GPU's shadow unit
+    // reads them (pica_matrix.h, ShadowByteOrder): measured in the emulator and,
+    // by the format's documentation, the console's too -- but no console has
+    // run it. If the sun's shadow is wrong on hardware in the way a wrong order
+    // is wrong -- everything the map covers half dark, or nothing shadowed at
+    // all -- this swaps the order without a rebuild. The PC ignores it.
+    bool shadowMapFlipBytes = false;
 };
 
 // ---------------------------------------------------------------------------

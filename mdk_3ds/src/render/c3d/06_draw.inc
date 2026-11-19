@@ -631,17 +631,27 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // as triangles from its vertex pairs here (this GPU has no line primitive,
     // see below), and the geometry shader would light that line data as if it
     // were triangles (measured: the lamp's wire frame went red/green/black).
+    // A program with a geometry shader takes the vertices three at a time, so
+    // only a whole number of triangles goes through one (a Lines mesh drawn
+    // from its vertex pairs need not be).
+    const bool wholeTriangles = (count % 3) == 0;
     const bool lit = r->litLive && draw->material.shading == mdk::Shading::Lit && !overlay &&
-                     draw->primitive == mdk::Primitive::Triangles &&
-                     !(renderDebugFlags() & kRenderDebugFlat);
-    if (lit != r->litBound) {
-        C3D_BindProgram(lit ? &r->programLit : &r->program);
+                     draw->primitive == mdk::Primitive::Triangles && wholeTriangles &&
+                     gsAllowed(r) && !(renderDebugFlags() & kRenderDebugFlat);
+    // THE GEOMETRY-STAGE RULE (03_frame.inc bindProgram): once this command
+    // list has used a geometry program, an unlit draw goes through the
+    // pass-through one -- the same picture, and no split to leave geometry mode.
+    shaderProgram_s* const wanted =
+        lit ? &r->programLit
+            : (r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program);
+    if (wanted != r->boundProgram) {
+        bindProgram(r, wanted);
         if (lit) {
             installLitUniforms(r);
         }
-        r->litBound = lit;
         r->programSwitches++;
     }
+    r->litBound = lit;
     if (lit) {
         // The world position the geometry shader takes its normal from; the
         // identity (every arena batch) is written only when it is not there.
@@ -673,12 +683,13 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // per draw: AGENTS.md R3).
     setHaze(r, r->hazeLive && draw->material.shading != mdk::Shading::Original &&
                    draw->material.pass != mdk::Pass::Overlay);
-    if (r->litBound) {
+    if (r->boundProgram && r->boundProgram->geometryShader) {
         // The geometry shader decides the primitives (it emits each triangle).
         C3D_DrawArrays(GPU_GEOMETRY_PRIM, first, count);
     } else {
         C3D_DrawArrays(GPU_TRIANGLES, first, count);
     }
+
     // Restore the frame's default for the next draw, so every draw starts
     // from the state begin_frame installed. The transition back is cached in
     // the same way; repeated Solid draws do not dirty the effect block.
@@ -838,10 +849,8 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
     // The canvas takes no haze and no light, and the last queued draw may have
     // left either on.
     setHaze(r, false);
-    if (r->litBound) {
-        C3D_BindProgram(&r->program);
-        r->litBound = false;
-    }
+    bindProgram(r, &r->program);
+    r->litBound = false;
     if (r->lightStageOn) {
         C3D_TexEnvInit(C3D_GetTexEnv(1));
         r->lightStageOn = false;
@@ -940,10 +949,8 @@ static bool ensureGlow(RendererC3D* r) {
 // `view`, stage 0 = that texture (alpha 1, so the alpha test passes), the depth
 // test off, no cull. Stages 1-5 are left to the caller.
 static void glowDrawState(RendererC3D* r, C3D_Tex* view) {
-    if (r->litBound) {
-        C3D_BindProgram(&r->program);
-        r->litBound = false;
-    }
+    bindProgram(r, &r->program);
+    r->litBound = false;
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation, 1.0f, 1.0f, 0.0f, 0.0f);
     C3D_TexBind(0, view);
     C3D_TexEnv* tex = C3D_GetTexEnv(0);
@@ -970,8 +977,16 @@ static void glowDrawState(RendererC3D* r, C3D_Tex* view) {
 //
 //   1. C3D_FrameSplit: the eye's scene so far goes to the GX queue, so what
 //      follows reads it finished.
-//   2. At edge-smoothing scale 2, a 2x2-averaging transfer (tiled to tiled)
-//      brings the 480x800 target to 240x400 first.
+//   2. At edge-smoothing scale 2, the 480x800 target is brought to 240x400
+//      first: a 2x2-averaging transfer TILED TO LINEAR (the screen output's own
+//      form), then an unscaled LINEAR TO TILED one (the texture upload's form).
+//      Not one tiled-to-tiled transfer (flag bit 5): on the console ANY display
+//      transfer with bit 5 set stalls the transfer engine for good, scaled or
+//      not, with or without OUT_TILED (measured 2026-11-18 on the Old 3DS
+//      appliance, mdk_3ds/tools/gstest stages T20/T23/T27; the two-transfer
+//      chain and the texture copy below ran 90 frames each, T22/T24-T26). The
+//      emulator accepts bit 5, which is how this pass hung the first console
+//      frame it ran on. Two GX queue entries per eye here, not one.
 //   3. GX_TextureCopy, tile row by tile row (30 tiles = 7680 bytes of a 240-wide
 //      framebuffer row into the 8192 bytes of a 256-wide texture row): the
 //      picture becomes the 256x512 picture texture, unscaled (a raw copy).
@@ -992,8 +1007,10 @@ static void glowDrawState(RendererC3D* r, C3D_Tex* view) {
 //      0: the PC's max(.., 0)) and the fitted curve (pica_matrix.h, THE GLOW).
 //
 // GX QUEUE BUDGET: citro3d's queue holds 32 entries and a full one is svcBreak.
-// This pass adds 2 per eye (the split, the copy) and 1 more at scale 2 (the
-// shrink); the blur passes flush inside the command list instead of splitting.
+// This pass adds 2 per eye (the split, the copy) and 2 more at scale 2 (the
+// shrink and the re-tile); the blur passes flush inside the command list instead
+// of splitting. Measured on the console, stereo at scale 2, before the re-tile:
+// 14 entries a frame.
 // Everything this pass changes is restored, or its cache invalidated, before the
 // canvas draws.
 static void drawGlow(RendererC3D* r) {
@@ -1001,27 +1018,36 @@ static void drawGlow(RendererC3D* r) {
         return;
     }
     C3D_RenderTarget* eye = r->eyeTarget;
-    C3D_FrameSplit(0);
+    frameSplit(r);
     u32* source = static_cast<u32*>(eye->frameBuf.colorBuf);
-    // Tiled to tiled (bit 5), RGBA8 both sides, 2x2 averaging.
-    const u32 shrink = BIT(5) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-                       GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-                       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_XY);
     if (r->targetScale > 1) {
+        const size_t scratchBytes = (size_t)kScreenWidth * kScreenHeight * 4;
         if (!r->glowScratch) {
-            r->glowScratch = static_cast<u32*>(linearAlloc((size_t)kScreenWidth * kScreenHeight * 4));
-            if (!r->glowScratch) {
-                mdk::log3dsPrintf("glow: scale-2 scratch allocation FAILED; glow off this session");
-                r->glowRefused = true;
-                r->glowLive = false;
-                return;
-            }
+            r->glowScratch = static_cast<u32*>(linearAlloc(scratchBytes));
         }
-        // Both dimensions the input's (the engine halves the output itself: see
-        // writeScreenshotBmp).
-        const u32 dim = GX_BUFFER_DIM(r->targetWidth, r->targetHeight);
-        GX_DisplayTransfer(source, dim, r->glowScratch, dim, shrink);
-        source = r->glowScratch;
+        if (!r->glowScratchTiled) {
+            r->glowScratchTiled = static_cast<u32*>(linearAlloc(scratchBytes));
+        }
+        if (!r->glowScratch || !r->glowScratchTiled) {
+            mdk::log3dsPrintf("glow: scale-2 scratch allocation FAILED; glow off this session");
+            r->glowRefused = true;
+            r->glowLive = false;
+            return;
+        }
+        const u32 rgba = GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+                         GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8);
+        // Step 2 (above): NEVER flag bit 5 (tiled to tiled) -- it hangs the
+        // console's transfer engine. Tiled to linear with 2x2 averaging, both
+        // dimensions the input's (the engine halves the output itself: see
+        // writeScreenshotBmp) ...
+        const u32 full = GX_BUFFER_DIM(r->targetWidth, r->targetHeight);
+        GX_DisplayTransfer(source, full, r->glowScratch, full,
+                           rgba | GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_XY));
+        // ... then linear back to tiled, unscaled, for the tile-row copy below.
+        const u32 half = GX_BUFFER_DIM(kScreenWidth, kScreenHeight);
+        GX_DisplayTransfer(r->glowScratch, half, r->glowScratchTiled, half,
+                           rgba | GX_TRANSFER_OUT_TILED(1));
+        source = r->glowScratchTiled;
     }
     const u32 rowBytes = (u32)kScreenWidth * 8 * 4;                       // 7680
     const u32 texRowBytes = (u32)mdk::pica::kGlowTexWidth * 8 * 4;        // 8192
@@ -1160,6 +1186,168 @@ static void drawGlow(RendererC3D* r) {
     r->hazeOn = false;
 }
 
+// THE RECEIVE PASS (Enhanced Mode enableSkyShadows): the sun's shadow laid on
+// the eye's picture, once per eye, after the opaque passes and before anything
+// translucent -- mdk_shadow.g.pica has the arithmetic.
+//
+// Every opaque Lit triangle mesh the eye has just drawn is drawn AGAIN with the
+// receive program: the same vertex shader, so the same clip positions, tested
+// for depth EQUALITY and never written -- so only the surface that won a pixel
+// touches it, and a cut-out's holes (which wrote no depth) are left alone. The
+// one texture is the shadow map on unit 0 (the only unit a PICA shadow texture
+// can be read on); what it answers is 1 in the light and 0 in the shadow, and
+// the combiner turns that into the factor the blend multiplies the picture by:
+//
+//     stage 0:  A = (1 - map) * q          how much shadow reaches this pixel
+//     stage 1:  R * A + 1 * (1 - A)        = mix(1, R, A)
+//     blend:    picture := picture * that  (pica::kBlendShadowMultiply)
+//
+// R (rgb) and q (alpha) are the vertex colour: the geometry shader's.
+//
+// WHAT IS NOT SHADOWED, AND IS ON THE PC: a blended Lit surface (the multiply
+// would darken what is seen through it) and the point lights' share of the
+// light, which this backend does not draw at all.
+//
+// Everything this pass changes is put back, or its cache made to say so,
+// before the next draw: the program, stages 0-2, the haze uniform, the depth
+// and blend state, the matrix and the world uniform.
+static void receiveShadows(RendererC3D* r) {
+    if (!r->shadowLive || !gsAllowed(r)) {
+        return;
+    }
+    bindProgram(r, &r->programShadow);
+    installShadowUniforms(r);
+    r->litBound = false;           // not the lit program: the next lit draw binds it
+
+    // The haze's kept fraction rides in the vertex colour's alpha (the vertex
+    // shader computes it from this uniform), so it is set as the scene's
+    // hazed draws set it; the stage that mixes the haze in is not used here.
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, r->hazeLive ? r->hazeExponent : 0.0f,
+                  0.0f, 0.0f, 0.0f);
+    if (!r->tintIsWhite) {
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+        r->tintIsWhite = true;
+    }
+
+    // The map on unit 0, compared without a perspective divide (the sun's
+    // projection is orthographic); the bias is the geometry shader's.
+    C3D_TexBind(0, &r->shadowTex);
+    C3D_TexShadowParams(false, 0.0f);
+
+    C3D_TexEnv* amount = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(amount);
+    C3D_TexEnvSrc(amount, C3D_RGB, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+    C3D_TexEnvOpRgb(amount, GPU_TEVOP_RGB_ONE_MINUS_SRC_COLOR, GPU_TEVOP_RGB_SRC_ALPHA,
+                    GPU_TEVOP_RGB_SRC_ALPHA);
+    C3D_TexEnvFunc(amount, C3D_RGB, GPU_MODULATE);
+    C3D_TexEnvSrc(amount, C3D_Alpha, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
+    C3D_TexEnvFunc(amount, C3D_Alpha, GPU_REPLACE);
+    C3D_TexEnvColor(amount, 0xFFFFFFFFu);   // alpha 1: the alpha test passes
+    C3D_TexEnv* factor = C3D_GetTexEnv(1);
+    C3D_TexEnvInit(factor);
+    C3D_TexEnvSrc(factor, C3D_RGB, GPU_PRIMARY_COLOR, GPU_CONSTANT, GPU_PREVIOUS);
+    C3D_TexEnvFunc(factor, C3D_RGB, GPU_INTERPOLATE);
+    C3D_TexEnvColor(factor, 0xFFFFFFFFu);   // the 1 of mix(1, R, A)
+#ifdef MDK_SHADOW_PROBE
+    // THE HARNESS'S PROBES (make SHADOWPROBE=n): the pass draws one of its terms
+    // alone. 1 = a constant half grey (does the pass reach pixels at all?),
+    // 2 = the map's answer, 3 = the factor R, 5 = the (u, v, depth) the geometry
+    // shader put in the colour. (8, 10 and 20-29 change what is compared, not
+    // the combiner: 03_frame.inc.)
+    if (MDK_SHADOW_PROBE == 1) {
+        C3D_TexEnvSrc(factor, C3D_RGB, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
+        C3D_TexEnvFunc(factor, C3D_RGB, GPU_REPLACE);
+        C3D_TexEnvColor(factor, 0xFF808080u);
+    } else if (MDK_SHADOW_PROBE == 2) {
+        C3D_TexEnvSrc(factor, C3D_RGB, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
+        C3D_TexEnvFunc(factor, C3D_RGB, GPU_REPLACE);
+    } else if (MDK_SHADOW_PROBE == 3) {
+        C3D_TexEnvSrc(factor, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+        C3D_TexEnvFunc(factor, C3D_RGB, GPU_REPLACE);
+    } else if (MDK_SHADOW_PROBE == 5) {
+        // The vertex's (u, v, depth) in the map, which the geometry shader put
+        // in the colour (params.w).
+        C3D_TexEnvSrc(factor, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+        C3D_TexEnvFunc(factor, C3D_RGB, GPU_REPLACE);
+    }
+#endif
+    C3D_TexEnvInit(C3D_GetTexEnv(2));
+    installAlphaTest(r, 0, false);
+    installDepthState(r, mdk::pica::kDepthShadowReceive);
+    writeBlendState(r, mdk::pica::kBlendShadowMultiply, -3, -3);
+
+    for (int32_t pass = static_cast<int32_t>(mdk::Pass::Solid);
+         pass <= static_cast<int32_t>(mdk::Pass::DoubleSided); pass++) {
+        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+        for (size_t i = 0; i < bucket.size(); i++) {
+            const mdk::MeshDraw* draw = &bucket[i];
+            if (!mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,
+                                           draw->primitive)) {
+                continue;   // what casts is what receives: the opaque Lit triangles
+            }
+            if (draw->mesh < 0 || (size_t)draw->mesh >= r->meshes.size()) {
+                continue;
+            }
+            const C3dMesh& mesh = r->meshes[(size_t)draw->mesh];
+            // A whole number of triangles only: the geometry shader takes the
+            // vertices three at a time (drawRecorded's rule, review finding 3).
+            if (!mesh.valid || mesh.count <= 0 || draw->first_vertex < 0 ||
+                draw->vertex_count <= 0 || (draw->vertex_count % 3) != 0 ||
+                draw->first_vertex + draw->vertex_count > mesh.count) {
+                continue;
+            }
+            // The matrix and the world, by drawRecorded's own caches.
+            float composed[16];
+            const float* upload = r->eyeVp;
+            const bool identity = mdk::pica::isIdentity(draw->world);
+            if (!identity) {
+                mdk::pica::drawMatrix(draw->world, r->eyeVp, composed);
+                upload = composed;
+            }
+            const bool frameMatrix = upload == r->eyeVp;
+            if (!frameMatrix || !r->matrixIsFrame) {
+                C3D_Mtx gpuMtx;
+                mdk::pica::registers(upload, gpuMtx.m);
+                C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
+                r->matrixIsFrame = frameMatrix;
+            }
+            if (!identity || !r->worldIsIdentity) {
+                C3D_Mtx worldMtx;
+                mdk::pica::registers(draw->world, worldMtx.m);
+                C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation, &worldMtx);
+                r->worldIsIdentity = identity;
+            }
+            const GPU_CULLMODE wantedCull =
+                draw->material.pass == mdk::Pass::Solid ? kSolidCull : GPU_CULL_NONE;
+            if (r->cullMode != wantedCull) {
+                C3D_CullFace(wantedCull);
+                r->cullMode = wantedCull;
+            }
+            C3D_BufInfo* bufInfo = C3D_GetBufInfo();
+            BufInfo_Init(bufInfo);
+            BufInfo_Add(bufInfo, mesh.data, 5 * sizeof(float), 2, 0x10);
+            C3D_DrawArrays(GPU_GEOMETRY_PRIM, draw->first_vertex, draw->vertex_count);
+            r->shadowReceivers++;
+        }
+    }
+
+    // BACK TO THE FRAME'S STATE. Stage 0, the texture on unit 0, the alpha test
+    // and the blend are written by the next draw itself (the blend's cache is
+    // made to miss); the rest is put back here. The scene goes on in geometry
+    // mode when it can (03_frame.inc bindProgram): the next unlit draw would
+    // bind the pass-through program anyway.
+    bindProgram(r, r->passReady ? &r->programPass : &r->program);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+    r->hazeOn = false;
+    C3D_TexEnvInit(C3D_GetTexEnv(1));
+    r->lightStageOn = false;
+    installDepthState(r, mdk::pica::DepthState{true, true});
+    if (r->cullMode != kSolidCull) {
+        C3D_CullFace(kSolidCull);
+        r->cullMode = kSolidCull;
+    }
+}
+
 // One replay of everything the frame has queued, in the oracle's pass order
 // (draw_queue.h), into whatever target is current. It is separate from the
 // frame end because a stereo frame replays the SAME queue once per eye: the
@@ -1183,6 +1371,11 @@ static void replayQueue(RendererC3D* r) {
         // pass sits (SPEC.md 6: post -> frame -> canvas).
         if (pass == static_cast<int32_t>(mdk::Pass::Overlay)) {
             drawGlow(r);
+        }
+        // The sun's shadow lands on the opaque passes, before anything
+        // translucent is drawn over them (receiveShadows).
+        if (pass == static_cast<int32_t>(mdk::Pass::Mirror)) {
+            receiveShadows(r);
         }
         const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
         for (size_t i = 0; i < bucket.size(); i++) {

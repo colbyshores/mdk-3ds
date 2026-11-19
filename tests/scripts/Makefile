@@ -108,6 +108,7 @@ SOURCES_VM := \
 	$(CORE)/render/sky_dome.cpp \
 	$(LINUX)/render/system_numerics_inverse.cpp \
 	$(3DS)/render/pica_matrix.cpp \
+	$(CORE)/render/sun_shadow.cpp \
 	$(3DS)/platform/input_3ds.cpp \
 	$(3DS)/platform/heap_split_policy.cpp \
 	$(COMMON_SOURCES)

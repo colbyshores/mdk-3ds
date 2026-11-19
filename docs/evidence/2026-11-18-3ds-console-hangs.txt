@@ -1,0 +1,142 @@
+2026-11-18  Enhanced Mode on the console: three hardware faults the emulator hides, found and fixed
+==================================================================================================
+
+HARDWARE. Old 3DS appliance old3ds-lan167 (CFGU model 0, firmware 3a062b049228,
+mdk_3ds/tools/hw_cycle.sh, AGENTS.md P10), handed back to MDK by the owner for
+this; and the owner's own New 3DS (192.168.4.57, ftpd, Homebrew Launcher), which
+found the first two. Every "survived" below is the console's own log, pulled over
+HTTP; no number here is an emulator number unless it says so.
+
+Tools made for it (both committed):
+- `make TOGGLEWALK=1` (harness aid, main_3ds.cpp): boot in the original look and
+  switch the config's enhancements on one at a time, 120 frames apart, logging
+  each BEFORE its first frame, so a hang names its toggle in mdk.log's last line.
+- mdk_3ds/tools/gstest: a 145 KB .3dsx that embeds MDK's OWN shader binary and
+  runs numbered stages, each logged and flushed before it starts. It pushes in
+  seconds where the game takes three minutes.
+- Rosalina's GDB stub, attached to the HUNG process with no console touches
+  (`target extended-remote <ip>:4000`, `attach <pid>`; vault runbook
+  20-runbooks/rosalina-gdb-stub-capabilities-and-scope.md), for backtraces,
+  citro3d's GX queue state, and the hung frame's command list (126,640 bytes,
+  dumped and decoded register by register).
+
+1. THE NEW 3DS DID NOT START (Luma crash dump 41, the owner's console)
+---------------------------------------------------------------------
+Prefetch abort in svcBreak, LR in __system_allocateHeaps after its MEMOP_ALLOC,
+the stack nearly empty: before main(). The dump's own stack holds maxCommit
+0x07C00000 (124 MiB: New 3DS extended memory under the Homebrew Launcher) and r3
+0x0630B000, the main heap heap_split.cpp asked for: 124 MiB - image - 24 MiB of
+linear = 99 MiB, in a heap AREA (0x08000000-0x0E000000) of 96 MiB.
+Mandarine gives the same 123 MiB and does NOT enforce the area, which is why
+every emulator boot passed.
+Fix: heap_split.cpp overrides libctru's weak __system_allocateHeaps (a copy of
+2.7.0's, read off its disassembly in mdk.elf, mappableInit and the newlib heap
+included) with the split from heap_split_policy.h: linear 24 MiB, main the rest,
+main capped at the area and the surplus to linear. Old 3DS: unchanged (main
+40,935,424, linear 25,165,824 on the appliance). New 3DS: main 100,663,296,
+linear 28,356,608 (the owner's console's boot log). Host test:
+tests/scripts/heap_split_tests.cpp (the dump's numbers, the Old 3DS split, the
+edges); removing the cap fails 5 of its checks.
+
+2. THE FIRST FRAME WITH THE LIGHT HUNG THE GPU (both consoles)
+--------------------------------------------------------------
+Symptom: lit black screens, HOME dead, no crash dump. The walk on the appliance:
+filtering, mipmaps, haze each survived 60 frames; the log ends at
+"walk: step 4: lighting ON at frame 480".
+GDB on the hung process: the main thread in C3D_FrameBegin -> C3Di_WaitAndClearQueue
+(timeout -1) -> gxCmdQueueWait; every other thread idle (ndsp, the file reader,
+gsp, apt). citro3d's queue: 5 entries, the two target fills done (lastEntry 2),
+entry 2 -- the frame's command list -- never finished. The list's geometry-stage
+registers at the first lit draw are all as libctru specifies (VSH_COM_MODE 1, GSH
+input 0x0800000B = 12 attributes, point mode, entry 0x1B, outmaps), no shader code
+is re-sent in the frame (one DVLB, one blob: 217 instructions, 29 operand
+descriptors, under 512/128), no NaN in any uniform. The frame switches between the
+lit program (geometry shader) and the plain one 8 times.
+gstest, MDK's DVLB, 90 frames per stage, on the appliance:
+    plain program only                                  survived
+    the lit geometry shader only                        survived
+    lit, then plain, in one frame                       HUNG (first frame)
+    lit, C3D_FrameSplit, plain                          survived (twice)
+    lit, plain re-sent in full (shaderProgramUse)       HUNG
+    pass-through GS / lit / pass-through (GS -> GS)     survived
+    plain, then lit, then pass-through                  survived
+THE RULE: a program WITHOUT a geometry shader must not draw after one WITH a
+geometry shader in the same command list. Plain -> geometry and geometry ->
+geometry are fine; a split in between is fine.
+Fix (03_frame.inc bindProgram / frameSplit, 06_draw.inc drawRecorded):
+- every bind goes through bindProgram; a plain program after a geometry program in
+  the current list splits the list first (the GPU then finishes the geometry
+  work before the plain program's configuration runs);
+- a scene that is in geometry mode draws its unlit draws through a pass-through
+  geometry shader (mdk_pass.g.pica, the DVLB's fifth DVLE): the same picture, and
+  the eye leaves geometry mode once, where its scene ends. Measured on the
+  console: 1 split a frame in stereo with the light on, 0 with the glow on
+  (whose own split is the drain);
+- at most 6 splits a frame (each a GX queue entry; 32 is svcBreak): past them
+  nothing binds a geometry program for the rest of the frame;
+- leaving geometry mode marks every vertex uniform dirty: shader unit 3 is the
+  geometry unit in that mode and keeps the geometry shader's float uniforms, and
+  citro3d re-sends only the dirty ones -- the tint (c5) would have been the GS's
+  `params` on a quarter of the vertices (read off the hung frame's command list).
+
+3. THE GLOW HUNG THE TRANSFER ENGINE (the appliance)
+----------------------------------------------------
+With the light fixed the walk went on: fragment lights, mirrors, HD textures, edge
+smoothing (2x targets) each survived; the log ends at "walk: step 9: glow ON".
+GDB: the same wait; the queue at 14 entries, 4 done, entry 4 a DISPLAY TRANSFER
+(the glow's 480x800 -> 240x400 shrink, flags 0x02000020) never finished.
+gstest, the same buffers, on the appliance:
+    T23 tiled->tiled (flag bit 5), no scaling           HUNG
+    T27 bit 5 + OUT_TILED, 2x2                          HUNG
+    T22 tiled->linear 2x2 (the screen output's form)    survived
+    T24 tiled->linear 2x2, then linear->tiled           survived
+    T25 the tile-row GX_TextureCopy into the texture    survived
+    T26 T24 + T25, as drawGlow now issues them          survived
+THE RULE: no display transfer with bit 5. Fix (06_draw.inc drawGlow): the shrink
+is tiled->linear with 2x2 averaging, then linear->tiled unscaled; emulator
+capture of level 7 frame 300 with every enhancement on, the old transfer against
+the new chain: 0 of 96,000 pixels differ.
+
+4. THE RESULT ON THE CONSOLE
+----------------------------
+The walk build (make AUTOQUIT=150 TOGGLEWALK=1), appliance, level 7, stereo:
+every one of the ten steps survived, the harness autoquit fired, `FRESH`
+(the first Enhanced Mode run to finish on a console). Frame period, from the
+game's own per-frame log: original look ~21 ms; light on ~24 ms; every
+enhancement on (stereo, edge smoothing 2x, glow 2 passes) ~50 ms, with 80-100 ms
+frames now and then. Level 8 with sun shadows: section 6 of
+2026-11-18-3ds-sun-shadows.txt, and the profile below.
+PROFILE (hw_cycle.sh --profile, make AUTOQUIT=90 PROFILE=1 LEVEL=8, every
+enhancement on, edge smoothing 2x, glow 2 passes, native shadow map 256): Old 3DS
+appliance, CFGU model 0, 268 MHz, L2 none, stereo ON, 957 frames in 90 s:
+  frame period mean 94.1 ms, p50 <= 80.1 ms (steady state 76-81 ms, ~12.5 fps,
+  every 60th-frame sample 76-113 ms); p95 is past the histogram's 100 ms top
+  bucket; max 3,347 ms (one stall, not located; frames 2-4 at 243-250 ms are the
+  start's level load settling);
+  per frame: begin (the wait for the previous frame's GPU work) 26.8 ms, draw
+  16.5 ms, end 26.6 ms, simulation 8.9 ms (5.4 steps of 1.65 ms).
+  The game's audio drops ~1 of 4 queued buffers at this frame rate (ndsp
+  "dropped=59" per 60 frames, dspdropped 0): an Enhanced-Mode-everything-on
+  cost: the shorter-frame console runs today (33 ms and less) drop none.
+The original look on the same console, level 7, stereo: ~21 ms; the light
+alone ~24 ms (the toggle walk, 2026-11-18-3ds-console-hangs.txt section 4).
+
+5. GUARDS
+---------
+tests/scripts/c3d_frame_test.sh (52 checks, 126 mutation arms):
+`geometry-programs-are-left-only-through-a-split` (the split, the uniform
+re-dirty, frameSplit the only C3D_FrameSplit, the frame's reset, the primitive
+following the bound program, unlit draws through the pass-through program; six
+arms), `program-bound-only-where-an-eye-is-installed` (the one raw
+C3D_BindProgram is bindProgram's), `no-tiled-to-tiled-display-transfer` (one
+arm: the old shrink). tests/scripts/heap_split_tests.cpp. The emulator cannot
+see any of the three faults; these pins are what can, short of a console.
+
+6. NOT DONE / NOT VERIFIED
+--------------------------
+- The owner's New 3DS has run the heap fix (it reached frame 1) but not yet the
+  geometry-stage or glow fixes; a release build is pushed for it.
+- The split cap is per frame, not per eye: a left eye that spends all six leaves
+  the right eye unlit (review, PLAUSIBLE only with many draws whose vertex count
+  is not a multiple of 3, or no pass-through program).
+- CIA (owner decision: last).

@@ -125,7 +125,13 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth);
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
 static void prepareHaze(RendererC3D* r);
 static void prepareLighting(RendererC3D* r);
+static void prepareShadows(RendererC3D* r);
+static void castShadows(RendererC3D* r);
+static bool makeShadowRamp(RendererC3D* r);
+static mdk::pica::ShadowByteOrder shadowByteOrder(const RendererC3D* r);
 static void installLitUniforms(RendererC3D* r);
+static void installShadowUniforms(RendererC3D* r);
+static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw);
 static void installAlphaTest(RendererC3D* r, int reference, bool force);
 
 // Install one pass's depth state on the citro3d context and record it in the
@@ -144,7 +150,8 @@ static void installAlphaTest(RendererC3D* r, int reference, bool force);
 // far plane itself. The oracle says LESS_OR_EQUAL (Renderer.cs:605), and
 // `pica::depthPasses` pins that tie.
 static void installDepthState(RendererC3D* r, mdk::pica::DepthState state) {
-    C3D_DepthTest(state.test, state.test ? GPU_LEQUAL : GPU_ALWAYS,
+    C3D_DepthTest(state.test,
+                  state.test ? (state.equal ? GPU_EQUAL : GPU_LEQUAL) : GPU_ALWAYS,
                   state.write ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
     r->depthTest = state.test;
     r->depthWrite = state.write;
@@ -164,6 +171,7 @@ static GPU_BLENDFACTOR gpuBlendFactor(mdk::pica::BlendFactor factor) {
     case mdk::pica::kBlendOneMinusDstColour: return GPU_ONE_MINUS_DST_COLOR;
     case mdk::pica::kBlendConstantAlpha: return GPU_CONSTANT_ALPHA;
     case mdk::pica::kBlendOneMinusConstantAlpha: return GPU_ONE_MINUS_CONSTANT_ALPHA;
+    case mdk::pica::kBlendDstColour: return GPU_DST_COLOR;
     }
     return GPU_ONE;
 }
@@ -235,8 +243,81 @@ static void installAlphaTest(RendererC3D* r, int reference, bool force) {
     if (!force && reference == r->alphaReference) {
         return;
     }
-    C3D_AlphaTest(true, GPU_GREATER, reference);
+    // A negative reference is the test OFF (the shadow caster pass: its alpha is
+    // a depth byte, not a coverage).
+    if (reference < 0) {
+        C3D_AlphaTest(false, GPU_ALWAYS, 0);
+    } else {
+        C3D_AlphaTest(true, GPU_GREATER, reference);
+    }
     r->alphaReference = reference;
+}
+
+// ============================================================================
+// THE GEOMETRY-STAGE RULE (HARDWARE; measured 2026-11-18 on the Old 3DS
+// appliance with mdk_3ds/tools/gstest, which draws through this DVLB).
+// On the PICA200 a program WITHOUT a geometry shader must not draw after a
+// program WITH one in the same command list: the GPU locks up for good (the
+// game's main thread then waits in C3D_FrameBegin for ever -- the owner's New
+// 3DS and the appliance both, first frame with enableLighting on). Measured,
+// stage by stage, 90 frames each:
+//     plain only / geometry only / plain -> geometry      fine
+//     geometry -> geometry (lit <-> pass-through)         fine
+//     geometry -> C3D_FrameSplit -> plain                 fine
+//     geometry -> plain                                   HANG
+//     geometry -> plain with shaderProgramUse (a full
+//       re-send of code, uniforms and configuration)      HANG
+// The emulator does not model it, which is how every enhancement built on a
+// geometry shader passed there. So EVERY program bind in this backend goes
+// through bindProgram, which splits the command list (the GPU then finishes the
+// geometry work before the plain program's configuration runs) when a plain
+// program follows a geometry program in the list. The scene avoids most of
+// those splits by drawing its unlit draws through the pass-through program
+// once it is in geometry mode (06_draw.inc drawRecorded), so an eye leaves
+// geometry mode once, where its scene ends.
+//
+// ALSO ON THE WAY BACK: in geometry mode shader unit 3 is the geometry unit and
+// keeps the geometry shader's float uniforms; back in plain mode it is a fourth
+// vertex unit, and citro3d re-sends only the vertex uniforms it holds dirty.
+// The tint (c5) would be the geometry shader's `params` on a quarter of the
+// vertices. Every vertex uniform is marked dirty on that transition.
+//
+// Each split is one GX queue entry (32, a full queue is svcBreak). A frame
+// makes at most kMaxGeometrySplits; past it, nothing binds a geometry program
+// for the rest of the frame (gsAllowed), so the frame can still leave geometry
+// mode once more and no further.
+static const int32_t kMaxGeometrySplits = 6;
+
+// The frame's command list ends here and a new one begins: the GPU runs this
+// one to its end before the next starts.
+static void frameSplit(RendererC3D* r) {
+    C3D_FrameSplit(0);
+    r->gsInList = false;
+}
+
+static bool gsAllowed(const RendererC3D* r) {
+    return r->geometrySplits < kMaxGeometrySplits;
+}
+
+static void bindProgram(RendererC3D* r, shaderProgram_s* program) {
+    if (program == r->boundProgram) {
+        return;
+    }
+    const bool geometry = program->geometryShader != nullptr;
+    const bool leavingGeometry =
+        !geometry && r->boundProgram && r->boundProgram->geometryShader != nullptr;
+    if (!geometry && r->gsInList) {
+        frameSplit(r);
+        r->geometrySplits++;
+    }
+    C3D_BindProgram(program);
+    if (leavingGeometry && r->vshUniformVecs > 0) {
+        C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, 0, r->vshUniformVecs);
+    }
+    if (geometry) {
+        r->gsInList = true;
+    }
+    r->boundProgram = program;
 }
 
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
@@ -248,7 +329,7 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // frame's commands go to the GPU at C3D_FrameEnd). Measured in Mandarine at
     // slider 60: without these two calls the right eye lost 43% of its pixels.
     if (target == r->targetRight && r->targetsShareDepth) {
-        C3D_FrameSplit(0);
+        frameSplit(r);
         C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH, 0, mdk::pica::kDepthClearValue);
     }
     C3D_FrameDrawOn(target);
@@ -281,7 +362,7 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
     r->tintIsWhite = true;
 
-    C3D_BindProgram(&r->program);
+    bindProgram(r, &r->program);
 
     // EVERY GPU STATE, EVERY FRAME. Uninitialised registers give
     // invisible geometry, not an error.
@@ -458,6 +539,7 @@ static void applyEdgeSmoothing(RendererC3D* r) {
         return;
     }
     releaseGlow(r);
+    releaseShadowMap(r);
     releaseEyeTargets(r);
     if (buildEyeTargets(r, want)) {
         return;
@@ -473,7 +555,316 @@ static void applyEdgeSmoothing(RendererC3D* r) {
     r->ready = false;
 }
 
- void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
+// A GPU BUFFER READ BACK INTO LINEAR MEMORY, OUTSIDE A FRAME, AND KNOWN DONE.
+// C3D_SyncTextureCopy out of a frame ends in gspWaitForEvent(PPF, false), which
+// does not clear the event first: a display transfer of the frame just ended
+// that completed unobserved leaves it set, and the wait then returns before
+// THIS copy has run (review, 2026-11-18; the emulator completes transfers at
+// once and cannot show it). So the destination is filled with `fill` (the
+// answer that means "nothing seen") and a second, 64-byte copy follows into a
+// renderer-owned drain: the transfer engine runs in order, and the PPF event
+// the second wait sees is at the earliest the first copy's own. The drain is
+// freed only after C3D_Fini; a destination freed after this cannot still be
+// the target of a transfer. False when the drain cannot be had (nothing read).
+static bool readBack(RendererC3D* r, void* source, u32 rowDim, u32* dest, size_t bytes, u8 fill) {
+    if (!r->copyDrain) {
+        r->copyDrain = static_cast<u32*>(linearAlloc(64));
+        if (!r->copyDrain) {
+            return false;
+        }
+    }
+    memset(dest, fill, bytes);
+    GSPGPU_FlushDataCache(dest, bytes);
+    C3D_SyncTextureCopy(static_cast<u32*>(source), rowDim, dest, rowDim, (u32)bytes,
+                        GX_TRANSFER_RAW_COPY(1));
+    const u32 drainDim = GX_BUFFER_DIM(64u >> 4, 0);
+    C3D_SyncTextureCopy(static_cast<u32*>(source), drainDim, r->copyDrain, drainDim, 64,
+                        GX_TRANSFER_RAW_COPY(1));
+    GSPGPU_InvalidateDataCache(dest, bytes);
+    return true;
+}
+
+// The sampler's half of testNativeShadowWrites: the receive program over the
+// test's quad (the bound vertex buffer) into `probe`, every receiver at depth
+// 0.75 at the map's centre (sunMtx rows (0,0,0,c), no normal offset, no bias),
+// the combiner the sampler's answer alone: black where the map holds a nearer
+// depth. A geometry program; the caller keeps bindProgram's rule.
+static void testSampleShadowMap(RendererC3D* r, C3D_Tex* tex, C3D_RenderTarget* probe,
+                                const C3D_Mtx* identity) {
+    C3D_TexEnv* env = C3D_GetTexEnv(0);
+    C3D_FrameBufClear(&probe->frameBuf, C3D_CLEAR_COLOR, 0xFFFFFFFFu, 0);
+    C3D_FrameDrawOn(probe);
+    C3D_SetViewport(0, 0, 8, 8);
+    C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 8, 8);
+    bindProgram(r, &r->programShadow);
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, identity);
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation, identity);
+    r->worldIsIdentity = true;
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation, 1.0f, 1.0f, 0.0f, 0.0f);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+    r->tintIsWhite = true;
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunDirLocation, 0.0f, 0.0f, -1.0f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunColourLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSkyLocation, 1.0f, 1.0f, 1.0f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowGroundLocation, 1.0f, 1.0f, 1.0f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowCameraLocation, 0.0f, 0.0f, 1.0f, 1.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowParamsLocation, 1.0f, 0.0f, 0.0f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation + 0, 0.0f, 0.0f, 0.0f, 0.5f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation + 1, 0.0f, 0.0f, 0.0f, 0.5f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation + 2, 0.0f, 0.0f, 0.0f, 0.75f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation + 3, 0.0f, 0.0f, 0.0f, 1.0f);
+    C3D_TexBind(0, tex);
+    C3D_TexShadowParams(false, 0.0f);
+    C3D_TexEnvInit(env);
+    C3D_TexEnvSrc(env, C3D_RGB, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
+    C3D_TexEnvFunc(env, C3D_RGB, GPU_REPLACE);
+    C3D_TexEnvSrc(env, C3D_Alpha, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
+    C3D_TexEnvFunc(env, C3D_Alpha, GPU_REPLACE);
+    C3D_TexEnvColor(env, 0xFFFFFFFFu);
+    C3D_DrawArrays(GPU_GEOMETRY_PRIM, 0, 6);
+}
+
+// ============================================================================
+// THE PICA'S OWN SHADOW WRITES, MEASURED (2026-11-18). The caster pass has two
+// ways to make the map:
+//   * NATIVE: GPU_FRAGOPMODE_SHADOW, the mode the PICA has for it -- every
+//     caster fragment's 24-bit depth goes into the map (the nearer one kept).
+//   * THE RAMP: an ordinary draw whose texture coordinates look the depth's
+//     bytes up in a ramp texture (s = depth, t = 256 * depth, REPEAT).
+// Each fails on one instrument, and both failures were measured:
+//   * on the Old 3DS the ramp's t is not repeated that far: the map the console
+//     wrote, read back byte for byte against the emulator's (level 8 frame 60),
+//     has the depth's middle byte 0 in every texel, so its depth is good to
+//     1/256 of the range (31 world units) and the sunlit floor shadowed itself;
+//     native writes land and the shadow sampler reads them.
+//   * in the emulator (Mandarine's OpenGL renderer on llvmpipe) the ramp is
+//     exact, and native writes reach memory and even an 8x8 test's sampler,
+//     yet the game's own frame showed no shadow from them at all.
+// So the renderer measures both, once, before the first frame that wants a sun
+// shadow, in a frame of its own, waited for:
+//   * THE RAMP: one quad at a depth whose middle byte is 0x37 drawn through it,
+//     read back -- the byte is there, or it is 0 (the console);
+//   * NATIVE: an 8x8 map SAMPLED (testSampleShadowMap, still clear), WRITTEN
+//     natively at depth 0.5, and SAMPLED AGAIN with every receiver behind it.
+// The ramp where it is exact; native writes where it is not and they work
+// (the console); the ramp otherwise, logged as neither. end_frame then reads
+// the real pass's map back once more in native mode.
+static void testNativeShadowWrites(RendererC3D* r) {
+    // A test that could not RUN (no VRAM or linear memory for it this time) is
+    // tried again, up to three times, before the ramp is taken for the session:
+    // on the console the ramp is the path that cannot work.
+    r->shadowNativeTestRuns++;
+    r->shadowNativeTested = r->shadowNativeTestRuns >= 3;
+    r->shadowNative = false;
+    C3D_Tex tex;
+    if (!C3D_TexInitShadow(&tex, 8, 8)) {
+        mdk::log3dsPrintf("shadows: native-write test could not make its texture (try %d)",
+                          (int)r->shadowNativeTestRuns);
+        return;
+    }
+    C3D_RenderTarget* target = C3D_RenderTargetCreateFromTex(&tex, GPU_TEXFACE_2D, 0, -1);
+    // ... and the RECEIVER: an 8x8 colour target the shadow sampler draws into.
+    C3D_RenderTarget* probe = C3D_RenderTargetCreate(8, 8, GPU_RB_RGBA8, -1);
+    // ... and the RAMP's: an 8x8 colour target one ramp quad is drawn into.
+    C3D_RenderTarget* rampProbe = C3D_RenderTargetCreate(8, 8, GPU_RB_RGBA8, -1);
+    float* quad = static_cast<float*>(linearAlloc(12 * 5 * sizeof(float)));
+    u32* back = static_cast<u32*>(linearAlloc(8 * 8 * 4));
+    u32* seen = static_cast<u32*>(linearAlloc(8 * 8 * 4));
+    u32* rampSeen = static_cast<u32*>(linearAlloc(8 * 8 * 4));
+    if (target && probe && rampProbe && quad && back && seen && rampSeen &&
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
+        // Clip space through the identity: the whole target, z -0.5 -> depth 0.5
+        // (pica::kDepthMapScale z + kDepthMapOffset).
+        static const int kTestCorners = 6;
+        static const int kRampTestMiddle = 0x37;
+        static const float kCorners[kTestCorners][2] = {
+            {-1, -1}, {1, -1}, {1, 1}, {-1, -1}, {1, 1}, {-1, 1}};
+        // The second quad, for the ramp: a depth whose middle byte is 0x37 and
+        // whose high byte is 0x80, half a step into its 1/65536 (no boundary near).
+        const float rampDepth = (float)(0x80 * 256 + kRampTestMiddle) / 65536.0f + 0.5f / 65536.0f;
+        for (int q = 0; q < 2; q++) {
+            for (int c = 0; c < kTestCorners; c++) {
+                float* corner = quad + (q * kTestCorners + c) * 5;
+                corner[0] = kCorners[c][0];
+                corner[1] = kCorners[c][1];
+                corner[2] = q == 0 ? -0.5f : rampDepth - 1.0f;
+                corner[3] = 0.0f;
+                corner[4] = 0.0f;
+            }
+        }
+        GSPGPU_FlushDataCache(quad, 12 * 5 * sizeof(float));
+        C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_COLOR, 0xFFFFFFFFu, 0);
+        C3D_Mtx identity;
+        Mtx_Identity(&identity);
+        C3D_AttrInfo* attrInfo = C3D_GetAttrInfo();
+        AttrInfo_Init(attrInfo);
+        AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);
+        AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);
+        C3D_BufInfo* bufInfo = C3D_GetBufInfo();
+        BufInfo_Init(bufInfo);
+        BufInfo_Add(bufInfo, quad, 5 * sizeof(float), 2, 0x10);
+        C3D_TexEnv* env = C3D_GetTexEnv(0);
+        for (int stage = 1; stage <= 5; stage++) {
+            C3D_TexEnvInit(C3D_GetTexEnv(stage));
+        }
+        C3D_TexEnvBufUpdate(C3D_Both, 0);
+        r->hazeOn = false;
+        r->lightStageOn = false;
+        C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
+                     mdk::pica::kDepthMapOffset);
+        installDepthState(r, mdk::pica::DepthState{false, false});
+        installAlphaTest(r, -1, true);
+        writeBlendState(r, mdk::pica::kBlendReplace, -3, -3);   // castShadows' own
+        C3D_CullFace(GPU_CULL_NONE);
+        r->cullMode = GPU_CULL_NONE;
+        // THE RAMP, MEASURED: one quad through the caster program and the ramp,
+        // as castShadows draws the map in ramp mode. Where t = 256 * depth is
+        // repeated (the emulator) the texel's middle byte is 0x37; where it is
+        // not (the Old 3DS: 0) the ramp cannot make a map.
+        const bool rampMade = makeShadowRamp(r);
+        if (rampMade) {
+            C3D_FrameBufClear(&rampProbe->frameBuf, C3D_CLEAR_COLOR, 0, 0);
+            C3D_FrameDrawOn(rampProbe);
+            C3D_SetViewport(0, 0, 8, 8);
+            C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 8, 8);
+            bindProgram(r, &r->programCaster);
+            r->litBound = false;
+            C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->casterMvpLocation, &identity);
+            C3D_TexBind(0, &r->shadowRamp);
+            C3D_TexEnv* rampEnv = C3D_GetTexEnv(0);
+            C3D_TexEnvInit(rampEnv);
+            C3D_TexEnvSrc(rampEnv, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
+            C3D_TexEnvFunc(rampEnv, C3D_Both, GPU_REPLACE);
+            C3D_DrawArrays(GPU_TRIANGLES, kTestCorners, kTestCorners);
+        }
+        // FIRST, THE MAP IS SAMPLED while it still holds its clear, as the game's
+        // map has been sampled by every frame before the one that writes it: an
+        // instrument that caches a sampled texture and does not see later native
+        // writes into it (the emulator: its own 8x8 test passed without this and
+        // the game's map then showed no shadow) must fail HERE.
+        testSampleShadowMap(r, &tex, probe, &identity);
+        // THEN THE NATIVE WRITE (the caster program is plain: bindProgram splits
+        // the list after the sampler's geometry program, the console's rule).
+        C3D_FrameDrawOn(target);
+        C3D_SetViewport(0, 0, 8, 8);
+        C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 8, 8);
+        bindProgram(r, &r->programCaster);
+        r->litBound = false;
+        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->casterMvpLocation, &identity);
+        // C3D_GetTexEnv again: it is what marks the stage dirty, and the sampler's
+        // draw has uploaded (and cleaned) it since -- edits through the old
+        // pointer would never reach the GPU, and the caster would run with the
+        // sampler's combiner (measured on the console: green non-zero, the
+        // penumbra path, softness 0xFE and no depth).
+        env = C3D_GetTexEnv(0);
+        C3D_TexEnvInit(env);
+        C3D_TexEnvSrc(env, C3D_Both, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
+        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+        C3D_TexEnvColor(env, 0x00000000u);
+        C3D_FragOpMode(GPU_FRAGOPMODE_SHADOW);
+        C3D_FragOpShadow(0.0f, 1.0f);
+        C3D_DrawArrays(GPU_TRIANGLES, 0, kTestCorners);
+        C3D_FragOpMode(GPU_FRAGOPMODE_GL);
+        // THE SAMPLER'S SIDE, in the same command list, as the game reads the map:
+        // the receive program over the same quad, every receiver at depth 0.75 at
+        // the map's centre (sunMtx rows (0,0,0,c), no normal offset, no bias), the
+        // combiner the sampler's answer alone. Black = behind the 0.5 just written
+        // = the sampler saw the native write. (The emulator writes natively, its
+        // readback sees it -- and its sampler, in the same list, does not: level
+        // 8 frame 60 then showed no shadow at all.) A geometry program is the last
+        // thing in this list, so nothing plain follows it (bindProgram's rule).
+        // AND THE SAMPLER AGAIN: now it must see the write.
+        testSampleShadowMap(r, &tex, probe, &identity);
+        C3D_FrameEnd(0);
+        // The copies wait for the queue (the test's draws) to drain first.
+        // Each pre-filled with the answer that means "did not work" (readBack):
+        // unwritten (FF), not dark (FF), no middle byte (00).
+        const u32 rowDim = GX_BUFFER_DIM((8u * 8u * 4u) >> 4, 0);
+        const bool read = readBack(r, tex.data, rowDim, back, 8 * 8 * 4, 0xFF) &&
+                          readBack(r, probe->frameBuf.colorBuf, rowDim, seen, 8 * 8 * 4, 0xFF) &&
+                          readBack(r, rampProbe->frameBuf.colorBuf, rowDim, rampSeen, 8 * 8 * 4, 0x00);
+        // The ramp texel's middle byte: memory byte 1 in the reversed order (the
+        // map's [high, mid, low, softness]), byte 2 in the PICA's.
+        const int midByte = shadowByteOrder(r) == mdk::pica::kShadowBytesReversed ? 1 : 2;
+        int rampExact = 0;
+        for (int i = 0; i < 64 && rampMade && read; i++) {
+            const uint8_t* texel = reinterpret_cast<const uint8_t*>(&rampSeen[i]);
+            if (texel[midByte] == kRampTestMiddle) {
+                rampExact++;
+            }
+        }
+        int moved = 0;
+        int dark = 0;
+        for (int i = 0; i < 64 && read; i++) {
+            if (back[i] != 0xFFFFFFFFu) {
+                moved++;
+            }
+            // RGBA8 in memory is [A, B, G, R]: the colour is the word's top 24 bits.
+            if ((seen[i] & 0xFFFFFF00u) == 0) {
+                dark++;
+            }
+        }
+        r->shadowNativeTested = true;   // it ran: its answer stands
+        // THE DECISION: the ramp where it is exact (its depths are the same 16
+        // bits everywhere it works, and its own sampler reads them); native
+        // writes where the ramp is not and they work; else the ramp, said so.
+        const bool rampWorks = rampExact == 64;
+        const bool nativeWorks = moved == 64 && dark == 64;
+        r->shadowNative = !rampWorks && nativeWorks;
+        mdk::log3dsPrintf("shadows: the ramp %s (%d of 64 texels carry the middle byte, first "
+                          "%08lX); native writes %s (%d of 64 written, first %08lX; %d of 64 "
+                          "receivers behind them dark, first %08lX); the caster pass uses %s",
+                          rampWorks ? "WORKS" : "does not work", rampExact,
+                          (unsigned long)rampSeen[0], nativeWorks ? "WORK" : "do not work", moved,
+                          (unsigned long)back[0], dark, (unsigned long)seen[0],
+                          r->shadowNative ? "native writes"
+                                          : (rampWorks ? "the ramp"
+                                                       : "the ramp (NEITHER path measured right)"));
+        // A native session never draws through the ramp: its half megabyte back.
+        // And a map an earlier, could-not-run try left behind was made for the
+        // ramp (with a depth buffer the native writes were never measured with):
+        // it goes too, and the next frame makes the native one (review,
+        // 2026-11-18). Outside a frame here, as releaseShadowMap needs.
+        if (r->shadowNative) {
+            releaseShadowMap(r);
+        }
+        r->matrixIsFrame = false;
+        r->hazeOn = false;
+    } else {
+        mdk::log3dsPrintf("shadows: native-write test could not run (try %d)",
+                          (int)r->shadowNativeTestRuns);
+    }
+    if (rampSeen) {
+        linearFree(rampSeen);
+    }
+    if (seen) {
+        linearFree(seen);
+    }
+    if (back) {
+        linearFree(back);
+    }
+    if (quad) {
+        linearFree(quad);
+    }
+    if (rampProbe) {
+        C3D_RenderTargetDelete(rampProbe);
+    }
+    if (probe) {
+        C3D_RenderTargetDelete(probe);
+    }
+    if (target) {
+        C3D_RenderTargetDelete(target);
+    }
+    // citro3d keeps the pointer it was bound with: unit 0 is unbound before the
+    // test's texture (on this stack) goes, so nothing re-dirtied later (an APT
+    // resume re-sends every unit) can read a dead C3D_Tex (review, 2026-11-18).
+    // Every draw that samples unit 0 binds its own texture first.
+    C3D_TexBind(0, nullptr);
+    C3D_TexDelete(&tex);
+}
+
+void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->ready) return;
     if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry
@@ -483,6 +874,12 @@ static void applyEdgeSmoothing(RendererC3D* r) {
     // first (and breaks inside a frame), so nothing in flight still reads them.
     applyEdgeSmoothing(r);
     if (!r->ready) return;
+    // The native shadow-write test, once, before the first frame that may cast
+    // a sun shadow (testNativeShadowWrites): outside the frame, like the rebuild.
+    if (!r->shadowNativeTested && r->toggles.enableSkyShadows && r->casterProgramReady &&
+        r->shadowProgramReady) {
+        testNativeShadowWrites(r);
+    }
 
     // C3D_FrameBegin returns FALSE when it could not begin (with
     // C3D_FRAME_NONBLOCK). A failed begin does NOT authorise drawing.
@@ -491,6 +888,9 @@ static void applyEdgeSmoothing(RendererC3D* r) {
     }
     r->inFrame = true;
     r->frame++;
+    // A new command list: nothing of this frame has used a geometry program.
+    r->gsInList = false;
+    r->geometrySplits = 0;
     r->drawCount = 0;
     r->triangleCount = 0;
     // A capture request: counted here, honoured at this frame's end
@@ -788,12 +1188,22 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // triangle in one eye and a hole in the other.
     prepareHaze(r);
     prepareLighting(r);
+    // The sun's shadow map (Enhanced Mode enableSkyShadows), once per frame and
+    // before either eye: both eyes read the one map.
+    prepareShadows(r);
+    castShadows(r);
     // The glow (Enhanced Mode enableGlowBillboards) follows the enhanced rig, as
     // the PC's post pass does; a session whose glow memory failed stays off.
     r->glowLive = r->toggles.enableGlowBillboards && r->lighting.enabled && !r->glowRefused;
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
+        if (eye == 0 && r->shadowLive && (r->frame == 30 || (r->frame % 600) == 0)) {
+            mdk::log3dsPrintf("shadows: frame %lu: %d caster draws into the map (%d more left "
+                              "out: their textures have holes), %d receiver draws an eye",
+                              (unsigned long)r->frame, (int)r->shadowCasters,
+                              (int)r->shadowHoleCasters, (int)r->shadowReceivers);
+        }
         // The census is read after the FIRST eye's replay: the second eye draws
         // the same records and would double every count.
         if (r->census.active) {
@@ -839,8 +1249,9 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // shaders and its own six): the number a draw sort by program would be
     // judged by on hardware (review of the lighting batch).
     if (r->litLive && (r->frame % 300) == 0) {
-        mdk::log3dsPrintf("light: frame %d: %d program switches (%d eyes)", (int)r->frame,
-                          (int)r->programSwitches, (int)r->eyes.passes);
+        mdk::log3dsPrintf("light: frame %d: %d program switches, %d geometry splits (%d eyes)",
+                          (int)r->frame, (int)r->programSwitches, (int)r->geometrySplits,
+                          (int)r->eyes.passes);
     }
     r->programSwitches = 0;
     if (r->glowLive && (r->frame % 300) == 0) {
@@ -855,6 +1266,51 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);
     r->inFrame = false;
+    // THE NATIVE WRITES, SEEN ON THE REAL PASS, ONCE. testNativeShadowWrites
+    // decides from 8x8 quads; the emulator's native writes pass that and land
+    // nowhere in the scene's caster pass (level 8 frame 60: 0 texels), which is
+    // why the ramp is taken wherever it is exact, and native only where the ramp
+    // measured broken (the Old 3DS: 13,285 texels, the emulator's ramp map's own,
+    // depths equal to 1/65536). So the first native frames have their map read
+    // back, as evidence: the first that wrote any settles it; three in a row
+    // with casters drawn and nothing written settle it too, and the map stays
+    // native -- a frame CAN legitimately write nothing (every caster back-facing
+    // the sun, or outside the map's box), and the only other path is the one
+    // that cannot work on this GPU (review, 2026-11-18: demoting to the ramp here
+    // put a console on it for the session).
+    if (r->shadowNative && !r->shadowNativeVerified && r->shadowLive && r->shadowCasters > 0 &&
+        r->shadowMapReady && r->shadowMapSize > 0) {
+        const u32 side = (u32)r->shadowMapSize;
+        const size_t bytes = (size_t)side * side * 4;
+        u32* copy = static_cast<u32*>(linearAlloc(bytes));
+        if (copy) {
+            const u32 rowDim = GX_BUFFER_DIM((side * 8u * 4u) >> 4, 0);
+            const bool read = readBack(r, r->shadowTex.data, rowDim, copy, bytes, 0xFF);
+            uint32_t written = 0;
+            for (size_t i = 0; i < (size_t)side * side && read; i++) {
+                if (copy[i] != 0xFFFFFFFFu) {
+                    written++;
+                }
+            }
+            linearFree(copy);
+            if (written > 0) {
+                r->shadowNativeVerified = true;
+                r->shadowNativeEmptyFrames = 0;
+                mdk::log3dsPrintf("shadows: native writes verified in the caster pass (%d "
+                                  "casters, %u texels written)",
+                                  (int)r->shadowCasters, (unsigned)written);
+            } else if (++r->shadowNativeEmptyFrames >= 3) {
+                // Settled without a sighting: native writes are only chosen where
+                // the ramp measured BROKEN, so there is nothing better to fall
+                // back to (the ramp shadows the floor with itself there); the
+                // readbacks stop, the map stays native.
+                r->shadowNativeVerified = true;
+                mdk::log3dsPrintf("shadows: native writes not seen in the caster pass (%d "
+                                  "casters, 0 texels, 3 frames running); kept (the ramp "
+                                  "measured broken on this GPU)", (int)r->shadowCasters);
+            }
+        }
+    }
     // A pending capture reads the frame just ended (the transfer queues
     // behind its draws), then the request is spent either way.
     if (r->pendingScreenshot[0]) {
@@ -879,6 +1335,30 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
             }
             writeScreenshotBmp(r, r->targetRight, rightPath);
         }
+#ifdef MDK_AUTOQUIT
+        // THE SHADOW MAP AS THE GPU WROTE IT (harness builds only): its tiled
+        // bytes beside the capture (sdmc:/3ds/mdk/shadowmap.bin.log; the
+        // console's HTTP serves /3ds/**.log), so the map the console made can be
+        // compared byte for byte with the emulator's, read back through
+        // readBack (known finished, the drain behind it).
+        if (r->shadowMapReady && r->shadowLive && r->shadowMapSize > 0) {
+            const u32 side = (u32)r->shadowMapSize;
+            const size_t bytes = (size_t)side * side * 4;
+            u32* copy = (u32*)linearAlloc(bytes);
+            if (copy) {
+                const u32 rowDim = GX_BUFFER_DIM((side * 8u * 4u) >> 4, 0);
+                FILE* f = readBack(r, r->shadowTex.data, rowDim, copy, bytes, 0xFF)
+                              ? fopen("sdmc:/3ds/mdk/shadowmap.bin.log", "wb") : nullptr;
+                if (f) {
+                    const size_t wrote = fwrite(copy, 1, bytes, f);
+                    fclose(f);
+                    mdk::log3dsPrintf("shadows: map %ux%u dumped (%u bytes) to shadowmap.bin.log",
+                                      (unsigned)side, (unsigned)side, (unsigned)wrote);
+                }
+                linearFree(copy);
+            }
+        }
+#endif
         r->pendingScreenshot[0] = '\0';
     }
     // C3D_FrameEnd submits the queue; it does not wait for it. Until the
@@ -972,6 +1452,393 @@ static void installLitUniforms(RendererC3D* r) {
 // The frame's haze, decided once before the eye loop: whether any draw may take
 // it, and the shader's exponent for the rig's density. One multiply; the rest is
 // the PICA's (mdk_c3d.v.pica, haze).
+// The cull a Solid caster is drawn with (castShadows): the eye pipeline's own.
+// The sun's matrix reaches clip space by the same proper transforms the eye's
+// does, and the choice is measured, not derived: with the other winding the
+// whole map was in shadow (level 8, 2026-11-18).
+static const GPU_CULLMODE kCasterCull = kSolidCull;
+
+// WHICH BYTE ORDER THE CASTER PASS WRITES THE MAP IN (pica_matrix.h,
+// ShadowByteOrder): the REVERSED one, on the console and in the emulator alike.
+//
+// A shadow map's texel is (depth24 << 8) | softness, depth BIG-endian in the
+// bytes (the vault's PICA200 note on shadow textures says so), and a PICA RGBA8
+// texel is read as the word A:B:G:R. So the word's high byte -- the depth's high
+// byte -- is the texel's A, then B, then G, and the softness is R: that is
+// kShadowBytesReversed, and it is what the emulator was MEASURED to read. The
+// emulator models the console's format (its shadow unit decodes `pixel >> 8` as
+// the depth and `pixel & 0xFF` as the softness), so it is not a quirk of the
+// host. An earlier version of this file wrote the other order on a console, on
+// the argument that the emulator's was a host byte-order artefact; an
+// independent review (2026-11-18) read the emulator's shader text and the
+// format's documentation and found that argument wrong. The detection it rested
+// on is gone.
+//
+// ON THE CONSOLE (2026-11-18) the map is written natively, and the console's map,
+// read back, holds [depth high, mid, low, softness] per texel in memory: this
+// order. config.ini's `shadowMapFlipBytes=1` writes the other one, and only the
+// ramp (the emulator's path) reads it.
+static mdk::pica::ShadowByteOrder shadowByteOrder(const RendererC3D* r) {
+    return r->toggles.shadowMapFlipBytes ? mdk::pica::kShadowBytesPica
+                                         : mdk::pica::kShadowBytesReversed;
+}
+
+// The ramp's texels, in `order` (ensureShadowMap; again when the order changes).
+static void fillShadowRamp(RendererC3D* r, mdk::pica::ShadowByteOrder order) {
+    const int width = mdk::pica::kSunShadowRampWidth;
+    const int height = mdk::pica::kSunShadowRampHeight;
+    uint8_t* texels = static_cast<uint8_t*>(r->shadowRamp.data);
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            uint8_t rgba[4];
+            mdk::pica::sunShadowRampTexel(x, y, order, rgba);
+            const size_t slot =
+                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)width);
+            mdk::pica::texelBytes(texels + slot * 4u, rgba[0], rgba[1], rgba[2], rgba[3]);
+        }
+    }
+    C3D_TexFlush(&r->shadowRamp);
+    r->shadowRampOrder = static_cast<int>(order);
+}
+
+// The ramp texture, made and filled once (linear heap): ensureShadowMap's in ramp
+// mode, testNativeShadowWrites' to measure whether the ramp works at all.
+static bool makeShadowRamp(RendererC3D* r) {
+    if (r->shadowRampReady) {
+        return true;
+    }
+    const int width = mdk::pica::kSunShadowRampWidth;
+    const int height = mdk::pica::kSunShadowRampHeight;
+    r->shadowRampReady = C3D_TexInit(&r->shadowRamp, (u16)width, (u16)height, GPU_RGBA8);
+    if (r->shadowRampReady) {
+        fillShadowRamp(r, shadowByteOrder(r));
+        // NEAREST: a column and a row are bytes, not shades. s is clamped
+        // (the depth is in [0, 1]); t REPEATS, 256 times across the range.
+        C3D_TexSetFilter(&r->shadowRamp, GPU_NEAREST, GPU_NEAREST);
+        C3D_TexSetWrap(&r->shadowRamp, GPU_CLAMP_TO_EDGE, GPU_REPEAT);
+    }
+    return r->shadowRampReady;
+}
+
+// THE SUN SHADOW'S MAP, made on first use: the map itself (a PICA shadow
+// texture in VRAM) and, when the caster pass writes through the ramp (not
+// natively: castShadows), a 16-bit depth buffer for it and the 512x256 ramp that
+// turns a depth into the map's bytes (linear heap, half a megabyte). The map is 512 texels a side when the VRAM has
+// the megabyte and a half that takes, and 256 when it does not -- with both
+// eyes' targets at the edge smoothing's double size and the glow's textures,
+// it does not. False when nothing could be made: sun shadows are then off for
+// the session, with one line.
+static bool ensureShadowMap(RendererC3D* r) {
+    if (r->shadowRefused) {
+        return false;
+    }
+    if (!(r->shadowMapReady && r->shadowTarget)) {
+        const int sizes[2] = {mdk::pica::kSunShadowMapSize, mdk::pica::kSunShadowMapSize / 2};
+        // THE GLOW'S SHARE IS LEFT FOR IT. Both are made on first use out of the
+        // same VRAM, and this one is asked first (before the eyes; the glow is
+        // made inside the first eye): at the edge smoothing's double-size targets
+        // a 512 map took all but 110 KB and the glow was refused (measured,
+        // 2026-11-18). So a size is only tried when it leaves the glow's
+        // textures their room, while the glow is wanted and not yet made.
+        const size_t glowShare =
+            (r->toggles.enableGlowBillboards && !r->glowReady && !r->glowRefused)
+                ? mdk::pica::kGlowVramBytes : 0u;
+        for (int i = 0; i < 2 && !r->shadowTarget; i++) {
+            const u16 size = (u16)sizes[i];
+            if ((size_t)vramSpaceFree() < mdk::pica::sunShadowVramBytes(sizes[i]) + glowShare) {
+                continue;
+            }
+            r->shadowMapReady = C3D_TexInitShadow(&r->shadowTex, size, size);
+            if (!r->shadowMapReady) {
+                continue;
+            }
+            // The ramp keeps the nearer caster with a depth buffer of its own;
+            // native writes keep it themselves and take the target exactly as
+            // testNativeShadowWrites measured it -- WITHOUT one (the emulator,
+            // for one, lands native writes into a bare target and none into a
+            // target with a depth buffer: level 8 frame 60, 0 texels written).
+            r->shadowTarget = C3D_RenderTargetCreateFromTex(
+                &r->shadowTex, GPU_TEXFACE_2D, 0,
+                r->shadowNative ? C3D_DEPTHTYPE(-1) : C3D_DEPTHTYPE(GPU_RB_DEPTH16));
+            if (!r->shadowTarget) {
+                // No target was made, so nothing the queue could be using: the
+                // texture can go at once, and the smaller size is tried.
+                C3D_TexDelete(&r->shadowTex);
+                r->shadowMapReady = false;
+                continue;
+            }
+            r->shadowMapSize = sizes[i];
+            // The unit blends the four nearest comparisons (the PC's 2x2).
+            C3D_TexSetFilter(&r->shadowTex, GPU_LINEAR, GPU_LINEAR);
+            C3D_TexSetWrap(&r->shadowTex, GPU_CLAMP_TO_BORDER, GPU_CLAMP_TO_BORDER);
+            // Outside the map is LIT: the border is the farthest depth with the
+            // full softness, 0xFFFFFFFF -- the same word in either byte order
+            // (citro3d's default is 0, a dark wedge past the map's edge).
+            r->shadowTex.border = 0xFFFFFFFFu;
+            mdk::log3dsPrintf("shadows: map %dx%d%s (VRAM, %u free), %s",
+                              (int)r->shadowMapSize, (int)r->shadowMapSize,
+                              r->shadowNative ? "" : " + 16-bit depth", (unsigned)vramSpaceFree(),
+                              r->shadowNative ? "written natively" : "written through the ramp");
+        }
+    }
+    if (r->shadowTarget && !r->shadowNative && !r->shadowRampReady) {
+        makeShadowRamp(r);
+    }
+    if (!r->shadowMapReady || !r->shadowTarget || (!r->shadowNative && !r->shadowRampReady)) {
+        // Inside a frame, where C3D_RenderTargetDelete breaks: what was made
+        // waits for releaseShadowMap (the next eye-target rebuild, or the
+        // destructor).
+        mdk::log3dsPrintf("shadows: map / depth / ramp allocation FAILED (map %d target %d "
+                          "ramp %d); sun shadows off (vram free %u)",
+                          (int)r->shadowMapReady, r->shadowTarget ? 1 : 0,
+                          (int)r->shadowRampReady, (unsigned)vramSpaceFree());
+        r->shadowRefused = true;
+        return false;
+    }
+    // The order can change while the game runs (the config's flip): the ramp is
+    // written again. Nothing of the GPU's is reading it here -- C3D_FrameBegin
+    // waited for the last frame's queue, and this frame has not drawn with it.
+    const mdk::pica::ShadowByteOrder order = shadowByteOrder(r);
+    if (r->shadowRampReady && r->shadowRampOrder != static_cast<int>(order)) {
+        fillShadowRamp(r, order);
+        mdk::log3dsPrintf("shadows: the ramp is rewritten in %s byte order",
+                          order == mdk::pica::kShadowBytesReversed ? "reversed" : "the PICA's");
+    }
+    return true;
+}
+
+// The frame's sun shadow, decided once before the eye loop: whether there is
+// one, the caster pass's matrix, and the receive program's uniforms.
+static void prepareShadows(RendererC3D* r) {
+    r->shadowCasters = 0;
+    r->shadowHoleCasters = 0;
+    r->shadowReceivers = 0;
+    r->shadowLive = r->litLive && r->shadowProgramReady && r->casterProgramReady &&
+                    r->toggles.enableSkyShadows &&
+                    r->lighting.shadows && r->lighting.shadow_distance > 0.0f &&
+                    ensureShadowMap(r);
+    if (!r->shadowLive) {
+        return;
+    }
+    const mdk::Lighting& l = r->lighting;
+    float sun[16];
+    const mdk::Vec3 centre = {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2]};
+    mdk::sunShadowMatrix(l.sun_direction, centre, l.shadow_distance,
+                         (uint32_t)r->shadowMapSize, sun);
+    mdk::pica::sunCasterMatrix(sun, r->sunVp);
+    float map[16];
+    mdk::pica::sunMapMatrix(sun, map);
+    mdk::pica::registers(map, r->shadowSunMtx);
+    const float values[6][4] = {
+        {l.sun_direction.x, l.sun_direction.y, l.sun_direction.z, 0.0f},
+        {l.sun.r, l.sun.g, l.sun.b, 0.0f},
+        {l.sky.r, l.sky.g, l.sky.b, 0.0f},
+        {l.ground.r, l.ground.g, l.ground.b, 0.0f},
+        {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2], 1.0f},
+#if defined(MDK_SHADOW_PROBE)
+        // The harness's probes (make SHADOWPROBE=n). 8: every receiver at the
+        // map's far end (all shadow, if the unit compares at all). 20-29: every
+        // receiver at ONE depth, (n - 20) / 10 + 0.05 (0.999 for 29): what the
+        // map holds in front of that depth shows as shadow. 5: the geometry
+        // shader puts (u, v, depth) in the colour.
+        {l.exposure, mdk::pica::sunShadowNormalOffset(r->shadowMapSize),
+         MDK_SHADOW_PROBE == 8 ? -2.0f
+         : MDK_SHADOW_PROBE == 29 ? 0.999f
+         : MDK_SHADOW_PROBE >= 20 ? (float)(MDK_SHADOW_PROBE - 20) * 0.1f + 0.05f
+         : mdk::pica::sunShadowDepthBias(r->shadowMapSize),
+         MDK_SHADOW_PROBE == 5 ? 1.0f : MDK_SHADOW_PROBE >= 20 ? 2.0f : 0.0f},
+#else
+        {l.exposure, mdk::pica::sunShadowNormalOffset(r->shadowMapSize),
+         mdk::pica::sunShadowDepthBias(r->shadowMapSize), 0.0f},
+#endif
+    };
+    memcpy(r->shadowUniforms, values, sizeof(values));
+}
+
+// The receive program's uniforms, written AT EVERY BIND of it, for the reason
+// installLitUniforms gives: binding a program with no geometry shader clears
+// the geometry stage's uniforms.
+static void installShadowUniforms(RendererC3D* r) {
+    const int locations[6] = {r->shadowSunDirLocation, r->shadowSunColourLocation,
+                              r->shadowSkyLocation, r->shadowGroundLocation,
+                              r->shadowCameraLocation, r->shadowParamsLocation};
+    for (int i = 0; i < 6; i++) {
+        C3D_FVUnifSet(GPU_GEOMETRY_SHADER, locations[i], r->shadowUniforms[i][0],
+                      r->shadowUniforms[i][1], r->shadowUniforms[i][2], r->shadowUniforms[i][3]);
+    }
+    C3D_Mtx sunMtx;
+    memcpy(sunMtx.m, r->shadowSunMtx, sizeof(r->shadowSunMtx));
+    C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation, &sunMtx);
+}
+
+// THE CASTER PASS (Enhanced Mode enableSkyShadows): the frame's opaque Lit
+// triangles -- the PC's casters, 11_shadow_post.inc drawShadowMap -- drawn from
+// the sun into the shadow map, once per frame, before the eyes.
+//
+// TWO WAYS TO WRITE THE MAP, CHOSEN BY MEASUREMENT (testNativeShadowWrites and
+// the end_frame verification have the facts): NATIVE, the PICA's own shadow
+// fragment mode -- each caster fragment's 24-bit depth into the map, the nearer
+// kept, the combiner black -- which the console lands; or THE RAMP, an ordinary
+// draw whose texture coordinate is the vertex's depth from the sun into a ramp
+// texture whose colour IS the map's encoding of that depth
+// (pica::sunShadowRampTexel), the map's own 16-bit depth buffer keeping the
+// nearest caster -- which the emulator lands. Either way the map is cleared to
+// 0xFFFFFFFF, the farthest depth there is, and Solid casters show the sun only
+// their front faces, as on the PC.
+//
+// WHAT A CASTER DOES NOT HAVE HERE IS ITS OWN TEXTURE: a cut-out (a grating, a
+// fence) is left out of the pass rather than cast solid. The PC cuts its
+// casters; this is the port's one known shortfall in the pass.
+//
+// installEye runs after this for each eye and installs the frame's state again
+// (program, attributes, matrix, stages, cull); the depth, alpha and blend state
+// this pass leaves are the ones their caches say.
+static void castShadows(RendererC3D* r) {
+    if (!r->shadowLive) {
+        return;
+    }
+    const u32 size = (u32)r->shadowMapSize;
+#if defined(MDK_SHADOW_PROBE)
+    // 10: the map cleared to the NEAREST depth and nothing cast (all shadow, if
+    // the unit reads what this pass clears).
+    const bool probeNoCasters = MDK_SHADOW_PROBE == 10;
+    C3D_FrameBufClear(&r->shadowTarget->frameBuf, C3D_CLEAR_ALL,
+                      probeNoCasters ? 0x000000FFu : 0xFFFFFFFFu, mdk::pica::kDepthClearValue);
+#else
+    const bool probeNoCasters = false;
+    // A native map's target has no depth buffer to clear.
+    C3D_FrameBufClear(&r->shadowTarget->frameBuf, r->shadowNative ? C3D_CLEAR_COLOR : C3D_CLEAR_ALL,
+                      0xFFFFFFFFu, mdk::pica::kDepthClearValue);
+#endif
+    C3D_FrameDrawOn(r->shadowTarget);
+    C3D_SetViewport(0, 0, size, size);
+    C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, size, size);
+
+    // The fixed state, written whole (AGENTS.md P2): this pass comes before the
+    // frame's first installEye, so nothing of this frame is installed yet.
+    bindProgram(r, &r->programCaster);
+    r->litBound = false;
+    C3D_AttrInfo* attrInfo = C3D_GetAttrInfo();
+    AttrInfo_Init(attrInfo);
+    AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
+    AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord (not read)
+    // NATIVE (testNativeShadowWrites measured that the writes land): the PICA
+    // writes each fragment's depth itself and keeps the nearer, so no ramp and
+    // no depth test; the combiner's output is black because its GREEN is the
+    // penumbra input, and 0 is a hard shadow that keeps the clear's softness.
+    C3D_TexEnv* ramp = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(ramp);
+    C3D_TexEnvColor(ramp, 0x00000000u);   // native mode's source (unused by the ramp's)
+    if (!r->shadowNative) {
+        C3D_TexBind(0, &r->shadowRamp);
+    }
+    C3D_TexEnvSrc(ramp, C3D_RGB, r->shadowNative ? GPU_CONSTANT : GPU_TEXTURE0,
+                  r->shadowNative ? GPU_CONSTANT : GPU_TEXTURE0,
+                  r->shadowNative ? GPU_CONSTANT : GPU_TEXTURE0);
+    C3D_TexEnvFunc(ramp, C3D_RGB, GPU_REPLACE);
+    // The alpha is the RAMP'S, in both byte orders: in the reversed one (the
+    // default) it is the depth's high byte, in the PICA one the softness (255).
+    // A constant 255 here wrote every map texel's depth as the far plane in the
+    // default order -- no sun shadow at all, measured 2026-11-18 (level 8 frame
+    // 60, the shadow on and off: 0 pixels apart; independent review finding 1).
+    // So the alpha test is OFF for this pass (below): it would discard every
+    // caster whose depth's high byte is 0, and the casters it exists for --
+    // textures with holes -- are left out of the pass anyway.
+    C3D_TexEnvSrc(ramp, C3D_Alpha, r->shadowNative ? GPU_CONSTANT : GPU_TEXTURE0,
+                  r->shadowNative ? GPU_CONSTANT : GPU_TEXTURE0,
+                  r->shadowNative ? GPU_CONSTANT : GPU_TEXTURE0);
+    C3D_TexEnvFunc(ramp, C3D_Alpha, GPU_REPLACE);
+    for (int stage = 1; stage <= 5; stage++) {
+        C3D_TexEnvInit(C3D_GetTexEnv(stage));
+    }
+    C3D_TexEnvBufUpdate(C3D_Both, 0);
+    // (Stages 1-5 pass through, and the two caches that describe them say so.)
+    r->hazeOn = false;
+    r->lightStageOn = false;
+    C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
+                 mdk::pica::kDepthMapOffset);
+    // The ramp keeps the nearer caster with the map's own depth buffer; native
+    // writes keep it themselves.
+    installDepthState(r, mdk::pica::DepthState{!r->shadowNative, !r->shadowNative});
+    if (r->shadowNative) {
+        C3D_FragOpMode(GPU_FRAGOPMODE_SHADOW);
+        C3D_FragOpShadow(0.0f, 1.0f);
+    }
+    // No alpha test (above): the reference -1 is the test off, and no draw uses
+    // it, so the next installAlphaTest writes the register again (installEye
+    // forces it anyway, every eye).
+    installAlphaTest(r, -1, true);
+    writeBlendState(r, mdk::pica::kBlendReplace, -3, -3);
+    C3D_CullFace(GPU_CULL_NONE);
+    r->cullMode = GPU_CULL_NONE;
+
+    for (int32_t pass = static_cast<int32_t>(mdk::Pass::Solid);
+         !probeNoCasters && pass <= static_cast<int32_t>(mdk::Pass::DoubleSided); pass++) {
+        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+        for (size_t i = 0; i < bucket.size(); i++) {
+            const mdk::MeshDraw* draw = &bucket[i];
+            if (!mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,
+                                           draw->primitive)) {
+                continue;
+            }
+            if (draw->mesh < 0 || (size_t)draw->mesh >= r->meshes.size()) {
+                continue;
+            }
+            // A surface whose texture has holes casts nothing (pica::
+            // textureSourceHasHoles): this pass cannot cut them.
+            if (draw->material.texture >= 0 &&
+                (size_t)draw->material.texture < r->textures.size() &&
+                r->textures[(size_t)draw->material.texture].hasHoles) {
+                r->shadowHoleCasters++;
+                continue;
+            }
+            const C3dMesh& mesh = r->meshes[(size_t)draw->mesh];
+            if (!mesh.valid || mesh.count <= 0 || draw->first_vertex < 0 ||
+                draw->vertex_count <= 0 ||
+                draw->first_vertex + draw->vertex_count > mesh.count) {
+                continue;
+            }
+            float composed[16];
+            const float* upload = r->sunVp;
+            if (!mdk::pica::isIdentity(draw->world)) {
+                mdk::pica::drawMatrix(draw->world, r->sunVp, composed);
+                upload = composed;
+            }
+            C3D_Mtx gpuMtx;
+            mdk::pica::registers(upload, gpuMtx.m);
+            C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->casterMvpLocation, &gpuMtx);
+            // THE PC'S CULL (11_shadow_post.inc: depthPipelines[Solid ? 0 : 1]): a
+            // Solid caster shows the sun only its FRONT faces, a DoubleSided one
+            // both. It is not a detail: the levels' walls are one-sided shells,
+            // and seen from behind -- from the sun's side of a canyon wall --
+            // they cast nothing on the PC. Drawn two-sided here, the wall shadowed
+            // the whole canyon floor the PC leaves in the sun (measured, level 8).
+            const GPU_CULLMODE wantedCull =
+                draw->material.pass == mdk::Pass::Solid ? kCasterCull : GPU_CULL_NONE;
+            if (r->cullMode != wantedCull) {
+                C3D_CullFace(wantedCull);
+                r->cullMode = wantedCull;
+            }
+            C3D_BufInfo* bufInfo = C3D_GetBufInfo();
+            BufInfo_Init(bufInfo);
+            BufInfo_Add(bufInfo, mesh.data, 5 * sizeof(float), 2, 0x10);
+            C3D_DrawArrays(GPU_TRIANGLES, draw->first_vertex, draw->vertex_count);
+            r->shadowCasters++;
+        }
+    }
+
+    if (r->shadowNative) {
+        C3D_FragOpMode(GPU_FRAGOPMODE_GL);
+    }
+    // The map is a texture the eyes' draws read in this same command list: what
+    // the GPU still holds of it goes to memory first (the glow's rule).
+    GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);
+    GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_INVALIDATE, 1);
+    // The vertex stage's matrix registers hold the last caster's: installEye
+    // uploads the eye's before anything else is drawn.
+    r->matrixIsFrame = false;
+}
+
 static void prepareHaze(RendererC3D* r) {
     // pica::hazeApplies with the draw-independent half decided here, once; the
     // per-draw half (shading, pass) is drawRecorded's.

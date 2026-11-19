@@ -1,0 +1,8 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-19T04:53:11Z at 3f2a1d8
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: 3DS Enhanced Mode on the console -- the geometry-stage and display-transfer
+hangs fixed, and the sun's shadows on the PICA200 (enableSkyShadows). 3DS
+renderer only; this Linux frame is byte-identical to the previous pin. The
+3DS pictures: docs/evidence/2026-11-18-3ds-sun-shadows-L8-console.png and the
+evidence files 2026-11-18-3ds-sun-shadows.txt / -console-hangs.txt.

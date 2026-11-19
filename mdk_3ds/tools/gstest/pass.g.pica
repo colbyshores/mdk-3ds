@@ -1,0 +1,24 @@
+; gstest's pass-through geometry shader: the triangle out as it came in.
+.gsh point c0
+.out outpos position
+.out outclr color
+.out outtc  texcoord0
+.entry pmain
+.proc pmain
+    setemit 0
+    mov outpos, v0
+    mov outtc, v2
+    mov outclr, v1
+    emit
+    setemit 1
+    mov outpos, v4
+    mov outtc, v6
+    mov outclr, v5
+    emit
+    setemit 2, prim
+    mov outpos, v8
+    mov outtc, v10
+    mov outclr, v9
+    emit
+    end
+.end

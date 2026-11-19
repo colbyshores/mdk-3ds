@@ -92,6 +92,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->enableLighting = value;
     } else if (keyIs(begin, keyEnd, "enableEdgeSmoothing")) {
         toggles->enableEdgeSmoothing = value;
+    } else if (keyIs(begin, keyEnd, "shadowMapFlipBytes")) {
+        toggles->shadowMapFlipBytes = value;
     }
 }
 
@@ -130,6 +132,8 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "enableHdTextures", toggles.enableHdTextures);
     appendToggle(&out, "enableLighting", toggles.enableLighting);
     appendToggle(&out, "enableEdgeSmoothing", toggles.enableEdgeSmoothing);
+    // A diagnostic, not a look (render_types.h): written so it can be found.
+    appendToggle(&out, "shadowMapFlipBytes", toggles.shadowMapFlipBytes);
     return out;
 }
 

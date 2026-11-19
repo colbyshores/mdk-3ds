@@ -152,6 +152,21 @@ $(error AT=$(AT) needs AUTOQUIT: the start override is a harness-build feature)
 endif
 DEFINES += -DMDK_HW_AT='$(AT)'
 endif
+# `make SHADOWPROBE=n` (a harness aid, never a release): the sun shadow's receive
+# pass draws one of its terms alone instead of the shadow -- 1 a constant half
+# grey (does the pass reach pixels?), 2 the map's answer, 3 the factor R, 4 the
+# amount q (06_draw.inc receiveShadows). Only renderer_c3d.cpp reads it: touch it
+# after changing SHADOWPROBE.
+# `make TOGGLEWALK=1` (a harness aid, never a release): boot in the original
+# look and switch the config's enhancements on one at a time, 120 frames apart,
+# logging each before its first frame (main_3ds.cpp), so a console that hangs
+# names the toggle in mdk.log's last line. `make clean` after changing it.
+ifneq ($(TOGGLEWALK),)
+DEFINES += -DMDK_TOGGLE_WALK=1
+endif
+ifneq ($(SHADOWPROBE),)
+DEFINES += -DMDK_SHADOW_PROBE=$(SHADOWPROBE)
+endif
 # `make AUTOQUIT=90 FIXED=1` gives every frame exactly one 1/60 s step (the
 # Linux --fixed-step), for frame-exact 3DS-vs-Linux comparisons with CAPTURE.
 # Only main_3ds.cpp reads it: touch it after changing FIXED.
@@ -219,13 +234,22 @@ BIN2S   := $(DEVKITPRO)/tools/bin/bin2s
 # program's geometry shader (Enhanced Mode lighting, mdk_c3d.g.pica).
 SHADER_PICA  := $(CURDIR)/shaders/mdk_c3d.v.pica
 SHADER_GPICA := $(CURDIR)/shaders/mdk_c3d.g.pica
+# The shadow receive program's geometry shader (Enhanced Mode sun shadows): the
+# DVLB's third DVLE. The ORDER on the picasso line below is the DVLE order the
+# backend indexes by (02_lifecycle.inc).
+SHADER_SPICA := $(CURDIR)/shaders/mdk_shadow.g.pica
+# ... and the shadow caster pass's vertex shader: the fourth DVLE.
+SHADER_CPICA := $(CURDIR)/shaders/mdk_caster.v.pica
+# ... and the pass-through geometry shader: the fifth DVLE (mdk_pass.g.pica says
+# why: the PICA must not leave geometry mode inside a command list).
+SHADER_PPICA := $(CURDIR)/shaders/mdk_pass.g.pica
 SHADER_SHBIN := $(BUILD)/mdk_c3d.shbin
 SHADER_HDR   := $(BUILD)/mdk_c3d_shbin.h
 SHADER_OBJ   := $(BUILD)/mdk_c3d_shbin.o
 
-$(SHADER_SHBIN): $(SHADER_PICA) $(SHADER_GPICA) | $(BUILD)
-	@echo "PICA $(notdir $(SHADER_PICA)) $(notdir $(SHADER_GPICA))"
-	@$(PICASSO) -o $@ $(SHADER_PICA) $(SHADER_GPICA)
+$(SHADER_SHBIN): $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA) | $(BUILD)
+	@echo "PICA $(notdir $(SHADER_PICA)) $(notdir $(SHADER_GPICA)) $(notdir $(SHADER_SPICA)) $(notdir $(SHADER_CPICA)) $(notdir $(SHADER_PPICA))"
+	@$(PICASSO) -o $@ $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA)
 
 # &: (grouped target, GNU Make 4.3+) is load-bearing here, NOT stylistic: with
 # a plain ':', two targets sharing one recipe are not atomic, so `make -j` can
