@@ -235,6 +235,88 @@ static int32_t texelStoreIndex(mdk::pica::TexelFormat format) {
     }
 }
 
+// THE COMPRESSED TEXTURE'S GPU COPY (EnhancedToggles::kurtCompressed): tex3ds'
+// import of the .t3x bytes kept in `source` -- an LZ decompress and a copy into
+// the linear heap, the ETC blocks already tiled by tex3ds on the host. Nothing is
+// expanded, which is the point: a Kurt frame made from its palette indices was a
+// 256 KB RGBA8 expansion of several ms on the ARM11, re-made nearly every frame
+// once the animations outran the residency (measured on the Old 3DS: clusters of
+// 13-16 frames with a 20-40 ms draw build).
+//
+// THE LOOK. ETC1 codes each 4x4 block as one colour pair and a modifier table,
+// so a sharp colour edge inside a block softens (the 4x4 block look); the owner
+// ruled performance over accuracy on the 3DS (2026-11-18) and saw little
+// difference against RGBA4 (2026-11-19). The ALPHA is exact: ETC1A4 has four
+// explicit bits a texel and Kurt's alpha is a colour key (0 or 255 -> 0 or 15),
+// so both alpha-test references cut him texel for texel as the original does
+// (kurt_etc1_convert.py --check proves it per frame).
+//
+// The same eviction ladder as makeTexture: a nobody's HD copy, then the least
+// recently used original, then any HD copy this frame has not drawn.
+static bool importCompressed(RendererC3D* renderer, C3dTexture& texture) {
+    if (texture.source.empty()) {
+        return false;
+    }
+    // THE HEADER FIRST, so a file that is not this set's never reaches the
+    // eviction ladder below: an import that fails for a broken file would
+    // otherwise evict every texture it could before giving up. tex3ds' header:
+    // u16 subtextures, u8 log2(width) - 3 | (log2(height) - 3) << 3, u8 format.
+    // Only ETC1/ETC1A4 (GPU_ETC1 = 12, GPU_ETC1A4 = 13): the compressed seam's
+    // contract, and the formats `format` below can name.
+    const uint8_t* header = texture.source.data();
+    const bool headerOk =
+        texture.source.size() > 6 && (header[0] | (header[1] << 8)) >= 1 &&
+        (header[3] == (uint8_t)GPU_ETC1 || header[3] == (uint8_t)GPU_ETC1A4) &&
+        (8 << (header[2] & 7)) >= texture.realWidth &&
+        (8 << ((header[2] >> 3) & 7)) >= texture.realHeight;
+    if (!headerOk) {
+        mdk::log3dsPrintf("texture %dx%d: not an ETC .t3x of that size (%u bytes), refused",
+                          (int)texture.realWidth, (int)texture.realHeight,
+                          (unsigned)texture.source.size());
+        return false;
+    }
+    Tex3DS_Texture t3x = nullptr;
+    for (;;) {
+        t3x = Tex3DS_TextureImport(texture.source.data(), texture.source.size(), &texture.tex,
+                                   nullptr, false);
+        if (t3x) {
+            break;
+        }
+        if (evictHd(renderer, renderer->frameStartUse, true) ||
+            evictTextures(renderer, texture.source.size() * 4u) ||
+            evictHd(renderer, renderer->frameStartUse, false)) {
+            continue;
+        }
+        mdk::log3dsPrintf("texture %dx%d: compressed import FAILED (%u bytes)",
+                          (int)texture.realWidth, (int)texture.realHeight,
+                          (unsigned)texture.source.size());
+        return false;
+    }
+    Tex3DS_TextureFree(t3x);
+    texture.paddedWidth = texture.tex.width;
+    texture.paddedHeight = texture.tex.height;
+    texture.rect = mdk::pica::compressedFrameRect(texture.realWidth, texture.realHeight,
+                                                  texture.paddedWidth, texture.paddedHeight);
+    texture.mipLevels = texture.tex.maxLevel;
+    texture.gpuBytes = (uint32_t)C3D_TexCalcTotalSize(texture.tex.size, texture.tex.maxLevel);
+    texture.format = texture.tex.fmt == GPU_ETC1 ? mdk::pica::TexelFormat::Etc1
+                                                 : mdk::pica::TexelFormat::Etc1A4;
+    // NEAREST at creation (the original look); the draw rewrites the filter per
+    // draw (06_draw.inc). REPEAT only on an axis the image fills: on a padded one
+    // a wrap would sample the padding (the HD copies' rule).
+    C3D_TexSetFilter(&texture.tex, GPU_NEAREST, GPU_NEAREST);
+    C3D_TexSetWrap(&texture.tex,
+                   texture.realWidth == texture.paddedWidth ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,
+                   texture.realHeight == texture.paddedHeight ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
+    texture.valid = true;
+    renderer->compressedMade++;
+    renderer->compressedBytesSaved +=
+        mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,
+                                texture.paddedHeight, 0) -
+        mdk::pica::textureBytes(texture.format, texture.paddedWidth, texture.paddedHeight, 0);
+    return true;
+}
+
 // Makes the GPU copy of a texture from the source the backend kept, and
 // fills it.
 //
@@ -254,6 +336,9 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     // texture had: no unit's bind may be skipped on the strength of the old
     // contents (03_frame.inc, THE DEDUPE).
     forgetTextureBinds(renderer);
+    if (texture.compressed) {
+        return importCompressed(renderer, texture);
+    }
     // THE MIP CHAIN (SPEC.md 7.9 enableMipmaps): made with the texture when the
     // toggle is on at that moment, so turning it on costs its memory -- a third
     // more per texture -- from the next texture made (the next level load, or an

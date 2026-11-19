@@ -448,5 +448,6 @@ mdk::MdkCapabilities mdk_render_capabilities(MdkRenderer r) {
     // sprite cache keeps the C#'s behaviour. (The 3DS names a budget; see
     // renderer_c3d.cpp.)
     caps.sprite_residency_bytes = 0;
+    caps.sprite_preload_bytes = 0;   // no compressed frames to preload (render_types.h)
     return caps;
 }

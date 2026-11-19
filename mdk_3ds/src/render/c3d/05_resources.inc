@@ -140,6 +140,63 @@ int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t hei
     return (int32_t)mdk::pica::textureBytes(format, paddedW, paddedH, levels);
 }
 
+// A COMPRESSED texture from a .t3x's bytes (render.h; EnhancedToggles::
+// kurtCompressed): imported now -- a decompress and a copy, no expansion -- and
+// kept as bytes so an eviction is undone by importing again (makeTexture). The
+// image is width x height at the texture's top-left (kurt_etc1_convert.py pads,
+// never scales), drawn through pica::compressedFrameRect.
+MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t w, int32_t h,
+                                                  const uint8_t* t3x, int32_t size) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !t3x ||
+        size <= 0) {
+        return -1;
+    }
+    C3dTexture texture;
+    texture.realWidth = w;
+    texture.realHeight = h;
+    texture.compressed = true;
+    texture.indexed = false;
+    texture.source.assign(t3x, t3x + size);
+    // A sprite frame: the shadow pass never sees it (Pass::DoubleSided Sprite
+    // shading, pica::castsSunShadow), so "holes" is only the honest answer.
+    texture.hasHoles = true;
+    texture.lastUsed = ++renderer->drawCounter;
+    const int32_t id = acquireTextureSlot(renderer);
+    C3dTexture& slot = renderer->textures[(size_t)id];
+    slot = std::move(texture);
+    if (!makeTexture(renderer, slot, false)) {
+        slot = C3dTexture();
+        return -1;
+    }
+    // A texture whose image is bigger than the file's texture is not this set's:
+    // refused rather than drawn through a rectangle past the texture's edge.
+    if (slot.realWidth > slot.paddedWidth || slot.realHeight > slot.paddedHeight) {
+        mdk::log3dsPrintf("texture %dx%d: compressed file is %dx%d, refused", (int)w, (int)h,
+                          (int)slot.paddedWidth, (int)slot.paddedHeight);
+        C3D_TexDelete(&slot.tex);
+        slot = C3dTexture();
+        return -1;
+    }
+    return id;
+}
+
+int32_t mdk_render_texture_bytes(MdkRenderer r, MdkTextureId t) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || t < 0 || (size_t)t >= renderer->textures.size()) {
+        return 0;
+    }
+    const C3dTexture& texture = renderer->textures[(size_t)t];
+    if (!texture.valid || texture.releasePending) {
+        return 0;
+    }
+    if (texture.compressed) {
+        return (int32_t)texture.gpuBytes;
+    }
+    return (int32_t)mdk::pica::textureBytes(texture.format, texture.paddedWidth,
+                                            texture.paddedHeight, texture.mipLevels);
+}
+
 MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || !renderer->ready || !rgba) {
@@ -156,7 +213,8 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
         return;
     }
     C3dTexture& texture = renderer->textures[(size_t)t];
-    if (texture.source.empty() || texture.releasePending) {
+    // A compressed texture's source is a file's bytes, not indices to replace.
+    if (texture.source.empty() || texture.releasePending || texture.compressed) {
         return;
     }
     if (w != texture.realWidth || h != texture.realHeight) {

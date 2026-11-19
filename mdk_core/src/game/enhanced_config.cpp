@@ -141,6 +141,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->glowBloom = value;
     } else if (keyIs(begin, keyEnd, "texture16")) {
         toggles->texture16 = value;
+    } else if (keyIs(begin, keyEnd, "kurtCompressed")) {
+        toggles->kurtCompressed = value;
     }
 }
 
@@ -185,6 +187,8 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "glowBloom", toggles.glowBloom);
     // 3DS: 16-bit texture stores, from the next texture made (render_types.h).
     appendToggle(&out, "texture16", toggles.texture16);
+    // 3DS: Kurt's frames from the ETC1A4 set, from the next level load (render_types.h).
+    appendToggle(&out, "kurtCompressed", toggles.kurtCompressed);
     // A diagnostic, not a look (render_types.h): written so it can be found.
     appendToggle(&out, "shadowMapFlipBytes", toggles.shadowMapFlipBytes);
     // 0 = automatic (render_types.h).

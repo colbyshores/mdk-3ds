@@ -188,11 +188,23 @@ static void heapProbe(const char* tag) {
 // streams it under the HD budget.
 const char kHdPackRoot[] = "sdmc:/3ds/mdk/hd";
 
+// KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): his ORIGINAL
+// TRAVSPRT.BNI frames as ETC1A4, made on the host by
+// mdk_3ds/tools/kurt_etc1_convert.py and staged into the RomFS by stage_romfs.sh
+// (the set is derived from the game data the RomFS already carries, so it ships
+// in every .3dsx and .cia and the hardware loop needs no separate SD copy). The
+// layout and manifest are the HD pack's, indexed by the same code.
+const char kKurtSetRoot[] = "romfs:/kurt";
+
 // The sound bank's decoded store, bounded (see where it is set).
 const size_t kDecodedSoundBudgetBytes = (size_t)6 << 20;
 
-bool loadHdPack(int32_t level, mdk::ModImages* out) {
-    FILE* file = fopen("sdmc:/3ds/mdk/hd/manifest.txt", "r");
+// A compressed pack's manifest (the HD pack's, or Kurt's set: the same columns),
+// indexed for `level` by ModImages' own rule. False when there is none.
+bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out,
+                            int32_t* count) {
+    const std::string manifest = std::string(root) + "/manifest.txt";
+    FILE* file = fopen(manifest.c_str(), "r");
     if (!file) {
         return false;
     }
@@ -240,9 +252,18 @@ bool loadHdPack(int32_t level, mdk::ModImages* out) {
         mdk::log3dsPrintf("hd: pack built above the 512 cap the 3DS budgets for; not used");
         return false;
     }
-    *out = mdk::ModImages::fromList(kHdPackRoot, files, true, level);
-    mdk::log3dsPrintf("hd: pack manifest %d textures (sdmc:/3ds/mdk/hd)", (int)files.size());
+    *out = mdk::ModImages::fromList(root, files, true, level);
+    *count = (int32_t)files.size();
     return !files.empty();
+}
+
+bool loadHdPack(int32_t level, mdk::ModImages* out) {
+    int32_t count = 0;
+    if (!loadCompressedManifest(kHdPackRoot, level, out, &count)) {
+        return false;
+    }
+    mdk::log3dsPrintf("hd: pack manifest %d textures (sdmc:/3ds/mdk/hd)", (int)count);
+    return true;
 }
 
 // The surface cache's lookup into the HD pack: a Lit surface's .t3x path.
@@ -431,7 +452,7 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("main: resolved config shadows=%d lights=%d haze=%d mirrors=%d glow=%d "
                               "filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
                               "smoothing2x2=%d glowBloom=%d flip=%d shadowMapSize=%d shadowMapRefresh=%d "
-                              "texture16=%d",
+                              "texture16=%d kurtCompressed=%d",
                               (int)enhancedToggles.enableSkyShadows,
                               (int)enhancedToggles.enableFragmentLights,
                               (int)enhancedToggles.enableHaze, (int)enhancedToggles.enableMirrors,
@@ -446,7 +467,8 @@ int main(int argc, char** argv) {
                               (int)enhancedToggles.shadowMapFlipBytes,
                               (int)enhancedToggles.shadowMapSize,
                               (int)enhancedToggles.shadowMapRefresh,
-                              (int)enhancedToggles.texture16);
+                              (int)enhancedToggles.texture16,
+                              (int)enhancedToggles.kurtCompressed);
         }
 #undef MDK_HW_STR
 #undef MDK_HW_STR2
@@ -543,6 +565,9 @@ int main(int argc, char** argv) {
     // whether the HD copy is used, so the toggle stays live.
     mdk::ModImages hdPack;
     HdPackSource hdSource;
+    // Kurt's compressed frames' index (loadCompressedManifest, kKurtSetRoot):
+    // filled where his animations load, read from there.
+    mdk::ModImages kurtSet;
     if (loadHdPack(options.level, &hdPack)) {
         hdSource.pack = &hdPack;
         surfaces.setColourReplacementLookup(hdPackLookup, &hdSource);
@@ -730,6 +755,34 @@ int main(int argc, char** argv) {
                         kurtSprite.setMods(&hdPack);
                     }
                     mdk::log3dsPrintf("sprites: Kurt's animations loaded");
+                    // KURT'S COMPRESSED FRAMES and the start set, at level load
+                    // (cold; AGENTS.md P5: no SD read inside a frame). One line:
+                    // what was read and preloaded, its bytes and its time. Off
+                    // (kurtCompressed=0, the A/B): every frame is the expansion,
+                    // in the texture16 store (RGBA5551, or RGBA8 under texture16=0).
+                    {
+                        const double started = nowSeconds();
+                        mdk::KurtSprite::CompressedReport report;
+                        int32_t listed = 0;
+                        const bool have =
+                            enhancedToggles.kurtCompressed &&
+                            loadCompressedManifest(kKurtSetRoot, flow.state().level, &kurtSet,
+                                                   &listed);
+                        kurtSprite.useCompressedFrames(have ? &kurtSet : nullptr, &report);
+                        const double read = nowSeconds();
+                        kurtSprite.preloadStartSet(&report);
+                        const double done = nowSeconds();
+                        mdk::log3dsPrintf(
+                            "sprites: kurtCompressed=%d texture16=%d set=%s (%d listed): %d/%d frames "
+                            "ETC1A4, %d bytes of .t3x read in %d ms; start set %d/%d frames "
+                            "preloaded, %d GPU bytes of %d, in %d ms",
+                            (int)enhancedToggles.kurtCompressed, (int)enhancedToggles.texture16,
+                            have ? kKurtSetRoot : "none", (int)listed, (int)report.compressed,
+                            (int)report.frames, (int)report.fileBytes,
+                            (int)((read - started) * 1000.0), (int)report.preloaded,
+                            (int)report.startFrames, (int)report.preloadBytes,
+                            (int)report.preloadBudget, (int)((done - read) * 1000.0));
+                    }
                 } else {
                     mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
                 }

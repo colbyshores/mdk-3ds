@@ -46,6 +46,21 @@ int32_t mdk_render_index_texture_bytes(MdkRenderer r_, int32_t w, int32_t h) {
     return w * h;
 }
 
+// THE DESKTOP HAS NO COMPRESSED TEXTURES: it keeps the palette indices (one
+// byte a pixel, the lookup in the shader), so there is nothing a compressed
+// frame would save. The answer is "none", and the caller makes the index texture
+// as it always did (render.h).
+MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t, int32_t, const uint8_t*,
+                                                  int32_t) {
+    return -1;
+}
+
+// No per-texture answer here: callers fall back to mdk_render_index_texture_bytes,
+// which is the desktop's exact cost of an index texture (render.h).
+int32_t mdk_render_texture_bytes(MdkRenderer, MdkTextureId) {
+    return 0;
+}
+
 MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r_, int32_t w, int32_t h,
                                             const uint8_t* px) {
     RendererVk* r = asVk(r_);

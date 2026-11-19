@@ -68,6 +68,10 @@ public:
         int32_t frame = -1;
         int32_t bytes = 0;      // the GPU memory it costs while resident
         uint32_t lastUsed = 0;  // the draw counter when it was last drawn
+        // PINNED: made at level load and kept for the level (Kurt's start set,
+        // KurtSprite::preloadStartSet). Counted in residentBytes, but outside
+        // the budget's rotation: never a victim, and not part of overBudget.
+        bool pinned = false;
     };
 
     // The bound, in GPU bytes. 0 means "no bound": nothing is ever dropped.
@@ -75,12 +79,17 @@ public:
     int32_t budget() const { return budget_; }
     bool bounded() const { return budget_ > 0; }
     int32_t residentBytes() const { return residentBytes_; }
+    int32_t pinnedBytes() const { return pinnedBytes_; }
     int32_t residentCount() const { return (int32_t)resident_.size(); }
-    bool overBudget() const { return budget_ > 0 && residentBytes_ > budget_; }
+    // The ROTATING frames over the budget: a pinned frame is held outside it.
+    bool overBudget() const { return budget_ > 0 && residentBytes_ - pinnedBytes_ > budget_; }
 
     // A frame became resident.
     void add(const Entry& entry) {
         residentBytes_ += entry.bytes;
+        if (entry.pinned) {
+            pinnedBytes_ += entry.bytes;
+        }
         resident_.push_back(entry);
     }
 
@@ -91,6 +100,9 @@ public:
                 continue;
             }
             residentBytes_ -= resident_[i].bytes;
+            if (resident_[i].pinned) {
+                pinnedBytes_ -= resident_[i].bytes;
+            }
             resident_[i] = resident_.back();
             resident_.pop_back();
             return true;
@@ -102,6 +114,7 @@ public:
     // from an empty cache, even if a previous load had already drawn frames.
     void clear() {
         residentBytes_ = 0;
+        pinnedBytes_ = 0;
         resident_.clear();
     }
 
@@ -113,6 +126,9 @@ public:
         while (i < resident_.size()) {
             if (resident_[i].animation == animation) {
                 residentBytes_ -= resident_[i].bytes;
+                if (resident_[i].pinned) {
+                    pinnedBytes_ -= resident_[i].bytes;
+                }
                 resident_[i] = resident_.back();
                 resident_.pop_back();
                 continue;
@@ -138,7 +154,8 @@ public:
         const Entry* oldest = nullptr;
         for (size_t i = 0; i < resident_.size(); i++) {
             const Entry& entry = resident_[i];
-            if (entry.animation == keepAnimation && entry.frame == keepFrame) {
+            if (entry.pinned ||
+                (entry.animation == keepAnimation && entry.frame == keepFrame)) {
                 continue;
             }
             if (!oldest || entry.lastUsed < oldest->lastUsed) {
@@ -161,6 +178,7 @@ public:
 private:
     int32_t budget_ = 0;
     int32_t residentBytes_ = 0;
+    int32_t pinnedBytes_ = 0;
     uint32_t clock_ = 0;
     std::vector<Entry> resident_;
 };
@@ -175,7 +193,8 @@ public:
     //
     // THE TEXTURE IS MADE WHEN THE FRAME IS FIRST DRAWN, not when the
     // animation is loaded: see SpriteResidency above. `texture` is -1 while
-    // the frame is not resident.
+    // the frame is not resident. (The one exception is the start set, made at
+    // level load from compressed copies: preloadStartSet.)
     struct Frame {
         int32_t texture = -1;
         int32_t width = 0;
@@ -187,6 +206,11 @@ public:
         // a frame whose texture has been dropped has to be uploaded again
         // and the archive it came from is gone by then.
         std::vector<uint8_t> indices;
+        // The frame's COMPRESSED copy, a .t3x file's bytes (useCompressedFrames;
+        // EnhancedToggles::kurtCompressed), or empty. Read at level load -- a
+        // frame's file is 1-6 KB, the whole set 1.2 MB -- so making the texture
+        // on first draw is an import from memory and never an SD read.
+        std::vector<uint8_t> compressed;
     };
 
     // An animation's decoded frames. `repeat` is the C#'s Repeat enum.
@@ -219,6 +243,37 @@ public:
     // The mods whose images replace Kurt's frames under the Sprite
     // shading (the C#'s KurtSprite mods; null: none). Set before load.
     void setMods(ModImages* mods) { mods_ = mods; }
+
+    // KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): the set made
+    // offline from the player's TRAVSPRT.BNI (mdk_3ds/tools/kurt_etc1_convert.py),
+    // indexed like the HD pack (ModImages::fromList; files by name, a level's
+    // own folder first). Every frame that has a file gets its bytes read now --
+    // level load, after load() -- and from then on its texture is the compressed
+    // one; a frame without one keeps the index texture. Null: none (the toggle
+    // off: every frame the index texture, in the backend's texture16 store).
+    struct CompressedReport {
+        int32_t frames = 0;        // frames loaded
+        int32_t compressed = 0;    // of them, with a compressed copy
+        int32_t fileBytes = 0;     // the copies' bytes, held in memory
+        int32_t startFrames = 0;   // the start set's frames (preloadStartSet)
+        int32_t preloaded = 0;     // of them, made now and pinned
+        int32_t preloadBytes = 0;  // their GPU bytes
+        int32_t preloadBudget = 0; // the bound they were made under
+    };
+    void useCompressedFrames(ModImages* set, CompressedReport* report);
+
+    // THE START SET (K_STILL, K_FALL, K_LAND, K_IDLE: what every level opens on)
+    // made NOW, at level load, from the compressed copies, and pinned for the
+    // level -- while it fits the backend's preload bound
+    // (MdkCapabilities::sprite_preload_bytes; a frame past the bound is made on
+    // first draw as before). Frames without a compressed copy are not preloaded:
+    // their making is the ARM11 expansion the preload exists to avoid, and the
+    // set would not fit in that store anyway. After useCompressedFrames.
+    void preloadStartSet(CompressedReport* report);
+
+    // The names of the start set, in preload order.
+    static int startSetCount();
+    static const char* startSetName(int index);
 
     // Adds one level animation (K_SURF, K_SLIDE, ...). A name already loaded
     // from the BNI is replaced, as the C#'s level animations take precedence.
@@ -303,6 +358,16 @@ private:
     // the first time the frame is drawn and kept until the residency budget
     // says it has to go. False when the texture could not be made.
     bool ensureTexture(int32_t animation, int32_t frame);
+
+    // Makes a frame's GPU copy: the compressed copy when it has one and the
+    // backend takes it, else the index texture; the HD pack's link either way.
+    // The texture id, or -1.
+    int32_t makeFrameTexture(int32_t animation, int32_t frame);
+
+    // What a made frame costs resident: the backend's count of the texture it
+    // actually made (its real store, a compressed copy's ETC bytes), else the
+    // index-texture estimate, else the indices.
+    int32_t frameBytes(const Frame& frame) const;
 
     // Drops the frames that have gone unused the longest until the resident
     // set is inside the budget. The frame being drawn is never dropped.

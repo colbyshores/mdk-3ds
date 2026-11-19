@@ -441,6 +441,36 @@ size_t textureBytes(TexelFormat format, int32_t paddedWidth, int32_t paddedHeigh
     }
 }
 
+CompressedRect compressedFrameRect(int32_t realWidth, int32_t realHeight, int32_t textureWidth,
+                                   int32_t textureHeight) {
+    CompressedRect rect;
+    if (realWidth <= 0 || realHeight <= 0 || textureWidth <= 0 || textureHeight <= 0) {
+        return rect;
+    }
+    const int32_t w = realWidth < textureWidth ? realWidth : textureWidth;
+    const int32_t h = realHeight < textureHeight ? realHeight : textureHeight;
+    rect.left = 0.0f;
+    rect.top = 1.0f;
+    rect.right = (float)w / (float)textureWidth;
+    rect.bottom = 1.0f - (float)h / (float)textureHeight;
+    return rect;
+}
+
+static int32_t potAtLeast8(int32_t value) {
+    int32_t result = 8;
+    while (result < value && result < 1024) {
+        result *= 2;
+    }
+    return result;
+}
+
+size_t spriteFrameBytes(TexelFormat format, int32_t realWidth, int32_t realHeight, int32_t levels) {
+    if (realWidth <= 0 || realHeight <= 0) {
+        return 0;
+    }
+    return textureBytes(format, potAtLeast8(realWidth), potAtLeast8(realHeight), levels);
+}
+
 TexelFormat expandedTexelFormat(bool texture16, bool keepRgba8, int32_t paddedWidth,
                                 int32_t paddedHeight, const uint8_t* level0, size_t level0Texels) {
     if (!texture16 || keepRgba8 || !level0 || level0Texels == 0 ||

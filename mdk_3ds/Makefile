@@ -156,6 +156,11 @@ endif
 # config.ini lines (';' between them, no spaces, no commas) over the console's own
 # config, for the per-toggle cost profiles: one console config per run without
 # writing the SD card. Only main_3ds.cpp reads it: touch it after changing TOGGLES.
+# Kurt's three stores, for the A/B (the boot log's `sprites: kurtCompressed=...`
+# line says which ran): TOGGLES='kurtCompressed=0;texture16=0' is the RGBA8
+# expansion, TOGGLES='kurtCompressed=0' the RGBA5551 one, and no override (or
+# TOGGLES='kurtCompressed=1') the ETC1A4 frames from romfs:/kurt (stage_romfs.sh;
+# MDK_KURT_ETC1=0 builds a RomFS without them).
 ifneq ($(strip $(TOGGLES)),)
 ifndef AUTOQUIT
 $(error TOGGLES=$(TOGGLES) needs AUTOQUIT: the config override is a harness-build feature)

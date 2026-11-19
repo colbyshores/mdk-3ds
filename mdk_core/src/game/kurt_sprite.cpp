@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "formats/bni.h"
+#include "formats/file_system.h"
 #include "formats/palette.h"
 #include "formats/sprite_animation.h"
 #include "formats/texture.h"
@@ -462,49 +463,13 @@ bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
     if (frame.texture < 0) {
         // THE C#'s Texture(name, frame, image): the frame's texture, made
         // the first time the frame is drawn.
-        const int32_t texture = mdk_render_create_index_texture(
-            renderer_, frame.width, frame.height, frame.indices.data(), paletteRgba_.data());
-        if (texture < 0) {
+        if (makeFrameTexture(animationIndex, frameIndex) < 0) {
             return false;
-        }
-        frame.texture = texture;
-        // A mod's image for this frame (the C#'s KurtSprite.Upscaled: the
-        // enhanced look's sprites only, named ANIMATION_frame). Given to
-        // the renderer as the frame's colour texture; the index texture
-        // stays for the original look.
-        if (mods_ && shading_ == Shading::Sprite) {
-            formats::Texture image;
-            image.setName(animation.name);
-            image.setWidth(frame.width);
-            image.setHeight(frame.height);
-            image.setFrameCount(1);
-            image.setIndices(frame.indices.data(), (int32_t)frame.indices.size());
-            formats::Palette palette;
-            memcpy(palette.mutableRgba(), paletteRgba_.data(), 256 * 4);
-            HdImage replacement;
-            const std::string name =
-                animation.name + "_" + std::to_string(frameIndex);
-            if (mods_->compressed()) {
-                // The 3DS HD pack: the frame's .t3x, imported by the backend.
-                std::string path;
-                if (mods_->resolve(ModImages::Kind::Textures, name, image, palette, &path)) {
-                    mdk_render_replace_compressed(renderer_, texture, path.c_str());
-                }
-            } else if (mods_->texture(name, image, palette, &replacement)) {
-                mdk_render_replace_colour(renderer_, texture, palette_, 1, replacement.width,
-                                          replacement.height, replacement.rgba.data());
-            }
         }
         SpriteResidency::Entry entry;
         entry.animation = animationIndex;
         entry.frame = frameIndex;
-        // WHAT IT COSTS. The backend's own arithmetic: the 3DS expands the
-        // indices through the palette into RGBA8 padded to powers of two,
-        // and the desktop keeps the indices as they are.
-        entry.bytes = mdk_render_index_texture_bytes(renderer_, frame.width, frame.height);
-        if (entry.bytes <= 0) {
-            entry.bytes = frame.width * frame.height;
-        }
+        entry.bytes = frameBytes(frame);
         entry.lastUsed = now;
         residency_.add(entry);
     } else {
@@ -512,6 +477,162 @@ bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
     }
     trimResidency(animationIndex, frameIndex);
     return true;
+}
+
+int32_t KurtSprite::makeFrameTexture(int32_t animationIndex, int32_t frameIndex) {
+    Animation& animation = animations_[(size_t)animationIndex];
+    Frame& frame = animation.frames[(size_t)frameIndex];
+    int32_t texture = -1;
+    // THE COMPRESSED COPY FIRST (EnhancedToggles::kurtCompressed): an import of
+    // bytes already in memory, never an expansion. A backend with no compressed
+    // textures (the desktop) answers -1 and the index texture is made instead.
+    if (!frame.compressed.empty()) {
+        texture = mdk_render_create_compressed_texture(renderer_, frame.width, frame.height,
+                                                       frame.compressed.data(),
+                                                       (int32_t)frame.compressed.size());
+    }
+    if (texture < 0) {
+        texture = mdk_render_create_index_texture(renderer_, frame.width, frame.height,
+                                                  frame.indices.data(), paletteRgba_.data());
+    }
+    if (texture < 0) {
+        return -1;
+    }
+    frame.texture = texture;
+    // A mod's image for this frame (the C#'s KurtSprite.Upscaled: the
+    // enhanced look's sprites only, named ANIMATION_frame). Given to
+    // the renderer as the frame's colour texture; the frame's own texture
+    // stays for the original look. The HD pack's copy wins over a compressed
+    // frame as it does over the index texture (the backend's per-draw choice).
+    if (mods_ && shading_ == Shading::Sprite) {
+        formats::Texture image;
+        image.setName(animation.name);
+        image.setWidth(frame.width);
+        image.setHeight(frame.height);
+        image.setFrameCount(1);
+        image.setIndices(frame.indices.data(), (int32_t)frame.indices.size());
+        formats::Palette palette;
+        memcpy(palette.mutableRgba(), paletteRgba_.data(), 256 * 4);
+        HdImage replacement;
+        const std::string name = animation.name + "_" + std::to_string(frameIndex);
+        if (mods_->compressed()) {
+            // The 3DS HD pack: the frame's .t3x, imported by the backend.
+            std::string path;
+            if (mods_->resolve(ModImages::Kind::Textures, name, image, palette, &path)) {
+                mdk_render_replace_compressed(renderer_, texture, path.c_str());
+            }
+        } else if (mods_->texture(name, image, palette, &replacement)) {
+            mdk_render_replace_colour(renderer_, texture, palette_, 1, replacement.width,
+                                      replacement.height, replacement.rgba.data());
+        }
+    }
+    return texture;
+}
+
+int32_t KurtSprite::frameBytes(const Frame& frame) const {
+    // WHAT IT COSTS, AS MADE. The backend's count of the texture it actually
+    // made: an ETC1A4 frame is one byte a texel (and any chain it was converted
+    // with), a 16-bit store two, RGBA8 four -- so the same budget holds four
+    // times the frames compressed as it does expanded. A backend with no
+    // per-texture answer (the desktop) is costed by its index-texture
+    // arithmetic, which is its exact figure.
+    int32_t bytes = frame.texture >= 0 ? mdk_render_texture_bytes(renderer_, frame.texture) : 0;
+    if (bytes <= 0) {
+        bytes = mdk_render_index_texture_bytes(renderer_, frame.width, frame.height);
+    }
+    if (bytes <= 0) {
+        bytes = frame.width * frame.height;
+    }
+    return bytes;
+}
+
+namespace {
+const char* const kStartSet[] = {"K_STILL", "K_FALL", "K_LAND", "K_IDLE"};
+} // namespace
+
+int KurtSprite::startSetCount() {
+    return (int)(sizeof(kStartSet) / sizeof(kStartSet[0]));
+}
+
+const char* KurtSprite::startSetName(int index) {
+    return index >= 0 && index < startSetCount() ? kStartSet[index] : "";
+}
+
+void KurtSprite::useCompressedFrames(ModImages* set, CompressedReport* report) {
+    CompressedReport local;
+    CompressedReport* out = report ? report : &local;
+    out->frames = 0;
+    out->compressed = 0;
+    out->fileBytes = 0;
+    const formats::FileSystem* system = formats::fileSystem();
+    for (size_t a = 0; a < animations_.size(); a++) {
+        Animation& animation = animations_[a];
+        for (size_t f = 0; f < animation.frames.size(); f++) {
+            Frame& frame = animation.frames[f];
+            std::vector<uint8_t>().swap(frame.compressed);
+            out->frames++;
+            if (!set || !system || !system->readFile) {
+                continue;
+            }
+            // Resolved by NAME (the set's files are not keyed, so no hash is
+            // taken), a level's own folder first: the HD pack's rule.
+            formats::Texture unkeyed;
+            formats::Palette unused;
+            std::string path;
+            const std::string name = animation.name + "_" + std::to_string(f);
+            if (!set->resolve(ModImages::Kind::Textures, name, unkeyed, unused, &path)) {
+                continue;
+            }
+            if (!system->readFile(system->user, path.c_str(), &frame.compressed)) {
+                std::vector<uint8_t>().swap(frame.compressed);
+                continue;
+            }
+            out->compressed++;
+            out->fileBytes += (int32_t)frame.compressed.size();
+        }
+    }
+}
+
+void KurtSprite::preloadStartSet(CompressedReport* report) {
+    CompressedReport local;
+    CompressedReport* out = report ? report : &local;
+    out->startFrames = 0;
+    out->preloaded = 0;
+    out->preloadBytes = 0;
+    out->preloadBudget = renderer_ ? mdk_render_capabilities(renderer_).sprite_preload_bytes : 0;
+    for (int n = 0; n < startSetCount(); n++) {
+        const int32_t index = findAnimation(kStartSet[n]);
+        if (index < 0) {
+            continue;
+        }
+        Animation& animation = animations_[(size_t)index];
+        for (size_t f = 0; f < animation.frames.size(); f++) {
+            Frame& frame = animation.frames[f];
+            out->startFrames++;
+            if (out->preloadBudget <= 0 || frame.compressed.empty() || frame.texture >= 0) {
+                continue;
+            }
+            if (makeFrameTexture(index, (int32_t)f) < 0) {
+                continue;
+            }
+            const int32_t bytes = frameBytes(frame);
+            if (out->preloadBytes + bytes > out->preloadBudget) {
+                // Past the bound: this frame and the rest are made on first draw.
+                mdk_render_release_texture(renderer_, frame.texture);
+                frame.texture = -1;
+                continue;
+            }
+            SpriteResidency::Entry entry;
+            entry.animation = index;
+            entry.frame = (int32_t)f;
+            entry.bytes = bytes;
+            entry.lastUsed = residency_.tick();
+            entry.pinned = true;
+            residency_.add(entry);
+            out->preloaded++;
+            out->preloadBytes += bytes;
+        }
+    }
 }
 
 void KurtSprite::trimResidency(int32_t keepAnimation, int32_t keepFrame) {

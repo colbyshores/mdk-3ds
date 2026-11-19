@@ -205,6 +205,17 @@ struct C3dTexture {
     // RGBA bytes of an RGBA texture.
     bool indexed = false;
 
+    // A COMPRESSED texture (mdk_render_create_compressed_texture: Kurt's original
+    // frames as ETC1A4, EnhancedToggles::kurtCompressed). `source` holds the .t3x
+    // file's bytes and the GPU copy is tex3ds' import of them (importCompressed,
+    // 04_textures.inc) -- NEVER a palette expansion; an eviction is undone by
+    // importing again. `rect` is the real image's rectangle in the imported
+    // texture (pica::compressedFrameRect), drawn through like an HD copy's, and
+    // `gpuBytes` what the import holds (C3D_TexCalcTotalSize, chain included).
+    bool compressed = false;
+    mdk::pica::CompressedRect rect;
+    uint32_t gpuBytes = 0;
+
     // The source changed while the old GPU copy may still be in flight. The
     // replacement waits for the next frame boundary (AGENTS.md P3).
     bool stale = false;
@@ -749,6 +760,11 @@ struct RendererC3D {
     int32_t texturesMade[4] = {0, 0, 0, 0};
     size_t textureBytesSaved = 0;
     int32_t texturesMadeLogged = -1;   // the making count at the last line
+    // The COMPRESSED textures imported (EnhancedToggles::kurtCompressed: Kurt's
+    // ETC frames), counted per import as above, and the level-0 bytes they did
+    // not allocate against the RGBA8 expansion of the same padded size.
+    int32_t compressedMade = 0;
+    size_t compressedBytesSaved = 0;
 
     // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
     // may still be reading the last frame's textures then. C3D_FrameBegin

@@ -603,6 +603,20 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     // UNMEASURED (AGENTS.md P6). What the bound buys is that the set can
     // never be the 49.94 MiB the eager upload asked for.
     caps.sprite_residency_bytes = 1024 * 1024;
+    // THE START SET, preloaded (render_types.h; EnhancedToggles::kurtCompressed).
+    // K_STILL, K_FALL, K_LAND and K_IDLE as ETC1A4 at their original padded sizes
+    // are 105 frames, 2,662,400 bytes (measured over the GOG TRAVSPRT.BNI, no mip
+    // chain: kurt_etc1_convert.py's default). As RGBA5551 the same frames are
+    // 5,324,800 and as RGBA8 10,649,600, so only the compressed set is ever
+    // preloaded. Three megabytes holds it with room for a frame-size change, and
+    // holds a --mips set (a third more) only in part: the rest is made on first
+    // draw as before. Kept for the level, outside the megabyte above, which then
+    // rotates only the other animations: at one byte a texel every one of them
+    // but the chute's sway fits whole (the largest, K_BANG, is 999,424 bytes), so
+    // their cycles stop re-making frames. K_CHUTEC does not (12 frames of 512x512,
+    // 262,144 bytes each as ETC1A4, a megabyte each as RGBA8): it still rotates,
+    // four frames at a time, each an import of bytes in memory, not an expansion.
+    caps.sprite_preload_bytes = 3 * 1024 * 1024;
     return caps;
 }
 

@@ -298,6 +298,24 @@ MDK_TEST(EnhancedConfigRoundTrips) {
         mdk::EnhancedToggles off;
         MDK_CHECK(mdk::parseEnhancedConfig("texture16 = off\n", &off) && !off.texture16);
     }
+    // Kurt's compressed frames on the 3DS: ON by default, written, and read back
+    // when it is off (the owner's three-way A/B: kurtCompressed=0 with texture16=1
+    // is the RGBA5551 expansion, with texture16=0 the RGBA8 one).
+    MDK_CHECK(toggles.kurtCompressed && back.kurtCompressed);
+    MDK_CHECK(text.find("kurtCompressed=1\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles expanded;
+        expanded.kurtCompressed = false;
+        mdk::EnhancedToggles expandedBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(expanded).c_str(),
+                                           &expandedBack));
+        MDK_CHECK(!expandedBack.kurtCompressed && expandedBack.texture16);
+        MDK_CHECK(mdk::writeEnhancedConfig(expanded).find("kurtCompressed=0\n") !=
+                  std::string::npos);
+        mdk::EnhancedToggles harness;
+        MDK_CHECK(mdk::parseEnhancedConfig("texture16=0\nkurtCompressed=0\n", &harness) &&
+                  !harness.kurtCompressed && !harness.texture16);
+    }
     // How often the 3DS redraws the shadow map (not a toggle): 0 = automatic by
     // default, written, read back; only 1-4 are taken, anything else is 0.
     MDK_CHECK(toggles.shadowMapRefresh == 0 && back.shadowMapRefresh == 0);

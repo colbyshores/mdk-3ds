@@ -164,6 +164,29 @@ MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r, int32_t width, int32_
 // code. Returns 0 when the backend has no answer.
 int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t height);
 
+// Create a texture from a COMPRESSED file's bytes: a tex3ds .t3x (ETC1 /
+// ETC1A4, LZ-compressed or not) whose texture holds a width x height image at
+// its TOP-LEFT, the rest padding (Kurt's original frames,
+// mdk_3ds/tools/kurt_etc1_convert.py; EnhancedToggles::kurtCompressed). The
+// bytes are copied: the backend makes the GPU copy by importing them -- no
+// palette expansion, no ARM11 work but a decompress and a copy -- and makes it
+// again from them after an eviction. Drawn like an index texture's id
+// (material.texture), through the image's rectangle.
+//
+// Returns -1 when the backend has no compressed textures -- the Linux backend
+// keeps the palette indices and answers -1, so its callers draw the index
+// texture as before -- or when the bytes do not import.
+MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t width, int32_t height,
+                                                  const uint8_t* t3x, int32_t size);
+
+// The GPU bytes a MADE texture holds right now, in the store it was actually
+// made in (an index texture's RGBA8 or 16-bit store and its mip chain, a
+// compressed texture's ETC data). What a residency that wants to count real
+// bytes asks once the texture exists. 0 when the texture is not resident or
+// the backend has no answer (then mdk_render_index_texture_bytes is the
+// estimate).
+int32_t mdk_render_texture_bytes(MdkRenderer r, MdkTextureId texture);
+
 // Create a 256x1 RGBA palette.
 MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba256);
 

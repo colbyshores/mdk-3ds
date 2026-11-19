@@ -76,6 +76,15 @@ MdkTextureId mdk_render_create_rgba_texture(MdkRenderer, int32_t, int32_t, const
     return 3;
 }
 
+MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t, int32_t, const uint8_t*,
+                                                  int32_t) {
+    return -1;
+}
+
+int32_t mdk_render_texture_bytes(MdkRenderer, MdkTextureId) {
+    return 0;
+}
+
 MdkPaletteId mdk_render_create_palette(MdkRenderer, const uint8_t*) {
     mdk_test_palettes++;
     return 7;

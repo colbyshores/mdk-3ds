@@ -836,6 +836,31 @@ enum class TexelFormat { Rgba8, Etc1, Etc1A4, Rgb565, Rgba5551, Rgba4 };
 size_t textureBytes(TexelFormat format, int32_t paddedWidth, int32_t paddedHeight,
                     int32_t levels);
 
+// THE RECTANGLE A COMPRESSED KURT FRAME OCCUPIES in its .t3x
+// (EnhancedToggles::kurtCompressed; mdk_3ds/tools/kurt_etc1_convert.py). The
+// converter pads the ORIGINAL frame, unscaled, to a power of two with the image
+// at the TOP-LEFT, so the frame is realWidth x realHeight of the
+// textureWidth x textureHeight texture. In tex3ds' own subtexture convention --
+// the one the HD copies are drawn through (06_draw.inc: uv' = uv * (right - left,
+// bottom - top) + (left, top)) -- that is left 0, top 1, right w/W, bottom 1 - h/H:
+// exactly what tex3ds itself writes for an image it pads (measured on a 52x146
+// Kurt frame: right 832/1024 = 52/64, bottom 440/1024 = 1 - 146/256).
+struct CompressedRect {
+    float left = 0.0f;
+    float top = 1.0f;
+    float right = 1.0f;
+    float bottom = 0.0f;
+};
+CompressedRect compressedFrameRect(int32_t realWidth, int32_t realHeight, int32_t textureWidth,
+                                   int32_t textureHeight);
+
+// What one Kurt frame costs resident, by store (the sprite residency's bytes and
+// the figures the A/B is reported in): the frame's padded size in RGBA8
+// (texture16=0), RGBA5551 (texture16=1: an index texture's alpha is 0/255), or
+// ETC1A4 (kurtCompressed=1: one byte a texel, `levels` mip levels below level 0
+// when the set was converted with --mips; 0 by default).
+size_t spriteFrameBytes(TexelFormat format, int32_t realWidth, int32_t realHeight, int32_t levels);
+
 // ---------------------------------------------------------------------------
 // THE 16-BIT STORE (EnhancedToggles::texture16)
 // ---------------------------------------------------------------------------

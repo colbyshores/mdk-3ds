@@ -202,7 +202,8 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
             // this frame draws is not freed under the GPU, AGENTS.md P3). The
             // HUD's digits and the fonts keep the palette's exact colours; at most
             // the first frame that draws one shows the 16-bit copy.
-            if (draw->material.pass == mdk::Pass::Overlay && !resource.keepRgba8) {
+            if (draw->material.pass == mdk::Pass::Overlay && !resource.keepRgba8 &&
+                !resource.compressed) {
                 resource.keepRgba8 = true;
                 if (resource.valid && resource.format != mdk::pica::TexelFormat::Rgba8) {
                     resource.stale = true;
@@ -366,6 +367,15 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         offsetX = hd->left;
         scaleY = hd->bottom - hd->top;
         offsetY = hd->top;
+    } else if (resource.compressed) {
+        // A COMPRESSED texture (Kurt's ETC1A4 frames) is a tex3ds texture too:
+        // its image's rectangle, in the same convention (pica::compressedFrameRect),
+        // and no last-row flip on top -- the converter feeds tex3ds the frame top
+        // row first, as hd_pack_convert.py does, and tex3ds' top is t = 1.
+        scaleX = resource.rect.right - resource.rect.left;
+        offsetX = resource.rect.left;
+        scaleY = resource.rect.bottom - resource.rect.top;
+        offsetY = resource.rect.top;
     } else {
         // The PICA's t runs from the LAST memory row (pica::sceneUvFromTop has
         // the rule and the measurement). Every draw takes it, the canvas too:

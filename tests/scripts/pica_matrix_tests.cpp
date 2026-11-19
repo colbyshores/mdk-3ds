@@ -1364,6 +1364,63 @@ void testThe16BitStore() {
     PICA_CHECK(at8 == chainTexels);
 }
 
+// KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): the rectangle a
+// padded original frame is drawn through, and what one frame costs per store --
+// the numbers the three-way A/B (RGBA8 / RGBA5551 / ETC1A4) and the start-set
+// preload bound are reported in.
+void testTheCompressedKurtFrame() {
+    using mdk::pica::TexelFormat;
+    // THE RECTANGLE is tex3ds' own for an image it pads at the top-left, measured
+    // on K_IDLE_0 (52x146 in 64x256): right 832/1024, top 1024/1024, bottom
+    // 440/1024 (in 1/1024ths, rounded) -- so a frame converted with its padding
+    // done on the host draws exactly as tex3ds would have mapped it.
+    const mdk::pica::CompressedRect idle = mdk::pica::compressedFrameRect(52, 146, 64, 256);
+    PICA_CHECK(idle.left == 0.0f && idle.top == 1.0f);
+    PICA_CHECK(idle.right == 52.0f / 64.0f);
+    PICA_CHECK(idle.bottom == 1.0f - 146.0f / 256.0f);
+    PICA_CHECK((int)(idle.right * 1024.0f + 0.5f) == 832);
+    PICA_CHECK((int)(idle.bottom * 1024.0f + 0.5f) == 440);
+    // A frame that fills its texture is the whole of it (tex3ds' full image).
+    const mdk::pica::CompressedRect full = mdk::pica::compressedFrameRect(64, 256, 64, 256);
+    PICA_CHECK(full.left == 0.0f && full.top == 1.0f && full.right == 1.0f &&
+               full.bottom == 0.0f);
+    // A bigger image than its texture is clamped to the texture, never mapped
+    // past its edge; nonsense sizes give the whole texture.
+    const mdk::pica::CompressedRect over = mdk::pica::compressedFrameRect(80, 300, 64, 256);
+    PICA_CHECK(over.right == 1.0f && over.bottom == 0.0f);
+    const mdk::pica::CompressedRect none = mdk::pica::compressedFrameRect(0, 10, 64, 256);
+    PICA_CHECK(none.right == 1.0f && none.bottom == 0.0f);
+
+    // ONE FRAME, PER STORE. K_IDLE_0 (52x146 -> 64x256): RGBA8 64 KiB (texture16=0),
+    // RGBA5551 32 KiB (texture16=1), ETC1A4 16 KiB (kurtCompressed=1, no chain:
+    // the converter's default) -- one byte a texel, a quarter of the expansion.
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Rgba8, 52, 146, 0) == 65536u);
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Rgba5551, 52, 146, 0) == 32768u);
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 52, 146, 0) == 16384u);
+    // The largest, K_CHUTEC_0 (339x288 -> 512x512): a whole megabyte expanded to
+    // RGBA8 -- the residency's entire budget for one frame -- and 256 KiB as ETC1A4.
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Rgba8, 339, 288, 0) == 1048576u);
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Rgba5551, 339, 288, 0) == 524288u);
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 339, 288, 0) == 262144u);
+    // K_BANG_1 (113x125 -> 128x128): 64 KiB / 32 KiB / 16 KiB.
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Rgba8, 113, 125, 0) == 65536u);
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 113, 125, 0) == 16384u);
+    // A --mips set: the chain is a third more (64x256 down to 8x32: 16384 + 4096
+    // + 1024 + 256 bytes), the same rule textureBytes costs the HD copies with.
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 52, 146, 3) == 21760u);
+    // The PICA's floor: a frame under 8 texels a side is an 8x8 texture.
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 3, 5, 0) == 64u);
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 0, 5, 0) == 0u);
+
+    // THE RESIDENCY'S MEGABYTE in frames of K_IDLE_0's size, per store: 16
+    // expanded to RGBA8, 32 in RGBA5551, 64 as ETC1A4 -- the same bound, four
+    // times the frames.
+    const size_t budget = 1024u * 1024u;
+    PICA_CHECK(budget / mdk::pica::spriteFrameBytes(TexelFormat::Rgba8, 52, 146, 0) == 16u);
+    PICA_CHECK(budget / mdk::pica::spriteFrameBytes(TexelFormat::Rgba5551, 52, 146, 0) == 32u);
+    PICA_CHECK(budget / mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 52, 146, 0) == 64u);
+}
+
 void testTheHdResidencyPolicy() {
     using mdk::pica::HdSlot;
     // THE VICTIM: the least recently drawn resident copy that the protected frame
@@ -1952,6 +2009,7 @@ int runPicaMatrixTests() {
     testTheFilteredEdge();
     testTheMipChain();
     testThe16BitStore();
+    testTheCompressedKurtFrame();
     testTheHdResidencyPolicy();
     testTheSunsShadow();
     return failures;

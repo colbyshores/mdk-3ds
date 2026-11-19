@@ -108,6 +108,37 @@ fi
 stage_dir fall3d "$SRC/FALL3D"
 stage_dir stream "$SRC/STREAM"
 
+# KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): his original
+# TRAVSPRT.BNI frames as ETC1A4, made from the same data by
+# kurt_etc1_convert.py into $KURT_ETC1_DIR (default <repo>/build-kurt-etc1, kept
+# across `make clean`) -- incremental, ~2 s when nothing changed, ~2 min the first
+# time -- and hard-linked here as kurt/ with its own manifest.txt, CASE KEPT (the
+# game opens these by the manifest's exact names, not through the data's
+# case-insensitive resolver). Not fatal: without the set (no tex3ds, no numpy or
+# PIL, a failed encode) the game draws every frame from its palette indices.
+KURT_ETC1_DIR="${KURT_ETC1_DIR:-$REPO/build-kurt-etc1}"
+if [ "${MDK_KURT_ETC1:-1}" != "0" ]; then
+    if MDK_DATA_DIR="$SRC" python3 "$HERE/kurt_etc1_convert.py" "$KURT_ETC1_DIR" >&2; then
+        :
+    else
+        echo "stage_romfs:   (warning) kurt_etc1_convert.py failed; Kurt is expanded" >&2
+    fi
+fi
+if [ -f "$KURT_ETC1_DIR/manifest.txt" ] && [ -d "$KURT_ETC1_DIR/textures" ]; then
+    mkdir -p "$OUT/kurt"
+    ln "$KURT_ETC1_DIR/manifest.txt" "$OUT/kurt/manifest.txt" 2>/dev/null ||
+        cp "$KURT_ETC1_DIR/manifest.txt" "$OUT/kurt/manifest.txt"
+    ( cd "$KURT_ETC1_DIR" && find textures -type f -name '*.t3x' -print0 ) |
+        while IFS= read -r -d '' rel; do
+            mkdir -p "$OUT/kurt/$(dirname "$rel")"
+            ln "$KURT_ETC1_DIR/$rel" "$OUT/kurt/$rel" 2>/dev/null ||
+                cp "$KURT_ETC1_DIR/$rel" "$OUT/kurt/$rel"
+        done
+    echo "stage_romfs:   kurt ($(find "$OUT/kurt" -name '*.t3x' | wc -l) ETC1A4 frames)"
+else
+    echo "stage_romfs:   (skip) kurt -- no compressed set; Kurt is expanded"
+fi
+
 # A manifest, so the build can verify the staging WITHOUT depending on the
 # bytes (which are not in the repository).
 {

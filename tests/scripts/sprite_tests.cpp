@@ -14,6 +14,8 @@
 //      dropping it would drop the picture that is about to be drawn.
 //   4. THE ANIMATION. Replacing an animation releases every frame of it, so
 //      its GPU copies do not leak -- in any order the frames were added.
+//   5. THE PINNED START SET. Frames made at level load (kurtCompressed) are
+//      counted but held outside the budget's rotation, and never a victim.
 //
 // The numbers are the port's own: the C# has no bound, and the 3DS's is
 // named by its backend (renderer_c3d.cpp). The picture the policy produces
@@ -234,6 +236,76 @@ void testReplacingAnAnimation() {
     SPRITE_CHECK(interleaved.residentCount() == 0);
 }
 
+// THE PINNED START SET (KurtSprite::preloadStartSet, kurtCompressed): Kurt's
+// K_STILL/K_FALL/K_LAND/K_IDLE made at level load and kept for the level. A
+// pinned frame is counted in the resident total but held OUTSIDE the budget's
+// rotation: it never makes the set over budget and is never a victim, so the
+// megabyte rotates only the other animations.
+void testThePinnedStartSet() {
+    SpriteResidency residency;
+    residency.setBudget(1024 * 1024);
+    // The start set as ETC1A4 (2,662,400 bytes over 105 frames on the GOG data),
+    // here as four pinned frames bigger than the whole budget together.
+    for (int32_t i = 0; i < 4; i++) {
+        SpriteResidency::Entry pinned;
+        pinned.animation = 0;
+        pinned.frame = i;
+        pinned.bytes = 700000;
+        pinned.lastUsed = (uint32_t)(i + 1);
+        pinned.pinned = true;
+        residency.add(pinned);
+    }
+    SPRITE_CHECK(residency.residentBytes() == 2800000);
+    SPRITE_CHECK(residency.pinnedBytes() == 2800000);
+    SPRITE_CHECK(!residency.overBudget());
+    // Nothing pinned is a victim, however old.
+    SPRITE_CHECK(!residency.victim(-1, -1, nullptr));
+
+    // Rotating frames: ETC1A4 frames of 16,384 bytes. 64 fit the megabyte...
+    for (int32_t i = 0; i < 64; i++) {
+        SpriteResidency::Entry entry;
+        entry.animation = 1;
+        entry.frame = i;
+        entry.bytes = 16384;
+        entry.lastUsed = (uint32_t)(100 + i);
+        residency.add(entry);
+    }
+    SPRITE_CHECK(!residency.overBudget());
+    // ...and the 65th is over: the victim is the oldest ROTATING frame, not the
+    // pinned frames that are older still.
+    SpriteResidency::Entry extra;
+    extra.animation = 2;
+    extra.frame = 0;
+    extra.bytes = 16384;
+    extra.lastUsed = 500;
+    residency.add(extra);
+    SPRITE_CHECK(residency.overBudget());
+    SpriteResidency::Entry victim;
+    SPRITE_CHECK(residency.victim(2, 0, &victim));
+    SPRITE_CHECK(victim.animation == 1 && victim.frame == 0 && !victim.pinned);
+    SPRITE_CHECK(residency.remove(victim.animation, victim.frame));
+    SPRITE_CHECK(!residency.overBudget());
+    SPRITE_CHECK(residency.pinnedBytes() == 2800000);
+
+    // A pinned frame that goes gives its bytes back to both counts.
+    SPRITE_CHECK(residency.remove(0, 3));
+    SPRITE_CHECK(residency.pinnedBytes() == 2100000);
+    SPRITE_CHECK(residency.residentBytes() == 2100000 + 64 * 16384);
+    // A replaced animation takes its pinned frames with it...
+    residency.removeAnimation(0);
+    SPRITE_CHECK(residency.pinnedBytes() == 0);
+    SPRITE_CHECK(residency.residentBytes() == 64 * 16384);
+    // ...and a new level starts with nothing pinned.
+    SpriteResidency::Entry again;
+    again.animation = 3;
+    again.frame = 0;
+    again.bytes = 10;
+    again.pinned = true;
+    residency.add(again);
+    residency.clear();
+    SPRITE_CHECK(residency.pinnedBytes() == 0 && residency.residentBytes() == 0);
+}
+
 void testTheClock() {
     SpriteResidency residency;
     const uint32_t first = residency.tick();
@@ -251,6 +323,7 @@ int runSpriteResidencyTests() {
     testTheBound();
     testTheVictim();
     testReplacingAnAnimation();
+    testThePinnedStartSet();
     testTheClock();
     return failures;
 }

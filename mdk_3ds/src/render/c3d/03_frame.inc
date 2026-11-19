@@ -1128,7 +1128,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // frames). Cold: this is the A/B's evidence that the store changed at all.
     {
         const int32_t made = r->texturesMade[0] + r->texturesMade[1] + r->texturesMade[2] +
-                             r->texturesMade[3];
+                             r->texturesMade[3] + r->compressedMade;
         if ((r->frame == 30 || (r->frame % 300) == 0) && made != r->texturesMadeLogged) {
             r->texturesMadeLogged = made;
             int32_t resident16 = 0;
@@ -1150,11 +1150,14 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
                     mdk::pica::TexelFormat::Rgba8, t.paddedWidth, t.paddedHeight, t.mipLevels);
             }
             mdk::log3dsPrintf("textures: frame %d texture16=%d: made %d rgb565, %d rgba5551, "
-                              "%d rgba4, %d rgba8, %u bytes saved vs rgba8; resident %d (%d "
-                              "16-bit) %u bytes of %u as rgba8",
+                              "%d rgba4, %d rgba8, %u bytes saved vs rgba8; kurtCompressed=%d: "
+                              "%d etc imported, %u bytes saved; resident %d (%d "
+                              "not rgba8) %u bytes of %u as rgba8",
                               (int)r->frame, (int)r->toggles.texture16, (int)r->texturesMade[0],
                               (int)r->texturesMade[1], (int)r->texturesMade[2],
                               (int)r->texturesMade[3], (unsigned)r->textureBytesSaved,
+                              (int)r->toggles.kurtCompressed, (int)r->compressedMade,
+                              (unsigned)r->compressedBytesSaved,
                               (int)resident, (int)resident16, (unsigned)residentBytes,
                               (unsigned)residentRgba8Bytes);
         }

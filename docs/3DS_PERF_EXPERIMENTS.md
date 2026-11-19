@@ -39,10 +39,60 @@ inside the frame) is where the large wins have come from, the same lesson as
 | A | Static light baked once per rig on the CPU | `experiment/3ds-baked-light` | +1.1 ms isolated | rejected |
 | B | Haze through the PICA fog unit (W-buffer) | `experiment/3ds-fog-haze` | scene nearly black on console | rejected (broken) |
 | D | Light in the vertex shader from face normals | `experiment/3ds-vertex-light` | +7.4 ms | rejected |
-| E5 | 16-bit texture stores (RGB565 / RGBA5551 / RGBA4) | `experiment/3ds-texture16` | speed: noise (44.6 vs 45.1 isolated); memory −10–12 MB | kept as a memory lever, superseded for sprites by E8 |
+| E5 | 16-bit texture stores (RGB565 / RGBA5551 / RGBA4) | `experiment/3ds-texture16` | speed: noise alone (44.6 vs 45.1 isolated; shipped 51.5 vs 52.2 with E8's base); memory −9 to −12 MB | **merged with E8** (the fallback store under ETC1A4) |
 | E6 | Skip per-draw GPU state the GPU already holds (draw dedupe) | `experiment/3ds-draw-state` | isolated **48.0 → 43.8 ms (−4.2)**, 2-vblank frames 55% → 75%; shipped **56.6 → 54.2 ms (−2.4)**, 2-vblank frames 16% → 32%; command list 49,288 → 23,824 words in the longest frame; console capture identical (max diff 0) | **merged** |
-| E7 | Prewarm: make first-use textures/layouts/poses at level load, ≤1 texture/frame during play, Kurt residency 1 → 8 MiB | `experiment/3ds-prewarm` | not yet measured | host tests, then console |
-| E8 | Kurt's sprite frames as ETC1A4 (see below) | `experiment/3ds-kurt-etc1` | in progress | agent implementing |
+| E7 | Prewarm: make first-use textures/layouts/poses at level load, ≤1 texture/frame during play, Kurt residency 1 → 8 MiB | `experiment/3ds-prewarm` | not yet measured; two c3d test anchors re-pointed for its new `expandIndices` argument | host tests, then console |
+| E8 | Kurt's sprite frames as ETC1A4, start set preloaded; E5's 16-bit store as the fallback | `experiment/3ds-kurt-etc1` (07399b3, on 6541a2e = E5) | shipped **52.2 → 42.9 ms (−9.2)**, 4+ vblank frames 256 → 4, spikes 40 → 4, draw build 13.9 → 7.5 ms; isolated **42.8 → 33.6 ms (−9.2)**, 2,566 of 2,580 frames at 2 vblanks; Kurt mean diff 2.9/255 | **merged** |
+
+### E8 as built (2026-11-19)
+
+- `mdk_3ds/tools/kurt_etc1_convert.py`, run by `stage_romfs.sh` in every
+  `make -C mdk_3ds`: Kurt's original TRAVSPRT.BNI frames, decoded by mdk_core's own
+  parsers with each level's palette, alpha flood-bleed as `hd_pack_convert.py`,
+  padded (not scaled) to a power of two, `tex3ds -f etc1a4 -q high`, no mips by
+  default. 408 frames, 1.18 MB, staged as `romfs:/kurt` (no SD copy needed;
+  .3dsx +1.3 MB). Deterministic; `--check` proves the alpha equals the colour key
+  on every frame. No flip needed: the frame rectangle matches the HD pack's.
+- Runtime: `mdk_render_create_compressed_texture` imports the .t3x bytes, no
+  palette expansion; the bytes are read at level load, never from SD mid-frame.
+  The HD pack's 128 copy still wins when present. Fallback without a compressed
+  copy: E5's RGBA5551.
+- The start set (K_STILL, K_FALL, K_LAND, K_IDLE: 105 frames) is preloaded at
+  level load under a separate 3 MiB limit; the 1 MiB residency then only rotates
+  the other animations (every one fits whole except K_CHUTEC, 3 MiB on its own).
+
+| Start set, 105 frames | Bytes | Frames in the 1 MiB residency |
+|---|---|---|
+| RGBA8 | 10,649,600 | 12 |
+| RGBA5551 | 5,324,800 | 17 |
+| ETC1A4 | 2,662,400 | 36 (and the whole set preloaded) |
+
+A/B: `TOGGLES='kurtCompressed=0;texture16=0'` (RGBA8),
+`TOGGLES='kurtCompressed=0'` (RGBA5551), default (ETC1A4).
+
+### E8 measured (Old 3DS, level 8, stereo, 90 s, steady mean; base 4cde286, no E6)
+
+| Kurt store | Shipped mean | 2 / 3 / 4+ vblank frames | Spikes >60 ms | Draw build | Isolated mean |
+|---|---|---|---|---|---|
+| RGBA8 | 52.2 ms | 388 / 996 / 256 | 40 | 13.9 ms | 42.8 ms |
+| RGBA5551 | 51.5 ms | 571 / 839 / 241 | 40 | 14.5 ms | — |
+| **ETC1A4** | **42.9 ms** | **855 / 1,123 / 4** | **4** | **7.5 ms** | **33.6 ms** |
+
+**Why it won.** Not the bytes but the churn: under RGBA8 the texture cache held
+57 textures yet had made 105 by frame 300 (evict, remake), and Kurt re-made a
+256 KB frame most frames of his fall, landing and idle. Under ETC1A4 154 textures
+sit in 12.1 MB (29.4 MB if they were RGBA8) and nothing is remade in play. 16-bit
+alone halves the bytes but keeps the churn, which is why it barely moved.
+
+**Look.** Console capture at frame 60: Kurt upright and in place; mean |d| 2.9/255
+in his box, 0.4 % of his pixels over 16; the rest of the frame within 16 everywhere.
+
+**Costs and follow-ups.**
+- Level load **+4.6 s**: 408 small `.t3x` files read from RomFS one by one. Pack
+  them into one file (one open, one read).
+- The 1.1 MB of `.t3x` bytes stay on the main heap (the tighter heap now: ~22.6 of
+  40.9 MB used at the loop). One packed file read on demand would release it.
+- No mip chain on Kurt's frames by default (`--mips` adds one).
 
 ## Texture formats on the 3DS — the policy
 
@@ -110,3 +160,17 @@ Kurt's start set (stand, fall, land, idle) in each format:
   `begin_frame`.
 - Catch-up step cap: experiment only, because it changes gameplay; the owner decides.
 - World textures as compressed replacements (above).
+
+## Deferred until the game is profiled and in a great state (owner, 2026-11-19)
+
+Engine refactors wait until the performance work is done, so they do not
+collide with the experiment branches:
+
+- Split the frontend monolith `mdk_3ds/src/main_3ds.cpp` (2,212 lines; `main()`
+  alone ~1,930) into `mdk_3ds/src/main/NN_*.inc` fragments over one state struct,
+  the pattern `renderer_c3d.cpp` + `render/c3d/*.inc` and `../t2k` already use.
+  Then pull the logic it shares with `mdk_linux/src/main.cpp` into `mdk_core`.
+- Split the grown backend fragments `render/c3d/03_frame.inc` (2,238 lines) and
+  `06_draw.inc` (1,495) further.
+- Make the c3d source-text pins less brittle: a harmless extra argument to
+  `expandIndices` broke two mutation arms in E7.

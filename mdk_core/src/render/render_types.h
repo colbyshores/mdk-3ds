@@ -271,6 +271,13 @@ struct EnhancedToggles {
                                       // texture is MADE: a change takes effect at the next
                                       // level load (or an evicted texture made again). The
                                       // PC ignores it
+    bool kurtCompressed = true;       // 3DS: Kurt's sprite frames drawn from the ETC1A4 set
+                                      // made offline from the player's TRAVSPRT.BNI
+                                      // (mdk_3ds/tools/kurt_etc1_convert.py, romfs:/kurt):
+                                      // 1 byte a texel, never expanded on the ARM11, and the
+                                      // start set loaded at level load. Off (or a frame with
+                                      // no compressed copy): the palette expansion, in the
+                                      // texture16 store. Read at level load. The PC ignores it
 
     // NOT A LOOK: a diagnostic of the 3DS sun shadow, off by default. The caster
     // pass writes the shadow map's four bytes in the order the GPU's shadow unit
@@ -426,6 +433,15 @@ struct MdkCapabilities {
     // this budget are kept. 0 means "no bound", which is what the desktop
     // answers -- the C#'s own behaviour.
     int32_t sprite_residency_bytes = 0;
+
+    // The GPU bytes Kurt's START SET (K_STILL, K_FALL, K_LAND, K_IDLE: the
+    // frames every level opens on) may take when it is made at LEVEL LOAD from
+    // compressed frames (EnhancedToggles::kurtCompressed) and kept for the level,
+    // outside sprite_residency_bytes' rotation. Only compressed frames are
+    // preloaded: an import is a copy, an expansion is the ARM11 work the
+    // preload exists to keep out of the frame. 0: no preload (the desktop, which
+    // has no compressed frames and no bound).
+    int32_t sprite_preload_bytes = 0;
 };
 
 } // namespace mdk
