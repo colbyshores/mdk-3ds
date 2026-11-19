@@ -284,6 +284,19 @@ MDK_TEST(EnhancedConfigRoundTrips) {
         MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(bloom).c_str(), &bloomBack));
         MDK_CHECK(bloomBack.glowBloom && bloomBack.enableGlowBillboards);
     }
+    // How often the 3DS redraws the shadow map (not a toggle): 0 = automatic by
+    // default, written, read back; only 1-4 are taken, anything else is 0.
+    MDK_CHECK(toggles.shadowMapRefresh == 0 && back.shadowMapRefresh == 0);
+    MDK_CHECK(text.find("shadowMapRefresh=0\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles every;
+        every.shadowMapRefresh = 3;
+        mdk::EnhancedToggles everyBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(every).c_str(), &everyBack));
+        MDK_CHECK(everyBack.shadowMapRefresh == 3);
+        mdk::EnhancedToggles wide;
+        MDK_CHECK(mdk::parseEnhancedConfig("shadowMapRefresh=9\n", &wide) && wide.shadowMapRefresh == 0);
+    }
     // The 3DS shadow map's side (not a toggle): 0 = automatic by default,
     // written, read back; only 128/256/512 are taken, anything else is 0.
     MDK_CHECK(toggles.shadowMapSize == 0 && back.shadowMapSize == 0);

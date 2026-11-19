@@ -281,6 +281,14 @@ struct EnhancedToggles {
     // self-shadow guards follow the size (pica::sunShadowNormalOffset). The PC
     // ignores it (its map is 2048).
     int32_t shadowMapSize = 0;
+
+    // NOT A TOGGLE: how often the 3DS redraws the sun shadow's map, in frames
+    // (the map is the same picture while the sun and the static world stand
+    // still; only moving casters lag). 0 = automatic (every 2nd frame); 1-4 =
+    // every that many frames. It is redrawn at once whatever this says when the
+    // camera has moved its box on, the sun has turned or the map is new. The PC
+    // ignores it.
+    int32_t shadowMapRefresh = 0;
 };
 
 // ---------------------------------------------------------------------------

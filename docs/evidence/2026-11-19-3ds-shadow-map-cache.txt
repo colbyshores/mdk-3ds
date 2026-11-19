@@ -1,0 +1,58 @@
+2026-11-19  3DS sun shadow map kept across frames (config shadowMapRefresh)
+===========================================================================
+
+HARDWARE. Old 3DS appliance old3ds-lan167 (CFGU model 0, 268 MHz, L2 none),
+stereo ON, level 8, every enhancement on, edge smoothing 2x1, glow billboards
+(9b12288). hw_cycle.sh FRESH on every run.
+
+WHY. The owner's idea ("cache the shadow for replay ... it's just a decal
+basically"). The map is the sun's view of the casters around the camera; while
+the sun, the box and the static world stand still it is the same picture. The
+single-pass profile split put its redraw at ~4 ms of the stereo frame (the map
+cleared, nothing cast: 63.7 -> 59.8 ms; 2026-11-19-3ds-sun-shadows-single-pass).
+
+WHAT (03_frame.inc prepareShadows / castShadows). The caster pass runs only when
+the frame must REDRAW the map: every `every` frames (config shadowMapRefresh
+1-4; 0 = automatic, every 2nd), and at once when the map is new (made or remade:
+shadowMapFresh), the sun has turned, the camera has moved a sixteenth of the
+shadow's reach from where it was cast, or the native writes are still to be
+seen (end_frame's check needs a cast). A kept map keeps the matrices it was cast
+with (sunVp, shadowSunMtx), so the receivers sample it where it was drawn:
+static shadows stay exactly in place; only moving casters update less often.
+
+MEASURED (hw_cycle --profile):
+  map redrawn every frame (shadowMapRefresh=1)  p50 50.0 ms  mean 61.3 ms
+  every 2nd frame (the default)                 p50 43.2 ms  mean 57.8 ms
+  every 4th frame                               p50 44.3 ms  mean 56.1 ms
+  -> the default saves 6.8 ms at p50 (more than the ~4 ms a cast costs: the
+  uncast frames land in a faster pacing slot) and 3.4 ms on the mean; 4 lowers
+  the mean further, not the typical frame. The log: "15 frames reused the map"
+  in the first 30, 285-300 of every 600 at 2; 428-450 at 4.
+  The branch across its commits: 80.3 -> 43.2 ms p50 (12.5 -> ~23 fps).
+THE LOOK. A still-camera capture with the cache (level 8 frame 60, FIXED=1)
+against the every-frame capture of 7e46bf6: 0 pixels differ.
+
+NOT MEASURED. Moving casters (enemies) lag the map by up to every-1 frames: at
+the default, one frame. The level 8 opening's casters are all static.
+
+TESTS. tests/formats/lighting_tests.cpp: shadowMapRefresh 0 by default,
+written, read back; 9 reads as 0.
+
+REVIEW (independent, read-only, Fable): no blocker -- every stale case is
+bounded to every-1 frames by the frame-count trigger; the fresh flag covers the
+one creation site and all three release paths; matrices change only with a
+cast; native verification is unaffected (forced casts until verified, readback
+only on cast frames). Fixed:
+- the periodic log could land on a reused frame and print "0 caster draws":
+  it reports the last cast's counts now;
+- a shadowMapFlipBytes flip rewrote the ramp but kept the old map: it forces a
+  redraw;
+- a change of the shadow's reach alone (its bias and offset with it) and a new
+  level's rig (sky, ground) now force a redraw -- a level change was otherwise
+  caught only by the camera's move.
+Recorded, not done: cast and reuse frames differ by ~4 ms and alternate, which
+the p50 hides (a moving-camera profile and the frame-period spread are worth a
+look); camera motion past the threshold every frame recasts every frame (no
+saving while moving fast); the harness's map dump on a reuse frame is the
+earlier cast's (compare with a still camera or shadowMapRefresh=1); the recast
+decision has no host test of its own.

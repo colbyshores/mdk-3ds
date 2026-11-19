@@ -630,6 +630,20 @@ struct RendererC3D {
     bool shadowRefused = false;     // they could not be: off for the session
     bool shadowLive = false;        // decided once per frame (prepareShadows)
     float sunVp[16] = {};           // world -> the caster pass's clip (pica::sunCasterMatrix)
+    // THE MAP'S CACHE (config shadowMapRefresh): the map is redrawn every few
+    // frames, and between redraws the receivers keep the matrices it was cast
+    // with (sunVp, shadowSunMtx), so a reused map stays where the world is.
+    bool shadowRecast = false;      // this frame redraws the map (prepareShadows)
+    bool shadowMapFresh = false;    // the map was (re)made and holds nothing yet
+    int shadowCastFrame = -1000;    // the frame it was last drawn
+    float shadowCastCentre[3] = {0.0f, 0.0f, 0.0f};
+    float shadowCastSun[3] = {0.0f, 0.0f, 0.0f};
+    // The rest of what the map was cast for: the reach, and the rig's sky and
+    // ground (a new level's rig differs: its map is not the last level's).
+    float shadowCastRig[7] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    int32_t shadowCastersLast = 0;     // the last cast's casters (the log's)
+    int32_t shadowHoleCastersLast = 0;
+    int32_t shadowReuses = 0;       // frames that reused it since the last log line
     // The receive program's uniforms, written at every bind of it: the six of
     // the light (the lit program's, with the offset and the bias in params)
     // and the four registers of world -> (u, v, depth, 1).

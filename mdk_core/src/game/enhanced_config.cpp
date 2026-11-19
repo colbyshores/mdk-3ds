@@ -101,6 +101,14 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         }
         return;
     }
+    // ... and how often the map is redrawn (render_types.h): 1-4, else automatic.
+    if (keyIs(begin, keyEnd, "shadowMapRefresh")) {
+        int32_t every = 0;
+        if (readNumber(equals + 1, end, &every)) {
+            toggles->shadowMapRefresh = (every >= 1 && every <= 4) ? every : 0;
+        }
+        return;
+    }
     bool value = false;
     if (!readValue(equals + 1, end, &value)) {
         return;
@@ -178,6 +186,8 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     // 0 = automatic (render_types.h).
     char size[32];
     snprintf(size, sizeof(size), "shadowMapSize=%d\n", (int)toggles.shadowMapSize);
+    out.append(size);
+    snprintf(size, sizeof(size), "shadowMapRefresh=%d\n", (int)toggles.shadowMapRefresh);
     out.append(size);
     return out;
 }

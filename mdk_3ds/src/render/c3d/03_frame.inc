@@ -1237,10 +1237,13 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
         if (eye == 0 && r->shadowLive && (r->frame == 30 || (r->frame % 600) == 0)) {
-            mdk::log3dsPrintf("shadows: frame %lu: %d caster draws into the map (%d more left "
-                              "out: their textures have holes), %d shadowed lit draws (both eyes)",
-                              (unsigned long)r->frame, (int)r->shadowCasters,
-                              (int)r->shadowHoleCasters, (int)r->shadowReceivers);
+            mdk::log3dsPrintf("shadows: frame %lu: %d caster draws into the map at its last cast (%d more left "
+                              "out: their textures have holes), %d shadowed lit draws (both eyes); "
+                              "%d frames reused the map since the last line",
+                              (unsigned long)r->frame, (int)r->shadowCastersLast,
+                              (int)r->shadowHoleCastersLast, (int)r->shadowReceivers,
+                              (int)r->shadowReuses);
+            r->shadowReuses = 0;
         }
         // The census is read after the FIRST eye's replay: the second eye draws
         // the same records and would double every count.
@@ -1632,6 +1635,7 @@ static bool ensureShadowMap(RendererC3D* r) {
                 continue;
             }
             r->shadowMapSize = sizes[i];
+            r->shadowMapFresh = true;   // nothing in it: the next frame casts
             r->shadowMapAsked = r->toggles.shadowMapSize;
             // The unit blends the four nearest comparisons (the PC's 2x2).
             C3D_TexSetFilter(&r->shadowTex, GPU_LINEAR, GPU_LINEAR);
@@ -1667,6 +1671,7 @@ static bool ensureShadowMap(RendererC3D* r) {
     const mdk::pica::ShadowByteOrder order = shadowByteOrder(r);
     if (r->shadowRampReady && r->shadowRampOrder != static_cast<int>(order)) {
         fillShadowRamp(r, order);
+        r->shadowMapFresh = true;   // a kept map holds the old order's bytes
         mdk::log3dsPrintf("shadows: the ramp is rewritten in %s byte order",
                           order == mdk::pica::kShadowBytesReversed ? "reversed" : "the PICA's");
     }
@@ -1729,14 +1734,52 @@ static void prepareShadows(RendererC3D* r) {
         return;
     }
     const mdk::Lighting& l = r->lighting;
-    float sun[16];
-    const mdk::Vec3 centre = {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2]};
-    mdk::sunShadowMatrix(l.sun_direction, centre, l.shadow_distance,
-                         (uint32_t)r->shadowMapSize, sun);
-    mdk::pica::sunCasterMatrix(sun, r->sunVp);
-    float map[16];
-    mdk::pica::sunMapMatrix(sun, map);
-    mdk::pica::registers(map, r->shadowSunMtx);
+    // REDRAW THE MAP, OR KEEP LAST FRAME'S (config shadowMapRefresh; measured
+    // 2026-11-19: the caster pass is ~4 ms of the Old 3DS's stereo frame). The
+    // map is the sun's view of the casters around the camera: while the sun,
+    // the box and the static world stand still it is the same picture, so it is
+    // redrawn every `every` frames, and AT ONCE when the map is new, the sun has
+    // turned, the camera has moved a sixteenth of the box's reach from where it
+    // was cast (the box's far edges are what that would move), or the native
+    // writes are still to be seen (end_frame's check needs a cast). A kept map
+    // keeps its matrices: the receivers sample it where it was cast.
+    const int every = r->toggles.shadowMapRefresh > 0 ? (int)r->toggles.shadowMapRefresh : 2;
+    const float dx = r->cameraPos[0] - r->shadowCastCentre[0];
+    const float dy = r->cameraPos[1] - r->shadowCastCentre[1];
+    const float dz = r->cameraPos[2] - r->shadowCastCentre[2];
+    const float reach = l.shadow_distance / 16.0f;
+    const bool moved = dx * dx + dy * dy + dz * dz > reach * reach;
+    const bool sunTurned = l.sun_direction.x != r->shadowCastSun[0] ||
+                           l.sun_direction.y != r->shadowCastSun[1] ||
+                           l.sun_direction.z != r->shadowCastSun[2];
+    // The reach and the rig: a changed shadow distance makes the bias and the
+    // offset disagree with the map, and a new level brings a new rig (review,
+    // 2026-11-19: a level change was otherwise caught only by the camera's move).
+    const float rig[7] = {l.shadow_distance, l.sky.r, l.sky.g, l.sky.b,
+                          l.ground.r, l.ground.g, l.ground.b};
+    const bool rigChanged = memcmp(rig, r->shadowCastRig, sizeof(rig)) != 0;
+    r->shadowRecast = r->shadowMapFresh || moved || sunTurned || rigChanged ||
+                      r->frame - r->shadowCastFrame >= every ||
+                      (r->shadowNative && !r->shadowNativeVerified);
+    if (r->shadowRecast) {
+        float sun[16];
+        const mdk::Vec3 centre = {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2]};
+        mdk::sunShadowMatrix(l.sun_direction, centre, l.shadow_distance,
+                             (uint32_t)r->shadowMapSize, sun);
+        mdk::pica::sunCasterMatrix(sun, r->sunVp);
+        float map[16];
+        mdk::pica::sunMapMatrix(sun, map);
+        mdk::pica::registers(map, r->shadowSunMtx);
+        r->shadowMapFresh = false;
+        r->shadowCastFrame = r->frame;
+        memcpy(r->shadowCastCentre, r->cameraPos, sizeof(r->shadowCastCentre));
+        r->shadowCastSun[0] = l.sun_direction.x;
+        r->shadowCastSun[1] = l.sun_direction.y;
+        r->shadowCastSun[2] = l.sun_direction.z;
+        memcpy(r->shadowCastRig, rig, sizeof(rig));
+    } else {
+        r->shadowReuses++;
+    }
     const float values[6][4] = {
         {l.sun_direction.x, l.sun_direction.y, l.sun_direction.z, 0.0f},
         {l.sun.r, l.sun.g, l.sun.b, 0.0f},
@@ -1801,7 +1844,8 @@ static void installShadowUniforms(RendererC3D* r) {
 // (program, attributes, matrix, stages, cull); the depth, alpha and blend state
 // this pass leaves are the ones their caches say.
 static void castShadows(RendererC3D* r) {
-    if (!r->shadowLive) {
+    // (A frame that keeps last frame's map draws nothing: prepareShadows.)
+    if (!r->shadowLive || !r->shadowRecast) {
         return;
     }
     leaveShadowLitStages(r);
@@ -1945,6 +1989,9 @@ static void castShadows(RendererC3D* r) {
     // The vertex stage's matrix registers hold the last caster's: installEye
     // uploads the eye's before anything else is drawn.
     r->matrixIsFrame = false;
+    // The log reports the last cast's counts: a reused map's frame casts none.
+    r->shadowCastersLast = r->shadowCasters;
+    r->shadowHoleCastersLast = r->shadowHoleCasters;
 }
 
 static void prepareHaze(RendererC3D* r) {
