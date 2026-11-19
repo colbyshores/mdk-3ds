@@ -1625,8 +1625,12 @@ int main(int argc, char** argv) {
         // log asks for one framebuffer BMP at the next frame; the file is
         // consumed so the ask fires once. Checked every 30 frames -- a
         // stat a second, never frame-critical work.
+        // NOT in release or PROFILE builds: the fopen of a file that is not
+        // there costs ~85 ms on the console's SD (measured 2026-11-19: a stall
+        // every 30 frames, the 30-frame spikes). Release screenshots are
+        // ATM's / Rosalina's; the harness's fixed-frame capture is below.
         static char capturePath[128] = {};
-        if (capturePath[0] == '\0' && (frame % 30) == 0) {
+        if (mdk::log3dsPeriodic() && capturePath[0] == '\0' && (frame % 30) == 0) {
             if (FILE* armed = std::fopen("sdmc:/3ds/mdk/capture.txt", "rb")) {
                 char named[sizeof(capturePath)] = {};
                 size_t got = std::fread(named, 1, sizeof(named) - 1, armed);
@@ -1786,7 +1790,7 @@ int main(int argc, char** argv) {
                 // once a second, every decoded track but the one playing, the one
                 // fading out (both pinned by their voices) and the loading arena's.
                 // A level played end to end then holds three tracks, not all nine.
-                if ((frame % 60u) == 0u) {
+                if (mdk::log3dsPeriodic() && (frame % 60u) == 0u) {
                     const std::string keep[3] = {
                         music->playing(), music->fading(),
                         streamSecond.empty() ? std::string() : music->trackOf(streamSecond)};
@@ -2032,7 +2036,7 @@ int main(int argc, char** argv) {
             }
 #endif
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
-            if ((frame % 300u) == 0u) {
+            if (mdk::log3dsPeriodic() && (frame % 300u) == 0u) {
                 mdk::log3dsPrintf("effects: frame %d: %d sprite effects, %d with a halo, %d not "
                                   "yet measured (pixels away)",
                                   (int)frame, (int)effectsView.spriteEffects(),
@@ -2135,7 +2139,7 @@ int main(int argc, char** argv) {
                                   : "-",
                               runtime ? "runtime" : "standalone");
         }
-        if (frame <= 5u || (frame % 60u) == 0u) {
+        if (frame <= 5u || (mdk::log3dsPeriodic() && (frame % 60u) == 0u)) {
             mdk::log3dsPrintf("frame %lu elapsed=%.4f steps=%u feet=(%.1f,%.1f,%.1f) "
                               "yaw=%.1f health=%d eye=(%.1f,%.1f,%.1f) voices=%d plays=%d "
                               "objects=%d obj=%dc/%dd peak=%dc/%dd",
@@ -2148,7 +2152,7 @@ int main(int argc, char** argv) {
                               (int)objectCorners, (int)objectDraws,
                               (int)objectPeakCorners, (int)objectPeakDraws);
         }
-        if (audioReady && (frame % 60u) == 0u) {
+        if (audioReady && mdk::log3dsPeriodic() && (frame % 60u) == 0u) {
             // The sink's own ledger, on the same cadence as the frame line. The
             // frame number is repeated HERE on purpose (review F1 of
             // run-20261106-062909): the only reading that discriminates a healthy

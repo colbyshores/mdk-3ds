@@ -25,6 +25,20 @@ namespace mdk {
 // no-op and the game runs on.
 bool log3dsOpen();
 
+// PERIODIC DIAGNOSTICS -- the every-60th / every-300th frame lines, the census
+// -- are SD writes with an fflush each, 5-10 ms apiece (Forsaken's measurement,
+// vault forsaken/findings), inside the frame. On in harness builds, whose tools
+// read them; OFF in release builds and in PROFILE builds, where they would be
+// the stalls the profile measures (2026-11-19: the 4+ vblank spikes). Event
+// lines (boot, level, the first frames, failures) are not periodic and stay.
+inline bool log3dsPeriodic() {
+#if defined(MDK_AUTOQUIT) && !defined(MDK_HW_PROFILE)
+    return true;
+#else
+    return false;
+#endif
+}
+
 // Close the log. Safe to call when the open failed.
 void log3dsClose();
 

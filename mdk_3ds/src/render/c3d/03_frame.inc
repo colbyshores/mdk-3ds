@@ -934,7 +934,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     }
     // The one frame that gets censused (see `Census`). Everything else pays the
     // compare and nothing more.
-    r->census.active = (r->frame == kCensusFrame);
+    r->census.active = mdk::log3dsPeriodic() && r->frame == kCensusFrame;
     r->census.triangles = 0;
     r->census.behind = 0;
     r->census.offscreen = 0;
@@ -966,7 +966,8 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     pumpHdTextures(r, previousFrameStart);
     // The stream's state, every 300 frames once it has done anything: the
     // evidence a budget is read from (docs/HD_TEXTURES_3DS_SPEC.md 4.2).
-    if ((r->frame % 300) == 0 && (r->hdImported > 0 || !r->hdQueue.empty())) {
+    if (mdk::log3dsPeriodic() && (r->frame % 300) == 0 &&
+        (r->hdImported > 0 || !r->hdQueue.empty())) {
         mdk::log3dsPrintf("hd: frame %d: %d imported, %u bytes resident of %u, %d evicted, "
                           "%d failed, %d queued, %d reading",
                           (int)r->frame, (int)r->hdImported, (unsigned)r->hdResidentBytes,
@@ -1236,7 +1237,8 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
-        if (eye == 0 && r->shadowLive && (r->frame == 30 || (r->frame % 600) == 0)) {
+        if (eye == 0 && r->shadowLive && mdk::log3dsPeriodic() &&
+            (r->frame == 30 || (r->frame % 600) == 0)) {
             mdk::log3dsPrintf("shadows: frame %lu: %d caster draws into the map at its last cast (%d more left "
                               "out: their textures have holes), %d shadowed lit draws (both eyes); "
                               "%d frames reused the map since the last line",
@@ -1278,7 +1280,7 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // able to say it.
     {
         r->canvasFrames++;
-        if (r->canvasFrames == 1 || (r->canvasFrames % 60) == 0) {
+        if (r->canvasFrames == 1 || (mdk::log3dsPeriodic() && (r->canvasFrames % 60) == 0)) {
             mdk::log3dsPrintf("canvas: quads=%d draws=%d mesh=%d corners=%d eyes=%d "
                               "(canvas frame %d)",
                               (int)r->canvasQuadsThisFrame, (int)r->canvasDrawsThisFrame,
@@ -1289,13 +1291,13 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // The lit program's switches (each re-sends the dirty uniforms of both
     // shaders and its own six): the number a draw sort by program would be
     // judged by on hardware (review of the lighting batch).
-    if (r->litLive && (r->frame % 300) == 0) {
+    if (r->litLive && mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
         mdk::log3dsPrintf("light: frame %d: %d program switches, %d geometry splits (%d eyes)",
                           (int)r->frame, (int)r->programSwitches, (int)r->geometrySplits,
                           (int)r->eyes.passes);
     }
     r->programSwitches = 0;
-    if (r->glowLive && (r->frame % 300) == 0) {
+    if (r->glowLive && mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
         mdk::log3dsPrintf("glow (bloom): frame %d: %d passes (%d eyes, scale %dx%d)", (int)r->frame,
                           (int)r->glowPasses, (int)r->eyes.passes, (int)r->targetScaleX,
                           (int)r->targetScaleY);
@@ -1304,7 +1306,7 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
         if (r->glowQuadCount > r->billboardsPeak) {
             r->billboardsPeak = r->glowQuadCount;
         }
-        if ((r->frame % 300) == 0) {
+        if (mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
             mdk::log3dsPrintf("glow (billboards): frame %d: %d halos now (%d drawn, both eyes), "
                               "at most %d a frame since the last line, %d dropped past the cap",
                               (int)r->frame, (int)r->glowQuadCount, (int)r->billboardsDrawn,
@@ -1313,7 +1315,7 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
             r->glowQuadsDropped = 0;
         }
     }
-    if ((r->frame % 300) == 0) {
+    if (mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
         mdk::log3dsPrintf("programs: frame %d: %d lit, %d lit+shadow, %d pass-through, %d plain "
                           "draws (both eyes)",
                           (int)r->frame, (int)r->drawsLit, (int)r->drawsShadowLit,

@@ -121,3 +121,23 @@ ADDENDUM 2026-11-19 (3): EXPERIMENT E3, THE SHADOW MAP SAMPLED NEAREST (a
 throwaway branch, dropped). One compare a pixel instead of the unit's 2x2:
 p50 43.9 ms against 43.9 for the base run straight after it, same session. The
 2x2 comparison is free in the texture unit; blockier edges would buy nothing.
+
+ADDENDUM 2026-11-19 (4): THE SPIKES, FOUND AND HALF REMOVED. The profiler's
+spike lines (frames over 60 ms with their spans) named two causes on level 8's
+original look, stereo:
+  - every 30 frames, ~85 ms OUTSIDE every measured span: the main loop's
+    fopen() of sdmc:/3ds/mdk/capture.txt (a screenshot trigger) -- an SD open
+    of a missing file -- plus the every-60th / every-300th diagnostic log lines,
+    each an fflush to the SD (Forsaken measured 5-10 ms a flushed write);
+  - clusters of 13-16 frames whose game-side draw build takes 20-40 ms: the
+    first-use creation of what comes into view (open).
+FIX: mdk::log3dsPeriodic() -- the periodic lines, the one-frame census and
+the capture poll are on in harness builds (whose tools read them) and OFF in
+release and PROFILE builds; event lines (boot, level, the first frames,
+failures) stay everywhere.
+  original look, stereo     steady mean   vblanks 2 / 3 / 4+
+  before                    45.1 ms       69% / 10% / 21%
+  after                     40.0 ms       82% /  3% / 15%
+The 30-frame spikes are gone (no spike at frames 31/61/91/121); all 40 logged
+spikes are now the first-use clusters. Release screenshots: ATM / Rosalina
+(capture.txt is no longer polled in a release build).

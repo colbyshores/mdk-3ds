@@ -52,6 +52,16 @@ constexpr uint32_t kSteadyFrom = 3;
 uint64_t g_steadySumUs = 0;
 uint32_t g_steadyCount = 0;
 uint32_t g_vblanks[5] = {0, 0, 0, 0, 0};   // [1], [2], [3], [4+]; [0] unused
+// THE SPIKES, NAMED. A frame over kSpikeUs (60 ms: four vblanks or more) is
+// logged with the previous frame's spans -- the spans of frame N are reported
+// at its end, its period measured at the start of N+1 -- so a spike says what
+// it was made of (simulation steps, the draw build, the GPU waits). The first
+// kSpikeLogs only: the log is an SD write.
+constexpr uint32_t kSpikeUs = 60000u;
+constexpr uint32_t kSpikeLogs = 40u;
+uint32_t g_spikesLogged = 0;
+uint64_t g_lastSimT = 0, g_lastBeginT = 0, g_lastDrawT = 0, g_lastEndT = 0;
+uint32_t g_lastSteps = 0;
 uint32_t g_over17 = 0;   // > 16.667 ms: missed a 60 Hz vblank
 uint32_t g_over34 = 0;   // > 33.333 ms: missed a 30 Hz vblank
 bool g_stereoSeen = false;
@@ -97,6 +107,17 @@ void harnessProfileFrame(double periodSeconds) {
     // into the summary's max: the summary cannot say which frame, and the frame
     // log's `elapsed` is the game's clamped step, not the wall clock. Rare by
     // definition, so the log write is not a per-frame cost.
+    if (us > kSpikeUs && us <= 500000u && g_count >= kSteadyFrom && g_spikesLogged < kSpikeLogs) {
+        g_spikesLogged++;
+        const double usPerTick = 1000000.0 / (double)SYSCLOCK_ARM11;
+        mdk::log3dsPrintf("profile: spike %lu.%01lu ms at profiled frame %lu: sim %.2f ms (%lu steps) "
+                          "begin %.2f draw %.2f end %.2f",
+                          (unsigned long)(us / 1000u), (unsigned long)(us % 1000u / 100u),
+                          (unsigned long)g_count, (double)g_lastSimT * usPerTick / 1000.0,
+                          (unsigned long)g_lastSteps, (double)g_lastBeginT * usPerTick / 1000.0,
+                          (double)g_lastDrawT * usPerTick / 1000.0,
+                          (double)g_lastEndT * usPerTick / 1000.0);
+    }
     if (us > 500000u) {
         mdk::log3dsPrintf("profile: STALL %lu.%03lu ms at profiled frame %lu",
                           (unsigned long)(us / 1000u), (unsigned long)(us % 1000u),
@@ -147,6 +168,11 @@ void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTic
     g_drawT += drawTicks;
     g_endT += endTicks;
     g_spanFrames++;
+    g_lastSimT = simTicks;
+    g_lastSteps = simSteps;
+    g_lastBeginT = beginTicks;
+    g_lastDrawT = drawTicks;
+    g_lastEndT = endTicks;
 #else
     (void)simTicks; (void)simSteps; (void)beginTicks; (void)drawTicks; (void)endTicks;
 #endif

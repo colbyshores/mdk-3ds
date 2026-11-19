@@ -1,0 +1,7 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-19T19:50:57Z at 766fe67
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: the 3DS main loop no longer polls an SD file every 30 frames nor flushes
+periodic diagnostics inside the frame in release/profile builds: the Old 3DS
+original look 45.1 -> 40.0 ms steady mean (4+ vblank frames 21% -> 15%).
+3DS-only; this Linux frame is byte-identical to the previous pin.
