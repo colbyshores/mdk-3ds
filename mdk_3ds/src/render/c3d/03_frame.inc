@@ -1313,6 +1313,13 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
             r->glowQuadsDropped = 0;
         }
     }
+    if ((r->frame % 300) == 0) {
+        mdk::log3dsPrintf("programs: frame %d: %d lit, %d lit+shadow, %d pass-through, %d plain "
+                          "draws (both eyes)",
+                          (int)r->frame, (int)r->drawsLit, (int)r->drawsShadowLit,
+                          (int)r->drawsPass, (int)r->drawsPlain);
+    }
+    r->drawsLit = r->drawsShadowLit = r->drawsPass = r->drawsPlain = 0;
     // The halos are this frame's: a frame whose game hands none over (no
     // runtime) must not draw the last frame's again (review, 2026-11-19).
     r->glowQuadCount = 0;

@@ -332,6 +332,9 @@ struct RendererC3D {
     bool glowHaloReady = false;
     bool billboardsLive = false;   // the frame's glow is billboards (end_frame)
     int32_t billboardsDrawn = 0;   // halos drawn this frame, both eyes
+    // THE DRAW CENSUS by program (both eyes), logged every 300 frames: which
+    // program each queued draw went through (drawRecorded).
+    int32_t drawsLit = 0, drawsShadowLit = 0, drawsPass = 0, drawsPlain = 0;
     int32_t billboardsPeak = 0;    // the most halos in one frame since the last log line
     int32_t glowQuadsDropped = 0;  // halos past kMaxGlowQuads since the last log line
     float* glowLevelQuad = nullptr;

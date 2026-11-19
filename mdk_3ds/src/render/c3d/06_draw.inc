@@ -774,6 +774,15 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (shadowLit) {
         r->shadowReceivers++;
     }
+    if (r->boundProgram == &r->programShadow) {
+        r->drawsShadowLit++;
+    } else if (r->boundProgram == &r->programLit) {
+        r->drawsLit++;
+    } else if (r->boundProgram == &r->programPass) {
+        r->drawsPass++;
+    } else {
+        r->drawsPlain++;
+    }
     if (lit) {
         // The world position the geometry shader takes its normal from; the
         // identity (every arena batch) is written only when it is not there.

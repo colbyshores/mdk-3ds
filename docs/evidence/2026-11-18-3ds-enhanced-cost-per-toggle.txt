@@ -102,3 +102,17 @@ whole-triangle draw through the pass-through geometry shader): p50 36.3 ms --
 the geometry stage itself costs nothing measurable; the cost is the lit
 geometry shader's arithmetic per triangle per eye on the PICA's one geometry
 unit (face normal, rsq, hemisphere + sun, three lg2/ex2 pairs).
+
+ADDENDUM 2026-11-19 (2): THE LIGHT'S SPLIT, WITH A DRAW CENSUS. The log now
+counts each frame's draws by program every 300 frames. Level 8, stereo:
+  light off, every draw through the pass-through GS   486 pass-through   p50 35.1 ms
+  lit, its arithmetic stripped (a throwaway build),
+    shadows off                                       436 lit, 50 pass    p50 38.5 ms
+  lit, full arithmetic, shadows off (above)                               p50 44.3 ms
+  lit, arithmetic stripped, shadows ON                                    p50 43.9 ms
+  everything on                                                           p50 45.6 ms
+The geometry stage is free (the census proves the probe's draws went through
+it). The light's arithmetic is ~6 ms with shadows off but only ~2 ms with them
+on: the lit geometry shader and the shadow lookup's fragment work (three texture
+fetches a lit pixel) are each close to the limit, so removing one leaves the
+other. The next step is experiments on throwaway branches (owner, 2026-11-19).
