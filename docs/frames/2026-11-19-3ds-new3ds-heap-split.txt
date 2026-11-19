@@ -1,0 +1,7 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-19T04:53:10Z at 3f2a1d8
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: the 3DS main/linear heap split capped at the 96 MiB heap area (the
+owner's New 3DS crashed before main(), Luma dump 41). 3DS-only startup code;
+the Linux picture did not change: byte-identical to the previous pin.
+Evidence: docs/evidence/2026-11-18-3ds-console-hangs.txt section 1.

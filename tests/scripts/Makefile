@@ -103,11 +103,13 @@ SOURCES_VM := \
 	system_numerics_tests.cpp \
 	pica_matrix_tests.cpp \
 	input_3ds_tests.cpp \
+	heap_split_tests.cpp \
 	sky_dome_tests.cpp \
 	$(CORE)/render/sky_dome.cpp \
 	$(LINUX)/render/system_numerics_inverse.cpp \
 	$(3DS)/render/pica_matrix.cpp \
 	$(3DS)/platform/input_3ds.cpp \
+	$(3DS)/platform/heap_split_policy.cpp \
 	$(COMMON_SOURCES)
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))

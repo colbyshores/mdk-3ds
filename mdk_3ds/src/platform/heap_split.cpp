@@ -17,41 +17,109 @@
 // level's worth of expanded colours. 24 MiB is far above that working set and
 // still leaves ~8 MiB of margin against the old 32.7 MiB.
 //
-// HOW. __ctru_heap_size and __ctru_linear_heap_size are STRONG-overridable
-// (libctru defines them weak, symbols "V" in allocateHeaps.o). The default
-// allocator reads both BEFORE it splits (the `cmp r3, #0` / `cmp r1, #0`
-// branches): heap == 0 with linear != 0 means "give the linear heap this much
-// and the rest to main". So these two globals move ~7.5 MiB from the GPU heap
-// to the malloc heap without reimplementing the allocator -- which matters,
-// because an __system_allocateHeaps override owns mappableInit() too and
-// omitting it data-aborts in gspInit at boot
-// (Obsidian 30-architecture/patterns/3ds-adaptive-linear-heap-and-mappableinit-trap.md).
-// The default path still runs: it does the svcControlMemory mapping, the
-// mappableInit(), and the fake_heap_start/end wiring.
+// HOW. libctru 2.7.0's __system_allocateHeaps is WEAK (symbol "W" in
+// allocateHeaps.o), and so are the two size globals ("V"). Until 2026-11-18
+// this file only overrode the globals (heap 0, linear 24 MiB: "linear gets this
+// much, main the rest") and let libctru's default allocator run. That broke on
+// a New 3DS in extended memory: 124 MiB less 24 MiB of linear asked for a
+// 99 MiB main heap, which does not fit the 96 MiB heap area, and libctru's
+// svcBreak guard fired before main() (Luma crash dump 41; heap_split_policy.h
+// has the registers). The globals cannot express "24 MiB, unless main would
+// overflow its area" -- they are read before any of our code runs -- so the
+// allocator itself is overridden here, as a line-for-line copy of libctru
+// 2.7.0's (recovered from its disassembly in mdk.elf, allocateHeaps.c lines
+// 19-80) with the split taken from mdk::heapSplitFor instead.
+//
+// THE TRAP an override has to respect: it owns mappableInit() and the
+// fake_heap_start/end wiring too, and omitting mappableInit data-aborts in
+// gspInit at boot (Obsidian
+// 30-architecture/patterns/3ds-adaptive-linear-heap-and-mappableinit-trap.md).
+// Both are below, in libctru's order.
 //
 // The split is logged at boot and linearSpaceFree() is logged with every heap
 // probe (main_3ds.cpp), so a hardware run shows both sides. An original-3DS
-// region is ~62.3 MiB free after the image; on a region too small for this
-// split libctru's own svcBreak guard fires rather than silently starving main.
+// region is ~62.3 MiB free after the image, where the cap never binds and the
+// split is the one every earlier measurement used; on a region too small for
+// the linear heap the svcBreak guard fires rather than silently starving main.
 // ============================================================================
 
 #include <stdint.h>
 
-// NOT <3ds/env.h>: it declares these two globals with C++ linkage inside its
+#include "platform/heap_split_policy.h"
+
+// NOT <3ds/env.h>: it declares the size globals with C++ linkage inside its
 // static inline accessors, which collides with the C linkage libctru actually
 // exports. The definitions below are the authoritative (unmangled) symbols.
+extern "C" {
 #include <3ds/types.h>
+#include <3ds/result.h>
+#include <3ds/svc.h>
+#include <3ds/os.h>
+#include <3ds/allocator/mappable.h>
+}
 
 extern "C" {
 
-// 0 = "let libctru compute it": with a non-zero linear size the default
-// allocator assigns main = avail - linear, so this stays adaptive to the
-// console's actual application region instead of hard-coding a main size.
+// Written by __system_allocateHeaps below before anything reads them
+// (envGetHeapSize, linearSpaceFree and the texture code read them later).
 u32 __ctru_heap_size = 0;
+u32 __ctru_linear_heap_size = 0;
 
-// 24 MiB for the GPU heap; the surplus (~7.5 MiB over libctru's half split on
-// an original 3DS) goes to newlib. See the header comment for why the GPU
-// side does not need the default half.
-u32 __ctru_linear_heap_size = 24 * 1024 * 1024;
+// Defined (bss) by libctru's allocateHeaps.o, which is still linked for them.
+extern u32 __ctru_heap;
+extern u32 __ctru_linear_heap;
+
+// newlib's sbrk window.
+extern char* fake_heap_start;
+extern char* fake_heap_end;
+
+void __system_allocateHeaps(void) {
+    Result rc;
+
+    // The resource limit object for this process.
+    Handle reslimit = 0;
+    rc = svcGetResourceLimit(&reslimit, CUR_PROCESS_HANDLE);
+    if (R_FAILED(rc)) {
+        svcBreak(USERBREAK_PANIC);
+    }
+
+    // Total and used commit.
+    s64 maxCommit = 0;
+    s64 currentCommit = 0;
+    ResourceLimitType reslimitType = RESLIMIT_COMMIT;
+    svcGetResourceLimitLimitValues(&maxCommit, reslimit, &reslimitType, 1);
+    svcGetResourceLimitCurrentValues(&currentCommit, reslimit, &reslimitType, 1);
+    svcCloseHandle(reslimit);
+
+    // What is left, page-aligned, split by this title's rule.
+    const u32 remaining = (u32)(maxCommit - currentCommit) & ~0xFFFu;
+    const mdk::HeapSplit split = mdk::heapSplitFor(remaining);
+    if (!split.fits) {
+        svcBreak(USERBREAK_PANIC);
+    }
+    __ctru_heap_size = split.main;
+    __ctru_linear_heap_size = split.linear;
+
+    // The application heap.
+    rc = svcControlMemory(&__ctru_heap, OS_HEAP_AREA_BEGIN, 0x0, __ctru_heap_size, MEMOP_ALLOC,
+                          (MemPerm)(MEMPERM_READ | MEMPERM_WRITE));
+    if (R_FAILED(rc)) {
+        svcBreak(USERBREAK_PANIC);
+    }
+
+    // The linear heap.
+    rc = svcControlMemory(&__ctru_linear_heap, 0x0, 0x0, __ctru_linear_heap_size,
+                          MEMOP_ALLOC_LINEAR, (MemPerm)(MEMPERM_READ | MEMPERM_WRITE));
+    if (R_FAILED(rc)) {
+        svcBreak(USERBREAK_PANIC);
+    }
+
+    // The mappable allocator (gspInit needs it).
+    mappableInit(OS_MAP_AREA_BEGIN, OS_MAP_AREA_END);
+
+    // newlib's heap.
+    fake_heap_start = (char*)__ctru_heap;
+    fake_heap_end = fake_heap_start + __ctru_heap_size;
+}
 
 } // extern "C"

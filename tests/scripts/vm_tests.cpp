@@ -33,6 +33,7 @@
 #include "audio_stream_tests.h"
 #include "flow_tests.h"
 #include "input_3ds_tests.h"
+#include "heap_split_tests.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/dti.h"
@@ -7797,6 +7798,14 @@ int main() {
     failures += inputFailures;
     if (inputFailures == 0) {
         printf("PASS Input3dsMap\n");
+    }
+
+    // The 3DS heap split: main capped at its 96 MiB area (Luma crash dump 41, a
+    // New 3DS in extended memory). Data-independent.
+    const int heapSplitFailures = mdk::test::runHeapSplitTests();
+    failures += heapSplitFailures;
+    if (heapSplitFailures == 0) {
+        printf("PASS HeapSplit\n");
     }
 
     // The MathF.Min/MathF.Max twins, in the oracle's bits. Data-independent, so it
