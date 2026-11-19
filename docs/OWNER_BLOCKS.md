@@ -9,9 +9,12 @@ is made, record it here and flip the ledger row to `todo` in the same commit.
 
 | id | blocking decision | unblocks with |
 |---|---|---|
-| spec.voice-pool | `SPEC.md:809` says the 3DS voice pool shrinks to 24 and the audio queue to 40 ms; the port ships the C# oracle's 64 voices and an 80 ms queue (`src/Mdk.Engine/Audio/AudioDevice.cs:73 MaxVoices = 64`). The builder may not amend a protected spec. | Either amend `SPEC.md` §8 to match the oracle, or authorise a per-target 3DS cap with a stated reason. One line; no code change either way. |
-| hw.cia-boot | **Owner decision 2026-11-17: CIA testing goes LAST, and it is not part of the netload hardware loop.** `netload_stub` and `hw_cycle.sh` are for `.3dsx` payloads only; the loop must never try to install or boot a CIA. The row was `hw_cycle.sh --install`, and that mode is removed. | The owner starts the final CIA pass, a separate step after the `.3dsx` work is done (install the `make -C mdk_3ds cia` output by the owner's chosen route, then boot it). Record the route and its evidence here and flip the row to `todo` with that acceptance, in the same commit. |
+| hw.cia-boot | **Owner decision 2026-11-17: CIA testing goes LAST, and it is not part of the netload hardware loop.** `netload_stub` and `hw_cycle.sh` are for `.3dsx` payloads only; the loop must never try to install or boot a CIA. **Refined 2026-11-19:** the owner first tests the `.3dsx` on their own New 3DS; the CIA pass follows that. | The owner reports their New 3DS `.3dsx` test, then starts the final CIA pass (install the `make -C mdk_3ds cia` output by the owner's chosen route, then boot it). Record the route and its evidence here and flip the row to `todo` with that acceptance, in the same commit. |
 | re.phase-2-sweep | The Phase 2 post-process gap sweep needs the REA MCP server, which is disabled in `~/.config/kilo/kilo.jsonc`, and `SPEC-COMPLETION.md:146` says "No RE work enters a normal porting batch". | Enable the REA MCP server and authorise a dedicated sweep phase after the C#-driven work is exhausted. This is a config flip plus an authorisation, not hardware. |
+
+## Decided
+
+- **spec.voice-pool** (2026-11-19): the 3DS replicates `../forsaken`'s sound system -- the DSP mixes, 8 effect voices on ndsp channels 0-7 with oldest-eviction, DSP-ADPCM music on channel 23 by a 25 ms worker -- while the 64 logical voices and their lifecycle stay shared code, because `if_sound_playing` reads them. Recorded in `SPEC.md` §8; the ledger row is `todo`.
 
 ## Not blocked: hardware
 

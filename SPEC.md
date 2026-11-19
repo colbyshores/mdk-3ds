@@ -852,10 +852,38 @@ are gameplay. Only the *sink* differs:
 | Target | Sink |
 |---|---|
 | Linux | `SDL_OpenAudioDeviceStream` with `SDL_AUDIO_F32LE`, stereo, 44.1 kHz — 1:1 with the C#. |
-| 3DS | `ndsp` with a 16-bit PCM stream; the shared mixer's float output is converted at the sink. The voice pool shrinks to 24 and the queue to 40 ms to fit the 3DS's DSP budget. |
+| 3DS | `ndsp`, **the DSP mixes** (owner decision 2026-11-19: replicate `../forsaken`'s sound system, below). |
 
 The `Muted` output mode (mix and drop, keep the frame accounting) is kept, so
 the shared code and the tests run headless.
+
+**The 3DS follows Forsaken's sound system** (owner decision 2026-11-19; reference
+`../forsaken` at e8f0774, `forsaken_3ds/src/audio/sound_3ds.cpp` and
+`music_3ds.cpp`, proven on the Old 3DS). The sound LAWS stay shared code -- which
+sounds play, their volume, pan, Doppler pitch and scope are computed by
+`mdk_core/src/audio/` exactly as on the PC -- but the summing moves off the ARM11:
+
+- **Effects:** each live voice plays on its own `ndsp` channel and the DSP mixes
+  them. A pool of **8 effect voices** (channels 0-7): the DSP firmware starts
+  skipping audio when too many channels are active, which is why Forsaken caps it
+  there. When all 8 are taken, the voice claimed longest ago is reset and handed
+  over, and its sound is told it has no channel. Volume and pan become the
+  channel's mix, pitch its rate.
+- **Music:** DSP-ADPCM streamed on **channel 23**, outside the effect pool, by a
+  worker thread that wakes every 25 ms and keeps four wave buffers queued, each
+  carrying its own ADPCM context. The music bus's 6 kHz low-pass becomes the
+  channel's biquad filter if it is kept.
+- **The voice LIFECYCLE stays logical and shared.** The 64 voices, their start,
+  length and end, keep being advanced by the shared device every frame, because
+  the scripts read them: `if_sound_playing` (opcode 233,
+  `ScriptRuntime::isSoundPlaying`) branches on it. Losing a DSP channel to
+  eviction silences a sound; it must never end it early in the game's eyes.
+- **Not carried over:** the ARM11 summing of the 64 voices into one stream, the
+  80 ms mixed stream and the master limiter (the PC keeps all three). A worker thread follows AGENTS.md R1
+  (FZ/DN at entry) and §10's small-stack rule.
+
+This supersedes the earlier "voice pool shrinks to 24 and the queue to 40 ms" line,
+which the port never shipped.
 
 ---
 
@@ -1095,17 +1123,17 @@ current chains and their fallbacks.
 
 Each phase has an exit criterion that is *checked*, not asserted.
 
-| Phase | Work | Exit criterion |
-|---|---|---|
-| **P0** | This spec, `AGENTS.md`, `docs/DOCTRINE.md` | The spec is reviewed; the doctrine states the fidelity ladder. |
-| **P1** | The tree scaffold, the build systems, the toolchain | **DONE (verified 2026-10-21).** `mdk_linux` builds and renders headless on lavapipe; `mdk_3ds` builds a `.3dsx` that runs in mandarine at 60 Hz with the MDK data embedded in its RomFS. |
-| **P2** | `tools/` — the python gates | Each gate runs and **fails on a seeded violation** (a test that cannot fail is not a test). |
-| **P3** | `mdk_core/formats` + the unit tests | Every C# format test has a passing C++ twin. |
-| **P4** | `mdk_core` — the game logic, the script VM, the collision, the audio mixer, the platform-neutral parts | The golden-state tests match the C# byte for byte. |
-| **P5** | `mdk_linux` — the Vulkan renderer, the original look | The golden-frame tests match the C# within tolerance. |
-| **P6** | `mdk_linux` — the enhanced look, the stereo, the mods | The enhanced-look frames match; the HD-texture path is Linux-only and works. |
-| **P7** | `mdk_3ds` — the Citro3D renderer, the platform, the audio sink, the RomFS | The 3DS build runs a level in mandarine with the A/B checklist passing. |
-| **P8** | The packaging (`.cia`), the gates green, the adversarial sweep | `tools/check.sh` is green; the adversarial validator has no open findings. |
+| Phase | Work | Exit criterion | Status (2026-11-19, from `docs/COMPLETION_LEDGER.tsv`) |
+|---|---|---|---|
+| **P0** | This spec, `AGENTS.md`, `docs/DOCTRINE.md` | The spec is reviewed; the doctrine states the fidelity ladder. | **Done.** SPEC.md, AGENTS.md and docs/DOCTRINE.md are in the tree and in force. |
+| **P1** | The tree scaffold, the build systems, the toolchain | **DONE (verified 2026-10-21).** `mdk_linux` builds and renders headless on lavapipe; `mdk_3ds` builds a `.3dsx` that runs in mandarine at 60 Hz with the MDK data embedded in its RomFS. | **Done** (2026-10-21). |
+| **P2** | `tools/` — the python gates | Each gate runs and **fails on a seeded violation** (a test that cannot fail is not a test). | **Done in practice, not proven per gate.** The gates run in `tools/check.sh`; the frame gate and the renderer pins carry seeded-violation arms (`tests/scripts`). Not every python gate has its own seeded-violation test. |
+| **P3** | `mdk_core/formats` + the unit tests | Every C# format test has a passing C++ twin. | **Done:** `core.formats` (8ba4335). |
+| **P4** | `mdk_core` — the game logic, the script VM, the collision, the audio mixer, the platform-neutral parts | The golden-state tests match the C# byte for byte. | **Done except the script VM's tail:** `core.goldens` (0b8c974), `core.flow` (0132ee8), `audio.mix-parity` (653524a). Open: `opcodes.remaining-27` (27 opcodes decoded but no-op). |
+| **P5** | `mdk_linux` — the Vulkan renderer, the original look | The golden-frame tests match the C# within tolerance. | **Done:** `linux.render-frame` (f5314d3), `p5.0.frame-harness` (7f0d867), `p5.vulkan-goldens` (bd13abd). |
+| **P6** | `mdk_linux` — the enhanced look, the stereo, the mods | The enhanced-look frames match; the HD-texture path is Linux-only and works. | **Open:** `p6.enhanced-stereo`. |
+| **P7** | `mdk_3ds` — the Citro3D renderer, the platform, the audio sink, the RomFS | The 3DS build runs a level in mandarine with the A/B checklist passing. | **Done, with the 3DS work continuing:** the d1 3DS rows, `p7.platform-lifecycle` and `p7.romfs-streaming` (6f973de), `audio.3ds-sink` (34b230a), on-console `hw.harness-cycle`, `hw.pixels-rgba8`, `hw.profile-og`. Open: `hw.sleep-resume`; `spec.voice-pool` (the Forsaken sound system, §8). Beyond the phase: the 3DS Enhanced Mode toggles (§7.9) and the Old-3DS frame-time work (`docs/3DS_PERF_EXPERIMENTS.md`). |
+| **P8** | The packaging (`.cia`), the gates green, the adversarial sweep | `tools/check.sh` is green; the adversarial validator has no open findings. | **Partly done:** `p8.cia-build` (ed9d653). Open: `hw.cia-boot`, which waits for the owner's own `.3dsx` test on a New 3DS first; the final `tools/check.sh` + adversarial sweep at the end. |
 
 **The ralph-wiggum loop** drives P1→P8 automatically: it picks the next
 unfinished phase, works it, runs the phase's exit criterion, and moves on. A
