@@ -1,0 +1,58 @@
+2026-11-19  3DS experiments on the light's cost: five candidates, all rejected
+=============================================================================
+
+HARDWARE. Old 3DS appliance old3ds-lan167 (CFGU model 0, 268 MHz, L2 none),
+stereo ON, level 8, 90 s per run, hw_cycle.sh FRESH on every run. Every
+candidate on its own throwaway branch (owner, 2026-11-19: "these risky changes
+aren't all that risky if they go on throw away branches"); A, B and D were
+written by separate agents in their own worktrees and measured here serially.
+
+THE QUESTION. Turning the enhanced light off saved ~8-9 ms (mean) of the
+shipped frame. Where is that cost, and can a cheaper formulation keep the look?
+
+THE CANDIDATES (shipped config: everything on; each on vs off, back to back):
+  E3  the sun's map sampled NEAREST (one compare, not 2x2)        no change
+  A   static light baked once per rig on the CPU (owner-approved
+      exception); geometry shaders only pick the facing          worse, ~+1-2 ms
+      (look: within 2/255 of the GPU light; 372 of 436 shadowed draws baked;
+       the bake 24 ms once at level start)
+  B   the haze through the PICA fog unit (W-buffer depth) and the
+      shadow as one vertex scalar: two texture fetches a lit pixel  no change,
+      and BROKEN on the console (the scene nearly black: the fog unit does
+      not read the W-buffered depth the way the design assumed)
+  D   the light in the VERTEX shader from face normals made at mesh
+      creation (GPU-only)                                          worse, ~+1 ms
+      (look: within 1/255; 372 draws with no geometry stage at all)
+  --  texture units 1-2 left enabled (the idle texture) for the
+      rest of a frame                                              no cost
+      (mean 54.126 against 54.130 ms)
+
+ISOLATED (the original look plus ONLY the light; everything else off), means:
+  nothing on (the original look)                46.4 ms
+  the light only, twice                         49.2, 48.9 ms  (noise ~0.3)
+  the light only, units 1-2 enabled             49.3 ms
+  A bake on / off                               51.3 / 50.2 ms
+  D vertex light on / off                       58.9 / 51.5 ms
+  shipped (everything on), twice                58.9, 58.3 ms  (noise ~0.5)
+-> In isolation A costs +1.1 ms and D +7.4 ms (its larger vertex data); the
+   light itself costs only ~2.6 ms of mean. Every rejection stands on a clean
+   measurement.
+
+TWO LESSONS.
+1. THE p50 MISLEADS. The frame period is quantised by the 60 Hz refresh -- a
+   frame takes 2 or 3 vblanks, 33.3 or 50 ms -- so the p50 reports which side
+   of 50% the frames fall: "bake off" 35.1 and "vertex light off" 49.5 ms p50
+   with means 1.2 ms apart. The MEAN is stable (repeats within 0.3-0.5 ms).
+   The profiler now also logs the mean from the third frame on and the count
+   of frames at 1/2/3/4+ vblanks. Rechecked by mean, the branch's four
+   committed gains stand: 94.5 -> 77.1 -> 67.2 -> 61.4 -> 57.8 ms.
+2. THE ORIGINAL LOOK IS MOST OF THE FRAME. Level 8 with every enhancement off
+   is ~46 ms of mean (stereo); all the enhancements together add ~12. The
+   next experiments target the base path, which helps every configuration:
+   texture bandwidth (every original texture is expanded to RGBA8; mipmaps
+   already save ~4.5 ms, so the frame is texture-sensitive) and the draws'
+   CPU/state cost (11-14 ms a frame of command building).
+
+BRANCHES. experiment/3ds-baked-light (e95ef6d), experiment/3ds-fog-haze
+(aa35a5c), experiment/3ds-vertex-light (119b63b) are kept until the owner has
+seen this; experiment/3ds-shadow-nearest and the units probe were deleted.

@@ -42,6 +42,16 @@ uint32_t g_count = 0;
 uint64_t g_sumUs = 0;
 uint32_t g_maxUs = 0;
 uint32_t g_maxAt = 0;    // the profiled frame (1-based) that took g_maxUs
+// THE STEADY STATE. The frame period is quantised by the 60 Hz refresh (a
+// frame takes 2 or 3 vblanks: 33.3 or 50 ms), so the p50 flips between those
+// with no real change (measured 2026-11-19: 35.1 against 49.5 ms for builds
+// whose means differ by 1.2 ms); and the level's first frames carry the
+// first-use work (seconds). So the summary also gives the mean from the third
+// frame on, and how many frames took 1, 2, 3 and 4+ vblanks.
+constexpr uint32_t kSteadyFrom = 3;
+uint64_t g_steadySumUs = 0;
+uint32_t g_steadyCount = 0;
+uint32_t g_vblanks[5] = {0, 0, 0, 0, 0};   // [1], [2], [3], [4+]; [0] unused
 uint32_t g_over17 = 0;   // > 16.667 ms: missed a 60 Hz vblank
 uint32_t g_over34 = 0;   // > 33.333 ms: missed a 30 Hz vblank
 bool g_stereoSeen = false;
@@ -91,6 +101,14 @@ void harnessProfileFrame(double periodSeconds) {
         mdk::log3dsPrintf("profile: STALL %lu.%03lu ms at profiled frame %lu",
                           (unsigned long)(us / 1000u), (unsigned long)(us % 1000u),
                           (unsigned long)g_count);
+    }
+    if (g_count >= kSteadyFrom) {
+        g_steadySumUs += us;
+        g_steadyCount++;
+        // Nearest whole vblank (16.667 ms), by integer arithmetic: the divisor
+        // is a literal (AGENTS.md R11).
+        const uint32_t vb = (us + 8333u) / 16667u;
+        g_vblanks[vb < 1u ? 1u : (vb > 4u ? 4u : vb)]++;
     }
     if (us > 16667) g_over17++;
     if (us > 33333) g_over34++;
@@ -183,6 +201,14 @@ void harnessProfileReport() {
                       (unsigned long)(percentileUs(99) / 1000), (unsigned long)(percentileUs(99) % 1000 / 100),
                       (unsigned long)(g_maxUs / 1000), (unsigned long)(g_maxUs % 1000),
                       (unsigned long)g_maxAt, (unsigned long)g_over17, (unsigned long)g_over34);
+    const uint32_t steadyUs =
+        g_steadyCount ? (uint32_t)((double)g_steadySumUs / (double)g_steadyCount) : 0;
+    mdk::log3dsPrintf("profile: steady (frame %lu on) frames=%lu mean=%lu.%03lums; vblanks 1:%lu "
+                      "2:%lu 3:%lu 4+:%lu",
+                      (unsigned long)kSteadyFrom, (unsigned long)g_steadyCount,
+                      (unsigned long)(steadyUs / 1000), (unsigned long)(steadyUs % 1000),
+                      (unsigned long)g_vblanks[1], (unsigned long)g_vblanks[2],
+                      (unsigned long)g_vblanks[3], (unsigned long)g_vblanks[4]);
     mdk::log3dsPrintf("profile: console model=%u family=%s clock=%s l2=%s stereo=%s "
                       "(frame period = wall clock between frames, first frame excluded; "
                       "percentiles are 0.1 ms bucket upper edges)",

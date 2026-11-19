@@ -374,6 +374,10 @@ if [ "$MODE" = "--profile" ]; then
         exit 1
     fi
     echo "hw_cycle: $PROF"
+    # The steady-state line (frames 3 on, and the vblank spread), when the
+    # payload logs one: the p50 alone is quantised by the 60 Hz refresh.
+    STEADY=$(printf '%s' "$SESSION" | grep -F 'profile: steady ' | tail -1)
+    [ -n "$STEADY" ] && echo "hw_cycle: $STEADY"
     SPANS=$(printf '%s' "$SESSION" | grep -F 'profile: spans ' | tail -1)
     [ -n "$SPANS" ] && echo "hw_cycle: $SPANS"
     STEPS=$(printf '%s' "$SESSION" | grep -F 'profile: step ' | tail -1)

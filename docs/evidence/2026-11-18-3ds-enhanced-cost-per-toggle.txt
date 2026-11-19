@@ -116,3 +116,8 @@ it). The light's arithmetic is ~6 ms with shadows off but only ~2 ms with them
 on: the lit geometry shader and the shadow lookup's fragment work (three texture
 fetches a lit pixel) are each close to the limit, so removing one leaves the
 other. The next step is experiments on throwaway branches (owner, 2026-11-19).
+
+ADDENDUM 2026-11-19 (3): EXPERIMENT E3, THE SHADOW MAP SAMPLED NEAREST (a
+throwaway branch, dropped). One compare a pixel instead of the unit's 2x2:
+p50 43.9 ms against 43.9 for the base run straight after it, same session. The
+2x2 comparison is free in the texture unit; blockier edges would buy nothing.
