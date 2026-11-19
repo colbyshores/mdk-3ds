@@ -308,6 +308,16 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     const bool shadowLit = lit && r->shadowLitLive &&
                            mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,
                                                      draw->primitive);
+    // THE BAKED LIGHT (config bakeLight; 03_frame.inc bakeStaticLight): a lit
+    // draw of a STATIC mesh whose bake is the current rig's takes the baked
+    // program of its kind, whose geometry shader only picks the side the camera
+    // sees. Only whole triangles from the mesh's own triangle grid (the bake is
+    // per triangle from vertex 0) and only in world space as baked (an identity
+    // world: the arena's). Everything else -- the streamed meshes (objects,
+    // effects, Kurt), a misaligned or moved draw -- keeps the computed light.
+    const bool baked = lit && r->bakeLive && mesh.isStatic && mesh.bake != nullptr &&
+                       mesh.bakeSerial == r->bakeSerial && (draw->first_vertex % 3) == 0 &&
+                       (!shadowLit || r->bakeShadowReady) && mdk::pica::isIdentity(draw->world);
     C3D_TexBind(shadowLit ? 1 : 0, texture);
 
     // THE UV TRANSFORM, in uniform register 4.
@@ -436,6 +446,12 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     C3D_BufInfo* bufInfo = C3D_GetBufInfo();
     BufInfo_Init(bufInfo);
     BufInfo_Add(bufInfo, mesh.data, 5 * sizeof(float), 2, 0x10);
+    // A baked draw reads its bake as attribute 2 from a second buffer, four
+    // bytes a vertex in the mesh's own vertex order.
+    if (baked) {
+        BufInfo_Add(bufInfo, mesh.bake, 4, 1, 0x2);
+    }
+    installAttribLayout(r, baked);
 
     r->drawCount++;
     r->triangleCount += draw->vertex_count / 3;
@@ -757,13 +773,22 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         r->gsInList = true;
     }
 #endif
-    shaderProgram_s* const wanted =
+    shaderProgram_s* const computed =
         shadowLit ? &r->programShadow
         : lit     ? &r->programLit
                   : (r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program);
+    // The baked programs stand in for the lit ones on a baked draw only.
+    shaderProgram_s* const wanted =
+        !baked ? computed : (shadowLit ? &r->programBakeShadow : &r->programBakeLit);
     if (wanted != r->boundProgram) {
         bindProgram(r, wanted);
-        if (shadowLit) {
+        if (baked) {
+            if (shadowLit) {
+                installBakedShadowUniforms(r);
+            } else {
+                installBakedLitUniforms(r);
+            }
+        } else if (shadowLit) {
             installShadowUniforms(r);
         } else if (lit) {
             installLitUniforms(r);
@@ -774,7 +799,13 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (shadowLit) {
         r->shadowReceivers++;
     }
-    if (r->boundProgram == &r->programShadow) {
+    if (r->boundProgram == &r->programBakeShadow) {
+        r->drawsShadowLit++;
+        r->drawsBakedShadow++;
+    } else if (r->boundProgram == &r->programBakeLit) {
+        r->drawsLit++;
+        r->drawsBakedLit++;
+    } else if (r->boundProgram == &r->programShadow) {
         r->drawsShadowLit++;
     } else if (r->boundProgram == &r->programLit) {
         r->drawsLit++;
@@ -1153,6 +1184,9 @@ static void glowDrawState(RendererC3D* r, C3D_Tex* view) {
 static void drawGlowBillboards(RendererC3D* r);
 
 static void drawGlow(RendererC3D* r) {
+    // The glow's buffers have no bake: the scene's last draw may have been a
+    // baked one (installAttribLayout).
+    installAttribLayout(r, false);
     if (r->billboardsLive) {
         drawGlowBillboards(r);   // the 3DS default (config glowBloom = 0)
         return;
@@ -1360,6 +1394,8 @@ static void replayQueue(RendererC3D* r) {
             drawRecorded(r, &bucket[i]);
         }
     }
+    // The canary and the next eye's first draws set buffers without the bake.
+    installAttribLayout(r, false);
 }
 
  void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
@@ -1372,6 +1408,11 @@ static void replayQueue(RendererC3D* r) {
     // depth test off on this target, the order IS the occlusion, so this is not
     // a tidiness change.
     r->queue.add(*draw);
+    // The baked light's want (03_frame.inc bakeStaticLight): a static mesh is
+    // baked only when a frame queues it.
+    if (draw->mesh >= 0 && (size_t)draw->mesh < r->meshes.size()) {
+        r->meshes[(size_t)draw->mesh].drawnFrame = r->frame;
+    }
 }
 
 // THE GLOW BILLBOARDS (Enhanced Mode enableGlowBillboards, the 3DS default:

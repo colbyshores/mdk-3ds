@@ -284,6 +284,19 @@ MDK_TEST(EnhancedConfigRoundTrips) {
         MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(bloom).c_str(), &bloomBack));
         MDK_CHECK(bloomBack.glowBloom && bloomBack.enableGlowBillboards);
     }
+    // The 3DS's baked static light (not a look of its own): on by default,
+    // written, read back off.
+    MDK_CHECK(toggles.bakeLight && back.bakeLight);
+    MDK_CHECK(text.find("bakeLight=1\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles gpu;
+        gpu.bakeLight = false;
+        mdk::EnhancedToggles gpuBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(gpu).c_str(), &gpuBack));
+        MDK_CHECK(!gpuBack.bakeLight && gpuBack.enableLighting);
+        mdk::EnhancedToggles off;
+        MDK_CHECK(mdk::parseEnhancedConfig("bakeLight=0\n", &off) && !off.bakeLight);
+    }
     // How often the 3DS redraws the shadow map (not a toggle): 0 = automatic by
     // default, written, read back; only 1-4 are taken, anything else is 0.
     MDK_CHECK(toggles.shadowMapRefresh == 0 && back.shadowMapRefresh == 0);

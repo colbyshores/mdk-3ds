@@ -194,6 +194,17 @@ struct C3dMesh {
     // a frame that may be on the GPU. Freed at the next frame boundary, exactly
     // like a texture's releasePending (AGENTS.md P3).
     bool releasePending = false;
+    // THE BAKED LIGHT (config bakeLight; 03_frame.inc bakeStaticLight). A mesh
+    // made by mdk_render_create_mesh and never rewritten since is STATIC: its
+    // per-triangle light is baked on the CPU into `bake` (linear heap, four
+    // bytes a vertex, pica::bakeMeshLight) once per rig, and its lit draws take
+    // the baked programs. mdk_render_update_mesh makes a mesh not static, for
+    // good; a dynamic mesh (objects, effects, Kurt) never is.
+    bool isStatic = false;
+    void* bake = nullptr;
+    uint32_t bakeSerial = 0;   // the renderer's rig serial `bake` holds; 0 = none
+    bool bakeFailed = false;   // the bake's memory was refused: the GPU path, for good
+    int drawnFrame = -1;       // the last frame a draw of it was queued (the bake's want)
 };
 
 // The one frame whose geometry is censused (see `Census`). It has to be a frame
@@ -335,6 +346,7 @@ struct RendererC3D {
     // THE DRAW CENSUS by program (both eyes), logged every 300 frames: which
     // program each queued draw went through (drawRecorded).
     int32_t drawsLit = 0, drawsShadowLit = 0, drawsPass = 0, drawsPlain = 0;
+    int32_t drawsBakedLit = 0, drawsBakedShadow = 0;   // of which baked (config bakeLight)
     int32_t billboardsPeak = 0;    // the most halos in one frame since the last log line
     int32_t glowQuadsDropped = 0;  // halos past kMaxGlowQuads since the last log line
     float* glowLevelQuad = nullptr;
@@ -613,6 +625,28 @@ struct RendererC3D {
     shaderProgram_s programCaster;
     bool casterProgramReady = false;
     int casterMvpLocation = -1;
+    // THE BAKED-LIGHT PROGRAMS (config bakeLight; 03_frame.inc
+    // bakeStaticLight): mdk_bake.v.pica (DVLE[5], the base vertex shader plus
+    // the bake attribute) with mdk_bakelit.g.pica (DVLE[6]) or
+    // mdk_bakeshadow.g.pica (DVLE[7]) -- a static mesh's lit / shadowed lit
+    // draws, whose geometry shader only picks the side of the CPU's bake.
+    // Optional: without them every lit draw computes its light (litReady's
+    // programs). bakeLive is decided once per frame; bakeSerial counts the rigs
+    // (a mesh's bake is current when its serial is this one).
+    shaderProgram_s programBakeLit;
+    shaderProgram_s programBakeShadow;
+    bool bakeLitReady = false;
+    bool bakeShadowReady = false;
+    int bakeLitCameraLocation = -1;
+    int bakeShadowCameraLocation = -1, bakeShadowParamsLocation = -1;
+    int bakeShadowSunMtxLocation = -1, bakeShadowLutMapLocation = -1;
+    bool bakeLive = false;
+    float bakeRig[13] = {};
+    uint32_t bakeSerial = 0;
+    float bakeThresholds[mdk::pica::kBakedLightThresholds] = {};
+    bool bakeThresholdsReady = false;
+    int32_t bakesDone = 0;          // bakes made this session (the log's cadence)
+    bool attribsBaked = false;      // the attribute loaders include the bake (cache)
     C3D_Tex shadowRamp;
     bool shadowRampReady = false;
     int shadowRampOrder = -1;       // the pica::ShadowByteOrder its texels are in

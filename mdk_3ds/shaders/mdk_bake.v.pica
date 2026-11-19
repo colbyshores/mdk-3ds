@@ -1,0 +1,85 @@
+; ============================================================================
+; mdk_bake.v.pica -- the vertex shader of the BAKED-LIGHT programs (Enhanced Mode
+; enableLighting with config bakeLight, SPEC.md 7.9).
+;
+; mdk_c3d.v.pica line for line, plus ONE input and ONE output: the static
+; arena's light, baked on the CPU once per rig (03_frame.inc bakeStaticLight,
+; pica::bakeMeshLight), arrives as a third attribute -- four unsigned bytes a
+; vertex, 0..255 as floats -- and goes to the geometry shader untouched as the
+; vertex's fifth output register. Per triangle the bake holds:
+;
+;   first vertex   (F / 2 for the face normal n,  in bytes, 255)
+;   second vertex  (F / 2 for the flipped -n,     in bytes, 255)
+;   third vertex   zero (unused)
+;
+; and mdk_bakelit.g.pica / mdk_bakeshadow.g.pica pick the facing the camera
+; sees: the light the lit geometry shaders compute per triangle, without the
+; arithmetic.
+;
+; THE UNIFORMS ARE DECLARED IN mdk_c3d.v.pica's ORDER, so they land in the same
+; registers (mvp c0-3, uvtransform c4, tint c5, haze c6, world c7-10): the
+; backend writes the vertex uniforms by the base program's locations and caches
+; them across draws, whichever program is bound. 02_lifecycle.inc compares the
+; locations at create and leaves the baked programs off if they differ.
+;
+; Attributes:
+;   v0 = position (float3)
+;   v1 = texcoord (float2)
+;   v2 = the baked light (ubyte4, 0..255)
+; ============================================================================
+
+.constf bakeConstants(0.0, 1.0, -1.0, 0.5)
+.alias  bakeOnes bakeConstants.yyyy
+
+.out outpos position
+.out outclr color
+.out outtexcoord texcoord0
+.out outworld dummy        ; whole register to the geometry shader; not rasterised
+.out outbake dummy         ; the baked light, likewise
+
+.alias inpos v0
+.alias intex v1
+.alias inbake v2
+
+.fvec mvp[4]
+.fvec uvtransform
+.fvec tint
+.fvec haze
+.fvec world[4]
+
+.entry bakevmain
+.proc bakevmain
+    ; mdk_c3d.v.pica's vmain: the position, the tint with the haze's kept
+    ; fraction in w, the uv transform, the world position.
+    mov r0.xyz, inpos
+    mov r0.w,   bakeOnes
+    dp4 outpos.x, mvp[0], r0
+    dp4 outpos.y, mvp[1], r0
+    dp4 outpos.z, mvp[2], r0
+    dp4 outpos.w, mvp[3], r0
+
+    dp4 r2.x, mvp[3], r0
+    mul r2.x, haze.x, r2.x
+    ex2 r2.x, r2.x
+    mov r3, tint
+    mul r3.w, r3.w, r2.x
+    mov outclr, r3
+
+    mov r1, uvtransform
+    mov r0, intex
+    mul r0.x, r0.x, r1.x
+    mul r0.y, r0.y, r1.y
+    add r0.x, r0.x, r1.z
+    add r0.y, r0.y, r1.w
+    mov outtexcoord, r0
+    mov r0.xyz, inpos
+    mov r0.w,   bakeOnes
+    dp4 r4.x, world[0], r0
+    dp4 r4.y, world[1], r0
+    dp4 r4.z, world[2], r0
+    mov r4.w, bakeOnes
+    mov outworld, r4
+
+    mov outbake, inbake
+    end
+.end

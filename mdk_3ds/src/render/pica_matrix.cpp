@@ -657,5 +657,86 @@ void sunShadowTintMap(float out[4]) {
     out[3] = 0.5f / (float)kShadowTintHeight;
 }
 
+// THE BAKED LIGHT (pica_matrix.h). Cold: once per static mesh and rig.
+void bakedLightThresholds(float out[kBakedLightThresholds]) {
+    for (int32_t k = 0; k < kBakedLightThresholds; k++) {
+        out[k] = powf(((float)k + 0.5f) / 127.5f, 2.2f);
+    }
+}
+
+uint8_t bakedLightByte(float light, const float thresholds[kBakedLightThresholds]) {
+    const float c = light > 0.0f ? light : 0.0f;
+    // The count of thresholds <= c, by bisection on the integer range [lo, hi].
+    int32_t lo = 0;
+    int32_t hi = kBakedLightThresholds;
+    while (lo < hi) {
+        const int32_t mid = (lo + hi) >> 1;
+        if (thresholds[mid] <= c) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return (uint8_t)lo;
+}
+
+namespace {
+
+void bakedSideLight(const float n[3], const BakedLightRig& rig,
+                    const float thresholds[kBakedLightThresholds], uint8_t out[3]) {
+    const float t = n[2] * 0.5f + 0.5f;
+    float facing = -(rig.sunDir[0] * n[0] + rig.sunDir[1] * n[1] + rig.sunDir[2] * n[2]);
+    if (facing < 0.0f) {
+        facing = 0.0f;
+    }
+    for (int c = 0; c < 3; c++) {
+        const float light = rig.ground[c] + (rig.sky[c] - rig.ground[c]) * t + rig.sun[c] * facing;
+        out[c] = bakedLightByte(rig.exposure * light, thresholds);
+    }
+}
+
+} // namespace
+
+void bakedTriangleLight(const float w0[3], const float w1[3], const float w2[3],
+                        const BakedLightRig& rig, const float thresholds[kBakedLightThresholds],
+                        uint8_t front[3], uint8_t back[3]) {
+    const float e1[3] = {w1[0] - w0[0], w1[1] - w0[1], w1[2] - w0[2]};
+    const float e2[3] = {w2[0] - w0[0], w2[1] - w0[1], w2[2] - w0[2]};
+    // The shader's cross: r0.yzx * r1.zxy - r0.zxy * r1.yzx.
+    float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2],
+                  e1[0] * e2[1] - e1[1] * e2[0]};
+    float length2 = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+    if (length2 < 1.0e-12f) {
+        length2 = 1.0e-12f;   // the shader's degenerate floor
+    }
+    const float inv = 1.0f / sqrtf(length2);
+    n[0] *= inv;
+    n[1] *= inv;
+    n[2] *= inv;
+    bakedSideLight(n, rig, thresholds, front);
+    const float flipped[3] = {-n[0], -n[1], -n[2]};
+    bakedSideLight(flipped, rig, thresholds, back);
+}
+
+void bakeMeshLight(const float* vertices, int32_t count, const BakedLightRig& rig,
+                   const float thresholds[kBakedLightThresholds], uint8_t* out) {
+    if (!vertices || !out || count <= 0) {
+        return;
+    }
+    const int32_t triangles = count / 3;
+    for (int32_t i = 0; i < triangles; i++) {
+        const float* v = vertices + (size_t)i * 15u;
+        uint8_t* o = out + (size_t)i * 12u;
+        bakedTriangleLight(v, v + 5, v + 10, rig, thresholds, o, o + 4);
+        o[3] = 255;
+        o[7] = 255;
+        o[8] = o[9] = o[10] = o[11] = 0;
+    }
+    for (int32_t i = triangles * 3; i < count; i++) {
+        uint8_t* o = out + (size_t)i * 4u;
+        o[0] = o[1] = o[2] = o[3] = 0;
+    }
+}
+
 } // namespace pica
 } // namespace mdk

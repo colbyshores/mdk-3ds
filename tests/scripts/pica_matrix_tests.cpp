@@ -1722,6 +1722,160 @@ void testTheSunsShadow() {
     PICA_CHECK(mdk::pica::kGlowVramBytes >= glowTexels * 4u);
 }
 
+// THE BAKED LIGHT (config bakeLight): the CPU's per-triangle light is the lit
+// geometry shader's, for both facings, in the bytes the baked programs emit.
+// The reference below is the shader's arithmetic written out with powf (the
+// GPU's lg2/ex2 cannot be run here); the table's bytes must be its rounding.
+float bakeReferenceHalfF(float light) {
+    const float c = light > 0.0f ? light : 0.0f;
+    const float f = 0.5f * powf(c, 0.45454545f);
+    return f > 1.0f ? 1.0f : f;
+}
+
+void bakeReferenceSide(const float n[3], const mdk::pica::BakedLightRig& rig, float out[3]) {
+    const float t = n[2] * 0.5f + 0.5f;
+    float facing = -(rig.sunDir[0] * n[0] + rig.sunDir[1] * n[1] + rig.sunDir[2] * n[2]);
+    facing = facing > 0.0f ? facing : 0.0f;
+    for (int c = 0; c < 3; c++) {
+        out[c] = bakeReferenceHalfF(rig.exposure * (rig.ground[c] + (rig.sky[c] - rig.ground[c]) * t +
+                                                    rig.sun[c] * facing));
+    }
+}
+
+void testTheBakedLight() {
+    float thresholds[mdk::pica::kBakedLightThresholds];
+    mdk::pica::bakedLightThresholds(thresholds);
+    for (int k = 1; k < mdk::pica::kBakedLightThresholds; k++) {
+        PICA_CHECK(thresholds[k] > thresholds[k - 1]);
+    }
+    // The byte is round(255 * F / 2) of the shader's to_srgb: exact away from a
+    // rounding tie, within one where powf and the table may land either side.
+    int ties = 0;
+    for (int i = 0; i <= 6000; i++) {
+        const float light = (float)i * 0.001f;   // 0 .. 6, past the white at 2^2.2
+        const double ref = 255.0 * (double)bakeReferenceHalfF(light);
+        const int expected = (int)floor(ref + 0.5);
+        const int got = mdk::pica::bakedLightByte(light, thresholds);
+        const double frac = ref - floor(ref);
+        if (fabs(frac - 0.5) > 1.0e-3) {
+            PICA_CHECK(got == expected);
+        } else {
+            ties++;
+            PICA_CHECK(got - expected <= 1 && expected - got <= 1);
+        }
+    }
+    PICA_CHECK(ties < 60);
+    PICA_CHECK(mdk::pica::bakedLightByte(0.0f, thresholds) == 0);
+    PICA_CHECK(mdk::pica::bakedLightByte(-3.0f, thresholds) == 0);
+    PICA_CHECK(mdk::pica::bakedLightByte(nanf(""), thresholds) == 0);
+    PICA_CHECK(mdk::pica::bakedLightByte(1.0e30f, thresholds) == 255);
+    PICA_CHECK(mdk::pica::bakedLightByte(4.6f, thresholds) == 255);   // F = 2 at 2^2.2 = 4.59
+
+    mdk::pica::BakedLightRig rig;
+    const float sunDir[3] = {0.36f, -0.48f, -0.8f};   // unit: shines down and across
+    const float sun[3] = {0.9f, 0.8f, 0.6f};
+    const float sky[3] = {0.66f, 0.59f, 0.48f};
+    const float ground[3] = {0.57f, 0.30f, 0.25f};
+    for (int c = 0; c < 3; c++) {
+        rig.sunDir[c] = sunDir[c];
+        rig.sun[c] = sun[c];
+        rig.sky[c] = sky[c];
+        rig.ground[c] = ground[c];
+    }
+    rig.exposure = 1.34f;
+
+    // A floor (counter-clockwise seen from above: n = +z): the front is sky +
+    // the sun's full facing, the back ground alone (-n faces away from the sun).
+    {
+        const float w0[3] = {10.0f, 20.0f, 5.0f};
+        const float w1[3] = {14.0f, 20.0f, 5.0f};
+        const float w2[3] = {10.0f, 23.0f, 5.0f};
+        uint8_t front[3];
+        uint8_t back[3];
+        mdk::pica::bakedTriangleLight(w0, w1, w2, rig, thresholds, front, back);
+        for (int c = 0; c < 3; c++) {
+            const float up = bakeReferenceHalfF(rig.exposure * (sky[c] + sun[c] * 0.8f));
+            const float down = bakeReferenceHalfF(rig.exposure * ground[c]);
+            PICA_CHECK(fabsf((float)front[c] - up * 255.0f) <= 0.5f + 1.0e-3f);
+            PICA_CHECK(fabsf((float)back[c] - down * 255.0f) <= 0.5f + 1.0e-3f);
+        }
+        // The other winding is the same plane seen from the other side.
+        uint8_t front2[3];
+        uint8_t back2[3];
+        mdk::pica::bakedTriangleLight(w0, w2, w1, rig, thresholds, front2, back2);
+        PICA_CHECK(memcmp(front2, back, 3) == 0 && memcmp(back2, front, 3) == 0);
+    }
+    // An arbitrary slanted triangle against the reference, both sides.
+    {
+        const float w0[3] = {-120.5f, 33.25f, 7.0f};
+        const float w1[3] = {-101.0f, 40.0f, 19.5f};
+        const float w2[3] = {-118.0f, 61.0f, 2.0f};
+        uint8_t front[3];
+        uint8_t back[3];
+        mdk::pica::bakedTriangleLight(w0, w1, w2, rig, thresholds, front, back);
+        const float e1[3] = {w1[0] - w0[0], w1[1] - w0[1], w1[2] - w0[2]};
+        const float e2[3] = {w2[0] - w0[0], w2[1] - w0[1], w2[2] - w0[2]};
+        float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2],
+                      e1[0] * e2[1] - e1[1] * e2[0]};
+        const float len = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        for (int c = 0; c < 3; c++) {
+            n[c] /= len;
+        }
+        const float m[3] = {-n[0], -n[1], -n[2]};
+        float refFront[3];
+        float refBack[3];
+        bakeReferenceSide(n, rig, refFront);
+        bakeReferenceSide(m, rig, refBack);
+        for (int c = 0; c < 3; c++) {
+            PICA_CHECK(fabsf((float)front[c] - refFront[c] * 255.0f) <= 0.5f + 1.0e-3f);
+            PICA_CHECK(fabsf((float)back[c] - refBack[c] * 255.0f) <= 0.5f + 1.0e-3f);
+        }
+        // The sides differ (the sun lights one of them), or the pick would be vacuous.
+        PICA_CHECK(memcmp(front, back, 3) != 0);
+    }
+    // A zero-area triangle: n = 0 on both sides (the shader's floored rsq).
+    {
+        const float w[3] = {5.0f, 5.0f, 5.0f};
+        uint8_t front[3];
+        uint8_t back[3];
+        mdk::pica::bakedTriangleLight(w, w, w, rig, thresholds, front, back);
+        PICA_CHECK(memcmp(front, back, 3) == 0);
+        for (int c = 0; c < 3; c++) {
+            const float mid = bakeReferenceHalfF(rig.exposure * (ground[c] + sky[c]) * 0.5f);
+            PICA_CHECK(fabsf((float)front[c] - mid * 255.0f) <= 0.5f + 1.0e-3f);
+        }
+    }
+    // The mesh layout: (front, 255), (back, 255), zeros per triangle, and a
+    // trailing partial triangle zeroed.
+    {
+        float vertices[7 * 5];
+        memset(vertices, 0, sizeof(vertices));
+        const float corners[6][3] = {{0, 0, 0}, {4, 0, 0}, {0, 4, 0},
+                                     {0, 0, 0}, {0, 0, 4}, {4, 0, 0}};
+        for (int v = 0; v < 6; v++) {
+            for (int c = 0; c < 3; c++) {
+                vertices[v * 5 + c] = corners[v][c];
+            }
+            vertices[v * 5 + 3] = 0.25f;   // uv: not read
+            vertices[v * 5 + 4] = 0.75f;
+        }
+        uint8_t out[7 * 4];
+        memset(out, 0xAB, sizeof(out));
+        mdk::pica::bakeMeshLight(vertices, 7, rig, thresholds, out);
+        for (int tri = 0; tri < 2; tri++) {
+            uint8_t front[3];
+            uint8_t back[3];
+            mdk::pica::bakedTriangleLight(corners[tri * 3], corners[tri * 3 + 1],
+                                          corners[tri * 3 + 2], rig, thresholds, front, back);
+            const uint8_t* o = out + tri * 12;
+            PICA_CHECK(memcmp(o, front, 3) == 0 && o[3] == 255);
+            PICA_CHECK(memcmp(o + 4, back, 3) == 0 && o[7] == 255);
+            PICA_CHECK(o[8] == 0 && o[9] == 0 && o[10] == 0 && o[11] == 0);
+        }
+        PICA_CHECK(out[24] == 0 && out[25] == 0 && out[26] == 0 && out[27] == 0);
+    }
+}
+
 int runPicaMatrixTests() {
     testIdentityRecognition();
     testTheGlowQuadMapsThePanelOntoThePicture();
@@ -1754,6 +1908,7 @@ int runPicaMatrixTests() {
     testTheMipChain();
     testTheHdResidencyPolicy();
     testTheSunsShadow();
+    testTheBakedLight();
     return failures;
 }
 

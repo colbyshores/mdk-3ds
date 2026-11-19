@@ -1,0 +1,170 @@
+; ============================================================================
+; mdk_bakeshadow.g.pica -- the lit program WITH the sun's shadow, one pass, for
+; a BAKED static triangle (Enhanced Mode enableLighting + enableSkyShadows with
+; config bakeLight, SPEC.md 7.9).
+;
+; mdk_litshadow.g.pica line for line, except F_lit: it is not computed here but
+; picked from the CPU's bake for the side the camera sees (mdk_bakelit.g.pica
+; has the bytes and the side; 03_frame.inc bakeStaticLight makes them). The
+; unit normal is still made (cross + rsq) because the receiver's place in the
+; map is pushed along it (the normal offset) and the shadow tint's u is its
+; t = n.z * 0.5 + 0.5 -- both exactly as mdk_litshadow.g.pica makes them, so the
+; shadow, its tint and its edge fade are unchanged. What goes is the light's
+; arithmetic: the hemisphere, the sun's facing, the exposure and the three
+; lg2/ex2 pairs of to_srgb.
+;
+; OUTPUTS: as mdk_litshadow.g.pica's (the combiner is installShadowLitStages').
+;
+; INPUTS (mdk_bake.v.pica's outputs, three vertices of five registers):
+;   v0-v4    first vertex:  clip position, colour (tint rgb, w: haze kept),
+;                           texcoord, world position, bake (F / 2 for n, bytes)
+;   v5-v9    second vertex  (bake: F / 2 for -n)
+;   v10-v14  third vertex   (bake: unused)
+; ============================================================================
+
+.gsh point c0
+
+; Uniforms (written at every bind: installBakedShadowUniforms).
+.fvec camera        ; xyz: the eye's world position
+.fvec params        ; x exposure (unused here), y normal offset (world units), z depth bias
+.fvec lutMap        ; the lookup's texel centres: u = t * x + y, v = survive * z + w
+.fvec sunMtx[4]     ; world -> (u, v, depth, 1) of the shadow map, a row a register
+
+.constf bsConsts(0.0, 1.0, 0.5, 0.25)          ; 0, 1, 1/2, 1/4
+.constf bsConsts2(2.0, -1.0, 1.0e-12, 10.0)    ; 2, -1, the degenerate floor, 1 / fade width
+.constf bsConsts3(0.9, 0.0039215686, 0.0, 0.0) ; x: where the edge fade starts, y: 1/255
+.alias bsZeros     bsConsts.xxxx
+.alias bsOnes      bsConsts.yyyy
+.alias bsHalf      bsConsts.zzzz
+.alias bsQuarter   bsConsts.wwww
+.alias bsTwo       bsConsts2.xxxx
+.alias bsMinus1    bsConsts2.yyyy
+.alias bsTiny      bsConsts2.zzzz
+.alias bsInvFade   bsConsts2.wwww
+.alias bsFadeStart bsConsts3.xxxx
+.alias bsInv255    bsConsts3.yyyy
+
+.out outpos position
+.out outclr color
+.out outtc0 texcoord0
+.out outtcw texcoord0w
+.out outtc1 texcoord1
+.out outtc2 texcoord2
+
+.entry bsmain
+.proc bsmain
+    ; THE FACE NORMAL, turned to the camera: mdk_litshadow.g.pica's (every
+    ; scalar in all four lanes), keeping the side s (1 / 0) for the bake.
+    mov r0, v8
+    add r0, -v3, r0
+    mov r1, v13
+    add r1, -v3, r1
+    mul r2, r0.yzxw, r1.zxyw
+    mul r3, r0.zxyw, r1.yzxw
+    add r2, r2, -r3
+    mov r2.w, bsZeros
+    dp3 r3, r2, r2
+    max r3, bsTiny, r3
+    rsq r3, r3
+    mul r2, r2, r3
+    add r4, camera, -v3
+    dp3 r5, r2, r4
+    slt r11, bsZeros, r5           ; s: 1 if n faces the camera, else 0
+    mul r5, bsTwo, r11
+    add r5, bsMinus1, r5
+    mul r2, r2, r5                 ; r2 = n, turned
+
+    ; t (every lane) and the lookup's u: mdk_litshadow.g.pica's.
+    mov r6, r2.zzzz
+    mul r6, bsHalf, r6
+    add r6, bsHalf, r6
+    mul r9, lutMap.xxxx, r6
+    add r9, lutMap.yyyy, r9
+
+    ; F_lit / 2 from the bake (mdk_bakelit.g.pica's pick).
+    mov r12, v4
+    mov r7, v9
+    add r12, r12, -r7
+    mul r12, r12, r11
+    add r12, r7, r12
+    add r12, bsQuarter, r12
+    mul r12, bsInv255, r12
+    min r12, bsOnes, r12
+
+    ; The normal offset, in world units.
+    mul r14, params.yyyy, r2
+    mov r14.w, bsZeros
+
+    ; EMIT the triangle.
+    mov r0, v3
+    mov r4, v1
+    call bakeshadowvertex
+    setemit 0
+    mov outpos, v0
+    mov outtc0, r1
+    mov outtcw, r1.z
+    mov outtc1, v2
+    mov outtc2, r10
+    mov outclr, r15
+    emit
+
+    mov r0, v8
+    mov r4, v6
+    call bakeshadowvertex
+    setemit 1
+    mov outpos, v5
+    mov outtc0, r1
+    mov outtcw, r1.z
+    mov outtc1, v7
+    mov outtc2, r10
+    mov outclr, r15
+    emit
+
+    mov r0, v13
+    mov r4, v11
+    call bakeshadowvertex
+    setemit 2, prim
+    mov outpos, v10
+    mov outtc0, r1
+    mov outtcw, r1.z
+    mov outtc1, v12
+    mov outtc2, r10
+    mov outclr, r15
+    emit
+
+    end
+.end
+
+; One vertex: mdk_litshadow.g.pica's litshadowvertex (a .proc name is global
+; across the DVLB, hence its own copy and name). IN: r0 = world position (w 1),
+; r4 = its colour (w: haze kept), r9 = the lookup's u, r12 = F_lit / 2,
+; r14 = the normal offset. OUT: r1 = (u, v, depth, 1) in the map, r10 = the
+; lookup's (u, v), r15 = (F_lit / 2, haze kept). Uses r3, r5.
+.proc bakeshadowvertex
+    add r0, r14, r0
+    mov r0.w, bsOnes
+    dp4 r1.x, sunMtx[0], r0
+    dp4 r1.y, sunMtx[1], r0
+    dp4 r1.z, sunMtx[2], r0
+    add r1.z, -params.zzzz, r1.z   ; the depth bias: towards the sun
+    max r1.z, bsZeros, r1.z
+    mov r1.w, bsOnes
+
+    mul r3, bsTwo, r1
+    add r3, bsMinus1, r3
+    mov r5, r3
+    max r3, -r5, r3                ; |.|
+    max r3.x, r3.y, r3.x
+    add r3.x, -bsFadeStart, r3.x
+    mul r3.x, bsInvFade, r3.x
+    max r3.x, bsZeros, r3.x
+    min r3.x, bsOnes, r3.x
+    add r3.x, bsOnes, -r3.x        ; 1 - fade
+    mul r3.x, lutMap.z, r3.x
+    add r3.x, lutMap.w, r3.x       ; onto the lookup's rows
+    mov r10, r9
+    mov r10.y, r3.x
+
+    mov r15, r12
+    mov r15.w, r4.w                ; the haze's kept fraction
+.end

@@ -125,6 +125,10 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth);
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
 static void prepareHaze(RendererC3D* r);
 static void prepareLighting(RendererC3D* r);
+static void bakeStaticLight(RendererC3D* r);
+static void installBakedLitUniforms(RendererC3D* r);
+static void installBakedShadowUniforms(RendererC3D* r);
+static void installAttribLayout(RendererC3D* r, bool baked);
 static void prepareShadows(RendererC3D* r);
 static void castShadows(RendererC3D* r);
 static bool makeShadowRamp(RendererC3D* r);
@@ -380,6 +384,9 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // geometry vanishes with no error at all.
     AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
     AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord
+    // (the baked-light draws add a third loader for their own buffer and put
+    // these two back after themselves: installAttribLayout)
+    r->attribsBaked = false;
 
     // The combiner. The original look is an unlit, untextured surface for
     // now; the textured path replaces this when the palette expansion
@@ -1220,6 +1227,9 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // triangle in one eye and a hole in the other.
     prepareHaze(r);
     prepareLighting(r);
+    // The static arena's light, baked when the rig is new to a mesh queued this
+    // frame (config bakeLight): before the eye loop, never per draw.
+    bakeStaticLight(r);
     // The sun's shadow map (Enhanced Mode enableSkyShadows), once per frame and
     // before either eye: both eyes read the one map.
     prepareShadows(r);
@@ -1315,11 +1325,15 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     }
     if ((r->frame % 300) == 0) {
         mdk::log3dsPrintf("programs: frame %d: %d lit, %d lit+shadow, %d pass-through, %d plain "
-                          "draws (both eyes)",
+                          "draws (both eyes); baked light: %d lit, %d lit+shadow of them "
+                          "(bakeLight=%d, %s)",
                           (int)r->frame, (int)r->drawsLit, (int)r->drawsShadowLit,
-                          (int)r->drawsPass, (int)r->drawsPlain);
+                          (int)r->drawsPass, (int)r->drawsPlain, (int)r->drawsBakedLit,
+                          (int)r->drawsBakedShadow, (int)r->toggles.bakeLight,
+                          r->bakeLive ? "live" : "off");
     }
     r->drawsLit = r->drawsShadowLit = r->drawsPass = r->drawsPlain = 0;
+    r->drawsBakedLit = r->drawsBakedShadow = 0;
     // The halos are this frame's: a frame whose game hands none over (no
     // runtime) must not draw the last frame's again (review, 2026-11-19).
     r->glowQuadCount = 0;
@@ -1512,6 +1526,132 @@ static void installLitUniforms(RendererC3D* r) {
         C3D_FVUnifSet(GPU_GEOMETRY_SHADER, locations[i], r->litUniforms[i][0], r->litUniforms[i][1],
                       r->litUniforms[i][2], r->litUniforms[i][3]);
     }
+}
+
+// THE BAKED LIGHT (config bakeLight, default on; the owner's one approved
+// exception to the GPU-only rule: a ONE-TIME CPU bake, never per frame).
+//
+// The lit geometry shader spends most of its arithmetic on a light that, for
+// the static arena, cannot change while the rig does not (measured on the Old
+// 3DS, level 8 stereo: ~6 ms of the frame with shadows off, ~2 ms with them on;
+// docs/evidence/2026-11-18-3ds-enhanced-cost-per-toggle.txt). Only which SIDE
+// of a triangle the camera sees moves. So, once per rig and static mesh, the
+// CPU computes F / 2 for both sides of every triangle (pica::bakeMeshLight, the
+// shader's own arithmetic with a table for to_srgb) into a per-vertex buffer,
+// and the static mesh's lit draws take the baked programs, whose geometry
+// shaders only pick the side (mdk_bakelit.g.pica, mdk_bakeshadow.g.pica).
+//
+// WHEN: here, in end_frame before the eye loop -- the frame's draws are queued
+// and none is replayed yet, and C3D_FrameBegin waited for the last frame's
+// queue, so a bake being refilled is read by no GPU work (AGENTS.md P3). WHAT:
+// a static mesh queued this frame whose bake is not the current rig's. A mesh
+// that is not drawn is not baked (a level's other arenas), and one baked keeps
+// its bake until the rig changes, so a frame with nothing new pays one integer
+// compare per mesh. Cold: the loop runs once per mesh and rig.
+static void bakeStaticLight(RendererC3D* r) {
+    r->bakeLive = r->litLive && r->bakeLitReady && r->toggles.bakeLight;
+    if (!r->bakeLive) {
+        return;
+    }
+    const mdk::Lighting& l = r->lighting;
+    const float rig[13] = {l.sun_direction.x, l.sun_direction.y, l.sun_direction.z,
+                           l.sun.r, l.sun.g, l.sun.b, l.sky.r, l.sky.g, l.sky.b,
+                           l.ground.r, l.ground.g, l.ground.b, l.exposure};
+    if (r->bakeSerial == 0 || memcmp(rig, r->bakeRig, sizeof(rig)) != 0) {
+        memcpy(r->bakeRig, rig, sizeof(rig));
+        r->bakeSerial++;
+        if (r->bakeSerial == 0) {
+            r->bakeSerial = 1;   // 0 is "never baked"
+        }
+    }
+    if (!r->bakeThresholdsReady) {
+        mdk::pica::bakedLightThresholds(r->bakeThresholds);
+        r->bakeThresholdsReady = true;
+    }
+    mdk::pica::BakedLightRig bakeRig;
+    for (int c = 0; c < 3; c++) {
+        bakeRig.sunDir[c] = rig[c];
+        bakeRig.sun[c] = rig[3 + c];
+        bakeRig.sky[c] = rig[6 + c];
+        bakeRig.ground[c] = rig[9 + c];
+    }
+    bakeRig.exposure = rig[12];
+    for (size_t i = 0; i < r->meshes.size(); i++) {
+        C3dMesh& mesh = r->meshes[i];
+        if (!mesh.valid || !mesh.isStatic || mesh.bakeFailed || mesh.drawnFrame != r->frame ||
+            mesh.bakeSerial == r->bakeSerial || mesh.count < 3 || !mesh.data) {
+            continue;
+        }
+        const size_t bytes = (size_t)mesh.count * 4u;
+        if (!mesh.bake) {
+            mesh.bake = linearAlloc(bytes);
+            if (!mesh.bake) {
+                mesh.bakeFailed = true;
+                mdk::log3dsPrintf("bake: linearAlloc(%u) FAILED for mesh %d (%d corners); its "
+                                  "light stays on the GPU", (unsigned)bytes, (int)i,
+                                  (int)mesh.count);
+                continue;
+            }
+        }
+        const u64 start = svcGetSystemTick();
+        mdk::pica::bakeMeshLight(static_cast<const float*>(mesh.data), mesh.count, bakeRig,
+                                 r->bakeThresholds, static_cast<uint8_t*>(mesh.bake));
+        GSPGPU_FlushDataCache(mesh.bake, (u32)bytes);
+        const u64 ticks = svcGetSystemTick() - start;
+        mesh.bakeSerial = r->bakeSerial;
+        r->bakesDone++;
+        // Every bake while there are few, then one in 64: a rebuilt arena
+        // (LevelView::refresh) makes a new mesh and so a new bake.
+        if (r->bakesDone <= 16 || (r->bakesDone % 64) == 0) {
+            mdk::log3dsPrintf("bake: frame %d: mesh %d, %d triangles, %.2f ms on the CPU "
+                              "(%u bytes; rig %u; bake %d of the session)",
+                              (int)r->frame, (int)i, (int)(mesh.count / 3),
+                              (double)ticks * 1000.0 / (double)SYSCLOCK_ARM11, (unsigned)bytes,
+                              (unsigned)r->bakeSerial, (int)r->bakesDone);
+        }
+    }
+}
+
+// The baked programs' geometry uniforms, written AT EVERY BIND of one, for the
+// reason installLitUniforms gives (a plain bind clears the geometry unit's).
+// The values are the frame's own: the eye position of the lit program's, and
+// the shadowed lit program's offset, bias, map and lookup.
+static void installBakedLitUniforms(RendererC3D* r) {
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->bakeLitCameraLocation, r->litUniforms[4][0],
+                  r->litUniforms[4][1], r->litUniforms[4][2], r->litUniforms[4][3]);
+}
+
+static void installBakedShadowUniforms(RendererC3D* r) {
+    float lutMap[4];
+    mdk::pica::sunShadowTintMap(lutMap);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->bakeShadowLutMapLocation, lutMap[0], lutMap[1],
+                  lutMap[2], lutMap[3]);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->bakeShadowCameraLocation, r->shadowUniforms[4][0],
+                  r->shadowUniforms[4][1], r->shadowUniforms[4][2], r->shadowUniforms[4][3]);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->bakeShadowParamsLocation, r->shadowUniforms[5][0],
+                  r->shadowUniforms[5][1], r->shadowUniforms[5][2], r->shadowUniforms[5][3]);
+    C3D_Mtx sunMtx;
+    memcpy(sunMtx.m, r->shadowSunMtx, sizeof(r->shadowSunMtx));
+    C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, r->bakeShadowSunMtxLocation, &sunMtx);
+}
+
+// The attribute loaders: position and texcoord from the mesh (installEye's
+// pair), plus -- for a baked draw -- the bake's four bytes from its own buffer
+// (mdk_bake.v.pica's v2). Cached on attribsBaked; every draw that sets its own
+// buffers without the bake puts the pair back first (drawRecorded, and
+// replayQueue before the glow and after the scene).
+static void installAttribLayout(RendererC3D* r, bool baked) {
+    if (r->attribsBaked == baked) {
+        return;
+    }
+    C3D_AttrInfo* attrInfo = C3D_GetAttrInfo();
+    AttrInfo_Init(attrInfo);
+    AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
+    AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord
+    if (baked) {
+        AttrInfo_AddLoader(attrInfo, 2, GPU_UNSIGNED_BYTE, 4);   // the bake, 0..255
+    }
+    r->attribsBaked = baked;
 }
 
 // The frame's haze, decided once before the eye loop: whether any draw may take

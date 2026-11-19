@@ -1011,5 +1011,48 @@ uint8_t sunShadowTintAlpha(int32_t y);
 // rows, so t = 0 and t = 1 read exactly the first and last column.
 void sunShadowTintMap(float out[4]);
 
+// THE BAKED LIGHT (config bakeLight; 03_frame.inc bakeStaticLight). The lit
+// geometry shaders (mdk_c3d.g.pica, mdk_litshadow.g.pica) compute per triangle
+//
+//     F / 2 = min(1, to_srgb(exposure * (mix(ground, sky, t) + sun * facing)) / 2)
+//
+// for its face normal turned to the camera, n: t = n.z * 0.5 + 0.5 and facing
+// = max(0, -sunDir . n). Only the turn depends on the camera; for a mesh whose
+// vertices never change (the static arena) the rest is fixed while the rig is,
+// so the CPU computes it ONCE per rig for both facings, n and -n, and the baked
+// programs' geometry shaders (mdk_bakelit.g.pica, mdk_bakeshadow.g.pica) only
+// pick the side. The bake is cold: once per mesh and rig, never per frame.
+struct BakedLightRig {
+    float sunDir[3];   // the direction the sun SHINES
+    float sun[3];
+    float sky[3];
+    float ground[3];
+    float exposure;
+};
+// to_srgb by table instead of powf: the byte is round(255 * F / 2), and
+// F / 2 >= (k + 0.5) / 255 exactly when exposure * light >= ((k + 0.5) / 127.5)^2.2,
+// so the 255 thresholds (k = 0..254, rising) decide every byte: the count of
+// thresholds at or below the light IS the byte. 255 powf once per bake, then a
+// bisection of eight integer steps per channel.
+constexpr int32_t kBakedLightThresholds = 255;
+void bakedLightThresholds(float out[kBakedLightThresholds]);
+// The byte for one channel's exposure * light (negative and NaN read as 0, as
+// the shader's max(0, .) makes them).
+uint8_t bakedLightByte(float light, const float thresholds[kBakedLightThresholds]);
+// One triangle (world positions w0, w1, w2, the vertex order the geometry shader
+// takes them in): F / 2 in bytes for its face normal n = normalize(cross(w1 -
+// w0, w2 - w0)) -- `front` -- and for -n -- `back`. A zero-area triangle has
+// n = 0 on both sides, as the shader's floored rsq gives it.
+void bakedTriangleLight(const float w0[3], const float w1[3], const float w2[3],
+                        const BakedLightRig& rig, const float thresholds[kBakedLightThresholds],
+                        uint8_t front[3], uint8_t back[3]);
+// A whole mesh: `vertices` is the backend's layout (five floats a vertex,
+// position first), `count` vertices; `out` is four bytes a vertex. Triangle i
+// (vertices 3i .. 3i + 2) writes (front, 255) at its first vertex, (back, 255)
+// at its second and zeros at its third; a trailing partial triangle is zeros.
+// The ubyte4 attribute mdk_bake.v.pica hands to the geometry shader.
+void bakeMeshLight(const float* vertices, int32_t count, const BakedLightRig& rig,
+                   const float thresholds[kBakedLightThresholds], uint8_t* out);
+
 } // namespace pica
 } // namespace mdk

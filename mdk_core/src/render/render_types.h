@@ -264,6 +264,10 @@ struct EnhancedToggles {
     bool glowBloom = false;           // 3DS: the glow as the PC's bloom, ported (~10 ms on
                                       // the Old 3DS), instead of the default additive
                                       // billboards on bright effects; the PC ignores it
+    bool bakeLight = true;            // 3DS: the static arena's light (enableLighting) baked
+                                      // per triangle on the CPU once per rig, so its geometry
+                                      // shader only picks a facing; 0 = every lit triangle
+                                      // computes its light on the GPU. The PC ignores it
 
     // NOT A LOOK: a diagnostic of the 3DS sun shadow, off by default. The caster
     // pass writes the shadow map's four bytes in the order the GPU's shadow unit

@@ -346,6 +346,61 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
             shaderProgramFree(&r->programPass);
         }
     }
+    // THE BAKED-LIGHT PROGRAMS (config bakeLight): DVLE[5] the vertex shader
+    // with the bake attribute (five outputs a vertex, so the geometry shader's
+    // input stride is 15), DVLE[6] the baked lit and DVLE[7] the baked shadowed
+    // lit geometry shader. The vertex shader's uniforms MUST sit in the base
+    // one's registers -- every vertex uniform is written by the base program's
+    // locations and cached across binds (mdk_bake.v.pica) -- so a layout that
+    // differs leaves both off. Optional, like the lit program: without them the
+    // static arena's lit draws compute their light as every other lit draw does.
+    if (r->litReady && r->dvlb->numDVLE >= 8 &&
+        R_SUCCEEDED(shaderProgramInit(&r->programBakeLit))) {
+        const bool made =
+            R_SUCCEEDED(shaderProgramSetVsh(&r->programBakeLit, &r->dvlb->DVLE[5])) &&
+            R_SUCCEEDED(shaderProgramSetGsh(&r->programBakeLit, &r->dvlb->DVLE[6], 15));
+        shaderInstance_s* vs = made ? r->programBakeLit.vertexShader : nullptr;
+        const bool sameVertexUniforms =
+            vs && shaderInstanceGetUniformLocation(vs, "mvp") == r->mvpLocation &&
+            shaderInstanceGetUniformLocation(vs, "uvtransform") == r->uvLocation &&
+            shaderInstanceGetUniformLocation(vs, "tint") == r->tintLocation &&
+            shaderInstanceGetUniformLocation(vs, "haze") == r->hazeLocation &&
+            shaderInstanceGetUniformLocation(vs, "world") == r->worldLocation;
+        if (made) {
+            r->bakeLitCameraLocation =
+                shaderInstanceGetUniformLocation(r->programBakeLit.geometryShader, "camera");
+        }
+        r->bakeLitReady = made && sameVertexUniforms && r->bakeLitCameraLocation >= 0;
+        if (!r->bakeLitReady) {
+            shaderProgramFree(&r->programBakeLit);
+        }
+    }
+    if (r->bakeLitReady && r->shadowProgramReady &&
+        R_SUCCEEDED(shaderProgramInit(&r->programBakeShadow))) {
+        const bool made =
+            R_SUCCEEDED(shaderProgramSetVsh(&r->programBakeShadow, &r->dvlb->DVLE[5])) &&
+            R_SUCCEEDED(shaderProgramSetGsh(&r->programBakeShadow, &r->dvlb->DVLE[7], 15));
+        if (made) {
+            shaderInstance_s* gs = r->programBakeShadow.geometryShader;
+            r->bakeShadowCameraLocation = shaderInstanceGetUniformLocation(gs, "camera");
+            r->bakeShadowParamsLocation = shaderInstanceGetUniformLocation(gs, "params");
+            r->bakeShadowSunMtxLocation = shaderInstanceGetUniformLocation(gs, "sunMtx");
+            r->bakeShadowLutMapLocation = shaderInstanceGetUniformLocation(gs, "lutMap");
+        }
+        r->bakeShadowReady = made && r->bakeShadowCameraLocation >= 0 &&
+                             r->bakeShadowParamsLocation >= 0 &&
+                             r->bakeShadowSunMtxLocation >= 0 &&
+                             r->bakeShadowLutMapLocation >= 0;
+        if (!r->bakeShadowReady) {
+            shaderProgramFree(&r->programBakeShadow);
+        }
+    }
+    mdk::log3dsPrintf("baked-light programs: lit %s (camera=%d), lit+shadow %s (camera=%d "
+                      "params=%d mtx=%d lut=%d)",
+                      r->bakeLitReady ? "ready" : "UNAVAILABLE", (int)r->bakeLitCameraLocation,
+                      r->bakeShadowReady ? "ready" : "UNAVAILABLE",
+                      (int)r->bakeShadowCameraLocation, (int)r->bakeShadowParamsLocation,
+                      (int)r->bakeShadowSunMtxLocation, (int)r->bakeShadowLutMapLocation);
     // The vertex shader's uniform registers run from c0 to the world matrix's
     // last row (mdk_c3d.v.pica: mvp c0-3, uvtransform, tint, haze, world c7-10).
     r->vshUniformVecs = r->worldLocation + 4;
@@ -470,6 +525,12 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
         }
         if (r->shadowProgramReady) {
             shaderProgramFree(&r->programShadow);
+        }
+        if (r->bakeShadowReady) {
+            shaderProgramFree(&r->programBakeShadow);
+        }
+        if (r->bakeLitReady) {
+            shaderProgramFree(&r->programBakeLit);
         }
         if (r->passReady) {
             shaderProgramFree(&r->programPass);

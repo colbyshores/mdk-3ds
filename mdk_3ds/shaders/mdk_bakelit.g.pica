@@ -1,0 +1,92 @@
+; ============================================================================
+; mdk_bakelit.g.pica -- the lit program's geometry shader for a BAKED static
+; triangle (Enhanced Mode enableLighting with config bakeLight, SPEC.md 7.9).
+;
+; mdk_c3d.g.pica computes, per triangle, F = to_srgb(exposure * (hemisphere +
+; sun * facing)) for its face normal turned to the camera, and emits F / 2. For
+; the static arena every term but the turn is fixed while the rig is: the CPU
+; bakes F / 2 for BOTH facings of every triangle once per rig (03_frame.inc
+; bakeStaticLight, pica::bakeMeshLight), and this shader does only the turn --
+; which side of the triangle's plane the camera is on, the sign of
+; cross(w1 - w0, w2 - w0) . (camera - w0), mdk_c3d.g.pica's own test before its
+; normalisation (a positive scale does not change a sign) -- and picks the byte
+; triple the bake stored for that side. No rsq, no lg2/ex2, no light uniforms.
+;
+; THE BYTES. The bake stores b = round(255 * F / 2) (pica::bakedLightByte); the
+; attribute loader hands b over as a float. (b + 1/4) / 255 is emitted, so the
+; rasteriser's conversion to its 8-bit colour gives b back whether it rounds or
+; truncates.
+;
+; INPUTS (mdk_bake.v.pica's outputs, in declaration order, three vertices):
+;   v0-v4    first vertex:  clip position, colour (tint rgb, haze kept in w),
+;                           texcoord, world position, bake (F / 2 for n, bytes)
+;   v5-v9    second vertex  (bake: F / 2 for -n)
+;   v10-v14  third vertex   (bake: unused)
+; ============================================================================
+
+.gsh point c0
+
+.fvec camera        ; xyz: the eye's world position (as mdk_c3d.g.pica's)
+
+.constf blConsts(0.0, 1.0, 0.25, 0.0039215686)   ; 0, 1, 1/4, 1/255
+.alias blZeros   blConsts.xxxx
+.alias blOnes    blConsts.yyyy
+.alias blQuarter blConsts.zzzz
+.alias blInv255  blConsts.wwww
+
+.out outpos position
+.out outclr color
+.out outtc  texcoord0
+
+.entry blmain
+.proc blmain
+    ; THE SIDE: cross(w1 - w0, w2 - w0) . (camera - w0) > 0, in every lane.
+    mov r0, v8                     ; (one input register per instruction)
+    add r0, -v3, r0
+    mov r1, v13
+    add r1, -v3, r1
+    mul r2, r0.yzxw, r1.zxyw
+    mul r3, r0.zxyw, r1.yzxw
+    add r2, r2, -r3
+    add r4, camera, -v3
+    dp3 r5, r2, r4
+    slt r5, blZeros, r5            ; 1: the camera sees n's side, 0: -n's
+
+    ; THE BAKED LIGHT of that side: back + s * (front - back), exact in bytes.
+    mov r6, v4
+    mov r7, v9
+    add r6, r6, -r7
+    mul r6, r6, r5
+    add r6, r7, r6
+    add r6, blQuarter, r6
+    mul r6, blInv255, r6
+    min r6, blOnes, r6             ; F / 2, as mdk_c3d.g.pica emits it
+
+    ; EMIT the triangle unchanged, each vertex coloured with it and keeping its
+    ; own w (the haze's kept fraction, mdk_bake.v.pica).
+    setemit 0
+    mov outpos, v0
+    mov outtc, v2
+    mov r15, v1
+    mov r15.xyz, r6.xyz
+    mov outclr, r15
+    emit
+
+    setemit 1
+    mov outpos, v5
+    mov outtc, v7
+    mov r15, v6
+    mov r15.xyz, r6.xyz
+    mov outclr, r15
+    emit
+
+    setemit 2, prim
+    mov outpos, v10
+    mov outtc, v12
+    mov r15, v11
+    mov r15.xyz, r6.xyz
+    mov outclr, r15
+    emit
+
+    end
+.end

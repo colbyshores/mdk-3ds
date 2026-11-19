@@ -337,6 +337,10 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* v, int32_t n)
     renderer->meshes.push_back(mesh);
     const MdkMeshId id = (MdkMeshId)(renderer->meshes.size() - 1);
     mdk_render_update_mesh(r, id, v, n);
+    // STATIC from here: the vertices this call wrote are the mesh's for good,
+    // unless a later update rewrites them (which takes it back). Its lit draws
+    // may take the baked light (config bakeLight; 03_frame.inc bakeStaticLight).
+    renderer->meshes[(size_t)id].isStatic = true;
     return id;
 }
 
@@ -440,6 +444,9 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
     // capacity the frame did not use.
     GSPGPU_FlushDataCache(mesh.data, (u32)n * 5u * sizeof(float));
     mesh.count = n;
+    // Rewritten: not static (any bake it held is of other vertices), for good.
+    mesh.isStatic = false;
+    mesh.bakeSerial = 0;
 }
 
 void mdk_render_release_mesh(MdkRenderer r, MdkMeshId m) {
@@ -479,6 +486,13 @@ static void settleDeferredMeshes(RendererC3D* renderer) {
             linearFree(mesh.data);
             mesh.data = nullptr;
         }
+        // Its baked light, owed to the same frame (AGENTS.md P3).
+        if (mesh.bake) {
+            linearFree(mesh.bake);
+            mesh.bake = nullptr;
+        }
+        mesh.isStatic = false;
+        mesh.bakeSerial = 0;
         mesh.releasePending = false;
         mesh.capacity = 0;
     }

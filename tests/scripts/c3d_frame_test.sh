@@ -1406,6 +1406,72 @@ def adjudicate(text, quiet=False):
                  "yes" if stages else "NO", "yes" if leaves else "NO",
                  "yes" if haze_guard else "NO", "yes" if units else "NO"))
 
+    # THE BAKED LIGHT (config bakeLight; 03_frame.inc bakeStaticLight). The owner's
+    # one approved CPU exception: the static arena's per-triangle light baked ONCE
+    # per rig, never per frame and never per draw; the streamed meshes keep the GPU
+    # path. Pinned:
+    #   - the bake runs from exactly one place, mdk_render_end_frame, after
+    #     prepareLighting and before the eye loop (the frame's draws are queued and
+    #     none is replayed), and pica::bakeMeshLight only from bakeStaticLight;
+    #   - a mesh is STATIC only from mdk_render_create_mesh's own success path, and
+    #     mdk_render_update_mesh takes that back (so the object stream, effects and
+    #     Kurt -- create_dynamic_mesh + update -- never are);
+    #   - drawRecorded's baked draw is a lit draw of a static mesh whose bake is the
+    #     current rig's, aligned to the mesh's triangle grid, in world space as
+    #     baked; the baked programs are bound only for such a draw;
+    #   - the third attribute loader is the baked draw's alone: put back before the
+    #     glow and after the scene, and forgotten by installEye.
+    end_b = body(text, "mdk_render_end_frame") or ""
+    bake_calls = call_sites(text, "bakeStaticLight")
+    lighting_at = end_b.find("prepareLighting(r);")
+    bake_at = end_b.find("bakeStaticLight(r);")
+    bake_loop_at = end_b.find("installEye(r, eye == 0")
+    bake_fn_range = line_range(text, body_span(text, "bakeStaticLight"))
+    mesh_bakes = call_sites(text, "bakeMeshLight")
+    bake_only_there = bool(mesh_bakes) and bake_fn_range is not None and all(
+        bake_fn_range[0] <= ln <= bake_fn_range[1] for ln, _ in mesh_bakes)
+    static_sets = [m.start() for m in re.finditer(r"\.isStatic\s*=\s*true\s*;",
+                                                  blank_comments(text))]
+    create_sp = block_span(text, r"MdkMeshId mdk_render_create_mesh\(MdkRenderer r, "
+                                 r"const mdk::Vertex\* v, int32_t n\)")
+    static_only_create = (len(static_sets) == 1 and create_sp is not None
+                          and create_sp[0] <= static_sets[0] < create_sp[1])
+    update_b = body(text, "mdk_render_update_mesh") or ""
+    update_clears = re.search(r"mesh\.isStatic\s*=\s*false\s*;", update_b) is not None
+    rec_b = body(text, "drawRecorded") or ""
+    baked_def = re.search(r"const bool baked = lit && r->bakeLive && mesh\.isStatic && "
+                          r"mesh\.bake != nullptr &&\s*mesh\.bakeSerial == r->bakeSerial && "
+                          r"\(draw->first_vertex % 3\) == 0 &&\s*\(!shadowLit \|\| "
+                          r"r->bakeShadowReady\) && mdk::pica::isIdentity\(draw->world\);",
+                          rec_b) is not None
+    baked_pick = re.search(r"!baked \? computed : \(shadowLit \? &r->programBakeShadow : "
+                           r"&r->programBakeLit\)", rec_b) is not None
+    baked_programs = [ln for ln, loc in sites(text, r"&r->programBake(?:Lit|Shadow)\b")
+                      if "shaderProgram" not in loc and "boundProgram" not in loc]
+    replay_b = body(text, "replayQueue") or ""
+    attr_glow = re.match(r"[^{]*\{\s*(?://[^\n]*\n\s*)*installAttribLayout\(r, false\);",
+                         body(text, "drawGlow") or "") is not None
+    attr_end = re.search(r"installAttribLayout\(r, false\);\s*\}\s*$", replay_b) is not None
+    attr_eye = "r->attribsBaked = false;" in (body(text, "installEye") or "")
+    attr_draw = "installAttribLayout(r, baked);" in rec_b
+    rep.check("baked-light-static-meshes-only-and-never-per-draw",
+              len(bake_calls) == 1 and 0 <= lighting_at < bake_at < bake_loop_at
+              and bake_only_there and static_only_create and update_clears and baked_def
+              and baked_pick and len(baked_programs) == 1 and attr_glow and attr_end
+              and attr_eye and attr_draw,
+              "%d bakeStaticLight call(s), end_frame order lighting %d < bake %d < eye loop %d; "
+              "bakeMeshLight only in bakeStaticLight: %s; static set only by create_mesh: %s, "
+              "taken back by update_mesh: %s; the baked draw is a lit, static, current, "
+              "aligned, world-space draw: %s; the baked programs picked only for it: %s "
+              "(%d pick site(s)); the bake attribute put back before the glow %s, after "
+              "the scene %s, forgotten per eye %s, set per draw %s"
+              % (len(bake_calls), lighting_at, bake_at, bake_loop_at,
+                 "yes" if bake_only_there else "NO", "yes" if static_only_create else "NO",
+                 "yes" if update_clears else "NO", "yes" if baked_def else "NO",
+                 "yes" if baked_pick else "NO", len(baked_programs),
+                 "yes" if attr_glow else "NO", "yes" if attr_end else "NO",
+                 "yes" if attr_eye else "NO", "yes" if attr_draw else "NO"))
+
     # HOW THE SUN'S MAP IS WRITTEN, AND WHY IT IS NOT ONE WAY (measured
     # 2026-11-18; 03_frame.inc testNativeShadowWrites). The Old 3DS lands the
     # PICA's own shadow writes in the caster pass and does NOT repeat the ramp's
@@ -3033,6 +3099,38 @@ ARMS = [
     ("shadowed-lit-draw-through-the-plain-lit-program",
      lambda s: s.replace("shadowLit ? &r->programShadow", "shadowLit ? &r->programLit", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
+    # The baked light (config bakeLight), each invariant broken the plausible way.
+    ("baked-light-taken-by-a-streamed-mesh",
+     lambda s: s.replace("    // Rewritten: not static (any bake it held is of other vertices), for good.\n"
+                         "    mesh.isStatic = false;\n",
+                         "    // Rewritten: not static (any bake it held is of other vertices), for good.\n", 1),
+     "baked-light-static-meshes-only-and-never-per-draw"),
+    ("baked-light-without-the-static-test",
+     lambda s: s.replace("r->bakeLive && mesh.isStatic && mesh.bake", "r->bakeLive && mesh.bake", 1),
+     "baked-light-static-meshes-only-and-never-per-draw"),
+    ("baked-light-on-a-misaligned-draw",
+     lambda s: s.replace("(draw->first_vertex % 3) == 0 &&\n", "\n", 1),
+     "baked-light-static-meshes-only-and-never-per-draw"),
+    ("baked-light-on-a-moved-draw",
+     lambda s: s.replace(" && mdk::pica::isIdentity(draw->world);\n", ";\n", 1),
+     "baked-light-static-meshes-only-and-never-per-draw"),
+    ("baked-light-baked-per-draw",
+     lambda s: s.replace("    const bool overlay = draw->material.pass == mdk::Pass::Overlay;\n",
+                         "    bakeStaticLight(r);\n"
+                         "    const bool overlay = draw->material.pass == mdk::Pass::Overlay;\n", 1),
+     "baked-light-static-meshes-only-and-never-per-draw"),
+    ("baked-light-baked-inside-the-eye-loop",
+     lambda s: s.replace("    bakeStaticLight(r);\n", "", 1)
+                .replace("        replayQueue(r);\n", "        bakeStaticLight(r);\n        replayQueue(r);\n", 1),
+     "baked-light-static-meshes-only-and-never-per-draw"),
+    ("baked-light-program-for-every-lit-draw",
+     lambda s: s.replace("!baked ? computed : (shadowLit ? &r->programBakeShadow : &r->programBakeLit)",
+                         "!lit ? computed : (shadowLit ? &r->programBakeShadow : &r->programBakeLit)", 1),
+     "baked-light-static-meshes-only-and-never-per-draw"),
+    ("baked-light-attribute-left-on-for-the-glow",
+     lambda s: s.replace("    // baked one (installAttribLayout).\n    installAttribLayout(r, false);\n",
+                         "    // baked one (installAttribLayout).\n", 1),
+     "baked-light-static-meshes-only-and-never-per-draw"),
     ("shadowed-lit-draw-on-every-lit-surface",
      lambda s: s.replace("    const bool shadowLit = lit && r->shadowLitLive &&\n"
                          "                           mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,\n"
