@@ -162,6 +162,15 @@ $(error TOGGLES=$(TOGGLES) needs AUTOQUIT: the config override is a harness-buil
 endif
 DEFINES += -DMDK_HW_TOGGLES='$(TOGGLES)'
 endif
+# `make AUTOQUIT=90 GSPASSALL=1` sends every whole-triangle unlit draw through the
+# pass-through geometry shader (a harness aid): with the light off, what the
+# geometry stage costs by itself. Only renderer_c3d.cpp reads it: touch it after.
+ifneq ($(strip $(GSPASSALL)),)
+ifndef AUTOQUIT
+$(error GSPASSALL=$(GSPASSALL) needs AUTOQUIT: the probe is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_GSPASSALL=1
+endif
 # `make AUTOQUIT=90 GLOWPROBE=1` adds one halo in front of the camera every
 # frame (a harness aid): the glow billboards' path drawn on hardware without a
 # script's explosion. Only main_3ds.cpp reads it: touch it after changing it.

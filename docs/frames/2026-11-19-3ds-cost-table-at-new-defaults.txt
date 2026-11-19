@@ -1,0 +1,9 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-19T15:04:34Z at 7d142ad
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: the Old 3DS cost of each enhancement at the branch's new defaults (the
+light ~9 ms is now the one large cost; mipmaps save ~4.5 ms) and a GSPASSALL
+harness probe showing the geometry stage itself costs nothing measurable -- the
+light's cost is its shader arithmetic. Harness and evidence only; this Linux
+frame is byte-identical to the previous pin. Evidence:
+docs/evidence/2026-11-18-3ds-enhanced-cost-per-toggle.txt (addendum).

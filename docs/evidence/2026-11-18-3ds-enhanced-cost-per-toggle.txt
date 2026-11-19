@@ -85,3 +85,20 @@ profile's mean over a 90 s run and nothing to the p50 the comparisons use.
 Moving that work into the level load (the vault's
 first-use-texture-uploads-belong-in-a-frame-load-entry-after-the-fence.md) is
 open.
+
+ADDENDUM 2026-11-19: THE COSTS AT THE NEW DEFAULTS (241385f + the profiler,
+level 8, stereo; single-pass shadows, map every 2nd frame, smoothing 2x1, glow
+billboards). Run-to-run noise ~1-2 ms (this base 45.6 against 43.2 earlier).
+  run                         p50 frame   mean
+  everything on (base)        45.6 ms     59.6 ms
+  lighting OFF (and shadows)  36.2        51.5
+  sun shadows OFF             44.3        55.0
+  glow OFF                    44.6        58.7   (no halos in this scene)
+  HD textures OFF             45.5        58.9
+  edge smoothing OFF          46.5        58.2
+  mipmaps OFF                 50.1        59.7   (mipmaps SAVE ~4.5 ms)
+THE LIGHT'S ~9 ms, SPLIT (make ... GSPASSALL=1: the light off, every
+whole-triangle draw through the pass-through geometry shader): p50 36.3 ms --
+the geometry stage itself costs nothing measurable; the cost is the lit
+geometry shader's arithmetic per triangle per eye on the PICA's one geometry
+unit (face normal, rsq, hemisphere + sun, three lg2/ex2 pairs).
