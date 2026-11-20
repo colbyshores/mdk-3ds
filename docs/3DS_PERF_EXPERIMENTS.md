@@ -43,8 +43,9 @@ inside the frame) is where the large wins have come from, the same lesson as
 | D | Light in the vertex shader from face normals | `experiment/3ds-vertex-light` | +7.4 ms | rejected |
 | E5 | 16-bit texture stores (RGB565 / RGBA5551 / RGBA4) | `experiment/3ds-texture16` | speed: noise alone (44.6 vs 45.1 isolated; shipped 51.5 vs 52.2 with E8's base); memory −9 to −12 MB | **merged with E8** (the fallback store under ETC1A4) |
 | E6 | Skip per-draw GPU state the GPU already holds (draw dedupe) | `experiment/3ds-draw-state` | isolated **48.0 → 43.8 ms (−4.2)**, 2-vblank frames 55% → 75%; shipped **56.6 → 54.2 ms (−2.4)**, 2-vblank frames 16% → 32%; command list 49,288 → 23,824 words in the longest frame; console capture identical (max diff 0) | **merged** |
-| E7 | Prewarm: make first-use textures/layouts/poses at level load, ≤1 texture/frame during play, Kurt residency 1 → 8 MiB | `experiment/3ds-prewarm` | not yet measured; two c3d test anchors re-pointed for its new `expandIndices` argument | host tests, then console |
+| E7 | Prewarm first-use textures/layouts/poses at level load, ≤1 texture/frame in play (v2: without the Kurt part, which E8 made redundant) | `experiment/3ds-prewarm-v2` (84fb5df) | shipped 41.2 → 40.0 ms (within run-to-run noise: the same base measured 40.2 earlier); isolated 33.52 → 33.51 ms. First-use creation inside the draw across a whole 90 s run: 30 textures, **2.6 ms in total** without it, so there is nothing left to save after E8. Costs 4 MB of linear heap at load | rejected (branch kept) |
 | E8 | Kurt's sprite frames as ETC1A4, start set preloaded; E5's 16-bit store as the fallback | `experiment/3ds-kurt-etc1` (07399b3, on 6541a2e = E5) | shipped **52.2 → 42.9 ms (−9.2)**, 4+ vblank frames 256 → 4, spikes 40 → 4, draw build 13.9 → 7.5 ms; isolated **42.8 → 33.6 ms (−9.2)**, 2,566 of 2,580 frames at 2 vblanks; Kurt mean diff 2.9/255 | **merged** |
+| E10 | Kurt's ETC1A4 set as ONE file (`romfs:/kurt/kurt.pak`): one open and one read (index + start set) at level load, the other animations streamed a range at a time on the HD reader's thread, bounded 256 KiB staging cache, 16-bit stand-in until the bytes land | `experiment/3ds-kurt-pack` | level load: Kurt **4,557 ms → 62 ms** (1 file, 270,233 bytes, 2 reads), **0 bytes** of .t3x kept on the heap (was 1.1 MB); 5 animations prefetched in play, 0 frames stood in 16-bit; shipped 41.1 ms / isolated 33.6 ms (unchanged, within noise); console capture identical to E8 (max diff 0) | **merged** |
 
 ### E8 as built (2026-11-19)
 
@@ -95,6 +96,28 @@ in his box, 0.4 % of his pixels over 16; the rest of the frame within 16 everywh
 - The 1.1 MB of `.t3x` bytes stay on the main heap (the tighter heap now: ~22.6 of
   40.9 MB used at the loop). One packed file read on demand would release it.
 - No mip chain on Kurt's frames by default (`--mips` adds one).
+
+### E10 as built (2026-11-19): the pack and the stream
+- `kurt_pack.py` (run by `kurt_etc1_convert.py`) writes `kurt.pak`: a 32-byte
+  header (`KPAK`, v1), a 40-byte index entry per frame (name, level, size, offset,
+  length), the `.t3x` bytes 16-byte aligned; start set first, then each animation's
+  frames together. On the GOG data: 408 frames, 1,255,937 bytes; the index plus
+  start set is the first 270,233 bytes. Deterministic; the RomFS stages only it.
+- Level load: one `fopen`, a 32-byte read, ONE 270,201-byte read (index + start
+  set), the 105 start-set frames imported, the buffer freed. Logged as one line
+  (`sprites: ... 1 file opened, N bytes read in M ms ... kept on the heap`); the
+  console figure replaces the 4,557 ms / 1,122,760-byte one.
+- Play: a frame outside the start set with no staged bytes asks for its
+  animation's range (one read in flight, on the HD reader's thread, its own
+  channel) and draws the 16-bit index texture until the next draw after it lands.
+  The pump prefetches the state machine's next animations into free room. Staged
+  bytes are held at most 256 KiB, least recently drawn dropped first.
+- Errors: a bad header/short read rejects the pack (16-bit for the level), a bad
+  entry costs its frame only, a failed stream read costs its animation only; each
+  logged once, none retried. One `sprites: stream:` line at exit.
+- To measure: level-load ms, heap at the main loop, stand-ins and reads in the
+  exit line, and the steady mean against E8's 42.9 ms (the stand-in's expansion is
+  the cost this trades for 4.6 s and 1.1 MB).
 
 ## Texture formats on the 3DS — the policy
 

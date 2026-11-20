@@ -112,10 +112,13 @@ stage_dir stream "$SRC/STREAM"
 # TRAVSPRT.BNI frames as ETC1A4, made from the same data by
 # kurt_etc1_convert.py into $KURT_ETC1_DIR (default <repo>/build-kurt-etc1, kept
 # across `make clean`) -- incremental, ~2 s when nothing changed, ~2 min the first
-# time -- and hard-linked here as kurt/ with its own manifest.txt, CASE KEPT (the
-# game opens these by the manifest's exact names, not through the data's
-# case-insensitive resolver). Not fatal: without the set (no tex3ds, no numpy or
-# PIL, a failed encode) the game draws every frame from its palette indices.
+# time -- and packed there into ONE file, kurt.pak (kurt_pack.py;
+# mdk_core/src/formats/kurt_pack.h), which is all that is hard-linked here, as
+# kurt/kurt.pak. The 408 loose .t3x files and their manifest stay in the work
+# directory for the next incremental run and are NOT staged: the game opens the
+# pack once at level load (408 files opened one by one cost 4.6 s of an Old-3DS
+# level load). Not fatal: without the pack (no tex3ds, no numpy or PIL, a failed
+# encode) the game draws every frame from its palette indices.
 KURT_ETC1_DIR="${KURT_ETC1_DIR:-$REPO/build-kurt-etc1}"
 if [ "${MDK_KURT_ETC1:-1}" != "0" ]; then
     if MDK_DATA_DIR="$SRC" python3 "$HERE/kurt_etc1_convert.py" "$KURT_ETC1_DIR" >&2; then
@@ -124,17 +127,11 @@ if [ "${MDK_KURT_ETC1:-1}" != "0" ]; then
         echo "stage_romfs:   (warning) kurt_etc1_convert.py failed; Kurt is expanded" >&2
     fi
 fi
-if [ -f "$KURT_ETC1_DIR/manifest.txt" ] && [ -d "$KURT_ETC1_DIR/textures" ]; then
+if [ -f "$KURT_ETC1_DIR/kurt.pak" ]; then
     mkdir -p "$OUT/kurt"
-    ln "$KURT_ETC1_DIR/manifest.txt" "$OUT/kurt/manifest.txt" 2>/dev/null ||
-        cp "$KURT_ETC1_DIR/manifest.txt" "$OUT/kurt/manifest.txt"
-    ( cd "$KURT_ETC1_DIR" && find textures -type f -name '*.t3x' -print0 ) |
-        while IFS= read -r -d '' rel; do
-            mkdir -p "$OUT/kurt/$(dirname "$rel")"
-            ln "$KURT_ETC1_DIR/$rel" "$OUT/kurt/$rel" 2>/dev/null ||
-                cp "$KURT_ETC1_DIR/$rel" "$OUT/kurt/$rel"
-        done
-    echo "stage_romfs:   kurt ($(find "$OUT/kurt" -name '*.t3x' | wc -l) ETC1A4 frames)"
+    ln "$KURT_ETC1_DIR/kurt.pak" "$OUT/kurt/kurt.pak" 2>/dev/null ||
+        cp "$KURT_ETC1_DIR/kurt.pak" "$OUT/kurt/kurt.pak"
+    echo "stage_romfs:   kurt (kurt.pak, $(stat -c %s "$OUT/kurt/kurt.pak") bytes)"
 else
     echo "stage_romfs:   (skip) kurt -- no compressed set; Kurt is expanded"
 fi

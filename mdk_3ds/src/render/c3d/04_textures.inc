@@ -671,8 +671,9 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     const bool evictable = !renderer->hdQueue.empty() && hdHasEvictable(renderer, protectFrom);
     size_t next = 0;
     for (; next < renderer->hdQueue.size(); next++) {
-        if (!mdk::pica::hdMayDispatch(renderer->hdResidentBytes,
-                                      (size_t)renderer->hdReader.busy(), kHdLargestBytes,
+        const size_t reading =
+            (size_t)renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd);
+        if (!mdk::pica::hdMayDispatch(renderer->hdResidentBytes, reading, kHdLargestBytes,
                                       kHdBudgetBytes, evictable)) {
             break;
         }
@@ -700,7 +701,8 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     bool ok = false;
     char path[mdk::AsyncFileReader::kPathMax];
     while (imported < kHdImportsPerFrame &&
-           renderer->hdReader.poll(&id, path, &bytes, &size, &ok)) {
+           renderer->hdReader.poll(mdk::AsyncFileReader::kChannelHd, &id, path, &bytes, &size,
+                                   &ok)) {
         if (id < 0 || (size_t)id >= renderer->hdCopies.size()) {
             free(bytes);
             continue;

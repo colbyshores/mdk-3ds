@@ -100,6 +100,7 @@ set(SOURCES
     ${CORE}/src/formats/fti.cpp
     ${CORE}/src/formats/gif.cpp
     ${CORE}/src/formats/glb.cpp
+    ${CORE}/src/formats/kurt_pack.cpp
     ${CORE}/src/formats/local_paths.cpp
     ${CORE}/src/formats/mdk_data.cpp
     ${CORE}/src/formats/model.cpp

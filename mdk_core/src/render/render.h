@@ -187,6 +187,26 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t width, 
 // estimate).
 int32_t mdk_render_texture_bytes(MdkRenderer r, MdkTextureId texture);
 
+// THE BACKEND'S FILE READER, lent to a caller that streams from a pack (Kurt's
+// romfs:/kurt/kurt.pak, KurtSprite's stream): `size` bytes at `offset` of
+// `path`, read OFF the main thread (AGENTS.md P5: no blocking read inside a
+// frame). The 3DS shares its HD reader thread (platform/async_file_reader.h) on
+// a channel of its own, so a pack read is never handed to the HD importer and
+// no second thread is made. One read is in flight at a time: a request while
+// one is outstanding, or while the reader's slots are full, is refused -- ask
+// again on a later frame. False also when the backend has no reader (the
+// desktop answers false: its callers never stream).
+bool mdk_render_read_range_async(MdkRenderer r, int32_t tag, const char* path, uint32_t offset,
+                                 uint32_t size);
+
+// Takes one finished range read, if any: its tag, and either its bytes
+// (malloc'd, exactly the size asked for; the caller free()s them) or ok=false
+// with null bytes (the file could not be opened, or ended before the range did
+// -- a short read is a failure, never a partial buffer). False when nothing has
+// finished.
+bool mdk_render_poll_range_read(MdkRenderer r, int32_t* tag, uint8_t** bytes, uint32_t* size,
+                                bool* ok);
+
 // Create a 256x1 RGBA palette.
 MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba256);
 

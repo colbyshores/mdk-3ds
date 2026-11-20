@@ -9,13 +9,15 @@
 #include "game/kurt_sprite.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <algorithm>
 #include <utility>
 
 #include "formats/bni.h"
-#include "formats/file_system.h"
+#include "formats/kurt_pack.h"
 #include "formats/palette.h"
 #include "formats/sprite_animation.h"
 #include "formats/texture.h"
@@ -182,6 +184,10 @@ bool KurtSprite::load(MdkRenderer renderer, const formats::Bni& sprites,
         releaseAnimation((int32_t)i);
     }
     residency_.clear();
+    // The previous level's pack and stream go with its animations (their staged
+    // bytes are freed with them); a read still in flight is told apart by the
+    // generation and dropped when it lands.
+    forgetPack();
     animations_.clear();
     for (size_t i = 0; i < stateSpecs_.size(); i++) {
         if (findAnimation(stateSpecs_[i].name) >= 0) {
@@ -234,6 +240,7 @@ bool KurtSprite::add(MdkRenderer renderer, const std::string& name,
         // texture, and the old ones have to be released or they are lost for
         // ever (a GPU copy nobody can name).
         releaseAnimation(existing);
+        dropStaged(existing);
         animations_[(size_t)existing] = std::move(loaded);
     } else {
         animations_.push_back(std::move(loaded));
@@ -460,11 +467,38 @@ bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
     }
     Frame& frame = animation.frames[(size_t)frameIndex];
     const uint32_t now = residency_.tick();
+    animation.lastDrawn = now;
+    // THE FRAME'S COMPRESSED BYTES, when it has a pack copy and needs them (no
+    // texture yet, or an index texture standing in): from the staging cache if
+    // its animation is staged, else its animation's range is asked for -- read
+    // on the backend's reader thread, never here (AGENTS.md P5) -- and the index
+    // texture stands in until it lands (pumpStream).
+    const uint8_t* t3x = nullptr;
+    if (frame.packSize > 0 && (frame.texture < 0 || frame.standIn)) {
+        t3x = stagedFrame(animation, frame);
+        if (!t3x) {
+            requestStream(animationIndex);
+        }
+    }
+    const bool upgrading = frame.texture >= 0 && frame.standIn && t3x;
+    if (upgrading) {
+        // The bytes arrived: the stand-in goes (the backend defers the release
+        // of a copy still in flight) and the compressed copy is made below.
+        releaseFrame(animationIndex, frameIndex);
+        frame.standIn = false;
+    }
     if (frame.texture < 0) {
         // THE C#'s Texture(name, frame, image): the frame's texture, made
         // the first time the frame is drawn.
-        if (makeFrameTexture(animationIndex, frameIndex) < 0) {
+        if (makeFrameTexture(animationIndex, frameIndex, t3x) < 0) {
             return false;
+        }
+        if (upgrading && frame.packSize > 0) {
+            stream_.upgrades++;   // (a refused import zeroed packSize: not one)
+        }
+        frame.standIn = !t3x && frame.packSize > 0;
+        if (frame.standIn) {
+            stream_.standIns++;
         }
         SpriteResidency::Entry entry;
         entry.animation = animationIndex;
@@ -479,17 +513,24 @@ bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
     return true;
 }
 
-int32_t KurtSprite::makeFrameTexture(int32_t animationIndex, int32_t frameIndex) {
+int32_t KurtSprite::makeFrameTexture(int32_t animationIndex, int32_t frameIndex,
+                                     const uint8_t* t3x) {
     Animation& animation = animations_[(size_t)animationIndex];
     Frame& frame = animation.frames[(size_t)frameIndex];
     int32_t texture = -1;
     // THE COMPRESSED COPY FIRST (EnhancedToggles::kurtCompressed): an import of
     // bytes already in memory, never an expansion. A backend with no compressed
     // textures (the desktop) answers -1 and the index texture is made instead.
-    if (!frame.compressed.empty()) {
-        texture = mdk_render_create_compressed_texture(renderer_, frame.width, frame.height,
-                                                       frame.compressed.data(),
-                                                       (int32_t)frame.compressed.size());
+    if (t3x && frame.packSize > 0) {
+        texture = mdk_render_create_compressed_texture(renderer_, frame.width, frame.height, t3x,
+                                                       (int32_t)frame.packSize);
+        if (texture < 0) {
+            // Refused (the bytes do not import, or not as this frame's size): a
+            // property of the bytes, so the frame is plain 16-bit from now on
+            // and its bytes are never asked for again.
+            frame.packSize = 0;
+            stream_.importFailures++;
+        }
     }
     if (texture < 0) {
         texture = mdk_render_create_index_texture(renderer_, frame.width, frame.height,
@@ -558,47 +599,106 @@ const char* KurtSprite::startSetName(int index) {
     return index >= 0 && index < startSetCount() ? kStartSet[index] : "";
 }
 
-void KurtSprite::useCompressedFrames(ModImages* set, CompressedReport* report) {
+void StagedBytes::reset() {
+    free(data_);
+    data_ = nullptr;
+    size_ = 0;
+}
+
+void KurtSprite::forgetPack() {
+    for (size_t a = 0; a < animations_.size(); a++) {
+        Animation& animation = animations_[a];
+        animation.staged.reset();
+        animation.packBegin = 0;
+        animation.packEnd = 0;
+        animation.stream = StreamState::None;
+        animation.prefetched = false;
+        for (size_t f = 0; f < animation.frames.size(); f++) {
+            animation.frames[f].packOffset = 0;
+            animation.frames[f].packSize = 0;
+            animation.frames[f].standIn = false;
+        }
+    }
+    packPath_.clear();
+    // A read in flight (streamTag_) stays outstanding in the backend until it
+    // lands; the new generation makes it stale, and pumpStream drops it.
+    generation_ = (generation_ + 1) % 1000000;
+    stream_.staged = 0;
+}
+
+void KurtSprite::useCompressedPack(const formats::KurtPack* pack, int32_t level, const char* path,
+                                   CompressedReport* report) {
     CompressedReport local;
     CompressedReport* out = report ? report : &local;
     out->frames = 0;
     out->compressed = 0;
-    out->fileBytes = 0;
-    const formats::FileSystem* system = formats::fileSystem();
+    out->badFrames = 0;
+    out->streamable = 0;
+    forgetPack();
+    if (pack && path) {
+        packPath_ = path;
+    }
     for (size_t a = 0; a < animations_.size(); a++) {
         Animation& animation = animations_[a];
+        uint32_t begin = 0;
+        uint32_t end = 0;
         for (size_t f = 0; f < animation.frames.size(); f++) {
             Frame& frame = animation.frames[f];
-            std::vector<uint8_t>().swap(frame.compressed);
             out->frames++;
-            if (!set || !system || !system->readFile) {
+            if (!pack || !path) {
                 continue;
             }
-            // Resolved by NAME (the set's files are not keyed, so no hash is
-            // taken), a level's own folder first: the HD pack's rule.
-            formats::Texture unkeyed;
-            formats::Palette unused;
-            std::string path;
-            const std::string name = animation.name + "_" + std::to_string(f);
-            if (!set->resolve(ModImages::Kind::Textures, name, unkeyed, unused, &path)) {
+            // By NAME, a level's own copy first: the HD pack's rule.
+            const int32_t index = pack->find(animation.name + "_" + std::to_string(f), level);
+            if (index < 0) {
                 continue;
             }
-            if (!system->readFile(system->user, path.c_str(), &frame.compressed)) {
-                std::vector<uint8_t>().swap(frame.compressed);
+            const formats::KurtPack::Entry& entry = pack->entries()[(size_t)index];
+            if (!entry.valid || entry.width != frame.width || entry.height != frame.height) {
+                // A bad entry, or one made from other data: this frame is drawn
+                // from its index texture (the 16-bit path), the others are not.
+                out->badFrames++;
                 continue;
             }
+            frame.packOffset = entry.offset;
+            frame.packSize = entry.size;
             out->compressed++;
-            out->fileBytes += (int32_t)frame.compressed.size();
+            if (end == 0 || entry.offset < begin) {
+                begin = entry.offset;
+            }
+            if (entry.offset + entry.size > end) {
+                end = entry.offset + entry.size;
+            }
         }
+        if (end == 0) {
+            continue;
+        }
+        if (end - begin > kMaxStreamBytes) {
+            // Not a range kurt_pack.py writes: the animation stays 16-bit.
+            for (size_t f = 0; f < animation.frames.size(); f++) {
+                if (animation.frames[f].packSize > 0) {
+                    animation.frames[f].packSize = 0;
+                    out->compressed--;
+                    out->badFrames++;
+                }
+            }
+            continue;
+        }
+        animation.packBegin = begin;
+        animation.packEnd = end;
+        animation.stream = StreamState::Idle;
+        out->streamable++;
     }
 }
 
-void KurtSprite::preloadStartSet(CompressedReport* report) {
+void KurtSprite::preloadStartSet(const uint8_t* bytes, uint32_t begin, uint32_t size,
+                                 CompressedReport* report) {
     CompressedReport local;
     CompressedReport* out = report ? report : &local;
     out->startFrames = 0;
     out->preloaded = 0;
     out->preloadBytes = 0;
+    out->startFileBytes = 0;
     out->preloadBudget = renderer_ ? mdk_render_capabilities(renderer_).sprite_preload_bytes : 0;
     for (int n = 0; n < startSetCount(); n++) {
         const int32_t index = findAnimation(kStartSet[n]);
@@ -609,14 +709,24 @@ void KurtSprite::preloadStartSet(CompressedReport* report) {
         for (size_t f = 0; f < animation.frames.size(); f++) {
             Frame& frame = animation.frames[f];
             out->startFrames++;
-            if (out->preloadBudget <= 0 || frame.compressed.empty() || frame.texture >= 0) {
+            // Only a frame whose bytes are inside the caller's read: one outside
+            // it (a pack laid out otherwise) is streamed like any other frame.
+            if (out->preloadBudget <= 0 || !bytes || frame.packSize == 0 || frame.texture >= 0 ||
+                frame.packOffset < begin || frame.packOffset - begin > size ||
+                frame.packSize > size - (frame.packOffset - begin)) {
                 continue;
             }
-            if (makeFrameTexture(index, (int32_t)f) < 0) {
+            if (makeFrameTexture(index, (int32_t)f, bytes + (frame.packOffset - begin)) < 0) {
                 continue;
             }
-            const int32_t bytes = frameBytes(frame);
-            if (out->preloadBytes + bytes > out->preloadBudget) {
+            if (frame.packSize == 0) {
+                // The import was refused and the index texture made instead:
+                // that is not what the preload is for (and would not fit it).
+                releaseFrame(index, (int32_t)f);
+                continue;
+            }
+            const int32_t made = frameBytes(frame);
+            if (out->preloadBytes + made > out->preloadBudget) {
                 // Past the bound: this frame and the rest are made on first draw.
                 mdk_render_release_texture(renderer_, frame.texture);
                 frame.texture = -1;
@@ -625,14 +735,186 @@ void KurtSprite::preloadStartSet(CompressedReport* report) {
             SpriteResidency::Entry entry;
             entry.animation = index;
             entry.frame = (int32_t)f;
-            entry.bytes = bytes;
+            entry.bytes = made;
             entry.lastUsed = residency_.tick();
             entry.pinned = true;
             residency_.add(entry);
             out->preloaded++;
-            out->preloadBytes += bytes;
+            out->preloadBytes += made;
+            out->startFileBytes += (int32_t)frame.packSize;
         }
     }
+}
+
+const uint8_t* KurtSprite::stagedFrame(const Animation& animation, const Frame& frame) {
+    if (animation.stream != StreamState::Ready || !animation.staged.data() ||
+        frame.packOffset < animation.packBegin) {
+        return nullptr;
+    }
+    const uint32_t at = frame.packOffset - animation.packBegin;
+    if (at > animation.staged.size() || frame.packSize > animation.staged.size() - at) {
+        return nullptr;
+    }
+    return animation.staged.data() + at;
+}
+
+namespace {
+// A read's tag: the generation (a re-load bumps it) and the animation index.
+const int32_t kTagAnimations = 1024;
+} // namespace
+
+void KurtSprite::requestStream(int32_t animationIndex) {
+    if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size() ||
+        animationIndex >= kTagAnimations || streamTag_ >= 0 || packPath_.empty() || !renderer_) {
+        return;
+    }
+    Animation& animation = animations_[(size_t)animationIndex];
+    if (animation.stream != StreamState::Idle || animation.packEnd <= animation.packBegin) {
+        return;
+    }
+    // ONE READ IN FLIGHT. A refusal (the reader's slots are busy) is not a
+    // failure: the animation stays Idle and the next draw that needs it asks
+    // again -- a lock and a slot scan, no I/O.
+    const int32_t tag = generation_ * kTagAnimations + animationIndex;
+    if (mdk_render_read_range_async(renderer_, tag, packPath_.c_str(), animation.packBegin,
+                                    animation.packEnd - animation.packBegin)) {
+        animation.stream = StreamState::Pending;
+        streamTag_ = tag;
+    }
+}
+
+void KurtSprite::pumpStream() {
+    if (!renderer_) {
+        return;
+    }
+    int32_t tag = -1;
+    uint8_t* bytes = nullptr;
+    uint32_t size = 0;
+    bool ok = false;
+    while (mdk_render_poll_range_read(renderer_, &tag, &bytes, &size, &ok)) {
+        if (tag == streamTag_) {
+            streamTag_ = -1;
+        }
+        const int32_t index = tag % kTagAnimations;
+        if (tag < 0 || tag / kTagAnimations != generation_ || index >= (int32_t)animations_.size() ||
+            animations_[(size_t)index].stream != StreamState::Pending) {
+            // Stale: a re-load or a replaced animation since it was asked for.
+            free(bytes);
+            continue;
+        }
+        Animation& animation = animations_[(size_t)index];
+        const uint32_t want = animation.packEnd - animation.packBegin;
+        if (!ok || !bytes || size != want) {
+            free(bytes);
+            streamFailed(index, ok ? "wrong size" : "read failed or short");
+            continue;
+        }
+        animation.staged.adopt(bytes, size);
+        animation.stream = StreamState::Ready;
+        stream_.reads++;
+        stream_.bytesRead += (int32_t)size;
+        stream_.staged += size;
+        if (stream_.staged > stream_.stagedPeak) {
+            stream_.stagedPeak = stream_.staged;
+        }
+        trimStaged(index);
+    }
+    prefetchNext();
+}
+
+void KurtSprite::prefetchNext() {
+    if (streamTag_ >= 0 || packPath_.empty()) {
+        return;
+    }
+    for (size_t i = 0; i < stateIndices_.size(); i++) {
+        const int32_t index = stateIndices_[i];
+        if (index < 0 || index >= (int32_t)animations_.size()) {
+            continue;
+        }
+        Animation& animation = animations_[(size_t)index];
+        if (animation.stream != StreamState::Idle || animation.prefetched) {
+            continue;
+        }
+        // Nothing left to make from it (the start set, preloaded): not read.
+        bool wanted = false;
+        for (size_t f = 0; f < animation.frames.size() && !wanted; f++) {
+            wanted = animation.frames[f].packSize > 0 &&
+                     (animation.frames[f].texture < 0 || animation.frames[f].standIn);
+        }
+        if (!wanted) {
+            continue;
+        }
+        // Only into room the bound has: a prefetch never drops a staged
+        // animation, and the first that does not fit ends the prefetch.
+        if (stream_.staged + (animation.packEnd - animation.packBegin) > kStagedCacheBytes) {
+            return;
+        }
+        requestStream(index);
+        // Once a level -- unless the reader refused it (its slots busy): then
+        // it is asked again at a later pump.
+        animation.prefetched = animation.stream == StreamState::Pending;
+        return;
+    }
+}
+
+void KurtSprite::dropStaged(int32_t animationIndex) {
+    if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
+        return;
+    }
+    Animation& animation = animations_[(size_t)animationIndex];
+    if (animation.stream != StreamState::Ready) {
+        return;
+    }
+    stream_.staged -= animation.staged.size();
+    animation.staged.reset();
+    animation.stream = StreamState::Idle;
+}
+
+void KurtSprite::trimStaged(int32_t keep) {
+    while (stream_.staged > kStagedCacheBytes) {
+        int32_t oldest = -1;
+        for (size_t a = 0; a < animations_.size(); a++) {
+            const Animation& animation = animations_[a];
+            if ((int32_t)a == keep || animation.stream != StreamState::Ready) {
+                continue;
+            }
+            if (oldest < 0 || animation.lastDrawn < animations_[(size_t)oldest].lastDrawn) {
+                oldest = (int32_t)a;
+            }
+        }
+        if (oldest < 0) {
+            return;   // only `keep` is staged: held over the bound until the next
+        }
+        dropStaged(oldest);
+        stream_.dropped++;
+    }
+}
+
+void KurtSprite::streamFailed(int32_t animationIndex, const char* why) {
+    Animation& animation = animations_[(size_t)animationIndex];
+    animation.stream = StreamState::Failed;
+    // Its frames are plain 16-bit from now on: a stand-in stays as it is (it IS
+    // the 16-bit texture), and nothing asks for these bytes again.
+    for (size_t f = 0; f < animation.frames.size(); f++) {
+        animation.frames[f].packSize = 0;
+        animation.frames[f].standIn = false;
+    }
+    stream_.failures++;
+    if (stream_.failures == 1) {
+        snprintf(failureNote_, sizeof(failureNote_),
+                 "sprites: pack read of %s (%u bytes at %u) FAILED (%s); its frames stay 16-bit",
+                 animation.name.c_str(), (unsigned)(animation.packEnd - animation.packBegin),
+                 (unsigned)animation.packBegin, why);
+        failureTaken_ = false;
+    }
+}
+
+const char* KurtSprite::takeStreamFailure() {
+    if (failureTaken_) {
+        return nullptr;
+    }
+    failureTaken_ = true;
+    return failureNote_;
 }
 
 void KurtSprite::trimResidency(int32_t keepAnimation, int32_t keepFrame) {

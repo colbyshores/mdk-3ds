@@ -7,9 +7,10 @@
 #
 # Default <out dir>: build-kurt-etc1/ at the repo root (ignored as build-*/, and
 # OUTSIDE mdk_3ds/build/ so `make clean` keeps it). mdk_3ds/tools/stage_romfs.sh
-# runs this and links the result into the RomFS as romfs:/kurt/, where the game
-# finds it (main_3ds.cpp, kKurtSetRoot). NOTHING HERE IS COMMITTED: the frames are
-# the player's own TRAVSPRT.BNI, read from MDK_DATA_DIR (default <repo>/MDK).
+# runs this and links ONE file of the result into the RomFS, romfs:/kurt/kurt.pak
+# (kurt_pack.py; main_3ds.cpp, kKurtPackPath). NOTHING HERE IS COMMITTED: the
+# frames are the player's own TRAVSPRT.BNI, read from MDK_DATA_DIR (default
+# <repo>/MDK).
 #
 # WHY ROMFS AND NOT THE HD PACK'S sdmc:/3ds/mdk/hd/. The HD pack is an optional
 # add-on made on a GPU (Real-ESRGAN) and copied to the card by hand; this set is
@@ -18,10 +19,12 @@
 # hardware loop (hw_cycle.sh pushes only the .3dsx) needs no separate copy. It is
 # small: 408 frames, 1.2 MB of .t3x (tex3ds LZ-compresses by default; the GPU
 # copies are 14.75 MB for the whole set, which is why only the start set is
-# loaded at level load). The LAYOUT is the HD pack's own, so the game indexes
-# it with the same code (ModImages::fromList + resolve): a manifest.txt with the same ten columns, textures/NAME.t3x for every
-# level, textures/LEVELn/NAME.t3x where a level's palette shows a frame
-# differently (one frame, K_LOOKD_0, measured on the GOG data).
+# loaded at level load). The WORK LAYOUT is the HD pack's own: a manifest.txt
+# with the same ten columns, textures/NAME.t3x for every level,
+# textures/LEVELn/NAME.t3x where a level's palette shows a frame differently (one
+# frame, K_LOOKD_0, measured on the GOG data). WHAT SHIPS is kurt.pak, those
+# files behind one index (kurt_pack.py, mdk_core/src/formats/kurt_pack.h): 408
+# loose files opened one by one cost 4.6 s of an Old-3DS level load.
 #
 # PER FRAME (the exporter, mdk_3ds/tools/kurt_etc1/kurt_frames_export.cpp, does
 # the decoding with mdk_core's own parsers and the level's own palette):
@@ -66,6 +69,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hd_pack_convert import bleed  # noqa: E402  (the HD pack's own flood)
+from kurt_pack import write_pack  # noqa: E402  (the one file the RomFS carries)
 
 TEX3DS = os.environ.get("TEX3DS", "/opt/devkitpro/tools/bin/tex3ds")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
@@ -276,6 +280,13 @@ def main():
         for rel in sorted(lines):
             f.write("\t".join(lines[rel]) + "\n")
     os.replace(tmp, manifest_path)
+    # THE PACK, from the manifest just written: rewritten only when its bytes
+    # change. A failed frame is not in the manifest, so it is not in the pack
+    # (the game draws it from its palette indices).
+    pack_path, pack_frames, pack_bytes, start_bytes, rewritten = write_pack(out)
+    print("kurt_etc1_convert: %s: %d frames, %d bytes, start set %d bytes%s" %
+          (os.path.basename(pack_path), pack_frames, pack_bytes, start_bytes,
+           "" if rewritten else " (unchanged)"))
     files = sum(int(v[6]) for v in lines.values())
     gpu = sum(int(v[4]) * int(v[5]) for v in lines.values())
     print("kurt_etc1_convert: %d frames, %d encoded now, %d kept, %d failed%s; %.2f MB of "

@@ -85,6 +85,14 @@ int32_t mdk_render_texture_bytes(MdkRenderer, MdkTextureId) {
     return 0;
 }
 
+bool mdk_render_read_range_async(MdkRenderer, int32_t, const char*, uint32_t, uint32_t) {
+    return false;
+}
+
+bool mdk_render_poll_range_read(MdkRenderer, int32_t*, uint8_t**, uint32_t*, bool*) {
+    return false;
+}
+
 MdkPaletteId mdk_render_create_palette(MdkRenderer, const uint8_t*) {
     mdk_test_palettes++;
     return 7;

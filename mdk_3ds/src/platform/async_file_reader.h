@@ -20,6 +20,14 @@
 //     3DS it runs while main waits (the frame end's vsync), never instead of it.
 //   - synchronisation: one LightLock guards the slots; a LightEvent wakes the
 //     worker. No `volatile` stands in for either.
+//
+// TWO CHANNELS, ONE THREAD. The HD stream (kChannelHd: whole files) and Kurt's
+// pack stream (kChannelPack: a byte RANGE of romfs:/kurt/kurt.pak, one
+// animation's frames, KurtSprite's stream) share the worker and its slots, so
+// no second thread is made for the pack. Each caller polls its own channel only
+// -- a finished read is never handed to the other's importer -- and counts only
+// its own slots (busy). The pack stream keeps at most one read in flight, so the
+// HD stream always has the other slots.
 // ============================================================================
 
 #include <3ds.h>
@@ -33,6 +41,11 @@ public:
     static constexpr int32_t kSlots = 4;
     static constexpr size_t kPathMax = 192;
     static constexpr size_t kStackBytes = 16 * 1024;
+    static constexpr int32_t kChannelHd = 0;
+    static constexpr int32_t kChannelPack = 1;
+    // The largest range read: more than any animation's frames (K_CHUTEC's 12
+    // are 163,536 bytes); a corrupt index cannot size a bigger allocation.
+    static constexpr uint32_t kMaxRangeBytes = 1u << 20;
 
     AsyncFileReader() = default;
     AsyncFileReader(const AsyncFileReader&) = delete;
@@ -45,19 +58,31 @@ public:
     // to call when start() failed or was never called.
     void stop();
 
-    // Asks for `path` under `tag`. False when every slot is busy (try again next
-    // frame), the path is too long, or the reader is not running.
+    // Asks for `path` under `tag`, the whole file, on kChannelHd. False when
+    // every slot is busy (try again next frame), the path is too long, or the
+    // reader is not running.
     bool request(int32_t tag, const char* path);
 
-    // Takes one finished read, if any: its tag, the path it read (into `path`,
-    // kPathMax bytes -- a tag can be reused before its old read finishes, and the
-    // path is what tells the two apart), and either the bytes (malloc'd; the
-    // caller frees them) and their size, or ok=false (the file could not be
-    // read). False when nothing is finished.
-    bool poll(int32_t* tag, char* path, uint8_t** bytes, size_t* size, bool* ok);
+    // Asks for `length` bytes at `offset` of `path` under `tag` on `channel`.
+    // The read succeeds only when all `length` bytes are read: a short read
+    // (a truncated file) is ok=false, never a partial buffer. False as request.
+    bool requestRange(int32_t channel, int32_t tag, const char* path, uint32_t offset,
+                      uint32_t length);
 
-    // Slots holding a request, a read in progress or an untaken result.
-    int32_t busy();
+    // Takes one finished read on `channel`, if any: its tag, the path it read
+    // (into `path`, kPathMax bytes -- a tag can be reused before its old read
+    // finishes, and the path is what tells the two apart), and either the bytes
+    // (malloc'd; the caller frees them) and their size, or ok=false (the file
+    // could not be read). False when nothing on that channel is finished.
+    bool poll(int32_t channel, int32_t* tag, char* path, uint8_t** bytes, size_t* size, bool* ok);
+
+    // Slots of `channel` holding a request, a read in progress or an untaken
+    // result.
+    int32_t busy(int32_t channel);
+
+    // Slots of any channel not free: a request on any channel fails while this
+    // is kSlots.
+    int32_t busyAll();
 
     // The worker's loop (the thread's entry, asyncFileReaderThread, calls it
     // after establishing FZ/DN). Not for any other caller.
@@ -67,7 +92,12 @@ private:
     enum State : uint8_t { Free, Requested, Reading, Done };
     struct Slot {
         State state = Free;
+        int32_t channel = kChannelHd;
         int32_t tag = -1;
+        // A range read (requestRange): `length` bytes at `offset`. 0: the whole
+        // file (request).
+        uint32_t offset = 0;
+        uint32_t length = 0;
         char path[kPathMax] = {0};
         uint8_t* bytes = nullptr;
         size_t size = 0;

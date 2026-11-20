@@ -34,6 +34,7 @@
 #include "flow_tests.h"
 #include "input_3ds_tests.h"
 #include "heap_split_tests.h"
+#include "kurt_stream_tests.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/dti.h"
@@ -7839,6 +7840,15 @@ int main() {
     failures += heapSplitFailures;
     if (heapSplitFailures == 0) {
         printf("PASS HeapSplit\n");
+    }
+
+    // Kurt's pack at level load and its stream (kurt_stream_tests.h), against a
+    // fake backend: the 3DS cannot be run here and the stream's logic has no
+    // other check, so it is data-independent and sits above the data check.
+    const int kurtStreamFailures = mdk::test::runKurtStreamTests();
+    failures += kurtStreamFailures;
+    if (kurtStreamFailures == 0) {
+        printf("PASS KurtPackStream\n");
     }
 
     // The MathF.Min/MathF.Max twins, in the oracle's bits. Data-independent, so it

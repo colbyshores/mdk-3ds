@@ -297,6 +297,41 @@ static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool c
     }
 }
 
+// KURT'S PACK STREAM through the HD reader's thread (render.h): its own channel,
+// one read in flight, so the HD stream keeps the other slots and never sees a
+// pack read. Only the main thread calls these (the reader's slots are locked).
+bool mdk_render_read_range_async(MdkRenderer r, int32_t tag, const char* path, uint32_t offset,
+                                 uint32_t size) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || !path || size == 0 ||
+        renderer->hdReader.busy(mdk::AsyncFileReader::kChannelPack) > 0) {
+        return false;
+    }
+    return renderer->hdReader.requestRange(mdk::AsyncFileReader::kChannelPack, tag, path,
+                                           offset, size);
+}
+
+bool mdk_render_poll_range_read(MdkRenderer r, int32_t* tag, uint8_t** bytes, uint32_t* size,
+                                bool* ok) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || !tag || !bytes || !size || !ok) {
+        return false;
+    }
+    char path[mdk::AsyncFileReader::kPathMax];
+    size_t length = 0;
+    if (!renderer->hdReader.poll(mdk::AsyncFileReader::kChannelPack, tag, path, bytes, &length,
+                                 ok)) {
+        return false;
+    }
+    *size = (uint32_t)length;
+    if (!*ok) {
+        free(*bytes);
+        *bytes = nullptr;
+        *size = 0;
+    }
+    return true;
+}
+
 // The HD pack's compressed replacement for an index texture: recorded only.
 // The draw that first wants it queues it, and the frame-boundary pump imports
 // it under the HD budget (04_textures.inc, THE HD STREAM).

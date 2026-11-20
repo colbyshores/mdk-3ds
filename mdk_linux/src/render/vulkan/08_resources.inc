@@ -55,6 +55,16 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t, int32_t,
     return -1;
 }
 
+// NO STREAMED PACK READS ON THE DESKTOP: it never loads Kurt's compressed pack
+// (it has no compressed textures), so there is nothing to stream (render.h).
+bool mdk_render_read_range_async(MdkRenderer, int32_t, const char*, uint32_t, uint32_t) {
+    return false;
+}
+
+bool mdk_render_poll_range_read(MdkRenderer, int32_t*, uint8_t**, uint32_t*, bool*) {
+    return false;
+}
+
 // No per-texture answer here: callers fall back to mdk_render_index_texture_bytes,
 // which is the desktop's exact cost of an index texture (render.h).
 int32_t mdk_render_texture_bytes(MdkRenderer, MdkTextureId) {

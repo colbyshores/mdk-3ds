@@ -273,7 +273,7 @@ struct EnhancedToggles {
                                       // PC ignores it
     bool kurtCompressed = true;       // 3DS: Kurt's sprite frames drawn from the ETC1A4 set
                                       // made offline from the player's TRAVSPRT.BNI
-                                      // (mdk_3ds/tools/kurt_etc1_convert.py, romfs:/kurt):
+                                      // (kurt_etc1_convert.py, romfs:/kurt/kurt.pak):
                                       // 1 byte a texel, never expanded on the ARM11, and the
                                       // start set loaded at level load. Off (or a frame with
                                       // no compressed copy): the palette expansion, in the

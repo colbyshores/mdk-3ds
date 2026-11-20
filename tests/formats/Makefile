@@ -30,6 +30,7 @@ SOURCES := \
 	lighting_tests.cpp \
 	math_lut_tests.cpp \
 	mods_tests.cpp \
+	kurt_pack_tests.cpp \
 	random_tests.cpp \
 	$(CORE)/util/math_lut.cpp \
 	$(CORE)/util/random.cpp \
@@ -50,6 +51,7 @@ SOURCES := \
 	$(CORE)/formats/sni.cpp \
 	$(CORE)/formats/sprite_animation.cpp \
 	$(CORE)/formats/fti.cpp \
+	$(CORE)/formats/kurt_pack.cpp \
 	$(CORE)/formats/glb.cpp \
 	$(CORE)/formats/png.cpp \
 	$(CORE)/scripts/pose_cache.cpp \

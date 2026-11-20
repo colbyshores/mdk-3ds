@@ -63,6 +63,7 @@
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/file_system.h"
+#include "formats/kurt_pack.h"
 #include "formats/mdk_data.h"
 #include "formats/font.h"
 #include "game/arena_space.h"
@@ -190,17 +191,17 @@ const char kHdPackRoot[] = "sdmc:/3ds/mdk/hd";
 
 // KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): his ORIGINAL
 // TRAVSPRT.BNI frames as ETC1A4, made on the host by
-// mdk_3ds/tools/kurt_etc1_convert.py and staged into the RomFS by stage_romfs.sh
-// (the set is derived from the game data the RomFS already carries, so it ships
-// in every .3dsx and .cia and the hardware loop needs no separate SD copy). The
-// layout and manifest are the HD pack's, indexed by the same code.
-const char kKurtSetRoot[] = "romfs:/kurt";
+// mdk_3ds/tools/kurt_etc1_convert.py, packed into ONE file by kurt_pack.py
+// (formats/kurt_pack.h) and staged into the RomFS by stage_romfs.sh (the set is
+// derived from the game data the RomFS already carries, so it ships in every
+// .3dsx and .cia and the hardware loop needs no separate SD copy).
+const char kKurtPackPath[] = "romfs:/kurt/kurt.pak";
 
 // The sound bank's decoded store, bounded (see where it is set).
 const size_t kDecodedSoundBudgetBytes = (size_t)6 << 20;
 
-// A compressed pack's manifest (the HD pack's, or Kurt's set: the same columns),
-// indexed for `level` by ModImages' own rule. False when there is none.
+// The HD pack's manifest, indexed for `level` by ModImages' own rule. False
+// when there is none.
 bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out,
                             int32_t* count) {
     const std::string manifest = std::string(root) + "/manifest.txt";
@@ -263,6 +264,85 @@ bool loadHdPack(int32_t level, mdk::ModImages* out) {
         return false;
     }
     mdk::log3dsPrintf("hd: pack manifest %d textures (sdmc:/3ds/mdk/hd)", (int)count);
+    return true;
+}
+
+// KURT'S PACK AT LEVEL LOAD (cold; AGENTS.md P5). ONE open of romfs:/kurt/kurt.pak,
+// the 32-byte header, then the index and the start set in ONE contiguous read
+// (kurt_pack.py lays the start set out right after the index), and the file is
+// closed: the other animations are read later, a range at a time, by the
+// backend's reader thread (KurtSprite's stream), never inside a frame. Every
+// read is checked: no file, a short read, a bad magic/version/layout or a file
+// shorter than its header says is logged ONCE here and Kurt's frames take the
+// 16-bit path for the level -- nothing is retried. A bad index ENTRY costs only
+// its own frame (KurtSprite::useCompressedPack) and is named here.
+struct KurtPackLoad {
+    mdk::formats::KurtPack pack;
+    // The pack's bytes [kHeaderBytes, startEnd): the index, then the start set.
+    // A staging buffer: freed as soon as the start set is imported.
+    std::vector<uint8_t> front;
+    int32_t opened = 0;
+    int32_t bytesRead = 0;
+};
+
+bool loadKurtPack(const char* path, KurtPackLoad* out) {
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        mdk::log3dsPrintf("sprites: no pack at %s; Kurt's frames are 16-bit", path);
+        return false;
+    }
+    out->opened = 1;
+    long length = -1;
+    if (fseek(file, 0, SEEK_END) == 0) {
+        length = ftell(file);
+    }
+    uint8_t header[mdk::formats::KurtPack::kHeaderBytes];
+    bool ok = length >= 0 && fseek(file, 0, SEEK_SET) == 0 &&
+              fread(header, 1, sizeof(header), file) == sizeof(header);
+    if (ok) {
+        out->bytesRead += (int32_t)sizeof(header);
+    }
+    mdk::formats::KurtPack::Header parsed;
+    const mdk::formats::KurtPack::Status status =
+        ok ? mdk::formats::KurtPack::parseHeader(header, sizeof(header),
+                                                 length > 0x7FFFFFFFL ? 0x7FFFFFFFu
+                                                                      : (uint32_t)length,
+                                                 &parsed)
+           : mdk::formats::KurtPack::Status::TooSmall;
+    if (status != mdk::formats::KurtPack::Status::Ok) {
+        fclose(file);
+        mdk::log3dsPrintf("sprites: pack %s refused (%s, %ld bytes); Kurt's frames are 16-bit",
+                          path, mdk::formats::KurtPack::statusName(status), length);
+        return false;
+    }
+    // The header's bounds (parseHeader) keep this under the file's size.
+    const uint32_t frontBytes = parsed.startEnd - mdk::formats::KurtPack::kHeaderBytes;
+    out->front.resize(frontBytes);
+    const size_t got = frontBytes > 0 ? fread(out->front.data(), 1, frontBytes, file) : 0;
+    fclose(file);
+    if (got != frontBytes) {
+        mdk::log3dsPrintf("sprites: pack %s: short read of the index and start set (%u of %u "
+                          "bytes); Kurt's frames are 16-bit",
+                          path, (unsigned)got, (unsigned)frontBytes);
+        std::vector<uint8_t>().swap(out->front);
+        return false;
+    }
+    out->bytesRead += (int32_t)frontBytes;
+    const uint32_t indexBytes = parsed.indexEnd() - mdk::formats::KurtPack::kHeaderBytes;
+    if (mdk::formats::KurtPack::parseIndex(parsed, out->front.data(), indexBytes, &out->pack) !=
+        mdk::formats::KurtPack::Status::Ok) {
+        mdk::log3dsPrintf("sprites: pack %s: index refused; Kurt's frames are 16-bit", path);
+        std::vector<uint8_t>().swap(out->front);
+        return false;
+    }
+    if (out->pack.badEntries() > 0) {
+        const int32_t first = out->pack.firstBadEntry();
+        mdk::log3dsPrintf("sprites: pack %s: %d bad index entries (first #%d %s: %s); those "
+                          "frames are 16-bit",
+                          path, (int)out->pack.badEntries(), (int)first,
+                          out->pack.entries()[(size_t)first].name.c_str(),
+                          out->pack.firstBadReason());
+    }
     return true;
 }
 
@@ -565,9 +645,6 @@ int main(int argc, char** argv) {
     // whether the HD copy is used, so the toggle stays live.
     mdk::ModImages hdPack;
     HdPackSource hdSource;
-    // Kurt's compressed frames' index (loadCompressedManifest, kKurtSetRoot):
-    // filled where his animations load, read from there.
-    mdk::ModImages kurtSet;
     if (loadHdPack(options.level, &hdPack)) {
         hdSource.pack = &hdPack;
         surfaces.setColourReplacementLookup(hdPackLookup, &hdSource);
@@ -756,32 +833,55 @@ int main(int argc, char** argv) {
                     }
                     mdk::log3dsPrintf("sprites: Kurt's animations loaded");
                     // KURT'S COMPRESSED FRAMES and the start set, at level load
-                    // (cold; AGENTS.md P5: no SD read inside a frame). One line:
-                    // what was read and preloaded, its bytes and its time. Off
-                    // (kurtCompressed=0, the A/B): every frame is the expansion,
-                    // in the texture16 store (RGBA5551, or RGBA8 under texture16=0).
+                    // (cold; AGENTS.md P5: no SD read inside a frame). One open of
+                    // the pack, its index and the start set in one read, the start
+                    // set imported, the read's buffer freed; the other animations
+                    // stream later (pumpStream, below). One line: files opened,
+                    // bytes read, ms, start-set frames imported, and the .t3x bytes
+                    // still held on the heap after it (0: the stream starts empty).
+                    // Off (kurtCompressed=0, the A/B): every frame is the
+                    // expansion, in the texture16 store (RGBA5551, or RGBA8 under
+                    // texture16=0).
                     {
                         const double started = nowSeconds();
                         mdk::KurtSprite::CompressedReport report;
-                        int32_t listed = 0;
-                        const bool have =
-                            enhancedToggles.kurtCompressed &&
-                            loadCompressedManifest(kKurtSetRoot, flow.state().level, &kurtSet,
-                                                   &listed);
-                        kurtSprite.useCompressedFrames(have ? &kurtSet : nullptr, &report);
+                        KurtPackLoad packLoad;
+                        const bool have = enhancedToggles.kurtCompressed &&
+                                          loadKurtPack(kKurtPackPath, &packLoad);
+                        kurtSprite.useCompressedPack(have ? &packLoad.pack : nullptr,
+                                                     flow.state().level, kKurtPackPath, &report);
                         const double read = nowSeconds();
-                        kurtSprite.preloadStartSet(&report);
+                        if (have) {
+                            const mdk::formats::KurtPack::Header& header =
+                                packLoad.pack.header();
+                            const uint32_t skip =
+                                header.dataOffset - mdk::formats::KurtPack::kHeaderBytes;
+                            kurtSprite.preloadStartSet(packLoad.front.data() + skip,
+                                                       header.dataOffset,
+                                                       header.startEnd - header.dataOffset,
+                                                       &report);
+                        }
+                        // The staging buffer goes now: the start set's GPU copies
+                        // are made (and the backend keeps each one's .t3x as its
+                        // re-make source, startFileBytes).
+                        std::vector<uint8_t>().swap(packLoad.front);
                         const double done = nowSeconds();
                         mdk::log3dsPrintf(
-                            "sprites: kurtCompressed=%d texture16=%d set=%s (%d listed): %d/%d frames "
-                            "ETC1A4, %d bytes of .t3x read in %d ms; start set %d/%d frames "
-                            "preloaded, %d GPU bytes of %d, in %d ms",
+                            "sprites: kurtCompressed=%d texture16=%d pack=%s: %d file opened, "
+                            "%d bytes read in %d ms; %d/%d frames ETC1A4 (%d bad), %d "
+                            "animations to stream; start set %d/%d frames imported, %d GPU "
+                            "bytes of %d, from %d bytes of .t3x, in %d ms; %u bytes of .t3x "
+                            "kept on the heap (stream bound %u)",
                             (int)enhancedToggles.kurtCompressed, (int)enhancedToggles.texture16,
-                            have ? kKurtSetRoot : "none", (int)listed, (int)report.compressed,
-                            (int)report.frames, (int)report.fileBytes,
-                            (int)((read - started) * 1000.0), (int)report.preloaded,
+                            have ? kKurtPackPath : "none", (int)packLoad.opened,
+                            (int)packLoad.bytesRead, (int)((read - started) * 1000.0),
+                            (int)report.compressed, (int)report.frames, (int)report.badFrames,
+                            (int)report.streamable, (int)report.preloaded,
                             (int)report.startFrames, (int)report.preloadBytes,
-                            (int)report.preloadBudget, (int)((done - read) * 1000.0));
+                            (int)report.preloadBudget, (int)report.startFileBytes,
+                            (int)((done - read) * 1000.0),
+                            (unsigned)kurtSprite.streamStats().staged,
+                            (unsigned)mdk::KurtSprite::kStagedCacheBytes);
                     }
                 } else {
                     mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
@@ -2112,6 +2212,13 @@ int main(int argc, char** argv) {
             }
         }
         if (kurtSpriteReady && playerReady) {
+            // THE PACK STREAM'S PUMP (KurtSprite::pumpStream): the read the
+            // reader thread finished, if any, staged -- no I/O on this thread. A
+            // failed read is logged once and its frames stay 16-bit.
+            kurtSprite.pumpStream();
+            if (const char* failure = kurtSprite.takeStreamFailure()) {
+                mdk::log3dsPrintf("%s", failure);
+            }
             // C# Viewer.DrawScene draws Kurt after the level and before the HUD.
             kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
@@ -2252,6 +2359,17 @@ int main(int argc, char** argv) {
     mdk::harnessProfileReport();
     mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
                       (unsigned)steps, exitReason);
+    if (kurtSpriteReady) {
+        // The pack stream's record for the run, once, at exit (never inside play).
+        const mdk::KurtSprite::StreamStats& stream = kurtSprite.streamStats();
+        mdk::log3dsPrintf("sprites: stream: %d animations read (%d bytes), %d failed; %d frames "
+                          "stood in 16-bit, %d upgraded, %d refused; %u bytes staged, peak %u "
+                          "of %u, %d dropped",
+                          (int)stream.reads, (int)stream.bytesRead, (int)stream.failures,
+                          (int)stream.standIns, (int)stream.upgrades, (int)stream.importFailures,
+                          (unsigned)stream.staged, (unsigned)stream.stagedPeak,
+                          (unsigned)mdk::KurtSprite::kStagedCacheBytes, (int)stream.dropped);
+    }
     aptUnhook(&s_lifecycleCookie);
     // The arenas' GPU objects go while the renderer is still there.
     arenaViews.clear();

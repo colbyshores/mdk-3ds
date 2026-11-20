@@ -40,6 +40,28 @@ uint8_t* readWhole(const char* path, size_t* size) {
     return bytes;
 }
 
+// `length` bytes at `offset` into a malloc'd buffer, or null -- a short read
+// (the file ends early) is null, never a partial buffer. Only the worker calls it.
+uint8_t* readRange(const char* path, uint32_t offset, uint32_t length) {
+    if (length == 0 || length > AsyncFileReader::kMaxRangeBytes) {
+        return nullptr;
+    }
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        return nullptr;
+    }
+    uint8_t* bytes = nullptr;
+    if (fseek(file, (long)offset, SEEK_SET) == 0) {
+        bytes = static_cast<uint8_t*>(malloc(length));
+        if (bytes && fread(bytes, 1, length, file) != length) {
+            free(bytes);
+            bytes = nullptr;
+        }
+    }
+    fclose(file);
+    return bytes;
+}
+
 // THE THREAD'S ENTRY, a plain function so the R1 gate (tools/runner/gates_vfp.py)
 // can resolve the routine threadCreate names and read its body.
 void asyncFileReaderThread(void* self) {
@@ -96,7 +118,12 @@ void AsyncFileReader::stop() {
 }
 
 bool AsyncFileReader::request(int32_t tag, const char* path) {
-    if (!running_ || !path || strlen(path) >= kPathMax) {
+    return requestRange(kChannelHd, tag, path, 0, 0);
+}
+
+bool AsyncFileReader::requestRange(int32_t channel, int32_t tag, const char* path,
+                                   uint32_t offset, uint32_t length) {
+    if (!running_ || !path || strlen(path) >= kPathMax || length > kMaxRangeBytes) {
         return false;
     }
     bool queued = false;
@@ -104,7 +131,10 @@ bool AsyncFileReader::request(int32_t tag, const char* path) {
     for (int32_t i = 0; i < kSlots; i++) {
         if (slots_[i].state == Free) {
             slots_[i].state = Requested;
+            slots_[i].channel = channel;
             slots_[i].tag = tag;
+            slots_[i].offset = offset;
+            slots_[i].length = length;
             snprintf(slots_[i].path, kPathMax, "%s", path);
             queued = true;
             break;
@@ -117,14 +147,15 @@ bool AsyncFileReader::request(int32_t tag, const char* path) {
     return queued;
 }
 
-bool AsyncFileReader::poll(int32_t* tag, char* path, uint8_t** bytes, size_t* size, bool* ok) {
+bool AsyncFileReader::poll(int32_t channel, int32_t* tag, char* path, uint8_t** bytes,
+                           size_t* size, bool* ok) {
     if (!running_) {
         return false;
     }
     bool found = false;
     LightLock_Lock(&lock_);
     for (int32_t i = 0; i < kSlots; i++) {
-        if (slots_[i].state == Done) {
+        if (slots_[i].state == Done && slots_[i].channel == channel) {
             *tag = slots_[i].tag;
             memcpy(path, slots_[i].path, kPathMax);
             *bytes = slots_[i].bytes;
@@ -139,7 +170,19 @@ bool AsyncFileReader::poll(int32_t* tag, char* path, uint8_t** bytes, size_t* si
     return found;
 }
 
-int32_t AsyncFileReader::busy() {
+int32_t AsyncFileReader::busy(int32_t channel) {
+    int32_t count = 0;
+    LightLock_Lock(&lock_);
+    for (int32_t i = 0; i < kSlots; i++) {
+        if (slots_[i].state != Free && slots_[i].channel == channel) {
+            count++;
+        }
+    }
+    LightLock_Unlock(&lock_);
+    return count;
+}
+
+int32_t AsyncFileReader::busyAll() {
     int32_t count = 0;
     LightLock_Lock(&lock_);
     for (int32_t i = 0; i < kSlots; i++) {
@@ -155,6 +198,8 @@ void AsyncFileReader::run() {
     char path[kPathMax];
     for (;;) {
         int32_t slot = -1;
+        uint32_t offset = 0;
+        uint32_t length = 0;
         LightLock_Lock(&lock_);
         if (exit_) {
             LightLock_Unlock(&lock_);
@@ -164,6 +209,8 @@ void AsyncFileReader::run() {
             if (slots_[i].state == Requested) {
                 slots_[i].state = Reading;
                 memcpy(path, slots_[i].path, kPathMax);
+                offset = slots_[i].offset;
+                length = slots_[i].length;
                 slot = i;
                 break;
             }
@@ -173,8 +220,8 @@ void AsyncFileReader::run() {
             LightEvent_Wait(&wake_);
             continue;
         }
-        size_t size = 0;
-        uint8_t* bytes = readWhole(path, &size);
+        size_t size = length;
+        uint8_t* bytes = length > 0 ? readRange(path, offset, length) : readWhole(path, &size);
         LightLock_Lock(&lock_);
         slots_[slot].bytes = bytes;
         slots_[slot].size = bytes ? size : 0;

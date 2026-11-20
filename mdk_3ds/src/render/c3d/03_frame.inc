@@ -1150,7 +1150,8 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
                           "%d failed, %d queued, %d reading",
                           (int)r->frame, (int)r->hdImported, (unsigned)r->hdResidentBytes,
                           (unsigned)kHdBudgetBytes, (int)r->hdEvicted, (int)r->hdFailedCount,
-                          (int)r->hdQueue.size(), (int)r->hdReader.busy());
+                          (int)r->hdQueue.size(),
+                          (int)r->hdReader.busy(mdk::AsyncFileReader::kChannelHd));
     }
     // THE STORES THE TEXTURES WERE MADE IN (EnhancedToggles::texture16): once a
     // level's textures are made (frame 30), then every 300 frames when more were

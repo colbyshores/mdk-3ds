@@ -100,6 +100,7 @@ SOURCES_VM := \
 	layer_tests.cpp \
 	mve_audio_tests.cpp \
 	sprite_tests.cpp \
+	kurt_stream_tests.cpp \
 	system_numerics_tests.cpp \
 	pica_matrix_tests.cpp \
 	input_3ds_tests.cpp \
@@ -111,6 +112,11 @@ SOURCES_VM := \
 	$(CORE)/render/sun_shadow.cpp \
 	$(3DS)/platform/input_3ds.cpp \
 	$(3DS)/platform/heap_split_policy.cpp \
+	$(CORE)/game/kurt_sprite.cpp \
+	$(CORE)/formats/kurt_pack.cpp \
+	$(CORE)/game/mod_images.cpp \
+	$(CORE)/game/hd_key.cpp \
+	$(CORE)/util/sha256.cpp \
 	$(COMMON_SOURCES)
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))

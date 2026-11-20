@@ -39,6 +39,7 @@ class ModImages;
 
 namespace formats {
 class Bni;
+class KurtPack;
 class Palette;
 class SpriteAnimation;
 } // namespace formats
@@ -183,6 +184,45 @@ private:
     std::vector<Entry> resident_;
 };
 
+// A buffer the backend's reader malloc'd (mdk_render_poll_range_read), owned:
+// freed when it goes or is replaced. Move-only, so an Animation that holds one
+// can be moved (the animation list grows and is replaced) but never copied into
+// a second owner.
+class StagedBytes {
+public:
+    StagedBytes() = default;
+    ~StagedBytes() { reset(); }
+    StagedBytes(const StagedBytes&) = delete;
+    StagedBytes& operator=(const StagedBytes&) = delete;
+    StagedBytes(StagedBytes&& other) noexcept : data_(other.data_), size_(other.size_) {
+        other.data_ = nullptr;
+        other.size_ = 0;
+    }
+    StagedBytes& operator=(StagedBytes&& other) noexcept {
+        if (this != &other) {
+            reset();
+            data_ = other.data_;
+            size_ = other.size_;
+            other.data_ = nullptr;
+            other.size_ = 0;
+        }
+        return *this;
+    }
+    // Takes ownership of a malloc'd buffer (the old one is freed).
+    void adopt(uint8_t* data, uint32_t size) {
+        reset();
+        data_ = data;
+        size_ = data ? size : 0;
+    }
+    void reset();
+    const uint8_t* data() const { return data_; }
+    uint32_t size() const { return size_; }
+
+private:
+    uint8_t* data_ = nullptr;
+    uint32_t size_ = 0;
+};
+
 class KurtSprite {
 public:
     KurtSprite();
@@ -194,7 +234,7 @@ public:
     // THE TEXTURE IS MADE WHEN THE FRAME IS FIRST DRAWN, not when the
     // animation is loaded: see SpriteResidency above. `texture` is -1 while
     // the frame is not resident. (The one exception is the start set, made at
-    // level load from compressed copies: preloadStartSet.)
+    // level load from the pack's front: preloadStartSet.)
     struct Frame {
         int32_t texture = -1;
         int32_t width = 0;
@@ -206,11 +246,27 @@ public:
         // a frame whose texture has been dropped has to be uploaded again
         // and the archive it came from is gone by then.
         std::vector<uint8_t> indices;
-        // The frame's COMPRESSED copy, a .t3x file's bytes (useCompressedFrames;
-        // EnhancedToggles::kurtCompressed), or empty. Read at level load -- a
-        // frame's file is 1-6 KB, the whole set 1.2 MB -- so making the texture
-        // on first draw is an import from memory and never an SD read.
-        std::vector<uint8_t> compressed;
+        // The frame's COMPRESSED copy in Kurt's pack (romfs:/kurt/kurt.pak;
+        // useCompressedPack, EnhancedToggles::kurtCompressed): where its .t3x
+        // bytes are, packSize 0 for none. The bytes are NOT held per frame (that
+        // was 1.1 MB of main heap for the level): the start set's are imported
+        // at level load from one read, the others' come with their animation's
+        // stream (Animation::staged).
+        uint32_t packOffset = 0;
+        uint32_t packSize = 0;
+        // The texture is the index texture STANDING IN while the animation's
+        // bytes are being read; the next draw after they arrive replaces it
+        // with the compressed one.
+        bool standIn = false;
+    };
+
+    // Where an animation's pack bytes are (THE STREAM, useCompressedPack).
+    enum class StreamState : uint8_t {
+        None,      // nothing to stream: no frame of it has a pack copy
+        Idle,      // in the pack, not staged: the next draw that needs it asks
+        Pending,   // a read is in flight (the backend's reader thread)
+        Ready,     // staged: `staged` holds [packBegin, packEnd)
+        Failed,    // the read failed: logged once, its frames stay 16-bit
     };
 
     // An animation's decoded frames. `repeat` is the C#'s Repeat enum.
@@ -218,6 +274,16 @@ public:
         std::string name;
         Repeat repeat = Once;
         std::vector<Frame> frames;
+        // THE STREAM: this level's frames' bytes in the pack, one contiguous
+        // range (kurt_pack.py lays an animation's frames out together), read in
+        // one request when a frame of it is first wanted without its bytes, and
+        // held in the bounded staging cache (kStagedCacheBytes) while recent.
+        uint32_t packBegin = 0;
+        uint32_t packEnd = 0;
+        StreamState stream = StreamState::None;
+        StagedBytes staged;
+        uint32_t lastDrawn = 0;   // the residency clock when a frame was last drawn
+        bool prefetched = false;  // asked for ahead of a draw once this level
     };
 
     // The animation and frame a player's state selects. The animation is an
@@ -245,31 +311,76 @@ public:
     void setMods(ModImages* mods) { mods_ = mods; }
 
     // KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): the set made
-    // offline from the player's TRAVSPRT.BNI (mdk_3ds/tools/kurt_etc1_convert.py),
-    // indexed like the HD pack (ModImages::fromList; files by name, a level's
-    // own folder first). Every frame that has a file gets its bytes read now --
-    // level load, after load() -- and from then on its texture is the compressed
-    // one; a frame without one keeps the index texture. Null: none (the toggle
-    // off: every frame the index texture, in the backend's texture16 store).
+    // offline from the player's TRAVSPRT.BNI (mdk_3ds/tools/kurt_etc1_convert.py)
+    // in ONE file (kurt_pack.py, formats/kurt_pack.h), whose index the caller
+    // has read. Each frame is matched to its entry by name for `level` (a
+    // level's own copy first) and must agree on its size; a frame with no
+    // entry, an invalid one or a size that disagrees keeps the index texture
+    // (the 16-bit path). NO BYTES ARE READ HERE: the start set's come from the
+    // caller's one read (preloadStartSet), the others' from `path` through the
+    // backend's reader (the stream), so after level load this holds no .t3x
+    // bytes at all. Null pack: none (every frame the index texture).
     struct CompressedReport {
-        int32_t frames = 0;        // frames loaded
-        int32_t compressed = 0;    // of them, with a compressed copy
-        int32_t fileBytes = 0;     // the copies' bytes, held in memory
-        int32_t startFrames = 0;   // the start set's frames (preloadStartSet)
-        int32_t preloaded = 0;     // of them, made now and pinned
-        int32_t preloadBytes = 0;  // their GPU bytes
-        int32_t preloadBudget = 0; // the bound they were made under
+        int32_t frames = 0;         // frames loaded
+        int32_t compressed = 0;     // of them, with a valid pack entry
+        int32_t badFrames = 0;      // of them, whose entry was invalid or the wrong size
+        int32_t streamable = 0;     // animations with a pack range (the stream's unit)
+        int32_t startFrames = 0;    // the start set's frames (preloadStartSet)
+        int32_t preloaded = 0;      // of them, made now and pinned
+        int32_t preloadBytes = 0;   // their GPU bytes
+        int32_t preloadBudget = 0;  // the bound they were made under
+        int32_t startFileBytes = 0; // the .t3x bytes those imports were made from
     };
-    void useCompressedFrames(ModImages* set, CompressedReport* report);
+    void useCompressedPack(const formats::KurtPack* pack, int32_t level, const char* path,
+                           CompressedReport* report);
 
     // THE START SET (K_STILL, K_FALL, K_LAND, K_IDLE: what every level opens on)
-    // made NOW, at level load, from the compressed copies, and pinned for the
-    // level -- while it fits the backend's preload bound
-    // (MdkCapabilities::sprite_preload_bytes; a frame past the bound is made on
-    // first draw as before). Frames without a compressed copy are not preloaded:
-    // their making is the ARM11 expansion the preload exists to avoid, and the
-    // set would not fit in that store anyway. After useCompressedFrames.
-    void preloadStartSet(CompressedReport* report);
+    // made NOW, at level load, and pinned for the level -- while it fits the
+    // backend's preload bound (MdkCapabilities::sprite_preload_bytes; a frame
+    // past the bound is streamed and made on first draw like the others).
+    // `bytes` are the pack's bytes [begin, begin + size) -- the caller's one
+    // read of the pack's front, which kurt_pack.py fills with the start set --
+    // and are only borrowed: the caller frees them after this returns. Frames
+    // without a compressed copy are not preloaded: their making is the ARM11
+    // expansion the preload exists to avoid. After useCompressedPack.
+    void preloadStartSet(const uint8_t* bytes, uint32_t begin, uint32_t size,
+                         CompressedReport* report);
+
+    // THE STREAM'S PUMP, once a frame before draw(): takes the pack read that
+    // finished, if any, into the staging cache. No I/O happens here (the read
+    // ran on the backend's reader thread); a failed or short read marks its
+    // animation Failed -- never retried -- and is reported once
+    // (takeStreamFailure). With no read in flight it then PREFETCHES: the next
+    // animation of the state machine's order not yet staged, once a level, and
+    // only while it fits the staging bound without dropping anything -- so the
+    // first run, jump or shot after level load is usually made from memory
+    // rather than standing in while its read is in flight.
+    void pumpStream();
+
+    // The stream's first failure as one log line, once; null otherwise.
+    const char* takeStreamFailure();
+
+    // What the stream has done, for one line at exit (not per frame).
+    struct StreamStats {
+        int32_t reads = 0;           // animations read
+        int32_t failures = 0;        // reads that failed (their frames stay 16-bit)
+        int32_t bytesRead = 0;
+        int32_t standIns = 0;        // frames drawn from the index texture while waiting
+        int32_t upgrades = 0;        // stand-ins replaced by the compressed copy
+        int32_t importFailures = 0;  // compressed bytes the backend refused
+        int32_t dropped = 0;         // staged animations dropped to stay in the bound
+        uint32_t staged = 0;         // bytes staged now
+        uint32_t stagedPeak = 0;     // the most ever staged
+    };
+    const StreamStats& streamStats() const { return stream_; }
+
+    // The staging cache's bound: the recently drawn animations' bytes, so a
+    // frame the GPU residency dropped is made again from memory, not read again.
+    // K_CHUTEC, the largest animation (163,536 bytes), fits with others.
+    static constexpr uint32_t kStagedCacheBytes = 256 * 1024;
+    // No animation's range is near this (see kStagedCacheBytes); a range past it
+    // is not streamed (its frames stay 16-bit).
+    static constexpr uint32_t kMaxStreamBytes = 1024 * 1024;
 
     // The names of the start set, in preload order.
     static int startSetCount();
@@ -326,6 +437,10 @@ public:
     }
 
 private:
+    // The host tests' access to the stream's private steps
+    // (tests/scripts/kurt_stream_tests.cpp): no game data, no Player.
+    friend struct KurtSpriteTestAccess;
+
     struct StateSpec {
         const char* name;
         Repeat repeat;
@@ -359,10 +474,26 @@ private:
     // says it has to go. False when the texture could not be made.
     bool ensureTexture(int32_t animation, int32_t frame);
 
-    // Makes a frame's GPU copy: the compressed copy when it has one and the
-    // backend takes it, else the index texture; the HD pack's link either way.
-    // The texture id, or -1.
-    int32_t makeFrameTexture(int32_t animation, int32_t frame);
+    // Makes a frame's GPU copy: from `t3x` (the frame's compressed bytes) when
+    // given and the backend takes them, else the index texture; the HD pack's
+    // link either way. The texture id, or -1.
+    int32_t makeFrameTexture(int32_t animation, int32_t frame, const uint8_t* t3x);
+
+    // THE STREAM. The frame's bytes when its animation is staged, else null.
+    static const uint8_t* stagedFrame(const Animation& animation, const Frame& frame);
+    // Asks for an Idle animation's range when no read is in flight.
+    void requestStream(int32_t animation);
+    // The pump's prefetch (see pumpStream).
+    void prefetchNext();
+    // An animation's staged bytes go (back to Idle).
+    void dropStaged(int32_t animation);
+    // Drops the least recently drawn staged animations, never `keep`, until the
+    // cache is inside kStagedCacheBytes.
+    void trimStaged(int32_t keep);
+    // A read failed: the animation is Failed and its frames are plain 16-bit.
+    void streamFailed(int32_t animation, const char* why);
+    // Forgets every frame's pack copy and every animation's stream.
+    void forgetPack();
 
     // What a made frame costs resident: the backend's count of the texture it
     // actually made (its real store, a compressed copy's ETC bytes), else the
@@ -402,6 +533,15 @@ private:
     int32_t muzzleFlash_ = -1;
     // What is on the GPU, and how much of it there is. See SpriteResidency.
     SpriteResidency residency_;
+    // THE STREAM (useCompressedPack): the pack's path, the tag of the read in
+    // flight (-1: none), the generation that tells a stale read from a current
+    // one (a re-load bumps it), and the counters.
+    std::string packPath_;
+    int32_t streamTag_ = -1;
+    int32_t generation_ = 0;
+    StreamStats stream_;
+    bool failureTaken_ = true;
+    char failureNote_[160] = {0};
 };
 
 } // namespace mdk
