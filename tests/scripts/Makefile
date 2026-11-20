@@ -89,6 +89,8 @@ COMMON_SOURCES := \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/scripts/script_vm.cpp \
 	$(CORE)/scripts/script_runtime.cpp \
+	$(CORE)/scripts/sniper_rounds.cpp \
+	$(CORE)/util/system_numerics_inverse.cpp \
 	$(CORE)/scripts/items.cpp \
 	$(CORE)/scripts/end_level.cpp \
 	$(CORE)/scripts/hazards.cpp \
@@ -128,7 +130,6 @@ SOURCES_VM := \
 	heap_split_tests.cpp \
 	sky_dome_tests.cpp \
 	$(CORE)/render/sky_dome.cpp \
-	$(LINUX)/render/system_numerics_inverse.cpp \
 	$(3DS)/render/pica_matrix.cpp \
 	$(CORE)/render/sun_shadow.cpp \
 	$(3DS)/platform/input_3ds.cpp \

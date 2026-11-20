@@ -56,7 +56,7 @@
 #include "render/draw_queue.h"
 #include "render/render.h"
 #include "render/render_types.h"
-#include "render/system_numerics_inverse.h"
+#include "util/system_numerics_inverse.h"
 #include "render/vk/vk_context.h"
 
 #include "shader_palette_vert.h"

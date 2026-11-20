@@ -22,8 +22,8 @@
 //
 // That is the whole of the reason for the split, and it is the same shape the
 // Vulkan backend already uses for the sky's clip-to-direction inverse
-// (`mdk_linux/src/render/system_numerics_inverse.{h,cpp}`, compiled into both
-// its own target and `tests/scripts`). Nothing in here names a libctru type.
+// (`mdk_core/src/util/system_numerics_inverse.{h,cpp}`, compiled into both
+// targets and `tests/scripts`). Nothing in here names a libctru type.
 //
 // WHAT IS NOT HERE: the per-frame bookkeeping (which eye is installed, whether
 // the uniform already holds the frame's matrix, the cull mode cache). That is

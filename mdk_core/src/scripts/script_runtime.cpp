@@ -327,6 +327,12 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
         solids.solidsWithin = &ScriptRuntime::solidsWithinTrampoline;
         solids.keeperAt = &ScriptRuntime::keeperAtTrampoline;
         player_->setSolidHooks(solids);
+        // Kurt's sniper fire (ScriptRuntime.cs:330, kurt.SniperFire = FireSniper): the
+        // clip asks the rounds for a free slot (sniper_rounds.cpp).
+        Scope::FireHook fire;
+        fire.context = this;
+        fire.fire = &ScriptRuntime::fireSniperTrampoline;
+        player_->setSniperHooks(fire);
     }
 }
 
@@ -336,6 +342,9 @@ ScriptRuntime::~ScriptRuntime() {
         player_->setItemHooks(Player::ItemHooks());
         // The platform, the keeper and the touched list point into objects_ (package #3).
         player_->releaseSolids();
+    }
+    if (player_ != nullptr && player_->sniperHooks().context == this) {
+        player_->setSniperHooks(Scope::FireHook());
     }
 }
 
@@ -731,13 +740,17 @@ void ScriptRuntime::runTick() {
     effects.update(1.0f);
     fans.update();
     debris_.update(1.0f);
-    // SniperRounds.Update(1f) and AirStrike.Update(1f) come next in the C# (packages 6
-    // and 14, not ported), then EndLevel?.Update(1f) (ScriptRuntime.cs:958): the end of
-    // the level tears, lifts and turns, before the objects run. Its Finished event is
-    // EndLevel.cs:1509's LevelEnded(GameOver.No), latched here.
+    // SniperRounds.Update(1f) (ScriptRuntime.cs:956): the rounds fly and hit, before the
+    // objects run. AirStrike.Update(1f) comes next in the C# (package 14, not ported),
+    // then EndLevel?.Update(1f) (ScriptRuntime.cs:958): the end of the level tears, lifts
+    // and turns, before the objects run. Its Finished event is EndLevel.cs:1509's
+    // LevelEnded(GameOver.No), latched here.
+    sniperRounds_.update(1.0f);
     if (endLevel_ && endLevel_->update(1.0f)) {
         levelEnded_ = true;
     }
+    // UpdateSniperTarget (ScriptRuntime.cs:959): the scope's lock and zoom limit.
+    updateSniperTarget();
 
     // Only Kurt's arena and the active second one update. On the first tick
     // nothing has spawned yet, so this loop is empty; the controller below is

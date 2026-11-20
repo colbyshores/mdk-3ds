@@ -54,6 +54,7 @@
 #include "scripts/game_stats.h"
 #include "scripts/object.h"
 #include "scripts/script_vm.h"
+#include "scripts/sniper_rounds.h"
 #include "scripts/twister.h"
 #include "util/random.h"
 
@@ -257,6 +258,20 @@ public:
     // `lift` units above it unless the eye is close. Null when it could not spawn.
     MdkObject* spawnExplosion(const std::string& arena, const Vec3& center, float scale,
                               float yaw, float lift);
+
+    // ---- Sniper rounds (package #6: Scripts/SniperRounds.cs, ScriptRuntime.cs:1222-1293) ----
+    // C# ScriptRuntime.SniperRounds (:176): the three round slots, updated once a tick after
+    // the debris (runTick). bomb_follow_path (opcode 28) reaches guideLastMortar through it.
+    SniperRounds& sniperRounds() { return sniperRounds_; }
+    const SniperRounds& sniperRounds() const { return sniperRounds_; }
+    // C# ScriptRuntime.SniperTarget (:177, 0x573a8c): the object locked in the scope, which
+    // homing rounds chase; written each tick by updateSniperTarget, null out of sniper mode.
+    MdkObject* sniperTarget = nullptr;
+    // C# Sweep (:2928, bsp_sweep_box, the mortar round in 0x462708): a box of half extents
+    // `half` swept without sliding against Kurt's arena, then the second one. Faces stop it
+    // only from their front. The point is the box centre at the contact, the normal the
+    // face's plane; the arena and group as Raycast's. False when nothing stops it.
+    bool sweep(const Vec3& from, const Vec3& to, const Vec3& half, DebrisRayHit* out);
 
     // ---- Contact damage and spawned boxes (hazards.cpp) ----
     // C# TouchDamage (ScriptRuntime.cs:2758, touch_damage 0x45cf60, opcode 158):
@@ -925,6 +940,15 @@ private:
     // the triangle's normal, its arena and its group. The chain gun's wall shot needs the
     // arena and group (HitGroupAt) as well as the point.
     bool raycastHit(const Vec3& from, const Vec3& to, DebrisRayHit* out);
+    // C# UpdateSniperTarget (:1227, the lock during projection 0x43b65c): the nearest
+    // object whose screen box overlaps the lock square, not flagged 0x30; the zoom limit
+    // on it (0x4678b0). Called from runTick after SniperRounds.Update, as the C# does.
+    void updateSniperTarget();
+    // C# FireSniper (:1282), Kurt.SniperFire: a round of `type`, or Bones' air strike
+    // (package #14, not ported: no strike goes). False when nothing went.
+    bool fireSniper(int32_t type);
+    static bool fireSniperTrampoline(void* ctx, int32_t type);
+    friend class SniperRounds;
     // C# AimScore (:2029, 0x41ab2c): a box is a target when it is within its size + 140
     // of the origin, inside a cone around Kurt's yaw that is wider for big and close boxes,
     // and visible. Its score (squared distance, height counting double; lower is better),
@@ -1048,6 +1072,7 @@ private:
     audio::SoundBank* bank_;
     audio::SoundMixer mixer_;
     Debris debris_;  // C# ScriptRuntime.Debris, sharing rng_ (declared above it)
+    SniperRounds sniperRounds_{*this};  // C# ScriptRuntime.SniperRounds
     // C# _following: the voices started with playOn per object, so Remove can
     // stop them with the object. The C# pools the lists; a vector is pooled by
     // its own allocator, so the spare stack is not ported.

@@ -74,7 +74,6 @@ set(SOURCES
 
     # ---- the Vulkan renderer behind the render.h seam (RENDERER_VK) ----
     src/render/renderer_vk.cpp
-    src/render/system_numerics_inverse.cpp
     src/render/vk/vk_context.cpp
     third_party/volk/volk.c
 
@@ -148,6 +147,7 @@ set(SOURCES
     ${CORE}/src/game/mod_models.cpp
     ${CORE}/src/game/part_fit.cpp
     ${CORE}/src/util/sha256.cpp
+    ${CORE}/src/util/system_numerics_inverse.cpp
     ${CORE}/src/game/level_light.cpp
     ${CORE}/src/game/level_view.cpp
     ${CORE}/src/game/effects_draw.cpp
@@ -174,6 +174,7 @@ set(SOURCES
     ${CORE}/src/scripts/fans.cpp
     ${CORE}/src/scripts/pose_cache.cpp
     ${CORE}/src/scripts/script_runtime.cpp
+    ${CORE}/src/scripts/sniper_rounds.cpp
     ${CORE}/src/scripts/items.cpp
     ${CORE}/src/scripts/end_level.cpp
     ${CORE}/src/scripts/hazards.cpp

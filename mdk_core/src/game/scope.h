@@ -15,12 +15,12 @@
 // FollowCamera.SniperView).
 //
 // THE SEAMS FOR WHAT IS NOT HERE.
-//   * The rounds (gap package #6, Scripts/SniperRounds.cs): updateClip asks its
+//   * The rounds (gap package #6, scripts/sniper_rounds.h): updateClip asks its
 //     FireHook whether a round slot is free, exactly where the C# calls
 //     Kurt.SniperFire (ScriptRuntime.FireSniper). A null hook is the C#'s
-//     `SniperFire ?? (_ => true)`: every shot finds a slot. #6 binds it through
-//     Player::setSniperHooks, and its UpdateSniperTarget writes `zoomLimit`
-//     each tick through toScreen / locks / lockLimit below.
+//     `SniperFire ?? (_ => true)`: every shot finds a slot. The scripts runtime
+//     binds it through Player::setSniperHooks, and its UpdateSniperTarget writes
+//     `zoomLimit` each tick through toScreen / locks / lockLimit below.
 //   * The overlay and the frontend's view (#7, Hud/SniperOverlay.cs,
 //     SniperView.cs): everything they read is public state here -- zoom (the
 //     percentage and the mixer's ScopeZoom), pitch, clipRounds and clipTime (the

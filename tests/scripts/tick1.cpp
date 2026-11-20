@@ -1979,6 +1979,325 @@ bool kurtItemsDump(int level, int steps, const std::string& schedule, const MdkD
     return true;
 }
 
+// THE SNIPER ROUNDS (golden/L*_rounds_*.txt): Kurt and the scripts runtime stepped together
+// at 1/60 s, as kurtItemsDump does, under a schedule that enters sniper mode, aims, fires
+// and teleports. The oracle is tests/scripts/rounds_probe (`Probe <level> <steps>
+// <schedule>`); see its header for the schedule. Each step prints Kurt's scope (yaw, pitch,
+// zoom, the lock's zoom limit, the clip, the ammo), the locked target, the stats, then every
+// busy round slot (state, type, position, angles, speeds, life, linger, homing target and
+// part, yaw rate, path and time, the camera, the watch, the model's place and basis hash)
+// and every object whose hit state changed (hp, hit event/type/direction, shot part/point,
+// position). Every float is its bits. Objects are numbered in the order they are first seen
+// (the C#'s list drops removed objects, the deque keeps their slots), in the probe's order:
+// the target, the rounds' targets, then the list.
+struct RoundsHold {
+    Key key;
+    int from;
+    int to;
+};
+struct RoundsAim {
+    int step;
+    float yaw;
+    float pitch;
+};
+struct RoundsTeleport {
+    int step;
+    std::string arena;
+    Vec3 at;
+};
+// `hp:step:ID:HEALTH`: object ID's health set before that step.
+struct RoundsHealth {
+    int step;
+    int id;
+    int32_t health;
+};
+
+float roundsBits(const std::string& hex) {
+    const uint32_t bits = (uint32_t)strtoul(hex.c_str(), nullptr, 16);
+    float v;
+    memcpy(&v, &bits, sizeof(v));
+    return v;
+}
+
+bool parseRoundsSchedule(const std::string& schedule, std::vector<RoundsHold>* holds,
+                         std::vector<ItemsGive>* gives, std::vector<RoundsAim>* aims,
+                         std::vector<RoundsTeleport>* teleports,
+                         std::vector<RoundsHealth>* healths) {
+    static const struct {
+        const char* name;
+        Key key;
+    } kKeys[] = {{"snipe", kKeySniper},  {"fire", kKeyFire},    {"next", kKeyItemNext},
+                 {"prev", kKeyItemPrevious}, {"zin", kKeyZoomIn}, {"zout", kKeyZoomOut},
+                 {"left", kKeyTurnLeft}, {"right", kKeyTurnRight}, {"up", kKeyForward},
+                 {"down", kKeyBack}};
+    size_t start = 0;
+    while (start < schedule.size()) {
+        size_t end = schedule.find(',', start);
+        if (end == std::string::npos) {
+            end = schedule.size();
+        }
+        const std::string token = schedule.substr(start, end - start);
+        start = end + 1;
+        if (token.empty()) {
+            continue;
+        }
+        std::vector<std::string> fields;
+        size_t at = 0;
+        while (true) {
+            const size_t next = token.find(':', at);
+            fields.push_back(token.substr(at, next == std::string::npos ? std::string::npos
+                                                                        : next - at));
+            if (next == std::string::npos) {
+                break;
+            }
+            at = next + 1;
+        }
+        if (fields[0] == "give" && fields.size() == 3) {
+            ItemsGive give;
+            give.step = atoi(fields[1].c_str());
+            give.model = fields[2];
+            give.drop = false;
+            give.offset = Vec3{};
+            gives->push_back(give);
+            continue;
+        }
+        if (fields[0] == "aim" && fields.size() == 4) {
+            RoundsAim aim;
+            aim.step = atoi(fields[1].c_str());
+            aim.yaw = roundsBits(fields[2]);
+            aim.pitch = roundsBits(fields[3]);
+            aims->push_back(aim);
+            continue;
+        }
+        if (fields[0] == "hp" && fields.size() == 4) {
+            RoundsHealth health;
+            health.step = atoi(fields[1].c_str());
+            health.id = atoi(fields[2].c_str());
+            health.health = atoi(fields[3].c_str());
+            healths->push_back(health);
+            continue;
+        }
+        if (fields[0] == "tp" && fields.size() == 6) {
+            RoundsTeleport teleport;
+            teleport.step = atoi(fields[1].c_str());
+            teleport.arena = fields[2];
+            // float.Parse of the probe's decimal text: strtof rounds the same way.
+            teleport.at = Vec3{strtof(fields[3].c_str(), nullptr), strtof(fields[4].c_str(), nullptr),
+                               strtof(fields[5].c_str(), nullptr)};
+            teleports->push_back(teleport);
+            continue;
+        }
+        if (fields.size() != 2) {
+            return false;
+        }
+        bool known = false;
+        for (size_t k = 0; k < sizeof(kKeys) / sizeof(kKeys[0]); k++) {
+            if (fields[0] == kKeys[k].name) {
+                RoundsHold hold;
+                hold.key = kKeys[k].key;
+                if (sscanf(fields[1].c_str(), "%d-%d", &hold.from, &hold.to) != 2) {
+                    return false;
+                }
+                holds->push_back(hold);
+                known = true;
+            }
+        }
+        if (!known) {
+            return false;
+        }
+    }
+    return true;
+}
+
+const char* roundStateName(scripts::SniperRounds::State state) {
+    static const char* const kNames[] = {"Free", "Flying", "Killed", "Hit", "Dead", "Exploded"};
+    return kNames[(int)state];
+}
+
+bool kurtRoundsDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                    const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    std::vector<RoundsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<RoundsAim> aims;
+    std::vector<RoundsTeleport> teleports;
+    std::vector<RoundsHealth> healths;
+    if (!parseRoundsSchedule(schedule, &holds, &gives, &aims, &teleports, &healths)) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    // Yaw 0, as the probe: the LUT's facing() is exact there (see the probe's header).
+    player.yaw = 0.0f;
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    std::map<const scripts::MdkObject*, int> ids;
+    const auto id = [&ids](const scripts::MdkObject* obj) {
+        if (obj == nullptr) {
+            return -1;
+        }
+        std::map<const scripts::MdkObject*, int>::iterator found = ids.find(obj);
+        if (found != ids.end()) {
+            return found->second;
+        }
+        const int next = (int)ids.size();
+        ids[obj] = next;
+        return next;
+    };
+    const auto vec = [](const Vec3& v) {
+        return hexBits(v.x) + "," + hexBits(v.y) + "," + hexBits(v.z);
+    };
+    std::map<const scripts::MdkObject*, std::string> seen;
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    char buffer[768];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < gives.size(); i++) {
+            if (gives[i].step == step) {
+                player.collect(gives[i].model);
+            }
+        }
+        for (size_t i = 0; i < healths.size(); i++) {
+            if (healths[i].step != step) {
+                continue;
+            }
+            // The deque's object with that number (the map holds const pointers into it).
+            const std::deque<scripts::MdkObject>& list = runtime.objects();
+            for (size_t o = 0; o < list.size(); o++) {
+                std::map<const scripts::MdkObject*, int>::iterator found = ids.find(&list[o]);
+                if (found != ids.end() && found->second == healths[i].id) {
+                    runtime.objects()[o].health = healths[i].health;
+                }
+            }
+        }
+        for (size_t i = 0; i < teleports.size(); i++) {
+            if (teleports[i].step == step) {
+                runtime.teleportKurt(teleports[i].arena, teleports[i].at, 0.0f);
+            }
+        }
+        for (size_t i = 0; i < aims.size(); i++) {
+            if (aims[i].step == step) {
+                player.yaw = aims[i].yaw;
+                player.scope().pitch = aims[i].pitch;
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+
+        const Kurt& combat = player.combat();
+        const Scope& scope = player.scope();
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d snipe=%d yaw=%s pitch=%s zoom=%s limit=%s clip=%d/%s sel=%d "
+                 "ammo=%d,%d,%d,%d,%d target=%d hp=%d shots=%d hits=%d kills=%d objs=%d "
+                 "effects=%d pieces=%d\n",
+                 step, player.sniping() ? 1 : 0, hexBits(player.yaw).c_str(),
+                 hexBits(scope.pitch).c_str(), hexBits(scope.zoom).c_str(),
+                 hexBits(scope.zoomLimit).c_str(), scope.clipRounds, hexBits(scope.clipTime).c_str(),
+                 combat.selectedAmmo(), combat.ammo(1), combat.ammo(2), combat.ammo(3),
+                 combat.ammo(4), combat.ammo(5), id(runtime.sniperTarget), player.health(),
+                 runtime.stats.sniperShots, runtime.stats.sniperHits, runtime.stats.kills,
+                 runtime.objectCount(), runtime.effects.count(), runtime.debris().pieceCount());
+        *out += buffer;
+        const scripts::SniperRounds& rounds = runtime.sniperRounds();
+        for (int32_t i = 0; i < scripts::SniperRounds::kSlots; i++) {
+            const scripts::SniperRounds::Round& r = rounds.round(i);
+            if (r.state == scripts::SniperRounds::Free) {
+                continue;
+            }
+            std::string visual = "-";
+            if (r.hasVisual) {
+                uint32_t basis = 2166136261u;
+                for (int m = 0; m < 16; m++) {
+                    basis = fnvFloat(basis, r.visual.rolling_basis.m[m]);
+                }
+                snprintf(buffer, sizeof(buffer), "%s:%s:%08X", r.visual.type_name.c_str(),
+                         vec(r.visual.position).c_str(), basis);
+                visual = buffer;
+            }
+            snprintf(buffer, sizeof(buffer),
+                     "  r%d %s t=%d p=%s yaw=%s pitch=%s roll=%s v=%s,%s life=%s linger=%s "
+                     "tgt=%d/%d yr=%s path=%d/%s cam=%s:%s watch=%s vis=%s\n",
+                     (int)i, roundStateName(r.state), (int)r.type, vec(r.position).c_str(),
+                     hexBits(r.yaw).c_str(), hexBits(r.pitch).c_str(), hexBits(r.roll).c_str(),
+                     hexBits(r.speed).c_str(), hexBits(r.vertical).c_str(), hexBits(r.life).c_str(),
+                     hexBits(r.linger).c_str(), id(r.target), (int)r.targetPart,
+                     hexBits(r.yawRate).c_str(), (int)r.path, hexBits(r.pathTime).c_str(),
+                     hexBits(r.cameraDistance).c_str(), vec(r.cameraPosition).c_str(),
+                     hexBits(r.watch).c_str(), visual.c_str());
+            *out += buffer;
+        }
+        const std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            const scripts::MdkObject& o = objects[i];
+            if (o.dead) {
+                continue;
+            }
+            const int objectId = id(&o);
+            snprintf(buffer, sizeof(buffer), "hp=%d ht=%d hd=%s sp=%d pt=%s", (int)o.health,
+                     (int)o.hit_type, hexBits(o.hit_direction).c_str(), (int)o.shot_part,
+                     vec(o.shot_point).c_str());
+            const std::string hitText = buffer;
+            std::map<const scripts::MdkObject*, std::string>::iterator before = seen.find(&o);
+            if (before == seen.end()) {
+                seen[&o] = hitText;
+                continue;
+            }
+            if (before->second != hitText) {
+                before->second = hitText;
+                snprintf(buffer, sizeof(buffer),
+                         "  #%d %s hp=%d ev=%d ht=%d hd=%s sp=%d pt=%s pos=%s\n", objectId,
+                         o.type_name.c_str(), (int)o.health, (int)o.hit_event, (int)o.hit_type,
+                         hexBits(o.hit_direction).c_str(), (int)o.shot_part,
+                         vec(o.shot_point).c_str(), vec(o.position).c_str());
+                *out += buffer;
+            }
+        }
+    }
+    return true;
+}
+
 // KURT THROUGH A DOORWAY AND DOWN A CORRIDOR (golden/L7_corridor_*.txt). Kurt and the
 // scripts runtime stepped together at 1/60 s from a placed start (the frontends' --at), as
 // Viewer.RunSteps does: Kurt, then the scripts, then ArenaSpace::setSolid(solidArenas()) --
@@ -4631,6 +4950,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "rounds") {
+            // `tick1 dump rounds <level> <steps> <schedule>`: kurtRoundsDump's text, the
+            // C++ side of the sniper rounds probe.
+            std::string got;
+            std::string why;
+            if (!kurtRoundsDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                                &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "corridor") {
             // `tick1 dump corridor <level> <steps> <x,y,z,yaw> <schedule>`:
             // kurtCorridorDump's text, the C++ side of the corridor probe.
@@ -5562,6 +5894,59 @@ int main(int argc, char** argv) {
             std::string why;
             if (!kurtItemsDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why,
                                c.view ? c.view : "")) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The sniper rounds, end to end against the oracle probe (tests/scripts/rounds_probe;
+    // see kurtRoundsDump for the columns). The schedules are the probe's arguments, byte
+    // for byte: each golden's first line repeats its schedule.
+    {
+        struct RoundsCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const RoundsCase kRoundsCases[] = {
+            {"L8_rounds_ship", "golden/L8_rounds_ship.txt", 8, 450,
+             "snipe:30-32,aim:35:42A77D94:C2A22812,fire:70-140,give:150:SW_HOME,fire:200-205,"
+             "give:215:SW_SGREN,fire:265-270,give:280:SW_HGREN,fire:330-335",
+             "bullets on XBSHIP's faces (part hits, 65000 health untouched, the ship's reaction), "
+             "the scope's lock and zoom limit, a homing round steering onto it, a grenade's blast "
+             "(hit type 2 then -7), a homing grenade"},
+            {"L8_rounds_kill", "golden/L8_rounds_kill.txt", 8, 240,
+             "snipe:30-32,aim:45:42B41B0C:C0C13FC0,hp:70:7:8,fire:70-80,"
+             "aim:100:00000000:00000000,fire:100-104",
+             "a bullet kills an XG (CountEnemy, Kill facing yaw + 180, the round KILLED), then a "
+             "wall shot (Raycast, the group hit, 3 grey sparks, DEAD)"},
+            {"L7_rounds_mortar", "golden/L7_rounds_mortar.txt", 7, 450,
+             "tp:5:DANT_6:520:4030:-108,snipe:30-32,give:35:SW_LGREN,aim:40:41A00000:C1A00000,"
+             "fire:85-90,aim:200:43870000:C2340000,fire:200-205",
+             "the mortar puzzle: a mortar round lands on DANT_6's group 12, whose hit script's "
+             "bomb_follow_path (opcode 28) guides it along path 109157 to its blast; a second "
+             "mortar's drag, gravity, bounces and box sweep"},
+        };
+        for (size_t i = 0; i < sizeof(kRoundsCases) / sizeof(kRoundsCases[0]); i++) {
+            const RoundsCase& c = kRoundsCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!kurtRoundsDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
                 printf("FAIL %s: %s\n", c.name, why.c_str());
                 failures++;
             } else if (got == expected) {

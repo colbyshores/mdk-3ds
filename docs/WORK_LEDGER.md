@@ -299,3 +299,17 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - The goldens bite. Each of these breaks fails the named goldens: 114 always false (keeper, gun); no KurtTouchesGroups (trigger); no Carry (keeper, tank, gun); no object pass in the move (corridor_locked, door); the old default case (the vm_test); no ClipView (door); no StayOnKeeper (keeper, gun). Not pinned: Carry's fused-vs-unfused rounding (no golden turns a carried, unkept Kurt).
 - **Still open:** the ride parts of the same code (package #9); the slide branch of FallMove (#8); the upstream C#'s later triangle-platform and kept-in-air changes; Old-3DS cost unmeasured. All in `docs/OPEN_ITEMS.md`.
 - **Commit:** this entry.
+
+### Sniper rounds (gap package #6): the rounds, the lock, the mortar puzzle
+- **What:** a sniper shot now flies and hits, ported operation for operation from the C#.
+  - `Scripts/SniperRounds.cs` -> `scripts/sniper_rounds.{h,cpp}`: the three slots and the five round types (bullet, homing, grenade, homing grenade, mortar), straight flight tested against the objects (world box, then the pose's faces in model space) and the arena, homing (`Steer`), the mortar's drag, gravity, bounces and box sweep, `bomb_follow_path`'s guided flight, `HitObject` (hit event, hit type = the round's type, hit direction = its yaw, shot part/point, 8 damage under 65000, sparks, the kill), the explosions (two `Items.Blast`es, the effect, EXPLODE), the round camera and the round models' state.
+  - `ScriptRuntime.UpdateSniperTarget`, `FireSniper` and `Sweep` -> ScriptRuntime members (in `sniper_rounds.cpp`); `runTick` updates the rounds after the debris and the lock after the end of the level, where the C# does; the runtime binds `Player::setSniperHooks` and unbinds it in its destructor.
+  - Opcode 28 (`bomb_follow_path`) -> `script_vm.cpp`.
+  - System.Numerics' `Matrix4x4.Invert` twin moved from `mdk_linux/src/render/` to `mdk_core/src/util/` so the rounds' face test can use it.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. Every level has sniper-hit checks (`if_hit_weapon 0`), the homing and mortar rounds reach targets the chain gun cannot, and LEVEL7's DANT_6 puzzle (groups 10-13) is only solvable with a guided mortar round.
+- **Evidence:**
+  - The C# probe `tests/scripts/rounds_probe` (Kurt and the runtime at 1/60 s; enter the scope, aim by yaw/pitch bits, fire, give ammo, teleport, set a target's health) gives `golden/L8_rounds_ship.txt` (bullets on XBSHIP's faces, the lock, a homing round, a grenade, a homing grenade), `golden/L8_rounds_kill.txt` (a bullet kill, then a wall shot) and `golden/L7_rounds_mortar.txt` (a mortar on DANT_6's group 12, opcode 28's path 109157 to the blast, then a bouncing mortar); `tick1 dump rounds` matches all three byte for byte, every float as its bits.
+  - Breaking the code fails them: the homing yaw acceleration 540 -> 541 (L8_rounds_ship line 522), opcode 28 a no-op (L7_rounds_mortar line 312), the hit type written as 0 (L8_rounds_ship line 583), the mortar bounce 1.75 -> 1.5 (L7_rounds_mortar line 168), the vector dot fused (L8_rounds_kill line 49). The kill's explosion facing does not bite (the killed XG has a death script; OPEN_ITEMS).
+  - No existing golden changed: the full `tick1` suite passes with the hooks bound.
+- **Commit:** see the git log ("Sniper rounds").
+- **Still open:** the strike arm (#14), drawing the round models and the round cameras (#7), the wall's bullet hole (#16); see OPEN_ITEMS.

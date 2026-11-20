@@ -2359,6 +2359,10 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             obj->swing_length = obj->swing_pivot.z - obj->position.z;
             obj->flags |= MdkObject::FlagSwinging;
             break;
+        case 28:  // bomb_follow_path: the sniper mortar round that just hit a triangle group follows a path
+            // ScriptVm.cs:1130-1132 (package #6): LEVEL7 DANT_6's groups 10-13 run it.
+            runtime_.sniperRounds().guideLastMortar(ival(op(ins, 0)));
+            break;
         case 229:  // turn_and_jump_to_dest: turn, then enter movement command 229
             runtime_.turnAndJump(obj, fval(op(ins, 0)));
             return branch(obj, ins, obj->move_command == 229);

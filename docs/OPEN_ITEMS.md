@@ -1647,10 +1647,7 @@ Two measured System.Numerics facts the goldens rest on: `Vector3.Dot` is a plain
 off its M32 at every zoom).
 
 Still open:
-- **The rounds** (gap package #6): `Scripts/SniperRounds.cs`, `FireSniper` (bind it with
-  `Player::setSniperHooks`; null fires every shot, the C#'s `SniperFire ?? (_ => true)`) and
-  `UpdateSniperTarget` (writes `Scope::zoomLimit` through `toScreen`/`locks`/`lockLimit`).
-  Until then a shot spends ammo and plays SNIPERSHOT but hits nothing.
+- ~~**The rounds** (gap package #6)~~: landed 2026-11-20, see the next section.
 - **The frontends' scope view and overlay** (#7): neither frontend draws through
   `buildSniperCamera` yet, sets `SoundMixer::scopeZoom`/the listener from the scope, hides Kurt
   (`KurtSprite`'s `Sniping` return), or fills `Input::wheel` (the Linux wheel also presses the
@@ -1664,3 +1661,42 @@ Still open:
   clip fields (`Kurt.Snapshot.cs`, the saves) are not ported.
 - **newlib's `cosf`/`sinf`/`powf`** on the 3DS are unmeasured against the oracle (the same
   libm-leaf gap as the follow camera's `powf`).
+
+## The sniper rounds (2026-11-20, gap package #6): what landed, what is open
+
+A sniper shot spent ammo and hit nothing. Landed, operation for operation, pinned by
+`golden/L8_rounds_ship.txt`, `golden/L8_rounds_kill.txt` and `golden/L7_rounds_mortar.txt`
+(byte-identical to the C# probe `tests/scripts/rounds_probe/`, `tick1 dump rounds`):
+
+- `Scripts/SniperRounds.cs` whole -> `scripts/sniper_rounds.{h,cpp}`: the five round types,
+  straight flight against the objects (box, then the pose's faces in model space through
+  System.Numerics' `Matrix4x4.Invert`) and the arena, homing, the mortar's drag, gravity,
+  bounces and box sweep, `bomb_follow_path`'s guided flight, the hit (hit event, type,
+  direction, shot part/point, damage, sparks, the kill), the explosions, the round camera and
+  the round models' state.
+- `ScriptRuntime.UpdateSniperTarget`/`FireSniper`/`Sweep` -> ScriptRuntime members (kept in
+  `sniper_rounds.cpp`); `SniperRounds.Update` and `UpdateSniperTarget` sit in `runTick` where
+  the C# calls them; the runtime binds `Player::setSniperHooks` (and unbinds it in its
+  destructor, as the item hooks).
+- Opcode 28 (`bomb_follow_path`) -> `script_vm.cpp`.
+- `Matrix4x4.Invert`'s .NET-exact twin moved from `mdk_linux/src/render/` to
+  `mdk_core/src/util/system_numerics_inverse.{h,cpp}` so the core can use it.
+
+Still open:
+- **Bones' air strike** (`FireSniper`'s `Scope.Strike` arm, `AirStrike.Call`) is package #14:
+  until it lands no strike goes and the clip keeps the Bones round (the C#'s answer when the
+  strike finds no target). No golden fires a strike for that reason.
+- **The round models are not drawn** (`SniperRounds.Visuals`, drawn with the objects in the
+  C#'s Viewer): their state (model, place, basis) is ported and pinned (`vis=` in the goldens);
+  drawing them, and the round cameras (`SniperRounds.Camera`, the scope's inset views), are
+  #7's frontends.
+- **Bullet holes on walls** (opcode 130, package #16): `SniperRounds::moveStraight` is where
+  a round stops on the arena; the object half (`shot_part`/`shot_point`) is written.
+- **Not pinned by a golden:** the kill's explosion facing (`Kill(obj, yaw + 180)`: the killed
+  XG of `L8_rounds_kill` has a death script, so no explosion faces anything; breaking the
+  facing leaves every golden green, measured), the mortar's still-settle (`life = 15`), and a
+  round falling out below the arena. The goldens' targets were found by search; their kill
+  needs a test hook (`hp:` in the probe's schedule sets the XG's health to 8 so one bullet
+  reaches the kill path).
+- **Exactness rests on yaw 0 or a level-or-up pitch**, as #5's: `Player::facing()` is the LUT,
+  and it reaches the sniper eye only while the scope looks down.

@@ -11,7 +11,7 @@
 #include <string.h>
 
 #include "game/frame_blend.h"
-#include "render/system_numerics_inverse.h"
+#include "util/system_numerics_inverse.h"
 
 namespace {
 

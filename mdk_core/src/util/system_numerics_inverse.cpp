@@ -1,4 +1,4 @@
-#include "render/system_numerics_inverse.h"
+#include "util/system_numerics_inverse.h"
 
 #include <cmath>
 #include <cstdint>
@@ -100,7 +100,10 @@ Vec4f madd(const Vec4f& a, const Vec4f& b, const Vec4f& c) {
 
 Vec4f div(const Vec4f& a, float d) {
     Vec4f r;
-    for (int i = 0; i < 4; ++i) r.v[i] = a.v[i] / d;
+    for (int i = 0; i < 4; ++i) {
+        const float quotient = a.v[i] / d;  // a float divide (R7's), not R11's integer one
+        r.v[i] = quotient;
+    }
     return r;
 }
 

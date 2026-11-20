@@ -2,6 +2,12 @@
 
 Method and reachability evidence in the final Phase 2 report. Summary:
 
+- **Sniper rounds (2026-11-20, PORT_GAPS package 6):** 28 (`bomb_follow_path`) ported:
+  `SniperRounds::guideLastMortar` (scripts/sniper_rounds.cpp), pinned end to end by
+  `golden/L7_rounds_mortar.txt` (LEVEL7 DANT_6's group 12 hit script guides a mortar round
+  along path 109157). The rounds are also the last writer of 81's `hit_direction` and 195's
+  `hit_type` (weapon types 0-4) that was missing. Recount: C# **238**, C++ **235**, remaining
+  **3** (114, 130, 224).
 - **Combat and hazard batch (2026-11-20, PORT_GAPS package 4):** 158, 159, 167,
   172, 178 and 184 ported, with the consumer of 164's flag; recount (top-level
   `case` labels of both brace-matched spans, set semantics): C# **238**, C++ **234**,
@@ -362,9 +368,8 @@ one-line branch on `Rides.Ridden == obj`, and the runtime already carries that
 state as `ridesRidden_` (the ride slice is unported, so it is null and the branch
 is false for every object — the value the C# reads on foot). It never fires in
 levels 3–8; a synthetic `vm_tests` case pins the dispatch and the false branch.
-Remaining 3 (after the chain-gun batch, the end of a level, the combat and
-hazard batch and package #3 below):
-28,
+Remaining 2 (after the chain-gun batch, the end of a level, the combat and
+hazard batch, package #3 (114) and the sniper rounds (28) below):
 130,
 224
 
@@ -465,7 +470,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   `enterArena` makes an unreachable arena answer the arena RULE and not yet
   the collision) and `Kurt.Keeper`, whose `_keeper = null` the port cannot do.)
 - **Arena/world (needs arena texture/sky/fan/wind state, spawn helpers):**
-  28, 130, 133, 142, 143, 190, 224 (159 landed with the combat and hazard batch; 156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
+  130, 133, 142, 143, 190, 224 (28 landed with the sniper rounds, package 6: `SniperRounds::guideLastMortar`; 159 landed with the combat and hazard batch; 156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 128, 132,
   136 (158, 167, 172 and 184 landed with the combat and hazard batch; 121 landed with the floor-below batch over
@@ -569,14 +574,14 @@ portable with no new subsystem, and it is ported.)**
 
 | Opcode | Name | Gating subsystem (verified) |
 |---|---|---|
-| 81 | push_hit_dir | reads `hit_direction`; the chain gun, the blast, the mortar, Twister and touch_damage write it now, but the sniper rounds' writer (SniperRounds.cs:610, PORT_GAPS package 6) is unported |
+| 81 | push_hit_dir | reads `hit_direction`; the chain gun, the blast, the mortar, Twister, touch_damage and the sniper rounds (package 6, `SniperRounds::hitObject`) write it |
 | 135 | raise_573aa8 | writes the runtime's per-tick maximum, but the C# `ShakeRaised` follow-camera consumer is not ported |
 | 140 | group_set_texture | sets the group material VM state; the renderer ignores it (open item 1, dynamic scene updates) |
 | 174 | if_ammo | reads `Kurt`'s super-chain-gun timer and five sniper-ammo entries; the pickups write them and sniper mode's clip spends them (`Kurt::useAmmo`, 2026-11-20) |
 | 202 | set_574304 | writes the runtime's shared `skyMode`, but the renderer's `SkyModes.BackdropOf` and save/load snapshot consumers are not ported |
 | 203 | camera_track | writes the runtime's `cameraTrackPitch`/`cameraTrackTicks`, and the Linux follow camera consumes them, but the save/load snapshot's `camera_track_*` fields are not ported |
 | 131 | special_event | the <= 50 arm (the end of a level) is ported; the arms above 50 (the strike, the cutscenes, Gunter, the end of the game) are package 13 and still count as unimplemented |
-| 195 | if_hit_weapon | reads `hit_type`; the chain gun, the blast, the mortar, the cow, touch_damage and `hitGroup` write it now, but the sniper rounds' writer (SniperRounds.cs:609, weapon types 0, 2, 3, 4 and -6; PORT_GAPS package 6) is unported |
+| 195 | if_hit_weapon | reads `hit_type`; the chain gun, the blast, the mortar, the cow, touch_damage, `hitGroup` and the sniper rounds (package 6: the round's type on an object, the type as the group hit's weapon) write it |
 | 248 | push_kurt | knocks Kurt down and shoves him, from the object's frame or away from it (golden/L3_kurt_push.txt); the C#'s `StopFiring()` inside KnockDown is inert because the firing/muzzle subsystem is not ported |
 
 **Complete — effect realized with the subsystems present (225 cases):** every

@@ -209,7 +209,8 @@ public:
     // C# Kurt.LeaveSniper (0x4645c8).
     void leaveSniper(SniperExit exit = SniperSilent);
     // C# Kurt.SniperFire, the scripts runtime's round-slot test (ScriptRuntime.cs:330
-    // binds FireSniper, gap package #6). Null is the C#'s `SniperFire ?? (_ => true)`.
+    // binds FireSniper; the C++ runtime's constructor binds it, scripts/sniper_rounds.cpp).
+    // Null is the C#'s `SniperFire ?? (_ => true)`.
     void setSniperHooks(const Scope::FireHook& hook) { _sniperFire = hook; }
     const Scope::FireHook& sniperHooks() const { return _sniperFire; }
 
