@@ -102,3 +102,16 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - HUD pickup messages and the tornado (Twister) trail.
   - The level-7 corridor wall: is it a port divergence?
   - The gap audit.
+
+### Gap audit, C# vs C++; the first wave of gameplay ports started
+- **What:** a read-only audit compared the C# oracle `src/` with `mdk_core` and both frontends. Its result is `docs/PORT_GAPS.md`: 21 packages, ranked by what stops a level being finished, with the files they share and the order they merge in.
+  - Its opcode counts come from decoding every reachable script in LEVEL3-8. They correct `OPCODE_COVERAGE.md`'s claim that "none of the 11 fire": that held only because the reachability probe's Kurt stands still.
+- **Why:** the owner's 2026-11-20 direction to port everything from the C# before graphics work resumes.
+- **The headline:** no level can be finished today. Opcode 131 (`special_event` → `EndTheLevel`) is unported, and neither frontend can load the next level.
+- **Wave 1:** three agents in separate worktrees, all following the same written brief: golden-gated against C# probes, full gates, a ledger entry each.
+  - #1 end of level;
+  - #3 solids, platforms and lifts, which also fixes the VM default case: the C# branches to the else-gosub, the C++ skipped it;
+  - #4 the combat and hazard opcodes 158/159/167/172/178/184, plus path speed set by Kurt.
+- **Merge order:** they merge one at a time; #2 (loading the next level) starts after #1 lands.
+- **Open for the owner:** packages #19 (save/load) and #20 (menus and screens) were cut by the owner's 2026-11-05 directive. Whether "port everything" brings them back is the owner's call.
+- **Commit:** this entry, with `docs/PORT_GAPS.md`.
