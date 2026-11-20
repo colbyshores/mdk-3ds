@@ -251,3 +251,33 @@ Newest entries are at the bottom. Performance experiments keep their own table i
     - the missile's homing pull at 0.21: all four fail.
   - There are no opcode changes, so `docs/OPCODE_COVERAGE.md` is unchanged.
 - **Commit:** 48f570a on the agent's branch (on e0d79d4), cherry-picked onto the main branch after sniper mode (9fb8235); the only conflict was this ledger ("The fall before a level: the simulation").
+
+### Package 2: the next level
+- **What:** after a level's end, play goes on into the next level, as the C#'s `Game` does:
+  - `GameFlow::skipScreen` / `skipUnported` (`mdk_core/src/game/game_flow.{h,cpp}`): the screens this port lacks are skipped the way the C# skips them. Stream: `Flight.Stop`, health kept, the menu below 1. Statistics: `StatsScreen.EndPhase` moves the level on. Fall: `FallSim.Skip` gives a carry of 100 and no pickups. Save prompt: closed. Each one is logged as "flow: skipped X (package #N not ported)".
+  - Both frontends report the level (`runtime->stats`, Kurt's health), take `Event::LevelEnded`, skip, and load the level the flow names, in the C#'s order 7, 6, 3, 4, 8, 5. A level is entered at `flow.levelHealth()`: 100 after a skipped fall, LEVEL8's end health into LEVEL5. The menu after LEVEL5 ends the run.
+  - A level loop in `mdk_linux/src/main.cpp` and `mdk_3ds/src/main_3ds.cpp`. The body is not re-indented, to keep the diff mergeable. The teardown runs between frames, in this order: Kurt's pack read settled (`KurtSprite::settleStream`), the music, the DSP path closed while the bank lives, the runtime, the pose caches, the arena views; then the level block's objects in reverse order; then `mdk_render_release` of the level's scope, newest first; then two empty frames on the 3DS (four on Linux), so the deferred frees land before the next level allocates.
+  - The 3DS backend's `mdk_render_mark/release` was a no-op. It now keeps a creation log like the Vulkan one, skipping the renderer's own canvas mesh and white texture, and it reuses released palette and mesh slots. The Vulkan backend now frees a released texture's index copy.
+  - The C#'s test options are the first level's only (Game.cs:487): `--event`, `--at`, and the 3DS `EVENT=` / `AT=`. `--event-every-level` (Linux) and `EVENT_EVERY=1` (3DS) repeat the event in every level. `--replay-level` (Linux) reloads the level that ended, as a leak test.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. Before this, finishing a level stopped the game.
+- **Evidence:**
+  - `golden/flow_next_level.txt` is the C# probe `tests/scripts/flow_probe`'s output: the real `Flight`, `FallSim`, `LevelFlow` and `GameState`, for 7 levels × 4 end healths. `vm_tests dump-flow` matches it byte for byte. `flow_tests` also pins `skipUnported`'s trail.
+  - The goldens bite. A fall carry of 99 fails the golden and the trail test. A statistics page that does not advance the level fails both.
+  - `tests/scripts/level_chain_test.sh` runs headless on DISPLAY :99 with lavapipe. Level 3 chains to 4, 8 and 5, then exits at the menu, with every skipped screen logged.
+  - The chained frame 600 (level 4) and frame 1100 (level 8) are byte-identical to direct `--level=4` and `--level=8` runs at their own frames 111 and 122.
+  - Four level-3 teardowns leave the heap at 67.43, 67.47, 67.48 and 67.48 MB, with 42 fds and the renderer log at 0 each time.
+  - Without `mdk_render_release`, the test fails: the renderer log climbs by 95 a level and the heap by 2 MB a level.
+  - 3DS: the release and harness builds compile. No emulator run here; the parent runs it.
+- **Commit:** this entry's commit.
+
+### Owner un-cuts save/load and the menus and screens
+- **What:** packages #19 and #20 in `docs/PORT_GAPS.md` are back in scope.
+  - #19: save and load, the snapshot, LASTGAME, the save prompt.
+  - #20: the main menu, briefings, the statistics screen and slideshow, the end movies, intro and loading screens, and settings (difficulty, gore).
+  - The owner's 2026-11-05 directive had cut both.
+- **Why:** the owner, 2026-11-20, asked whether "port everything" includes them: "yes I want them back".
+- **Plan:**
+  - Both start once #2 (the level-to-level flow) lands, because they hang off its screens.
+  - #20 splits into three agents: menus/UI/settings, the statistics screen and slideshow, and the movies (the FLC/MVE parsers already exist).
+  - `docs/OWNER_DIRECTIVE_2026-11-05.md` is not edited. This entry records the reversal.
+- **Commit:** lands with the next merge.

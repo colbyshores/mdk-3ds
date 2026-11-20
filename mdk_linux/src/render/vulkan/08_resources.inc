@@ -222,6 +222,11 @@ void mdk_render_release_texture(MdkRenderer r_, MdkTextureId t_) {
     r->textures[t_].memory = VK_NULL_HANDLE;
     r->textures[t_].view = VK_NULL_HANDLE;
     r->textures[t_].used = false;
+    // The index copy goes with the texture (swap, not clear: clear keeps the
+    // capacity). A released slot used to keep its pixels until the slot was reused,
+    // so a finished level's textures stayed on the heap into the next level
+    // (package 2's teardown measured it; the 3DS backend already swaps).
+    std::vector<uint8_t>().swap(r->textures[t_].indices);
 }
 
 void mdk_render_release_palette(MdkRenderer r_, MdkPaletteId p_) {

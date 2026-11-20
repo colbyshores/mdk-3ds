@@ -7991,10 +7991,17 @@ void testARebuiltRuntimeNeedsItsSinkReattached(LevelData* levelData, Cmi* cmi,
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     // Player::facing uses the shared trig table; initialize it before the
     // opcode-170 test constructs a Player.
     mdk::mathLutInit();
+
+    // `vm_tests dump-flow`: the next-level chain (flow_tests.h), the C++ side of
+    // tests/scripts/flow_probe -- how golden/flow_next_level.txt is diffed.
+    if (argc > 1 && strcmp(argv[1], "dump-flow") == 0) {
+        fputs(mdk::test::flowNextLevelDump().c_str(), stdout);
+        return 0;
+    }
 
     // The formats library reaches the filesystem through this seam.
     mdk::formats::setFileSystem(mdk::test::host::fileSystem());

@@ -24,6 +24,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <string>
+
 #include "game/game_flow.h"
 #include "game/game_state.h"
 #include "game/level_flow.h"
@@ -542,6 +544,174 @@ void testStepSelection() {
     expectBits("a live frame uses the clock", flow::GameFlow::elapsedFor(false, 0.25f, 99.0f), 0x42C60000);
 }
 
+// ---------------------------------------------------------------------------
+// 6. THE NEXT LEVEL (package 2): what follows the end of a level when every
+//    screen this port does not have is SKIPPED (GameFlow::skipScreen). MEASURED:
+//    golden/flow_next_level.txt is the output of the C# probe
+//    tests/scripts/flow_probe, which drives the real Flight (Stop), FallSim
+//    (Skip), LevelFlow and GameState.EnterLastLevel; flowNextLevelDump below is
+//    its C++ twin, line for line, and must print the same bytes. The one step the
+//    probe transliterates (StatsScreen's EndPhase, which needs a window) is the
+//    one skipScreen's Statistics arm ports.
+// ---------------------------------------------------------------------------
+void appendf(std::string* out, const char* format, long long a, long long b = 0,
+             long long c = 0) {
+    char line[160];
+    snprintf(line, sizeof(line), format, a, b, c);
+    *out += line;
+}
+
+// StreamScreen's and FallScreen's index: Math.Clamp(IndexOf(level), 0, 4)
+// (StreamScreen.cs:57, FallScreen.cs:51).
+int screenIndex(int32_t level) {
+    const int index = flow::indexOf(level);
+    return index < 0 ? 0 : (index > 4 ? 4 : index);
+}
+
+void dumpChain(int32_t level, int32_t health, std::string* out) {
+    flow::GameFlow game(levelOptions(level));
+    game.handle(game.firstEvent());
+    flow::LevelResult result;
+    result.health = health;
+    game.reportLevel(result);
+    appendf(out, "level %lld ended health %lld\n", level, health);
+    static const char* const kAfter[] = {"Menu", "Statistics", "LastLevel"};
+    const flow::After after = flow::afterLevel(level, flow::GameOver::No);
+    *out += std::string("  after level: ") + kAfter[static_cast<int>(after)] + "\n";
+    flow::Screen screen = game.handle(flow::Event::LevelEnded);
+    // The same walk as GameFlow::skipUnported, one skip at a time so each one
+    // prints what it left behind.
+    for (int32_t i = 0; i < flow::GameFlow::kMaxSkips; i++) {
+        const flow::Event next = game.skipScreen();
+        if (next == flow::Event::None) {
+            break;
+        }
+        switch (screen) {
+            case flow::Screen::Stream: {
+                const bool died = next == flow::Event::Menu;
+                char line[160];
+                snprintf(line, sizeof(line),
+                         "  skipped Stream (%s): ended True after 1 update(s), health %d, "
+                         "outcome %s\n",
+                         screenIndex(level) > 3 ? "Gunter" : "Normal", (int)game.streamHealth(),
+                         died ? "Died" : "Survived");
+                *out += line;
+                break;
+            }
+            case flow::Screen::Statistics:
+                appendf(out, "  skipped Statistics: level %lld\n", game.state().level);
+                break;
+            case flow::Screen::Fall:
+                appendf(out, "  skipped Fall (index %lld): Landed, health %lld, pickups %lld\n",
+                        screenIndex(game.state().level), game.state().carry.health,
+                        static_cast<long long>(game.state().carry.pickups.size()));
+                break;
+            case flow::Screen::SavePrompt:
+                appendf(out, "  skipped SavePrompt: level %lld\n", game.state().level);
+                break;
+            default:
+                break;
+        }
+        screen = game.handle(next);
+    }
+    if (screen == flow::Screen::Level) {
+        appendf(out, "  play level %lld health %lld pickups %lld\n", game.state().level,
+                game.levelHealth(), 0);
+    } else {
+        *out += std::string("  screen ") + flow::GameFlow::screenName(screen) + "\n";
+    }
+}
+
+void testNextLevelGolden() {
+    const std::string got = mdk::test::flowNextLevelDump();
+    std::string expected;
+    FILE* file = fopen("golden/flow_next_level.txt", "rb");
+    if (!file) {
+        printf("  FAIL: no golden file golden/flow_next_level.txt\n");
+        failures++;
+        return;
+    }
+    char chunk[4096];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof(chunk), file)) > 0) {
+        expected.append(chunk, n);
+    }
+    fclose(file);
+    if (got != expected) {
+        size_t at = 0;
+        while (at < got.size() && at < expected.size() && got[at] == expected[at]) {
+            at++;
+        }
+        size_t lineStart = at;
+        while (lineStart > 0 && expected[lineStart - 1] != '\n') {
+            lineStart--;
+        }
+        printf("  FAIL: flow_next_level differs from the C# probe at byte %lu: oracle \"%.70s\", "
+               "port \"%.70s\"\n",
+               (unsigned long)at, expected.c_str() + lineStart,
+               lineStart < got.size() ? got.c_str() + lineStart : "");
+        failures++;
+    }
+}
+
+// skipUnported is the walk the frontends call: the same screens as the step-by-step
+// walk above, the trail in order, and a stop at a screen that is not skipped.
+void testSkipTrail() {
+    flow::GameFlow game(levelOptions(3));
+    game.handle(game.firstEvent());
+    flow::LevelResult result;
+    result.health = 55;
+    game.reportLevel(result);
+    expect("LEVEL3 ends to the stream", static_cast<long long>(game.handle(flow::Event::LevelEnded)),
+           static_cast<long long>(flow::Screen::Stream));
+    flow::GameFlow::SkipTrail trail;
+    expect("skipping through LEVEL3's screens reaches a level",
+           static_cast<long long>(game.skipUnported(&trail)),
+           static_cast<long long>(flow::Screen::Level));
+    expect("three screens skipped", trail.count, 3);
+    expect("first the stream", static_cast<long long>(trail.skipped[0]),
+           static_cast<long long>(flow::Screen::Stream));
+    expect("then the statistics", static_cast<long long>(trail.skipped[1]),
+           static_cast<long long>(flow::Screen::Statistics));
+    expect("then the fall", static_cast<long long>(trail.skipped[2]),
+           static_cast<long long>(flow::Screen::Fall));
+    expect("the level after LEVEL3 is LEVEL4", game.state().level, 4);
+    expect("entered at the fall's health, not the last level's", game.levelHealth(), 100);
+    expect("the carry is consumed by the level", game.state().hasCarry ? 1 : 0, 0);
+    // A level shown again is not skipped: the walk stops at once.
+    expect("a level is not skipped", static_cast<long long>(game.skipUnported(&trail)),
+           static_cast<long long>(flow::Screen::Level));
+    expect("and nothing is in the trail", trail.count, 0);
+    // LEVEL8's Gunter stream and save prompt keep the level's health into LEVEL5.
+    flow::GameFlow gunter(levelOptions(8));
+    gunter.handle(gunter.firstEvent());
+    gunter.reportLevel(result);
+    gunter.handle(flow::Event::LevelEnded);
+    expect("LEVEL8 skips to LEVEL5", static_cast<long long>(gunter.skipUnported(&trail)),
+           static_cast<long long>(flow::Screen::Level));
+    expect("two screens skipped (stream, save prompt)", trail.count, 2);
+    expect("LEVEL5", gunter.state().level, 5);
+    expect("at LEVEL8's end health", gunter.levelHealth(), 55);
+    // The menu is not skipped: LEVEL5 ends there, and the frontend stops.
+    flow::GameFlow last(levelOptions(5));
+    last.handle(last.firstEvent());
+    last.handle(flow::Event::LevelEnded);
+    expect("LEVEL5 stops at the menu", static_cast<long long>(last.skipUnported(&trail)),
+           static_cast<long long>(flow::Screen::Menu));
+    expect("having skipped nothing", trail.count, 0);
+    // A dead Kurt in the stream: the menu, as StreamScreen's Outcome.Died.
+    flow::GameFlow dead(levelOptions(3));
+    dead.handle(dead.firstEvent());
+    result.health = 0;
+    dead.reportLevel(result);
+    dead.handle(flow::Event::LevelEnded);
+    expect("a stream at 0 health ends at the menu",
+           static_cast<long long>(dead.skipUnported(&trail)),
+           static_cast<long long>(flow::Screen::Menu));
+    expect("the stream's package, for the log", flow::GameFlow::screenPackage(flow::Screen::Stream), 18);
+    expect("the fall's package", flow::GameFlow::screenPackage(flow::Screen::Fall), 17);
+}
+
 } // namespace
 
 namespace mdk {
@@ -556,7 +726,21 @@ int runFlowTests() {
     testLevelEndPaths();
     testTestCounts();
     testStepSelection();
+    testNextLevelGolden();
+    testSkipTrail();
     return failures;
+}
+
+std::string flowNextLevelDump() {
+    std::string out;
+    static const int32_t kLevels[] = {7, 6, 3, 4, 8, 5, 2};
+    static const int32_t kHealths[] = {100, 37, 1, 0};
+    for (size_t l = 0; l < sizeof(kLevels) / sizeof(kLevels[0]); l++) {
+        for (size_t h = 0; h < sizeof(kHealths) / sizeof(kHealths[0]); h++) {
+            dumpChain(kLevels[l], kHealths[h], &out);
+        }
+    }
+    return out;
 }
 
 } // namespace test

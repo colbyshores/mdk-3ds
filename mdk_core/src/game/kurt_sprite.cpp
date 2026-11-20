@@ -943,6 +943,23 @@ void KurtSprite::pumpStream() {
     prefetchNext();
 }
 
+bool KurtSprite::settleStream() {
+    if (streamTag_ < 0 || !renderer_) {
+        return true;
+    }
+    int32_t tag = -1;
+    uint8_t* bytes = nullptr;
+    uint32_t size = 0;
+    bool ok = false;
+    while (mdk_render_poll_range_read(renderer_, &tag, &bytes, &size, &ok)) {
+        free(bytes);
+        if (tag == streamTag_) {
+            streamTag_ = -1;
+        }
+    }
+    return streamTag_ < 0;
+}
+
 void KurtSprite::prefetchNext() {
     if (streamTag_ >= 0 || packPath_.empty()) {
         return;

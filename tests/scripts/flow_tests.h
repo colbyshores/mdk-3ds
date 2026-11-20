@@ -22,8 +22,15 @@
 // its own counter.
 // ============================================================================
 
+#include <string>
+
 namespace mdk {
 namespace test {
+
+// The next-level chain with every screen this port lacks skipped (package 2):
+// the C++ twin of tests/scripts/flow_probe, whose output is
+// golden/flow_next_level.txt. `vm_tests dump-flow` prints it.
+std::string flowNextLevelDump();
 
 // The level order, the flow's transitions, and the tick's step.
 int runFlowTests();

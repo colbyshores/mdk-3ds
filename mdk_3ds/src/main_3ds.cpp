@@ -676,6 +676,47 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // The run's frame and step counts and its end: run-scoped, so CAPTURE=, WALK=,
+    // the frame budget and the log count across every level the run plays.
+    uint32_t frame = 0;
+    uint32_t steps = 0;
+    const char* exitReason = "aptMainLoop returned false";
+    // C# Game._firstLevel: the first level gets the test options (the harness's
+    // EVENT= and AT=), later ones do not (Game.cs:487) -- unless EVENT_EVERY=1, the
+    // harness's level-to-level chain (package 2).
+    bool firstLevel = true;
+    heapProbe("run-start");
+
+    // =====================================================================
+    // THE LEVEL LOOP (package 2, the next-level transition). One pass per level:
+    // load, play, and -- when the level ends and the flow names another level
+    // (GameFlow::skipUnported: the stream, statistics, fall and save prompt this
+    // port lacks, skipped the way the C# skips them) -- tear the level down and go
+    // round again. The C#'s Game.Show does the same between two screens: the old
+    // screen disposed, every voice stopped, the renderer's scope released
+    // (Game.cs:539-547), then the next Viewer built.
+    //
+    // THE ORDER OF THE TEARDOWN is at the level block's end (marked "END OF THE
+    // LEVEL"): Kurt's pack read settled, the music, the DSP path (its worker joined
+    // and its bank pins given back while the bank lives), the runtime, the pose
+    // caches, the arena views; then the block's brace destroys the rest in reverse
+    // order of declaration (the passes, the HUD, Kurt's sprite, the bank and its SNI
+    // archives, the CMI, the level data, the HD pack); then the renderer's scope
+    // releases what the level made through it -- textures, palettes, meshes, newest
+    // first, so linear memory goes back in the reverse order it was taken -- and two
+    // empty frames give the GPU its completion boundary (C3D_FrameBegin waits for the
+    // last queue; the deferred releases are freed there, AGENTS.md P3) BEFORE the
+    // next level allocates anything.
+    //
+    // The body is NOT re-indented (a 1900-line whitespace diff in a file other
+    // packages edit).
+    // =====================================================================
+    for (;;) {
+    mdk::log3dsPrintf("level loop: level %d%s", (int)flow.state().level,
+                      firstLevel ? " (the run's first: the harness's test options apply)" : "");
+    const MdkScope levelScope = mdk_render_mark(renderer);
+    bool nextLevel = false;
+    {
     // ---------------------------------------------------------------------
     // The level.
     //
@@ -695,7 +736,7 @@ int main(int argc, char** argv) {
     // whether the HD copy is used, so the toggle stays live.
     mdk::ModImages hdPack;
     HdPackSource hdSource;
-    if (loadHdPack(options.level, &hdPack)) {
+    if (loadHdPack(flow.state().level, &hdPack)) {
         hdSource.pack = &hdPack;
         surfaces.setColourReplacementLookup(hdPackLookup, &hdSource);
     }
@@ -1294,7 +1335,8 @@ int main(int argc, char** argv) {
         // feet and yaw exactly as given, as the Linux build's --at sets them (no
         // +3 lift: the override is the feet). A harness build only: the console
         // has no command line, and a release must start where the level says.
-        {
+        // A test option, so the first level's alone (Game.cs:487).
+        if (firstLevel) {
             const float at[4] = {MDK_HW_AT};
             player.feet = mdk::Vec3{at[0], at[1], at[2]};
             player.yaw = at[3];
@@ -1472,8 +1514,6 @@ int main(int argc, char** argv) {
     // pair the Linux frontend keeps).
     const float kHudStep = 1.0f / 30.0f;
     float hudPending = 0.0f;
-    uint32_t frame = 0;
-    uint32_t steps = 0;
     // The stream mesh's capacity the frame log last reported, so a growth is said
     // once instead of every frame. Zero until the first frame with corners.
     int32_t streamCapacityLogged = -1;
@@ -1499,7 +1539,6 @@ int main(int argc, char** argv) {
     const std::vector<std::string>* frameDrawn = nullptr;   // this frame's drawn list
     int32_t objectPeakCorners = 0;
     int32_t objectPeakDraws = 0;
-    const char* exitReason = "aptMainLoop returned false";
     u32 prevHeld = 0;  // last frame's held mask; the menu reads edges
     // THE END OF A LEVEL (package 1). The C#'s Viewer subscribes to the scripts'
     // LevelEnded (Viewer.cs:240) and leaves EndDelay (0.5 s, :112) later through
@@ -1513,6 +1552,11 @@ int main(int argc, char** argv) {
     bool levelEndedExit = false;
     bool endSeen = false;
     bool tearRefusedLogged = false;
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_EVENT)
+    // The EVENT's game time (C# Viewer._time against TestStart), the level's own: a
+    // chained run (EVENT_EVERY=1) fires it one second into each level.
+    float harnessEventTime = 0.0f;
+#endif
 
     heapProbe("loop");
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
@@ -1763,12 +1807,19 @@ int main(int argc, char** argv) {
                 // `make AUTOQUIT=.. EVENT=N` (a harness aid): the C#'s Viewer.RunTests
                 // (Viewer.cs:664-680), ahead of Kurt's step -- special_event N for the
                 // controller of Kurt's arena on the step whose game time first reaches
-                // TestStart (1 s). 50 and below end the level.
+                // TestStart (1 s). 50 and below end the level. The first level's only,
+                // as the C#'s test options are (Game.cs:487), unless EVENT_EVERY=1.
                 {
-                    static float testTime = 0.0f;
                     const float kTestStart = 1.0f;
-                    testTime += step;
-                    if (runtime && !(testTime < kTestStart || testTime - step >= kTestStart)) {
+                    harnessEventTime += step;
+#if defined(MDK_HW_EVENT_EVERY)
+                    const bool eventLevel = true;
+#else
+                    const bool eventLevel = firstLevel;
+#endif
+                    if (eventLevel && runtime &&
+                        !(harnessEventTime < kTestStart ||
+                          harnessEventTime - step >= kTestStart)) {
                         mdk::log3dsPrintf("harness: special_event %d at frame %lu (EVENT)",
                                           (int)(MDK_HW_EVENT), (unsigned long)frame);
                         runtime->specialEvent(
@@ -2661,29 +2712,47 @@ int main(int argc, char** argv) {
             break;
         }
 
-        // THE LEVEL-END HOOK (package 2 loads the next level here). The C#'s Game takes
-        // Event.LevelEnded to AfterLevel (Game.cs:442), which the flow ports: it says
-        // which screen follows (the stream, the statistics, the save prompt or the
-        // menu). This frontend has no screen but the level and does not load another
-        // one yet, so it logs the flow's answer and ends the run through the ordinary
-        // teardown, after the frame the end was drawn on.
+        // THE LEVEL-END HOOK (package 2). Game.cs takes Event.LevelEnded to AfterLevel
+        // (:442, :499-512): the level's counts and Kurt's health are kept (the C# reads
+        // them off `_viewer`), and the flow says what follows. The stream, the
+        // statistics, the fall and the save prompt are not ported, so they are skipped
+        // the way the C# skips them (GameFlow::skipScreen, pinned against the C# by
+        // golden/flow_next_level.txt), each one logged. A level at the end of that
+        // walk is loaded by the level loop; anything else (the menu) ends the run.
         if (levelEndedExit) {
-            const mdk::flow::Screen after = flow.handle(mdk::flow::Event::LevelEnded);
-            mdk::log3dsPrintf("level: ended; the flow's next screen is %d (not loaded: the "
-                              "next level is package 2)",
-                              (int)after);
-            exitReason = "level ended";
+            mdk::flow::LevelResult result;
+            if (runtime) {
+                result.stats = runtime->stats;
+            }
+            result.health = player.health();
+            flow.reportLevel(result);
+            screen = flow.handle(mdk::flow::Event::LevelEnded);
+            mdk::log3dsPrintf("flow: level %d ended (health %d); the flow shows %s",
+                              (int)flow.state().level, (int)result.health,
+                              mdk::flow::GameFlow::screenName(screen));
+            mdk::flow::GameFlow::SkipTrail trail;
+            screen = flow.skipUnported(&trail);
+            for (int32_t i = 0; i < trail.count; i++) {
+                mdk::log3dsPrintf("flow: skipped %s (package #%d not ported)",
+                                  mdk::flow::GameFlow::screenName(trail.skipped[i]),
+                                  (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
+            }
+            if (screen == mdk::flow::Screen::Level) {
+                nextLevel = true;
+                mdk::log3dsPrintf("flow: next level %d at frame %lu, entered at health %d",
+                                  (int)flow.state().level, (unsigned long)frame,
+                                  (int)flow.levelHealth());
+            } else {
+                mdk::log3dsPrintf("flow: %s follows, which this frontend cannot show; exiting",
+                                  mdk::flow::GameFlow::screenName(screen));
+                exitReason = "level ended";
+            }
             break;
         }
     }
 
-    printf("[3ds] exiting after %lu frames\n", (unsigned long)frame);
-
-    mdk::harnessProfileReport();
-    mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
-                      (unsigned)steps, exitReason);
     if (kurtSpriteReady) {
-        // The pack stream's record for the run, once, at exit (never inside play).
+        // The pack stream's record for the level, once, at its end (never inside play).
         const mdk::KurtSprite::StreamStats& stream = kurtSprite.streamStats();
         // `held`: draws that showed Kurt's previous frame while the wanted one's
         // bytes were in flight (never a 16-bit stand-in made inside the frame);
@@ -2698,13 +2767,78 @@ int main(int argc, char** argv) {
                           (unsigned)stream.staged, (unsigned)stream.stagedPeak,
                           (unsigned)mdk::KurtSprite::kStagedCacheBytes, (int)stream.dropped);
     }
-    aptUnhook(&s_lifecycleCookie);
-    // The arenas' GPU objects go while the renderer is still there.
+
+    // THE LEVEL'S TEARDOWN, between frames: the last frame has ended, the next
+    // level's first has not begun (see the level loop's header for the order).
+    // 1. Kurt's pack read in flight, collected and freed, so the next level's sprite
+    //    (the same generation) cannot take it for one of its own. Bounded: the
+    //    reader thread finishes a read in milliseconds; two seconds is a hang.
+    if (kurtSpriteReady) {
+        const double settleStart = nowSeconds();
+        while (!kurtSprite.settleStream()) {
+            if (nowSeconds() - settleStart > 2.0) {
+                mdk::log3dsPrintf("level: Kurt's pack read did not land in 2 s; left to the "
+                                  "reader");
+                break;
+            }
+            svcSleepThread(1000000LL);
+        }
+    }
+    // 2. The sound: the music's voices, then the output (the DSP worker joined and
+    //    its bank pins given back WHILE the bank is alive; the software sink's ndsp
+    //    channel), then the runtime and its mixer. The next level opens them again.
+    music.reset();
+    if (mdk::kDspAudio) {
+        mdk::audioDspClose();
+    } else {
+        mdk::audioClose();
+    }
+    runtime.reset();
+    // 3. The pose caches key on the runtime's Model addresses, which the reset just
+    //    freed (scripts/pose_cache.h; the C#'s next Viewer calls ForgetPoses).
+    mdk::scripts::MdkObject::forget_poses();
+    // 4. The arenas' GPU objects, while their views still know them.
     arenaViews.clear();
+    }   // END OF THE LEVEL: its objects are destroyed here, in reverse order
+    // 5. What the level made through the renderer and no object released, newest
+    //    first (the deferred release: freed at the next frame boundary).
+    mdk_render_release(renderer, levelScope);
+    if (nextLevel) {
+        // 6. THE LOADING SCREEN'S FRAMES (C# Play: Show(null), LoadingScreen.Show,
+        //    Show(null), Game.cs:480-483): two empty frames, the clear colour, not
+        //    game frames (`frame` does not count them). C3D_FrameBegin waits for the
+        //    previous queue and the deferred releases are freed there (AGENTS.md P3),
+        //    so the linear memory is back BEFORE the next level asks for any.
+        for (int i = 0; i < 2; i++) {
+            MdkFrameParams blank;
+            blank.elapsed = 0.0f;
+            blank.frame_index = frame;
+            blank.clear_colour = 0xFF000000u;
+            blank.present = true;
+            blank.screenshot_path = nullptr;
+            mdk_render_begin_frame(renderer, &blank);
+            mdk_render_end_frame(renderer);
+        }
+        // The heap and linear figures with no level loaded: a level-to-level run
+        // returns to the same figures here (mem[run-start] is the first).
+        heapProbe("level-teardown");
+        firstLevel = false;
+        continue;
+    }
+    break;
+    }   // END OF THE LEVEL LOOP
+
+    printf("[3ds] exiting after %lu frames\n", (unsigned long)frame);
+
+    mdk::harnessProfileReport();
+    mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
+                      (unsigned)steps, exitReason);
+    aptUnhook(&s_lifecycleCookie);
+    // The arenas' GPU objects, the DSP path (its worker joined, its bank pins given
+    // back while the bank was alive) and the software sink went with the last level
+    // (the level loop's teardown); both closes are no-ops on what is already closed.
     mdk_render_destroy(renderer);
     mdk::audioClose();
-    // The DSP path: join its worker and give back its bank pins while the bank
-    // (a local of this function) is still alive.
     mdk::audioDspClose();
     mdk::romfsFileSystemExit();
     // The log is closed BEFORE gfxExit(): libctru's gfxExit() tears the SD

@@ -368,6 +368,13 @@ public:
     // first run, jump or shot after level load is usually made from memory
     // rather than held (chooseFrame) while its read is in flight.
     void pumpStream();
+    // A LEVEL'S TEARDOWN (package 2): the pack read in flight, if any, is collected
+    // and freed WITHOUT asking for another (pumpStream would prefetch). True once no
+    // read of this sprite's is outstanding. The frontend calls it until true before
+    // the sprite is destroyed: the next level's sprite starts at the same generation,
+    // so a read left in the backend's slot would land on it as one of its own (the
+    // same animation index, the previous level's bytes).
+    bool settleStream();
 
     // The stream's first failure as one log line, once; null otherwise.
     const char* takeStreamFailure();

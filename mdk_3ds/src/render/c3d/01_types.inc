@@ -491,6 +491,18 @@ struct RendererC3D {
     // no palette texture, so the palette's only job is the expansion.
     std::vector<std::vector<uint8_t>> palettes;
 
+    // THE SCOPE LOG (mdk_render_mark / mdk_render_release: the C#'s Renderer.Mark
+    // and Release(scope), which Game.Show calls between two screens). Every
+    // texture, palette and mesh the seam made, in the order it made them; a level's
+    // teardown releases everything made since the level's mark, newest first
+    // (package 2, the next-level transition). Each release is the ordinary deferred
+    // one, so the GPU-completion rule is the frame boundary's, as always (P3).
+    struct Created {
+        uint8_t kind;   // 0 texture, 1 palette, 2 mesh
+        int32_t id;
+    };
+    std::vector<Created> creationLog;
+
     // The cull mode last written to the CITRO3D CONTEXT. citro3d keeps the
     // render state in ONE global context, not per render target --
     // C3D_FrameDrawOn does not restore it -- so anything that binds another

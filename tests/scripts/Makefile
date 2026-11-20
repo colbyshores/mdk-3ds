@@ -171,6 +171,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh frontend_solid_pin_test.sh
 	@sh linux_refusal_report_test.sh
 	@sh linux_arg_parse_test.sh
+	@sh level_chain_test.sh
 	@sh panel_geom_test.sh
 	@bash emurun_harness_test.sh
 	@bash frame_gate_test.sh

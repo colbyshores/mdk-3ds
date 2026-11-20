@@ -2,6 +2,14 @@
 // Part of renderer_c3d.cpp's single translation unit (see its header).
 // No include guards, no includes of its own; the order is load-bearing.
 
+// Records a resource the seam made, for mdk_render_release (RendererC3D::creationLog).
+static void logCreation(RendererC3D* renderer, uint8_t kind, int32_t id) {
+    RendererC3D::Created created;
+    created.kind = kind;
+    created.id = id;
+    renderer->creationLog.push_back(created);
+}
+
 MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
                                               const uint8_t* paletteRgba) {
     RendererC3D* renderer = asC3d(r);
@@ -79,6 +87,7 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
         slot = C3dTexture();
         return -1;
     }
+    logCreation(renderer, 0, id);
     return id;
 }
 
@@ -111,6 +120,7 @@ MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r, int32_t w, int32_t h,
         slot = C3dTexture();
         return -1;
     }
+    logCreation(renderer, 0, id);
     return id;
 }
 
@@ -178,6 +188,7 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t w, int3
         slot = C3dTexture();
         return -1;
     }
+    logCreation(renderer, 0, id);
     return id;
 }
 
@@ -202,9 +213,23 @@ MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba) {
     if (!renderer || !renderer->ready || !rgba) {
         return -1;
     }
-    // The 3DS keeps the palette only to expand the textures through it.
-    renderer->palettes.push_back(std::vector<uint8_t>(rgba, rgba + 256 * 4));
-    return (MdkPaletteId)(renderer->palettes.size() - 1);
+    // The 3DS keeps the palette only to expand the textures through it. A released
+    // palette's slot (empty: a live one always holds 256 entries) is taken again, so
+    // a level-to-level run does not grow the table.
+    MdkPaletteId id = -1;
+    for (size_t i = 0; i < renderer->palettes.size(); i++) {
+        if (renderer->palettes[i].empty()) {
+            id = (MdkPaletteId)i;
+            break;
+        }
+    }
+    if (id < 0) {
+        renderer->palettes.push_back(std::vector<uint8_t>());
+        id = (MdkPaletteId)(renderer->palettes.size() - 1);
+    }
+    renderer->palettes[(size_t)id].assign(rgba, rgba + 256 * 4);
+    logCreation(renderer, 1, id);
+    return id;
 }
 
 void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t h, const uint8_t* px) {
@@ -397,7 +422,23 @@ void mdk_render_release_palette(MdkRenderer r, MdkPaletteId p) {
     if (!renderer || p < 0 || (size_t)p >= renderer->palettes.size()) {
         return;
     }
-    renderer->palettes[(size_t)p].clear();
+    // swap, not clear: clear keeps the kilobyte (and the slot is reused by the next
+    // create_palette, which tells a released slot by its being empty).
+    std::vector<uint8_t>().swap(renderer->palettes[(size_t)p]);
+}
+
+// A mesh slot: a released one whose linear memory the frame boundary has already
+// freed (not valid, nothing pending, no data), else a new one -- so a level-to-level
+// run reuses the table instead of growing it.
+static MdkMeshId acquireMeshSlot(RendererC3D* renderer) {
+    for (size_t i = 0; i < renderer->meshes.size(); i++) {
+        const C3dMesh& mesh = renderer->meshes[i];
+        if (!mesh.valid && !mesh.releasePending && !mesh.data) {
+            return (MdkMeshId)i;
+        }
+    }
+    renderer->meshes.push_back(C3dMesh());
+    return (MdkMeshId)(renderer->meshes.size() - 1);
 }
 
 MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* v, int32_t n) {
@@ -432,8 +473,9 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* v, int32_t n)
     //
     // The symptom was a screen that showed only the clear colour while the
     // log said the arena had loaded with 154 batches and 1197 vertices.
-    renderer->meshes.push_back(mesh);
-    const MdkMeshId id = (MdkMeshId)(renderer->meshes.size() - 1);
+    const MdkMeshId id = acquireMeshSlot(renderer);
+    renderer->meshes[(size_t)id] = mesh;
+    logCreation(renderer, 2, id);
     mdk_render_update_mesh(r, id, v, n);
     return id;
 }
@@ -465,8 +507,10 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer r, int32_t cap) {
     }
     renderer->meshAllocFailureLogged = false;
     mesh.valid = true;
-    renderer->meshes.push_back(mesh);
-    return (MdkMeshId)(renderer->meshes.size() - 1);
+    const MdkMeshId id = acquireMeshSlot(renderer);
+    renderer->meshes[(size_t)id] = mesh;
+    logCreation(renderer, 2, id);
+    return id;
 }
 
 void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, int32_t n) {
@@ -582,6 +626,40 @@ static void settleDeferredMeshes(RendererC3D* renderer) {
     }
 }
 
-MdkScope mdk_render_mark(MdkRenderer r) { (void)r; return MdkScope{}; }
-void mdk_render_release(MdkRenderer r, MdkScope s) { (void)r; (void)s; }
+// THE SCOPE (the C#'s Renderer.Mark / Release, and the Vulkan backend's
+// creationLog): the mark is the log's length, and a release pops the log back to it,
+// releasing each resource newest first through the ordinary deferred release -- so
+// nothing the GPU may still read is freed before the next frame boundary (P3). A
+// resource released earlier by its owner is released again harmlessly: a released
+// texture has no GPU copy, a released mesh no data, a released palette no bytes.
+// The renderer's OWN resources are skipped: the canvas mesh is made on the first
+// frame that draws the HUD, so inside whatever scope is open then, and the renderer
+// keeps it across screens (07_canvas.inc).
+MdkScope mdk_render_mark(MdkRenderer r) {
+    RendererC3D* renderer = asC3d(r);
+    MdkScope scope;
+    scope.textures = renderer ? (int32_t)renderer->creationLog.size() : 0;
+    scope.buffers = 0;
+    return scope;
+}
+
+void mdk_render_release(MdkRenderer r, MdkScope s) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || s.textures < 0) {
+        return;
+    }
+    while ((int32_t)renderer->creationLog.size() > s.textures) {
+        const RendererC3D::Created created = renderer->creationLog.back();
+        renderer->creationLog.pop_back();
+        if (created.kind == 0) {
+            if (created.id != renderer->canvasWhite) {
+                mdk_render_release_texture(r, created.id);
+            }
+        } else if (created.kind == 1) {
+            mdk_render_release_palette(r, created.id);
+        } else if (created.id != renderer->canvasMesh) {
+            mdk_render_release_mesh(r, created.id);
+        }
+    }
+}
 

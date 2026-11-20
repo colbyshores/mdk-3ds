@@ -399,6 +399,11 @@ goldens from the C# probe `tests/scripts/hazards_probe`
 (`golden/L*_hazards_*.txt`, `tick1 dump hazards`); each breaks when the piece it
 names is broken (see docs/WORK_LEDGER.md).
 
+**The next level (2026-11-20, package 2):** no opcode changes. What follows a level that
+131 ended is now played: both frontends report the level to `GameFlow`, skip the screens this
+port lacks the C#'s way (`golden/flow_next_level.txt`) and load the next level in the order of
+play.
+
 **Chain-gun batch (2026-11-19):** 181 (`boss_bar`) and 209
 (`if_player_on_me_low`) ported with Kurt's firing (`Kurt::firing()`, written by
 `Player::updateFiring`). 181 shows the health bar through the new

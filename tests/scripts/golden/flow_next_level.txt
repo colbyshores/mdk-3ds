@@ -1,0 +1,131 @@
+level 7 ended health 100
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 100, outcome Survived
+  skipped Statistics: level 6
+  skipped Fall (index 1): Landed, health 100, pickups 0
+  play level 6 health 100 pickups 0
+level 7 ended health 37
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 37, outcome Survived
+  skipped Statistics: level 6
+  skipped Fall (index 1): Landed, health 100, pickups 0
+  play level 6 health 100 pickups 0
+level 7 ended health 1
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 1, outcome Survived
+  skipped Statistics: level 6
+  skipped Fall (index 1): Landed, health 100, pickups 0
+  play level 6 health 100 pickups 0
+level 7 ended health 0
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 0, outcome Died
+  screen Menu
+level 6 ended health 100
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 100, outcome Survived
+  skipped Statistics: level 3
+  skipped Fall (index 2): Landed, health 100, pickups 0
+  play level 3 health 100 pickups 0
+level 6 ended health 37
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 37, outcome Survived
+  skipped Statistics: level 3
+  skipped Fall (index 2): Landed, health 100, pickups 0
+  play level 3 health 100 pickups 0
+level 6 ended health 1
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 1, outcome Survived
+  skipped Statistics: level 3
+  skipped Fall (index 2): Landed, health 100, pickups 0
+  play level 3 health 100 pickups 0
+level 6 ended health 0
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 0, outcome Died
+  screen Menu
+level 3 ended health 100
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 100, outcome Survived
+  skipped Statistics: level 4
+  skipped Fall (index 3): Landed, health 100, pickups 0
+  play level 4 health 100 pickups 0
+level 3 ended health 37
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 37, outcome Survived
+  skipped Statistics: level 4
+  skipped Fall (index 3): Landed, health 100, pickups 0
+  play level 4 health 100 pickups 0
+level 3 ended health 1
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 1, outcome Survived
+  skipped Statistics: level 4
+  skipped Fall (index 3): Landed, health 100, pickups 0
+  play level 4 health 100 pickups 0
+level 3 ended health 0
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 0, outcome Died
+  screen Menu
+level 4 ended health 100
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 100, outcome Survived
+  skipped Statistics: level 8
+  skipped Fall (index 4): Landed, health 100, pickups 0
+  play level 8 health 100 pickups 0
+level 4 ended health 37
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 37, outcome Survived
+  skipped Statistics: level 8
+  skipped Fall (index 4): Landed, health 100, pickups 0
+  play level 8 health 100 pickups 0
+level 4 ended health 1
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 1, outcome Survived
+  skipped Statistics: level 8
+  skipped Fall (index 4): Landed, health 100, pickups 0
+  play level 8 health 100 pickups 0
+level 4 ended health 0
+  after level: Statistics
+  skipped Stream (Normal): ended True after 1 update(s), health 0, outcome Died
+  screen Menu
+level 8 ended health 100
+  after level: LastLevel
+  skipped Stream (Gunter): ended True after 1 update(s), health 100, outcome Survived
+  skipped SavePrompt: level 5
+  play level 5 health 100 pickups 0
+level 8 ended health 37
+  after level: LastLevel
+  skipped Stream (Gunter): ended True after 1 update(s), health 37, outcome Survived
+  skipped SavePrompt: level 5
+  play level 5 health 37 pickups 0
+level 8 ended health 1
+  after level: LastLevel
+  skipped Stream (Gunter): ended True after 1 update(s), health 1, outcome Survived
+  skipped SavePrompt: level 5
+  play level 5 health 1 pickups 0
+level 8 ended health 0
+  after level: LastLevel
+  skipped Stream (Gunter): ended True after 1 update(s), health 0, outcome Died
+  screen Menu
+level 5 ended health 100
+  after level: Menu
+  screen Menu
+level 5 ended health 37
+  after level: Menu
+  screen Menu
+level 5 ended health 1
+  after level: Menu
+  screen Menu
+level 5 ended health 0
+  after level: Menu
+  screen Menu
+level 2 ended health 100
+  after level: Menu
+  screen Menu
+level 2 ended health 37
+  after level: Menu
+  screen Menu
+level 2 ended health 1
+  after level: Menu
+  screen Menu
+level 2 ended health 0
+  after level: Menu
+  screen Menu

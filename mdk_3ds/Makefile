@@ -168,13 +168,21 @@ DEFINES += -DMDK_HW_WALK='"$(WALK)"'
 endif
 # `make AUTOQUIT=90 EVENT=1` runs special_event 1 after one second of game time, the
 # C#'s --event test option (Program.cs:53, Viewer.RunTests): 50 and below end the level
-# (the arena breaks up, Kurt rises, the screen goes white, the run ends "level ended").
-# Only main_3ds.cpp reads it: touch it after changing EVENT.
+# (the arena breaks up, Kurt rises, the screen goes white). Since package 2 the flow
+# then loads the next level (3 -> 4 -> 8 -> 5, the screens between skipped), which plays
+# for real: the event is the first level's alone, as the C#'s test options are.
+# `EVENT_EVERY=1` fires it one second into EVERY level, so a run chains level to level.
+# Only main_3ds.cpp reads them: touch it after changing EVENT or EVENT_EVERY.
 ifneq ($(strip $(EVENT)),)
 ifndef AUTOQUIT
 $(error EVENT=$(EVENT) needs AUTOQUIT: the test event is a harness-build feature)
 endif
 DEFINES += -DMDK_HW_EVENT=$(EVENT)
+ifeq ($(strip $(EVENT_EVERY)),1)
+DEFINES += -DMDK_HW_EVENT_EVERY=1
+endif
+else ifneq ($(strip $(EVENT_EVERY)),)
+$(error EVENT_EVERY=$(EVENT_EVERY) needs EVENT=N: there is no event to repeat)
 endif
 # `make AUTOQUIT=90 TOGGLES='enableGlowBillboards=0;shadowMapSize=128'` applies
 # config.ini lines (';' between them, no spaces, no commas) over the console's own

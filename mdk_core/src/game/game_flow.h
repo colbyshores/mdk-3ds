@@ -116,6 +116,12 @@ enum class Start { Menu, Level, Statistics, Briefing, EndMovie, Stream, Fall };
 // C# SaveGame.FullHealth (Flow/SaveGames.cs:14). Kurt's health when nothing has
 // taken any: the light saves and a stream started without one both use it.
 constexpr int32_t kFullHealth = 100;
+// C# Stream.Flight.LowHealth (Flight.cs:90): a stream that ends below it is
+// Outcome.Died, and the StreamScreen goes to the menu.
+constexpr int32_t kStreamLowHealth = 1;
+// C# Kurt.Inventory.MaxHealth (Inventory.cs:23): the fall's starting health
+// (FallSim.Health), which a skipped fall hands on.
+constexpr int32_t kFallStartHealth = 100;
 // C# Stream.WatcomRandom.DefaultSeed, the seed of a stream started directly.
 constexpr uint32_t kStreamDefaultSeed = 1;
 // C# Game.TownShift: --towns gives bits 31-29 of the debriefing's town flags.
@@ -193,6 +199,48 @@ public:
     // The C#'s recursion is kept: an event that shows another screen is handled by
     // a nested call, so the inner one still sees firstLevel() == true.
     Screen handle(Event next);
+
+    // WHAT A SCREEN THIS PORT DOES NOT HAVE ENDS WITH (package 2, the next-level
+    // transition). The stream (#18), the fall (#17), the statistics, the briefing,
+    // the save prompt and the end movies (#19/#20) are not ported, so a frontend
+    // that is shown one of them takes it as SKIPPED: this returns the Event that
+    // screen ends with when the player skips straight through it, and applies the
+    // state that screen leaves behind, operation for operation with the C#'s own
+    // skip paths:
+    //   Stream     StreamScreen.Frame's Back -> Flight.Stop (Flight.cs:161): the
+    //              fade-out ends on the next update with the health unchanged, so
+    //              Event.StreamEnded (Event.Menu if that health is below
+    //              Flight.LowHealth, the C#'s Outcome.Died; StreamScreen.cs:114).
+    //   Statistics StatsScreen's pages Intermission, Debriefing, Score, Briefing
+    //              (StatsScreen.cs:136-138); after the Score page EndPhase moves the
+    //              level on, `Order[min(max(IndexOf(level), 0) + 1, 5)]`
+    //              (:263-264); the save prompt (cut, #19) closes; the briefing ends
+    //              in Event.Fall (NextPhase, :273-276).
+    //   Briefing   StatsPages.Briefing's one page, then Event.Fall.
+    //   Fall       FallScreen's Back -> FallSim.Skip (FallSim.cs:203-209): Landed at
+    //              once with the sim's starting health (Inventory.MaxHealth, 100)
+    //              and nothing collected, so the carry is (100, no pickups) and
+    //              Event.Play (FallScreen.Next, :120-124).
+    //   SavePrompt the prompt closed without a save (#19 is cut): Event.Play
+    //              (Game.cs:681).
+    //   EndMovie   skipped: Event.Menu (EndMovie.cs:58).
+    // Menu, Level and None are not skipped through (Event::None): the menu is the
+    // owner's 2026-11-05 cut, and a frontend shown it stops.
+    Event skipScreen();
+    // The skip for the screen shown, handled: handle(skipScreen()) until a screen
+    // that is not skipped through (a Level, the Menu, None), at most kMaxSkips
+    // times. `trail`, when given, receives the screens skipped in order (up to
+    // kMaxSkips of them), so the frontend can log each one.
+    static constexpr int32_t kMaxSkips = 8;
+    struct SkipTrail {
+        Screen skipped[kMaxSkips];
+        int32_t count = 0;
+    };
+    Screen skipUnported(SkipTrail* trail);
+    // The screen's name and, for one this port does not have, the gap package
+    // that ports it (docs/PORT_GAPS.md), for the frontends' "flow: skipped" lines.
+    static const char* screenName(Screen screen);
+    static int32_t screenPackage(Screen screen);
 
     // The health the level shown was ENTERED with, which is what a frontend seeds
     // its Kurt from. It is the fresh viewer's health: the fall's carry when the

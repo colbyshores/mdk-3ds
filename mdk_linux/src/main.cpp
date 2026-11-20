@@ -11,6 +11,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <dirent.h>
+#include <malloc.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -40,6 +42,7 @@
 #include "game/mod_models.h"
 #include "game/level_view.h"
 #include "game/follow_camera.h"
+#include "game/game_flow.h"
 #include "game/font_view.h"
 #include "game/hud_view.h"
 #include "game/kurt_sprite.h"
@@ -189,6 +192,46 @@ bool modReplacementLookup(void* user, const mdk::Surface& surface,
     return true;
 }
 
+// THE LEVEL CYCLE'S MEMORY (package 2, the next-level transition): what a level
+// leaves behind once it is torn down. `heap` is the C heap's bytes in use
+// (mallinfo2's uordblks: freed memory counts as free even when glibc keeps it),
+// `fds` the open file descriptors (the archives, the Vulkan device's handles),
+// and `logged` the renderer's creation log (mdk_render_mark), which a level's
+// mdk_render_release pops back to the level's mark. A level-to-level run prints
+// one line before the first level and one after each teardown, and a leak is a
+// figure that climbs along them.
+struct MemorySample {
+    long long heap = 0;
+    int fds = 0;
+    int logged = 0;
+};
+
+MemorySample memorySample(MdkRenderer renderer) {
+    MemorySample sample;
+    const struct mallinfo2 info = mallinfo2();
+    sample.heap = (long long)info.uordblks;
+    if (DIR* dir = opendir("/proc/self/fd")) {
+        while (const struct dirent* entry = readdir(dir)) {
+            if (entry->d_name[0] != '.') {
+                sample.fds++;
+            }
+        }
+        closedir(dir);
+        sample.fds--;   // the directory stream's own descriptor
+    }
+    sample.logged = mdk_render_mark(renderer).textures;
+    return sample;
+}
+
+// The empty frames between two levels (see the level loop's teardown): more than the
+// Vulkan backend's frames in flight, so every retired resource reaches its boundary.
+constexpr int kBetweenLevelFrames = 4;
+
+void printMemory(const char* tag, int level, const MemorySample& sample) {
+    std::printf("[main] mem[%s]: level %d heap=%lld fds=%d renderer-log=%d\n", tag, level,
+                sample.heap, sample.fds, sample.logged);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -232,6 +275,19 @@ int main(int argc, char** argv) {
     // of a level without walking to its trigger.
     bool hasEvent = false;
     int32_t eventValue = 0;
+    // --event-every-level: the event fires one second into EVERY level, not only the
+    // first. The C# hands the command line's test options to the first level alone
+    // (Game.cs:487, `_firstLevel ? _options.Level : new ViewerOptions(...)`), so
+    // without this a chained run plays the second level for real; with it a
+    // headless run chains level to level (3 -> 4 -> 8 -> 5), which is how the
+    // teardown and reload are tested (tests/scripts/level_chain_test.sh). A test
+    // aid, not the C#'s.
+    bool eventEveryLevel = false;
+    // --replay-level: when a level ends and the flow names the next one, load the
+    // level that ended AGAIN instead. A leak test, not the C#'s flow: two teardowns
+    // of the same level must leave the same memory behind, which two different
+    // levels cannot show (tests/scripts/level_chain_test.sh).
+    bool replayLevel = false;
 
     auto optionValue = [](const char* arg, const char* name) -> const char* {
         const size_t length = std::strlen(name);
@@ -314,6 +370,10 @@ int main(int argc, char** argv) {
             }
             hasEvent = true;
             eventValue = (int32_t)parsed;
+        } else if (std::strcmp(argv[i], "--event-every-level") == 0) {
+            eventEveryLevel = true;
+        } else if (std::strcmp(argv[i], "--replay-level") == 0) {
+            replayLevel = true;
         } else if (std::strcmp(argv[i], "--enhanced") == 0) {
             enhancedLook = true;
         } else if (std::strcmp(argv[i], "--original") == 0) {
@@ -437,6 +497,10 @@ int main(int argc, char** argv) {
     // --true-aspect projects at --size's own ratio, which is the picture only when
     // the hidden target IS the picture. A window is always 1280x960 (4:3) and the
     // canvas follows the window, so a 5:3 projection there would be stretched.
+    if (eventEveryLevel && !hasEvent) {
+        std::fprintf(stderr, "[main] --event-every-level needs --event=N: there is no event to repeat\n");
+        return 1;
+    }
     if (trueAspect && !headless) {
         std::fprintf(stderr, "[main] --true-aspect needs --headless (the window is 4:3)\n");
         return 1;
@@ -566,6 +630,51 @@ int main(int argc, char** argv) {
     // oracle's own shape, and the capture path runs exactly as it did before.
     mdk::audioOpen();
 
+    // ---------------------------------------------------------------------
+    // THE FLOW (game/game_flow.h, the C#'s Game): it decides which level plays,
+    // and after a level's end which screen follows. The run starts in a level
+    // (Start::Level, --level), as the C#'s `--level` does; the menu is cut.
+    // ---------------------------------------------------------------------
+    mdk::flow::FlowOptions flowOptions;
+    flowOptions.start = mdk::flow::Start::Level;
+    flowOptions.level = levelNumber;
+    mdk::flow::GameFlow flow(flowOptions);
+    if (flow.handle(flow.firstEvent()) != mdk::flow::Screen::Level) {
+        std::fprintf(stderr, "[main] the flow did not start in a level\n");
+        mdk_render_destroy(renderer);
+        mdk::audioClose();
+        mdk::windowDestroy(&window);
+        return 1;
+    }
+    // The run's frame count and its end: run-scoped, so --frames, --capture-frame
+    // and the log count frames across every level the run plays.
+    uint32_t frame = 0;
+    const char* exitReason = nullptr;
+    // C# Game._firstLevel: the first level gets the command line's test options
+    // (--event; --at), later ones do not (Game.cs:487).
+    bool firstLevel = true;
+    printMemory("run-start", levelNumber, memorySample(renderer));
+
+    // =====================================================================
+    // THE LEVEL LOOP (package 2, the next-level transition). One pass per level:
+    // load, play, and -- when the level ends and the flow names another level
+    // (GameFlow::skipUnported, the screens this port lacks skipped) -- tear the
+    // level down and go round again. The C#'s Game.Show does the same between
+    // screens: the old screen disposed, every voice stopped, the renderer's scope
+    // released (Game.cs:539-547), then the new Viewer built.
+    //
+    // The body is NOT re-indented (a 1000-line whitespace diff in a file other
+    // packages edit). Its two blocks: the loop, and inside it the level's own
+    // block, whose closing brace destroys every level object in reverse order of
+    // declaration before the renderer's scope is released. Both closing braces are
+    // marked "END OF THE LEVEL".
+    // =====================================================================
+    for (;;) {
+    levelNumber = flow.state().level;
+    // Everything the renderer makes from here on is the level's.
+    const MdkScope levelScope = mdk_render_mark(renderer);
+    bool nextLevel = false;
+    {
     // ---------------------------------------------------------------------
     // The level. The same sequence the 3DS frontend runs.
     // ---------------------------------------------------------------------
@@ -813,7 +922,7 @@ int main(int argc, char** argv) {
                 }
             }
         } else {
-            std::printf("[main] level 3: FAILED to load\n");
+            std::printf("[main] level %d: FAILED to load\n", levelNumber);
         }
     } else {
         std::printf("[main] data: NOT FOUND\n");
@@ -905,10 +1014,21 @@ int main(int argc, char** argv) {
     // The arena whose track the bank was last asked to prefetch (the frame loop).
     std::string musicPrefetchedFor;
     bool playerReady = false;
+    // The health the level is ENTERED with (the 3DS frontend's entryHealth): the
+    // fall's carry, which a skipped fall makes 100, or LEVEL8's end health into
+    // LEVEL5 (GameFlow::levelHealth, Viewer.CarryFromFall). The level's first spawn
+    // takes it; a respawn after a death is a fresh Kurt.
+    const int32_t entryHealth = flow.levelHealth();
+    bool firstSpawn = true;
     auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
         player = mdk::Player();
-        if (hasStartOverride) {
+        if (firstSpawn) {
+            player.setHealth(entryHealth);
+            firstSpawn = false;
+        }
+        // --at is a test option, so the first level's alone (Game.cs:487).
+        if (hasStartOverride && firstLevel) {
             player.feet = startOverride;
             player.yaw = hasYawOverride ? yawOverride : level.dti().startAngle();
         } else {
@@ -1020,7 +1140,6 @@ int main(int argc, char** argv) {
     float pending = 0.0f;
     auto last = std::chrono::steady_clock::now();
 
-    uint32_t frame = 0;
     // Edge trigger for the object pass's refusal line below. Declared with the
     // loop-carried state because it lives as long as the frame loop.
     bool streamFailureLogged = false;
@@ -1051,7 +1170,6 @@ int main(int argc, char** argv) {
     bool levelEndedExit = false;
     bool endSeen = false;
     bool tearRefusedLogged = false;
-    const char* exitReason = nullptr;
     // C# Viewer._time and TestStart (Viewer.cs:109): the game time the --event fires at.
     const float kTestStart = 1.0f;
     float testTime = 0.0f;
@@ -1111,7 +1229,8 @@ int main(int argc, char** argv) {
                 // C# Viewer.RunTests (Viewer.cs:664-680), ahead of Kurt's step: the
                 // --event fires on the step whose game time first reaches TestStart.
                 testTime += kStep;
-                if (hasEvent && runtime && !(testTime < kTestStart || testTime - kStep >= kTestStart)) {
+                if (hasEvent && (firstLevel || eventEveryLevel) && runtime &&
+                    !(testTime < kTestStart || testTime - kStep >= kTestStart)) {
                     std::printf("[main] --event: special_event %d at frame %u\n", (int)eventValue,
                                 frame);
                     runtime->specialEvent(
@@ -1545,15 +1664,102 @@ int main(int argc, char** argv) {
         if (maxFrames > 0 && (int)frame >= maxFrames) {
             break;
         }
-        // THE LEVEL-END HOOK (package 2 loads the next level here: Game.cs's
-        // Event.LevelEnded -> AfterLevel, game/game_flow.h's GameFlow::handle). This
-        // frontend shows only a level and does not load another one yet, so the run ends
-        // through the ordinary teardown, after the frame the end was drawn on.
+        // THE LEVEL-END HOOK (package 2). Game.cs takes Event.LevelEnded to AfterLevel
+        // (:442, :499-512): the level's counts and Kurt's health are kept (the C#
+        // reads them off `_viewer`), and the flow says what follows. The stream, the
+        // statistics, the fall and the save prompt are not ported, so they are skipped
+        // the way the C# skips them (GameFlow::skipScreen, pinned against the C# by
+        // golden/flow_next_level.txt), each one logged. A level at the end of that
+        // walk is loaded by the level loop; anything else (the menu) ends the run.
         if (levelEndedExit) {
-            exitReason = "level ended";
+            mdk::flow::LevelResult result;
+            if (runtime) {
+                result.stats = runtime->stats;
+            }
+            result.health = player.health();
+            flow.reportLevel(result);
+            mdk::flow::Screen after = flow.handle(mdk::flow::Event::LevelEnded);
+            std::printf("[main] flow: level %d ended (health %d); the flow shows %s\n",
+                        levelNumber, (int)result.health,
+                        mdk::flow::GameFlow::screenName(after));
+            mdk::flow::GameFlow::SkipTrail trail;
+            after = flow.skipUnported(&trail);
+            for (int32_t i = 0; i < trail.count; i++) {
+                std::printf("[main] flow: skipped %s (package #%d not ported)\n",
+                            mdk::flow::GameFlow::screenName(trail.skipped[i]),
+                            (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
+            }
+            if (after == mdk::flow::Screen::Level && replayLevel) {
+                std::printf("[main] flow: --replay-level: level %d again instead of %d\n",
+                            levelNumber, (int)flow.state().level);
+                flow.state().level = levelNumber;
+            }
+            if (after == mdk::flow::Screen::Level) {
+                nextLevel = true;
+                std::printf("[main] flow: next level %d at frame %u, entered at health %d\n",
+                            (int)flow.state().level, frame, (int)flow.levelHealth());
+            } else {
+                std::printf("[main] flow: %s follows, which this frontend cannot show; "
+                            "exiting\n",
+                            mdk::flow::GameFlow::screenName(after));
+                exitReason = "level ended";
+            }
             break;
         }
     }
+
+    // THE LEVEL'S TEARDOWN, between frames (the last frame has ended; the next level's
+    // first frame has not begun). The arenas' GPU objects first, while their views
+    // still know them; then the level block's closing brace destroys the rest in
+    // reverse order of declaration -- the music and the runtime (its mixer and every
+    // voice), the object and effects passes, Kurt's sprite, the HUD, the bank, the
+    // level data; then the renderer's scope releases what the level made through it
+    // that no object released (the sky, the HUD and font atlases, the surface cache's
+    // textures and palettes), newest first. The Vulkan backend retires each one to
+    // its frame-completion boundary (AGENTS.md P3).
+    arenaViews.clear();
+    music.reset();
+    runtime.reset();
+    // The shared pose caches key on the runtime's Model addresses, which the reset
+    // above freed (scripts/pose_cache.h; the C#'s next Viewer calls ForgetPoses,
+    // Viewer.cs:185). Dropped here, not only at the next spawn, so they do not hold
+    // the finished level's poses through the load.
+    mdk::scripts::MdkObject::forget_poses();
+    }   // END OF THE LEVEL: its objects are destroyed here
+    mdk_render_release(renderer, levelScope);
+    // The sky the renderer was handed is the level's and was just released.
+    {
+        const mdk::Panorama none;
+        mdk_render_set_panorama(renderer, &none);
+    }
+    // THE LOADING SCREEN'S FRAMES (C# Play: Show(null), LoadingScreen.Show, Show(null),
+    // Game.cs:480-483): a few empty frames between the levels -- the clear colour, not
+    // game frames, so `frame` does not count them. They are also the backend's
+    // completion boundaries: what the release above retired is destroyed once the
+    // frames that could still read it have finished, so the memory line after them
+    // is the level's teardown complete, not half of it.
+    if (nextLevel) {
+        for (int i = 0; i < kBetweenLevelFrames; i++) {
+            MdkFrameParams blank;
+            blank.elapsed = 0.0f;
+            blank.frame_index = frame;
+            blank.clear_colour = 0xFF000000u;
+            blank.present = true;
+            blank.screenshot_path = nullptr;
+            mdk_render_begin_frame(renderer, &blank);
+            mdk_render_end_frame(renderer);
+        }
+    }
+    if (!nextLevel) {
+        // The last level: no frames follow, so what it retired is still waiting for
+        // its boundary and the figure is not a settled one (the renderer is destroyed
+        // next anyway).
+        printMemory("run-end, unsettled", levelNumber, memorySample(renderer));
+        break;
+    }
+    printMemory("level-teardown", levelNumber, memorySample(renderer));
+    firstLevel = false;
+    }   // END OF THE LEVEL LOOP
 
     int32_t draws = 0;
     int32_t tris = 0;
@@ -1592,8 +1798,8 @@ int main(int argc, char** argv) {
         status = 1;
     }
 
-    // The arenas' GPU objects go while the renderer is still there.
-    arenaViews.clear();
+    // The arenas' GPU objects went with the last level, while the renderer was
+    // still there (the level loop's teardown).
     mdk_render_destroy(renderer);
     mdk::audioClose();
     mdk::windowDestroy(&window);

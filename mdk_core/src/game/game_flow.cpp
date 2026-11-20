@@ -102,6 +102,89 @@ Screen GameFlow::handle(Event next) {
     return shown;
 }
 
+Event GameFlow::skipScreen() {
+    switch (screen_) {
+        case Screen::Stream:
+            // C# Flight.Stop then Update: the fade ends before Kurt moves, so the
+            // health the stream was opened with is the one it ends with
+            // (Flight.cs:161, :220-228; StreamScreen.cs:114).
+            return streamHealth_ < kStreamLowHealth ? Event::Menu : Event::StreamEnded;
+        case Screen::Statistics: {
+            // C# StatsScreen: _index = Math.Max(IndexOf(level), 0) (:135); after
+            // the Score page, EndPhase (:263-264).
+            const int index = indexOf(state_.level) < 0 ? 0 : indexOf(state_.level);
+            const int nextIndex = index + 1 < kOrderCount - 1 ? index + 1 : kOrderCount - 1;
+            state_.level = kOrder[nextIndex];
+            return Event::Fall;
+        }
+        case Screen::Briefing:
+            return Event::Fall;
+        case Screen::Fall:
+            // C# FallSim.Skip -> Landed; FallScreen.Next: Carry = (Health, Collected).
+            state_.carry = FallCarry();
+            state_.carry.health = kFallStartHealth;
+            state_.hasCarry = true;
+            return Event::Play;
+        case Screen::SavePrompt:
+            return Event::Play;
+        case Screen::EndMovie:
+            return Event::Menu;
+        case Screen::None:
+        case Screen::Menu:
+        case Screen::Level:
+            break;
+    }
+    return Event::None;
+}
+
+Screen GameFlow::skipUnported(SkipTrail* trail) {
+    if (trail) {
+        trail->count = 0;
+    }
+    for (int32_t i = 0; i < kMaxSkips; i++) {
+        const Screen skipped = screen_;
+        const Event next = skipScreen();
+        if (next == Event::None) {
+            break;
+        }
+        if (trail) {
+            trail->skipped[trail->count++] = skipped;
+        }
+        handle(next);
+    }
+    return screen_;
+}
+
+const char* GameFlow::screenName(Screen screen) {
+    switch (screen) {
+        case Screen::None: return "None";
+        case Screen::Menu: return "Menu";
+        case Screen::Briefing: return "Briefing";
+        case Screen::Statistics: return "Statistics";
+        case Screen::Level: return "Level";
+        case Screen::Stream: return "Stream";
+        case Screen::Fall: return "Fall";
+        case Screen::EndMovie: return "EndMovie";
+        case Screen::SavePrompt: return "SavePrompt";
+    }
+    return "?";
+}
+
+int32_t GameFlow::screenPackage(Screen screen) {
+    switch (screen) {
+        case Screen::Stream: return 18;
+        case Screen::Fall: return 17;
+        case Screen::SavePrompt: return 19;
+        case Screen::Menu:
+        case Screen::Briefing:
+        case Screen::Statistics:
+        case Screen::EndMovie: return 20;
+        case Screen::None:
+        case Screen::Level: break;
+    }
+    return 0;
+}
+
 void GameFlow::reportLevel(const LevelResult& result) {
     level_ = result;
     hasLevel_ = true;

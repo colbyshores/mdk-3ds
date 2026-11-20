@@ -1355,9 +1355,7 @@ runs special_event like the C#'s `--event`):
   `--event`.
 
 Still open:
-- **Package 2**: the frontends' "LEVEL-END HOOK" blocks (`mdk_linux/src/main.cpp`,
-  `mdk_3ds/src/main_3ds.cpp`) end the run; loading what `GameFlow::handle(LevelEnded)` names
-  is package 2. The 3DS already calls the flow and logs its answer.
+- ~~**Package 2**~~: landed 2026-11-20 -- see "The next level (package 2)" below.
 - **Package 13**: special_event's arms above 50 (the cutscenes, the strike, Gunter, the end of
   the game) still count 131 as unimplemented; `GameOver.Yes` (the town flattened) is package 15.
 - **Unpinned**: FollowCamera's clearance skip while Frozen. No reachable golden blocks the
@@ -1414,6 +1412,56 @@ Missiles, Pickups, Radar) and FallMissile, byte-identical to the C# probe
 - **Target libm.** The missile's launch direction is `sinf`/`cosf` and the intro's ease is
   `powf(x, 2)`; the host matches the oracle, newlib on the 3DS is unmeasured (the same leaf as
   "The 3DS build's libm trig leaf" above).
+
+## The next level (2026-11-20, package 2): what landed, what is open
+
+Landed: after a level's end both frontends follow `Game.cs`'s flow (AfterLevel, ShowStream,
+AfterStream, the statistics, the fall, Play) and load the next level in the C#'s order
+(7, 6, 3, 4, 8, 5). The screens this port lacks are SKIPPED the way the C# skips them
+(`GameFlow::skipScreen` / `skipUnported`, each logged "flow: skipped X (package #N not
+ported)"), pinned by `golden/flow_next_level.txt` (byte-identical to the C# probe
+`tests/scripts/flow_probe`, `vm_tests dump-flow`). Both frontends tear the level down between
+frames (a level loop; the renderer's scope `mdk_render_mark/release`, now implemented on the
+3DS backend too) and `tests/scripts/level_chain_test.sh` proves the reload on Linux: 3 -> 4 ->
+8 -> 5, levels 4 and 8 reloaded byte-identical to a direct start, four level-3 teardowns
+leaving the heap flat.
+
+Still open:
+- **No emulator or console run yet** of the 3DS level loop (the parent's Mandarine check):
+  the heap and linear figures (`mem[run-start]`, `mem[level-teardown]`) are unmeasured there,
+  as is the DSP path's close/reopen per level and ndsp's re-init.
+- **The skipped screens' effects**: a skipped fall carries 100 health and no pickups (FallSim
+  at its start); the real fall (#17) hands on what Kurt took and lost. A skipped stream keeps
+  the level's health; the real stream (#18) changes it, and its health bonus is what LEVEL5
+  gets after LEVEL8. The statistics' Score-O-matic, the save prompt and the briefing
+  (#19/#20) show nothing. `GameState.StrikeUsed` and `Deaths` are not carried (the air strike
+  is #14; deaths are counted only for the save, #19).
+- **Death still respawns in place**: the C#'s KurtDied goes to the menu (cut); unchanged.
+- **The Linux heap after the FIRST teardown** sits ~16 MB above the run's start (the Vulkan
+  backend's and lavapipe's pools and compiled pipelines, made once); it is flat from the
+  second teardown on (+37 KB, +8 KB, +4 KB over three more), which is what the test pins.
+- **Linux shuts down with resources still held** by the last level's retire queues (no frames
+  follow it); the renderer's destroy frees them.
+- **The 3DS heap's `used=` after each teardown creeps 1-2 KB a level** (Mandarine, the parent's
+  run, chain 3 -> 4 -> 8 -> 5: 326,616 -> 327,816 -> 329,928 bytes; linear free back to
+  25,285,504 every time). Searched, not found to be a leak of ours:
+  - The shared code is flat. A scratch harness ran tick1's end-of-level dump (level data, CMI,
+    bank, Player, runtime, 480 steps with special_event) 8 times in one process. With glibc's
+    tcache off (`GLIBC_TUNABLES=glibc.malloc.tcache_count=0`), the heap after each cycle reads
+    339,696 bytes from cycle 1 on, exactly. With tcache on it creeps +8 KB, +2 KB, +1 KB...,
+    and that creep is free chunks the tcache holds, which mallinfo counts as in use.
+  - The Linux frontend's remaining creep is not ours either. An LD_PRELOAD malloc tracker,
+    reading allocations made from the second teardown on that were still live, found 177
+    blocks (~610 KB) and every one is lavapipe's or the Vulkan validation layer's; none comes
+    from mdk.
+  - The core has no static container that grows: the pose caches are dropped, the RomFS
+    index is built once, and there are no function-local static containers.
+  - Not measured, and the likely 3DS source: the C3D backend's tables keep their high-water
+    mark. The texture, mesh and palette slot vectors, the HD copies and the scope log's
+    capacity grow when a level needs more slots than any level before it, and 3, 4 and 8 are
+    successively bigger. That is a bound, not a leak. The test is to replay ONE level on the
+    3DS (a harness `--replay-level`, not built) and see whether `used=` holds still after
+    the second teardown, as it does on Linux.
 
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 
