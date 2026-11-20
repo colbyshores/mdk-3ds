@@ -292,13 +292,18 @@ SHADER_CPICA := $(CURDIR)/shaders/mdk_caster.v.pica
 # ... and the pass-through geometry shader: the fifth DVLE (mdk_pass.g.pica says
 # why: the PICA must not leave geometry mode inside a command list).
 SHADER_PPICA := $(CURDIR)/shaders/mdk_pass.g.pica
+# ... and the BAKED LIGHT's programs (EnhancedToggles::lightBaked): its vertex
+# shader (the lightmap uv attribute, no GS needed) the sixth DVLE, its pass-through
+# geometry shader (for a list already in geometry mode) the seventh.
+SHADER_LPICA := $(CURDIR)/shaders/mdk_lightmap.v.pica
+SHADER_BPICA := $(CURDIR)/shaders/mdk_passlm.g.pica
 SHADER_SHBIN := $(BUILD)/mdk_c3d.shbin
 SHADER_HDR   := $(BUILD)/mdk_c3d_shbin.h
 SHADER_OBJ   := $(BUILD)/mdk_c3d_shbin.o
 
-$(SHADER_SHBIN): $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA) | $(BUILD)
-	@echo "PICA $(notdir $(SHADER_PICA)) $(notdir $(SHADER_GPICA)) $(notdir $(SHADER_SPICA)) $(notdir $(SHADER_CPICA)) $(notdir $(SHADER_PPICA))"
-	@$(PICASSO) -o $@ $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA)
+$(SHADER_SHBIN): $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA) $(SHADER_LPICA) $(SHADER_BPICA) | $(BUILD)
+	@echo "PICA $(notdir $(SHADER_PICA)) $(notdir $(SHADER_GPICA)) $(notdir $(SHADER_SPICA)) $(notdir $(SHADER_CPICA)) $(notdir $(SHADER_PPICA)) $(notdir $(SHADER_LPICA)) $(notdir $(SHADER_BPICA))"
+	@$(PICASSO) -o $@ $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA) $(SHADER_LPICA) $(SHADER_BPICA)
 
 # &: (grouped target, GNU Make 4.3+) is load-bearing here, NOT stylistic: with
 # a plain ':', two targets sharing one recipe are not atomic, so `make -j` can

@@ -12,10 +12,13 @@ LINUX := ../../mdk_linux/src
 # mapping out of input_3ds_hid.cpp in the first place. Last on the include path
 # so it can never shadow a core or Linux header.
 3DS := ../../mdk_3ds/src
+# The 3DS baked sun shadow's host baker (mdk_3ds/tools/sun_bake/sun_baker.cpp),
+# tested against the runtime's reader (render/sun_bake.cpp).
+SUNBAKE := ../../mdk_3ds/tools/sun_bake
 BUILD := build
 CXX ?= g++
 CXXFLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter \
-            -fno-strict-aliasing -I$(CORE) -I$(LINUX) -I. -I../formats -I$(3DS)
+            -fno-strict-aliasing -I$(CORE) -I$(LINUX) -I. -I../formats -I$(3DS) -I$(SUNBAKE)
 LDFLAGS :=
 
 COMMON_SOURCES := \
@@ -106,6 +109,9 @@ SOURCES_VM := \
 	input_3ds_tests.cpp \
 	heap_split_tests.cpp \
 	sky_dome_tests.cpp \
+	sun_bake_tests.cpp \
+	$(3DS)/render/sun_bake.cpp \
+	$(SUNBAKE)/sun_baker.cpp \
 	$(CORE)/render/sky_dome.cpp \
 	$(LINUX)/render/system_numerics_inverse.cpp \
 	$(3DS)/render/pica_matrix.cpp \

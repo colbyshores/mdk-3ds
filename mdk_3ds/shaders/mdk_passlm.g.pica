@@ -1,0 +1,50 @@
+; ============================================================================
+; mdk_passlm.g.pica -- the PASS-THROUGH geometry shader for the BAKED LIGHT's
+; vertex shader (mdk_lightmap.v.pica), the DVLB's seventh DVLE: mdk_pass.g.pica
+; with the second texture coordinate carried through.
+;
+; WHY IT EXISTS: THE GEOMETRY-STAGE RULE (03_frame.inc). A program without a
+; geometry shader must not draw after one with a geometry shader in the same
+; command list; bindProgram splits the list when it would. The baked static
+; draws have no geometry shader, but the moving objects (lit in the geometry
+; shader) share the Solid and DoubleSided buckets with them, so a baked draw
+; that comes after an object would cost a split (at most six a frame). Once
+; the list is in geometry mode a baked draw runs through THIS program instead:
+; the same picture, no split, one cheap pass-through.
+;
+; The vertex shader's outputs, three vertices of four registers:
+;   v0-v3   position, colour, texcoord (surface), texcoord (lightmap)
+; ============================================================================
+
+.gsh point c0
+
+.out outpos position
+.out outclr color
+.out outtc0 texcoord0
+.out outtc1 texcoord1
+
+.entry plmain
+.proc plmain
+    setemit 0
+    mov outpos, v0
+    mov outtc0, v2
+    mov outtc1, v3
+    mov outclr, v1
+    emit
+
+    setemit 1
+    mov outpos, v4
+    mov outtc0, v6
+    mov outtc1, v7
+    mov outclr, v5
+    emit
+
+    setemit 2, prim
+    mov outpos, v8
+    mov outtc0, v10
+    mov outtc1, v11
+    mov outclr, v9
+    emit
+
+    end
+.end

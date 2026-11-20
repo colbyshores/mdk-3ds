@@ -279,6 +279,19 @@ struct EnhancedToggles {
                                       // no compressed copy): the palette expansion, in the
                                       // texture16 store. Read at level load. The PC ignores it
 
+    bool lightBaked = true;           // 3DS: the static world's LIGHT, the sun's shadow folded
+                                      // in, BAKED at build time (mdk_3ds/tools/sun_bake/,
+                                      // romfs:/sunbake): its Lit draws take the light from a
+                                      // per-level ETC1 lightmap with NO geometry shader, and
+                                      // the caster pass and the map are not made. Moving
+                                      // objects keep the shader's light, cast nothing, and take
+                                      // one shadow value each from the bake. Used only with
+                                      // enableLighting and enableSkyShadows on (sky shadows
+                                      // off: the real-time light, unshadowed). The bake is
+                                      // loaded at level load only when this is on; off, or a
+                                      // level with no bake: today's real-time path. The PC
+                                      // ignores it
+
     // NOT A LOOK: a diagnostic of the 3DS sun shadow, off by default. The caster
     // pass writes the shadow map's four bytes in the order the GPU's shadow unit
     // reads them (pica_matrix.h, ShadowByteOrder): measured in the emulator and,

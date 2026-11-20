@@ -77,19 +77,33 @@ static void setHaze(RendererC3D* r, bool on) {
 // 0-2 and the units are written once per run of these draws; stage 3 follows
 // the haze, cached on shadowLitHaze. The caches of the ordinary layout
 // (lightStageOn, hazeOn) are made to say "not installed" while it is here.
-static void installShadowLitStages(RendererC3D* r, bool haze) {
+//
+// UNDER THE BAKED LIGHT (bakeActive, EnhancedToggles::lightBaked) only the
+// MOVING objects come here (the static world is the baked draw's: no geometry
+// shader); the bake cannot hold them, so each takes ONE light value for the
+// draw from the stage's constant alpha (`light`, objectLightOf) where the map's
+// compare was: A = (1 - light) * survive, the same stage meaning. Unit 0 holds
+// the idle texture (no map is made). Stage 0 is then built per draw and sent
+// through setTexEnv0 (THE DEDUPE: one object's batches send it once).
+static void installShadowLitStages(RendererC3D* r, bool haze, float light) {
     if (!r->shadowLitStages) {
-        bindTexUnit(r, 0, &r->shadowTex);
-        C3D_TexShadowParams(false, 0.0f);   // orthographic: no divide; the bias is the GS's
+        if (r->bakeActive) {
+            bindTexUnit(r, 0, &r->unitIdle);
+        } else {
+            bindTexUnit(r, 0, &r->shadowTex);
+            C3D_TexShadowParams(false, 0.0f);   // orthographic: no divide; the bias is the GS's
+        }
         bindTexUnit(r, 2, &r->shadowTint);
-        C3D_TexEnv* amount = C3D_GetTexEnv(0);
-        C3D_TexEnvInit(amount);
-        C3D_TexEnvSrc(amount, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-        C3D_TexEnvFunc(amount, C3D_RGB, GPU_REPLACE);
-        C3D_TexEnvSrc(amount, C3D_Alpha, GPU_TEXTURE0, GPU_TEXTURE2, GPU_TEXTURE2);
-        C3D_TexEnvOpAlpha(amount, GPU_TEVOP_A_ONE_MINUS_SRC_ALPHA, GPU_TEVOP_A_SRC_ALPHA,
-                          GPU_TEVOP_A_SRC_ALPHA);
-        C3D_TexEnvFunc(amount, C3D_Alpha, GPU_MODULATE);
+        if (!r->bakeActive) {
+            C3D_TexEnv* amount = C3D_GetTexEnv(0);
+            C3D_TexEnvInit(amount);
+            C3D_TexEnvSrc(amount, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+            C3D_TexEnvFunc(amount, C3D_RGB, GPU_REPLACE);
+            C3D_TexEnvSrc(amount, C3D_Alpha, GPU_TEXTURE0, GPU_TEXTURE2, GPU_TEXTURE2);
+            C3D_TexEnvOpAlpha(amount, GPU_TEVOP_A_ONE_MINUS_SRC_ALPHA, GPU_TEVOP_A_SRC_ALPHA,
+                              GPU_TEVOP_A_SRC_ALPHA);
+            C3D_TexEnvFunc(amount, C3D_Alpha, GPU_MODULATE);
+        }
         C3D_TexEnv* light = C3D_GetTexEnv(1);
         C3D_TexEnvInit(light);
         C3D_TexEnvSrc(light, C3D_RGB, GPU_TEXTURE2, GPU_PRIMARY_COLOR, GPU_PREVIOUS);
@@ -107,6 +121,20 @@ static void installShadowLitStages(RendererC3D* r, bool haze) {
         r->shadowLitHaze = -1;
         r->lightStageOn = false;   // stage 1 is not the ordinary light stage
         r->hazeOn = false;         // stage 2 is not the ordinary haze stage
+        r->bakedStages = false;    // unit 1 holds the surface now, not the lightmap
+    }
+    if (r->bakeActive) {
+        C3D_TexEnv amount;
+        C3D_TexEnvInit(&amount);
+        C3D_TexEnvSrc(&amount, C3D_RGB, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+        C3D_TexEnvFunc(&amount, C3D_RGB, GPU_REPLACE);
+        C3D_TexEnvSrc(&amount, C3D_Alpha, GPU_CONSTANT, GPU_TEXTURE2, GPU_TEXTURE2);
+        C3D_TexEnvOpAlpha(&amount, GPU_TEVOP_A_ONE_MINUS_SRC_ALPHA, GPU_TEVOP_A_SRC_ALPHA,
+                          GPU_TEVOP_A_SRC_ALPHA);
+        C3D_TexEnvFunc(&amount, C3D_Alpha, GPU_MODULATE);
+        const float clamped = light < 0.0f ? 0.0f : (light > 1.0f ? 1.0f : light);
+        C3D_TexEnvColor(&amount, (u32)(clamped * 255.0f + 0.5f) << 24);
+        setTexEnv0(r, &amount);
     }
     const int8_t want = haze ? 1 : 0;
     if (want != r->shadowLitHaze) {
@@ -132,19 +160,60 @@ static void installShadowLitStages(RendererC3D* r, bool haze) {
 // its own combiner calls it first (installEye, the canvas, the glow, the
 // caster pass, and every unshadowed draw).
 static void leaveShadowLitStages(RendererC3D* r) {
-    if (!r->shadowLitStages) {
+    // THE BAKED LAYOUT goes the same way (the grey map on unit 1, the side
+    // attributes), unless the draw now installing it is itself baked.
+    const bool bakedOut = r->bakedStages && !r->bakedDrawing;
+    if (!r->shadowLitStages && !bakedOut) {
         return;
     }
-    C3D_TexEnvInit(C3D_GetTexEnv(1));
-    C3D_TexEnvInit(C3D_GetTexEnv(2));
-    C3D_TexEnvInit(C3D_GetTexEnv(3));
-    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
-    r->hazeOn = false;
-    r->lightStageOn = false;
+    if (r->shadowLitStages) {
+        C3D_TexEnvInit(C3D_GetTexEnv(1));
+        C3D_TexEnvInit(C3D_GetTexEnv(2));
+        C3D_TexEnvInit(C3D_GetTexEnv(3));
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->hazeLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+        r->hazeOn = false;
+        r->lightStageOn = false;
+    }
     bindTexUnit(r, 1, &r->unitIdle);
-    bindTexUnit(r, 2, &r->unitIdle);
+    if (r->shadowLitStages) {
+        bindTexUnit(r, 2, &r->unitIdle);
+    }
+    // The baked draws' side attributes go with the layout (setLightmapAttribs).
+    setLightmapAttribs(r, false);
     r->shadowLitStages = false;
+    r->bakedStages = false;
     r->shadowLitHaze = -1;
+}
+
+// THE OBJECTS' LIGHT under the baked light. A shadowed draw the lightmap has no
+// uvs for is a MOVING OBJECT (a scripted or posed mesh, drawn with its world
+// matrix): the bake cannot hold it, so it casts nothing and takes ONE light value
+// for the draw -- the level's static casters seen from the sun at the object's
+// origin, the bake's depth map 2x2-filtered (SunBake::lightAt), the point moved
+// kObjectLightBias units towards the sun so the floor it stands on does not
+// shadow it. Looked up once per world position per frame (a small table that
+// prepareShadows empties): the second eye and the object's other batches reuse
+// it. An identity world is no object (a mesh the bake did not know, drawn in
+// place): lit, as a surface off the real-time map is.
+static const float kObjectLightBias = 4.0f;
+static float objectLightOf(RendererC3D* r, const mdk::MeshDraw* draw) {
+    if (mdk::pica::isIdentity(draw->world)) {
+        return 1.0f;
+    }
+    const float* at = &draw->world[12];   // row-vector: the translation is the last row
+    for (int32_t i = 0; i < r->objectLightCount; i++) {
+        if (memcmp(r->objectLightAt[i], at, sizeof(float) * 3) == 0) {
+            return r->objectLight[i];
+        }
+    }
+    const float light = r->bake.lightAt(at, kObjectLightBias);
+    r->objectLookups++;
+    if (r->objectLightCount < RendererC3D::kObjectLights) {
+        memcpy(r->objectLightAt[r->objectLightCount], at, sizeof(float) * 3);
+        r->objectLight[r->objectLightCount] = light;
+        r->objectLightCount++;
+    }
+    return light;
 }
 
 static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
@@ -316,7 +385,22 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // only a whole number of triangles goes through one.
     const bool overlay = draw->material.pass == mdk::Pass::Overlay;
     const bool wholeTriangles = (draw->vertex_count % 3) == 0;
-    const bool lit = r->litLive && draw->material.shading == mdk::Shading::Lit && !overlay &&
+    // THE BAKED LIGHT (EnhancedToggles::lightBaked): a static Lit triangle draw
+    // the bake knows (in place: an identity world) takes its light from its
+    // vertex colours and its shadow from the level's grey map -- the ordinary
+    // vertex shader, NO geometry shader, surface * map * colour * 2, then the
+    // haze. A DoubleSided one needs its inward side's data too (drawn a second
+    // time, culled the other way, below). Every other Lit draw is lit as before.
+    const bool baked = r->bakeActive && mesh.lightmap != nullptr &&
+                       draw->material.shading == mdk::Shading::Lit && !overlay &&
+                       draw->primitive == mdk::Primitive::Triangles && wholeTriangles &&
+                       mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,
+                                                 draw->primitive) &&
+                       (draw->material.pass != mdk::Pass::DoubleSided ||
+                        mesh.lightmapBack != nullptr) &&
+                       mdk::pica::isIdentity(draw->world) &&
+                       !(renderDebugFlags() & kRenderDebugFlat);
+    const bool lit = !baked && r->litLive && draw->material.shading == mdk::Shading::Lit && !overlay &&
                      draw->primitive == mdk::Primitive::Triangles && wholeTriangles &&
                      gsAllowed(r) && !(renderDebugFlags() & kRenderDebugFlat);
     const bool shadowLit = lit && r->shadowLitLive &&
@@ -419,9 +503,11 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
                                                          draw->material.pass), false);
     // A shadowed lit draw's stages are installShadowLitStages' (below, with the
     // light); every other draw leaves that layout first.
+    r->bakedDrawing = baked;   // (a baked draw keeps the baked layout it is installing)
     if (!shadowLit) {
         leaveShadowLitStages(r);
     }
+    r->bakedDrawing = false;
     // Stage 0 is built here and sent only when the context's stage 0 differs
     // (setTexEnv0, THE DEDUPE): a run of scene draws sends it once, not per draw
     // as C3D_GetTexEnv's unconditional dirty used to make it.
@@ -442,11 +528,29 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
             C3D_TexEnvSrc(env, C3D_Both, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
             C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
             C3D_TexEnvColor(env, c);
+        } else if (baked && r->bakeShadowLive) {
+            // THE BAKED SHADOW: the surface times the grey map's m (1 in the sun,
+            // F_shadow / F_lit in the shadow, between on the soft edge); the
+            // light stage then multiplies by the vertex colour, x2. The surface's
+            // own alpha (the cut). Without the shadow a baked draw takes the
+            // plain stage below: the vertex colour alone.
+            C3D_TexEnvSrc(env, C3D_RGB, GPU_TEXTURE0, GPU_TEXTURE1, GPU_PRIMARY_COLOR);
+            C3D_TexEnvFunc(env, C3D_RGB, GPU_MODULATE);
+            C3D_TexEnvSrc(env, C3D_Alpha, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
+            C3D_TexEnvFunc(env, C3D_Alpha, GPU_REPLACE);
         } else {
             C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
             C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
         }
         setTexEnv0(r, env);
+    }
+    // The baked layout (left by leaveShadowLitStages), and with the shadow its
+    // grey map on unit 1 (texcoord1): bound once a run.
+    if (baked) {
+        if (r->bakeShadowLive) {
+            bindTexUnitIfChanged(r, 1, &r->bakeTex);
+        }
+        r->bakedStages = true;
     }
     // (else: stage 0 is installShadowLitStages')
 
@@ -468,7 +572,16 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // permutation is 0x10 -- the same shape the devkitPro examples use.
     // Sent only when the context's table names another buffer (THE DEDUPE):
     // the arena's batches are ranges of one mesh.
-    bindVertexBuffer(r, mesh.data);
+    // A baked draw also reads its side data (the lightmap uv and the light), from
+    // the mesh's second buffer, as attributes 2-3 (setLightmapAttribs; every other
+    // draw has two).
+    if (baked) {
+        setLightmapAttribs(r, true);
+        bindLightmapBuffers(r, mesh.data, mesh.lightmap);
+    } else {
+        setLightmapAttribs(r, false);
+        bindVertexBuffer(r, mesh.data);
+    }
 
     r->drawCount++;
     r->triangleCount += draw->vertex_count / 3;
@@ -589,7 +702,9 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // Cache the installed mode and change it only on a pass transition. An
     // all-Solid frame then performs no per-draw cull calls at all.
     const bool solid = draw->material.pass == mdk::Pass::Solid;
-    const GPU_CULLMODE wantedCull = solid ? kSolidCull : GPU_CULL_NONE;
+    // (A baked DoubleSided draw shows one side at a time: its outward side now,
+    // culled as Solid, its inward side after the draw, culled the other way.)
+    const GPU_CULLMODE wantedCull = (solid || baked) ? kSolidCull : GPU_CULL_NONE;
     if (r->cullMode != wantedCull) {
         C3D_CullFace(wantedCull);
         r->cullMode = wantedCull;
@@ -791,10 +906,13 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         r->gsInList = true;
     }
 #endif
+    // A baked draw needs no geometry shader; once the list is in geometry mode
+    // it takes the pass-through one instead of a split (mdk_passlm.g.pica).
     shaderProgram_s* const wanted =
-        shadowLit ? &r->programShadow
-        : lit     ? &r->programLit
-                  : (r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program);
+        baked       ? (r->gsInList && r->bakedPassReady ? &r->programBakedPass : &r->programBaked)
+        : shadowLit ? &r->programShadow
+        : lit       ? &r->programLit
+                    : (r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program);
     if (wanted != r->boundProgram) {
         bindProgram(r, wanted);
         if (shadowLit) {
@@ -807,6 +925,12 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     r->litBound = lit && !shadowLit;
     if (shadowLit) {
         r->shadowReceivers++;
+        if (r->bakeActive) {
+            r->objectShadowDraws++;
+        }
+    }
+    if (baked) {
+        r->bakedDraws++;
     }
     if (r->boundProgram == &r->programShadow) {
         r->drawsShadowLit++;
@@ -829,18 +953,21 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         }
     }
     if (shadowLit) {
-        installShadowLitStages(r, r->hazeLive);   // a Lit, non-Overlay draw: hazed when the frame is
-    } else if (lit != r->lightStageOn) {
+        installShadowLitStages(r, r->hazeLive,   // a Lit, non-Overlay draw: hazed when the frame is
+                               r->bakeActive ? objectLightOf(r, draw) : 1.0f);
+    } else if ((lit || baked) != r->lightStageOn) {
+        // (A baked draw takes the same light stage: its vertex colour is the F / 2
+        // the geometry shader would have emitted, baked.)
         C3D_TexEnv* light = C3D_GetTexEnv(1);
         C3D_TexEnvInit(light);
-        if (lit) {
+        if (lit || baked) {
             C3D_TexEnvSrc(light, C3D_RGB, GPU_PREVIOUS, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
             C3D_TexEnvFunc(light, C3D_RGB, GPU_MODULATE);
             // The vertex colour carries F / 2 (mdk_c3d.g.pica): x2 lets the light
             // brighten a surface as well as darken it.
             C3D_TexEnvScale(light, C3D_RGB, GPU_TEVSCALE_2);
         }
-        r->lightStageOn = lit;
+        r->lightStageOn = lit || baked;
     }
 
     // THE HAZE (SPEC.md 7.9 enableHaze) for a surface the PC hazes, nothing for
@@ -858,6 +985,20 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         C3D_DrawArrays(GPU_GEOMETRY_PRIM, first, count);
     } else {
         C3D_DrawArrays(GPU_TRIANGLES, first, count);
+    }
+    // THE BAKED DOUBLESIDED DRAW'S INWARD SIDE (the shader turned the normal to
+    // the camera, so each side has its own light and its own chart): the same
+    // triangles again, culled the other way, reading the back side data. One side of
+    // a triangle is ever on screen, so nothing is drawn twice.
+    if (baked && draw->material.pass == mdk::Pass::DoubleSided) {
+        C3D_CullFace(kBakedInwardCull);
+        r->cullMode = kBakedInwardCull;
+        bindLightmapBuffers(r, mesh.data, mesh.lightmapBack);
+        // (The primitive by the bound program, as the draw above: the pass-through
+        // geometry program when the list is in geometry mode.)
+        const bool geometryBound = r->boundProgram && r->boundProgram->geometryShader;
+        C3D_DrawArrays(geometryBound ? GPU_GEOMETRY_PRIM : GPU_TRIANGLES, first, count);
+        r->bakedBackDraws++;
     }
 
     // Restore the frame's default for the next draw, so every draw starts

@@ -400,6 +400,63 @@ void mdk_render_release_palette(MdkRenderer r, MdkPaletteId p) {
     renderer->palettes[(size_t)p].clear();
 }
 
+// THE BAKED LIGHT'S SIDE DATA for a mesh being made (EnhancedToggles::lightBaked):
+// every triangle side the level's bake knows (by its positions' bits in that
+// side's corner order, sun_bake.h) takes its chart's lightmap uvs and its light
+// colour, every other the white block and the neutral colour (F / 2 = 1/2: the
+// surface unlit); kSunBakeSideStride bytes a vertex in a buffer of their own
+// beside the five floats, so no other mesh and no other draw changes. The BACK
+// data (a DoubleSided triangle's inward side) is a second buffer, made only when
+// the mesh has such a side. A mesh with no known triangle (the sky dome) gets
+// none. Cold: once per mesh made -- at level load, and when an arena streams in
+// or a script retextures one (LevelView::refresh) -- never per frame.
+static uint8_t* lightmapSides(RendererC3D* r, const mdk::Vertex* v, int32_t n, bool back,
+                              int32_t* keyed) {
+    const size_t bytes = (size_t)n * (size_t)mdk::kSunBakeSideStride;
+    uint8_t* data = static_cast<uint8_t*>(linearAlloc(bytes));
+    while (!data && (evictHd(r, r->frameStartUse, true) || evictHd(r, r->frameStartUse, false))) {
+        data = static_cast<uint8_t*>(linearAlloc(bytes));
+    }
+    if (!data) {
+        // The mesh's static draws are then lit in real time (the geometry
+        // shader), as with no bake. Said once per refusal.
+        mdk::log3dsPrintf("light: linearAlloc(%u) FAILED for a mesh's baked side data: its "
+                          "static draws are lit in real time",
+                          (unsigned)bytes);
+        *keyed = 0;
+        return nullptr;
+    }
+    static_assert(sizeof(mdk::Vertex) % sizeof(float) == 0, "a vertex is whole floats");
+    *keyed = r->bake.meshSides(&v[0].pos.x, n, (int32_t)(sizeof(mdk::Vertex) / sizeof(float)), back,
+                               data);
+    if (*keyed == 0) {
+        linearFree(data);
+        return nullptr;
+    }
+    // (The frame end flushes the linear heap before the GPU reads it; the mesh's
+    // own update flushes its range, and so does this, for the reason given there.)
+    GSPGPU_FlushDataCache(data, (u32)bytes);
+    r->bakeReport.uvBytes += (uint32_t)bytes;
+    return data;
+}
+
+static void attachLightmap(RendererC3D* r, C3dMesh& mesh, const mdk::Vertex* v, int32_t n) {
+    if (!r->bake.valid() || !r->bakeTexReady || n < 3 || (n % 3) != 0) {
+        return;
+    }
+    const u64 started = osGetTime();
+    int32_t front = 0;
+    int32_t back = 0;
+    mesh.lightmap = lightmapSides(r, v, n, false, &front);
+    if (mesh.lightmap) {
+        mesh.lightmapBack = lightmapSides(r, v, n, true, &back);
+        r->bakeReport.meshes++;
+        r->bakeReport.triangles += n / 3;
+        r->bakeReport.keyed += front + back;
+    }
+    r->bakeReport.uvMs += (int32_t)(osGetTime() - started);
+}
+
 MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* v, int32_t n) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || !renderer->ready || n <= 0 || !v) {
@@ -435,6 +492,7 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* v, int32_t n)
     renderer->meshes.push_back(mesh);
     const MdkMeshId id = (MdkMeshId)(renderer->meshes.size() - 1);
     mdk_render_update_mesh(r, id, v, n);
+    attachLightmap(renderer, renderer->meshes[(size_t)id], v, n);
     return id;
 }
 
@@ -577,8 +635,126 @@ static void settleDeferredMeshes(RendererC3D* renderer) {
             linearFree(mesh.data);
             mesh.data = nullptr;
         }
+        if (mesh.lightmap) {
+            linearFree(mesh.lightmap);
+            mesh.lightmap = nullptr;
+        }
+        if (mesh.lightmapBack) {
+            linearFree(mesh.lightmapBack);
+            mesh.lightmapBack = nullptr;
+        }
         mesh.releasePending = false;
         mesh.capacity = 0;
+    }
+}
+
+// THE LEVEL'S BAKED LIGHT (c3d_sun_bake.h). The .sbk whole onto the heap
+// (charts, keys with the vertex colours, the objects' depth map: what the
+// meshes and the objects need for the level) and the .t3x imported by tex3ds'
+// own reader straight into the grey shadow map (linear heap). Every result is checked: a missing file, a
+// short read, a bad section, an atlas that is not the .sbk's size or a refused
+// allocation is a "no bake" with the reason, and the frame lights the static
+// world in real time (AGENTS.md P5). Cold: level load, outside any frame,
+// before the first arena mesh is made.
+// The largest .sbk read: the biggest level's is ~0.6 MB; anything far past it is
+// not a bake (and must not size an allocation).
+static const long kSunBakeMostBytes = 8L * 1024L * 1024L;
+
+bool mdk_c3d_load_sun_bake(MdkRenderer rr, const char* path, const char* atlasPath,
+                           MdkSunBakeReport* out) {
+    RendererC3D* r = asC3d(rr);
+    MdkSunBakeReport report;
+    const u64 started = osGetTime();
+    if (!r || !r->ready || !path || !atlasPath) {
+        report.why = "no renderer";
+    } else if (r->bakeTexReady || r->bake.valid()) {
+        report.why = "already loaded";
+    } else if (!r->bakedProgramReady) {
+        report.why = "no baked program";
+    } else {
+        FILE* file = fopen(path, "rb");
+        long size = -1;
+        const char* why = nullptr;
+        if (!file) {
+            report.why = "no .sbk";
+        } else if (fseek(file, 0, SEEK_END) != 0 || (size = ftell(file)) <= 0 ||
+                   fseek(file, 0, SEEK_SET) != 0) {
+            report.why = "unreadable .sbk";
+        } else if (size > kSunBakeMostBytes) {
+            // (The vector's allocation must not be what fails: -fno-exceptions
+            // turns that into an abort, not a "no bake".)
+            report.why = "the .sbk is larger than any bake";
+        } else {
+            r->bakeBytes.assign((size_t)size, 0);
+            if (fread(r->bakeBytes.data(), 1, r->bakeBytes.size(), file) != r->bakeBytes.size()) {
+                report.why = "short read (.sbk)";
+            } else if (!r->bake.parse(r->bakeBytes.data(), r->bakeBytes.size(), &why)) {
+                report.why = why ? why : "the .sbk does not parse";
+            }
+        }
+        if (file) {
+            fclose(file);
+        }
+        if (r->bake.valid()) {
+            const mdk::SunBakeHeader& h = r->bake.header();
+            FILE* atlas = fopen(atlasPath, "rb");
+            Tex3DS_Texture t3x = nullptr;
+            if (!atlas) {
+                report.why = "no .t3x";
+            } else {
+                t3x = Tex3DS_TextureImportStdio(atlas, &r->bakeTex, nullptr, false);
+                fclose(atlas);
+                if (!t3x) {
+                    report.why = "the .t3x does not import (or no linear memory)";
+                } else if (r->bakeTex.width != h.atlasWidth || r->bakeTex.height != h.atlasHeight) {
+                    // Never bound: nothing in flight reads it.
+                    C3D_TexDelete(&r->bakeTex);
+                    report.why = "the .t3x is not the .sbk's atlas";
+                } else {
+                    // LINEAR: the shadow's soft edge between the texels'
+                    // centres (the real-time compare's 2x2 filter). Clamped: a
+                    // chart's gutter is its edge.
+                    C3D_TexSetFilter(&r->bakeTex, GPU_LINEAR, GPU_LINEAR);
+                    C3D_TexSetWrap(&r->bakeTex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+                    r->bakeTexReady = true;
+                    report.loaded = true;
+                    report.atlasWidth = h.atlasWidth;
+                    report.atlasHeight = h.atlasHeight;
+                    report.format = h.format == mdk::kSunBakeL4 ? "L4" : "L8";
+                    report.texelSize = h.texelSize;
+                    report.fileBytes = h.fileBytes;
+                    report.texelBytes = (uint32_t)C3D_TexCalcTotalSize(r->bakeTex.size, 0);
+                    report.residentBytes = (uint32_t)r->bakeBytes.size();
+                    report.charts = (int32_t)h.chartCount;
+                    report.blocks = (int32_t)h.colourBlocks;
+                    report.keys = (int32_t)h.keyCount;
+                    report.depthWidth = h.depthWidth;
+                    report.depthHeight = h.depthHeight;
+                }
+                if (t3x) {
+                    Tex3DS_TextureFree(t3x);
+                }
+            }
+        }
+        if (!r->bakeTexReady) {
+            r->bake = mdk::SunBake();
+            std::vector<uint8_t>().swap(r->bakeBytes);
+        }
+    }
+    report.loadMs = (int32_t)(osGetTime() - started);
+    if (r) {
+        r->bakeReport = report;
+    }
+    if (out) {
+        *out = report;
+    }
+    return report.loaded;
+}
+
+void mdk_c3d_sun_bake_report(MdkRenderer rr, MdkSunBakeReport* out) {
+    RendererC3D* r = asC3d(rr);
+    if (r && out) {
+        *out = r->bakeReport;
     }
 }
 

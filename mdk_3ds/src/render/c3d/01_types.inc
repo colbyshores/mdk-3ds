@@ -19,6 +19,9 @@ static constexpr int kScreenHeight = 400;
 // visible is culled, and it matches the Linux build's layout and orientation
 // (no mirror, which would also invert the winding).
 static constexpr GPU_CULLMODE kSolidCull = GPU_CULL_FRONT_CCW;
+// The other side: a baked DoubleSided draw's inward faces (06_draw.inc, the
+// baked draw), whose light is the reversed normal's.
+static constexpr GPU_CULLMODE kBakedInwardCull = GPU_CULL_BACK_CCW;
 
 // THE DISPLAY TRANSFER FLAGS.
 //
@@ -229,6 +232,14 @@ struct C3dTexture {
 // A mesh: the vertices, in LINEAR memory, where the GPU reads them.
 struct C3dMesh {
     void* data = nullptr;
+    // THE BAKED LIGHT'S SIDE DATA (EnhancedToggles::lightBaked): the lightmap uv
+    // and the light colour, kSunBakeSideStride bytes a vertex, the mesh's second
+    // vertex buffer, made with the mesh when the level's bake knows its triangles
+    // (attachLightmap) and freed with it. The BACK data is a DoubleSided
+    // triangle's other side (its own light and chart), made only when the mesh
+    // has one.
+    void* lightmap = nullptr;
+    void* lightmapBack = nullptr;
     int32_t capacity = 0;
     int32_t count = 0;
     bool valid = false;
@@ -697,6 +708,55 @@ struct RendererC3D {
     int32_t shadowCasters = 0;      // draws the caster pass made this frame
     int32_t shadowHoleCasters = 0;  // casters left out: their textures have holes
     int32_t shadowReceivers = 0;    // lit draws that took the shadow this frame (both eyes)
+    // THE BAKED LIGHT (EnhancedToggles::lightBaked; render/sun_bake.h). The
+    // static world's Lit draws take their light (the geometry shader's F / 2)
+    // from their vertex colours and their shadow from a per-level grey map, and
+    // need NO geometry shader: programBaked is mdk_lightmap.v.pica alone (DVLE 5); programBakedPass
+    // the same with the pass-through mdk_passlm.g.pica (DVLE 6), for a command
+    // list already in geometry mode (no split). The bake is the level's .sbk
+    // (charts, keys with the vertex colours, the objects' depth map: main heap)
+    // and its .t3x (the L4 shadow map, linear heap), loaded at level load (mdk_c3d_load_sun_bake). bakeActive is
+    // decided once a frame (prepareShadows).
+    shaderProgram_s programBaked;
+    bool bakedProgramReady = false;
+    shaderProgram_s programBakedPass;
+    bool bakedPassReady = false;
+    std::vector<uint8_t> bakeBytes;
+    mdk::SunBake bake;
+    C3D_Tex bakeTex;
+    bool bakeTexReady = false;
+    bool bakeActive = false;
+    bool bakeShadowLive = false;     // ... and its grey shadow map is sampled this frame
+    MdkSunBakeReport bakeReport;
+    // The bake is for another sun (prepareShadows): said once, and from then the
+    // real-time light and map stand in, the map's native-write test included
+    // (begin_frame).
+    bool bakeSunWarned = false;
+    // THE BAKED LAYOUT: four attributes, two buffers, and (with the shadow) the
+    // grey map on unit 1, combiner stage 0 = surface * map. Left by
+    // leaveShadowLitStages like the shadowed layout (unit 1 back to the idle
+    // texture), except for the baked draw that is installing it (bakedDrawing,
+    // set around drawRecorded's leave).
+    bool bakedStages = false;
+    bool bakedDrawing = false;
+    // The attribute layout holds the lightmap uv as attribute 2 (setLightmapAttribs;
+    // only ever inside a baked layout, and leaveShadowLitStages puts it back).
+    bool lightmapAttribs = false;
+    // The two-buffer table of a baked draw (bindLightmapBuffers), rebuilt only
+    // when the buffers change, compared with the context's like vbufInfo.
+    const void* vbufLmFor[2] = {nullptr, nullptr};
+    C3D_BufInfo vbufInfoLm = {};
+    // THE OBJECTS' LIGHT (a shadowed draw the bake has no uvs for: a moving
+    // object): one depth-map lookup per world position per frame, kept here so
+    // the second eye and the object's other batches reuse it.
+    static const int32_t kObjectLights = 32;
+    float objectLightAt[kObjectLights][3] = {};
+    float objectLight[kObjectLights] = {};
+    int32_t objectLightCount = 0;
+    int32_t bakedDraws = 0;          // static draws lit by their vertex colours (this eye)
+    int32_t bakedBackDraws = 0;      // ... of them, the second (inward) side of a DoubleSided one
+    int32_t objectShadowDraws = 0;   // shadowed object draws that took one light each
+    int32_t objectLookups = 0;       // depth-map lookups made for them
     float hazeExponent = 0.0f;
     bool hazeLive = false;
     bool hazeOn = false;

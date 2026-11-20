@@ -1,0 +1,102 @@
+; ============================================================================
+; mdk_lightmap.v.pica -- the vertex shader of the BAKED LIGHT's program
+; (EnhancedToggles::lightBaked; mdk_3ds/src/render/sun_bake.h), the DVLB's
+; sixth DVLE.
+;
+; The static world's light is baked (sun_bake.h): each triangle side's F / 2 --
+; what mdk_c3d.g.pica would emit as the vertex colour -- arrives as a VERTEX
+; COLOUR, the same on the side's three corners, and the static shadow as a grey
+; multiplier map on texture unit 1. So a static Lit draw needs NO geometry
+; shader: this vertex shader is the whole program (06_draw.inc, the baked draw),
+; and the combiner does surface * map (with the sky shadows on), then the lit
+; program's own light stage (* colour * 2), then the haze.
+;
+; mdk_c3d.v.pica, instruction for instruction, plus TWO attributes from the
+; mesh's side buffer (05_resources.inc, attachLightmap; sun_bake.h
+; kSunBakeSideStride) and the second texture coordinate:
+;   v2  the lightmap uv, GPU_SHORT x2 (uv * 32768): back to (s, t), texcoord1;
+;   v3  the light, GPU_UNSIGNED_BYTE x4 (F / 2 * 255): the PICA does NOT
+;       normalise integer attributes (the vault's pica200-integer-vertex-
+;       attributes-are-not-normalised), so it is scaled by 1 / 255 here, times
+;       the tint (white for a scene draw), into the primary colour's rgb.
+; The primary colour's ALPHA keeps what it carries today: the tint's alpha times
+; the haze's kept fraction (ex2(haze * eye depth)), which combiner stage 2 blends
+; by -- the vertex colour's own alpha is not read.
+; The world position is not output: no geometry shader needs it. When the
+; command list is already in geometry mode the same shader runs with the
+; pass-through mdk_passlm.g.pica (no split: 03_frame.inc, THE GEOMETRY-STAGE
+; RULE).
+;
+; THE UNIFORMS ARE mdk_c3d.v.pica'S, DECLARED IN THE SAME ORDER, so picasso
+; gives them the same registers (mvp c0-3, uvtransform c4, tint c5, haze c6,
+; world c7-10, the last unused here): the draw path writes them through the
+; main program's locations, and the draw dedupe compares citro3d's one uniform
+; array. The backend checks the locations at creation and refuses the program
+; if they differ (02_lifecycle.inc).
+;
+; Attributes (C3D_AttrInfo, 03_frame.inc setLightmapAttribs):
+;   v0 = position (float3), v1 = texcoord (float2), v2 = lightmap uv (short2),
+;   v3 = light (ubyte4)
+; Outputs: position, colour (rgb: the light F / 2; w: the haze's kept fraction),
+; texcoord0 (the surface), texcoord1 (the lightmap). Four registers: the
+; pass-through GS's stride is 12, as every other geometry program's.
+; ============================================================================
+
+.constf lmConsts(0.0, 1.0, 0.000030517578125, 0.0039215686)   ; 0, 1, 1 / 32768, 1 / 255
+.alias  lmOnes  lmConsts.yyyy
+.alias  lmScale lmConsts.zzzz
+.alias  lmByte  lmConsts.wwww
+
+.out outpos position
+.out outclr color
+.out outtexcoord texcoord0
+.out outlm texcoord1
+
+.alias inpos v0
+.alias intex v1
+.alias inlm  v2
+.alias inlight v3
+
+.fvec mvp[4]
+.fvec uvtransform
+.fvec tint
+.fvec haze
+.fvec world[4]
+
+.entry lmmain
+.proc lmmain
+    mov r0.xyz, inpos
+    mov r0.w,   lmOnes
+    dp4 outpos.x, mvp[0], r0
+    dp4 outpos.y, mvp[1], r0
+    dp4 outpos.z, mvp[2], r0
+    dp4 outpos.w, mvp[3], r0
+
+    ; THE LIGHT: the vertex colour (bytes) / 255 times the tint, and in the alpha
+    ; the tint's alpha times the haze's kept fraction (mdk_c3d.v.pica).
+    dp4 r2.x, mvp[3], r0
+    mul r2.x, haze.x, r2.x
+    ex2 r2.x, r2.x
+    mov r3, tint
+    mul r3.w, r3.w, r2.x
+    mov r6, inlight
+    mul r6, lmByte, r6
+    mul r3.xyz, r3.xyz, r6.xyz
+    mov outclr, r3
+
+    ; The surface's texture coordinate, scaled and offset for the padded texture.
+    mov r1, uvtransform
+    mov r0, intex
+    mul r0.x, r0.x, r1.x
+    mul r0.y, r0.y, r1.y
+    add r0.x, r0.x, r1.z
+    add r0.y, r0.y, r1.w
+    mov outtexcoord, r0
+
+    ; The lightmap's (s, t): the shorts back to [0, 1).
+    mov r5, inlm
+    mul r5, lmScale, r5
+    mov outlm, r5
+
+    end
+.end

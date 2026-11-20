@@ -350,6 +350,40 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
             shaderProgramFree(&r->programPass);
         }
     }
+    // THE BAKED LIGHT'S PROGRAMS (EnhancedToggles::lightBaked): the DVLB's sixth
+    // DVLE (mdk_lightmap.v.pica: the vertex shader plus the lightmap uv attribute
+    // and texcoord1) ALONE -- the static world's Lit draws with no geometry
+    // shader -- and with the seventh (mdk_passlm.g.pica, stride 12) for a list
+    // already in geometry mode. Its vertex uniforms MUST sit where the main
+    // vertex shader's do -- every draw writes them through the main locations,
+    // and the dedupe compares one array -- so a shader that disagrees is
+    // refused. Optional: without it the static world is lit in real time.
+    if (r->litReady && r->dvlb->numDVLE >= 7 &&
+        R_SUCCEEDED(shaderProgramInit(&r->programBaked))) {
+        if (R_SUCCEEDED(shaderProgramSetVsh(&r->programBaked, &r->dvlb->DVLE[5]))) {
+            shaderInstance_s* vs = r->programBaked.vertexShader;
+            r->bakedProgramReady =
+                shaderInstanceGetUniformLocation(vs, "mvp") == r->mvpLocation &&
+                shaderInstanceGetUniformLocation(vs, "uvtransform") == r->uvLocation &&
+                shaderInstanceGetUniformLocation(vs, "tint") == r->tintLocation &&
+                shaderInstanceGetUniformLocation(vs, "haze") == r->hazeLocation &&
+                shaderInstanceGetUniformLocation(vs, "world") == r->worldLocation;
+        }
+        if (!r->bakedProgramReady) {
+            shaderProgramFree(&r->programBaked);
+        }
+    }
+    if (r->bakedProgramReady && R_SUCCEEDED(shaderProgramInit(&r->programBakedPass))) {
+        r->bakedPassReady =
+            R_SUCCEEDED(shaderProgramSetVsh(&r->programBakedPass, &r->dvlb->DVLE[5])) &&
+            R_SUCCEEDED(shaderProgramSetGsh(&r->programBakedPass, &r->dvlb->DVLE[6], 12));
+        if (!r->bakedPassReady) {
+            shaderProgramFree(&r->programBakedPass);
+        }
+    }
+    mdk::log3dsPrintf("baked light programs: %s, pass-through %s",
+                      r->bakedProgramReady ? "ready" : "UNAVAILABLE",
+                      r->bakedPassReady ? "ready" : "UNAVAILABLE");
     // The vertex shader's uniform registers run from c0 to the world matrix's
     // last row (mdk_c3d.v.pica: mvp c0-3, uvtransform, tint, haze, world c7-10).
     r->vshUniformVecs = r->worldLocation + 4;
@@ -499,6 +533,12 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     releaseShadowMap(r);
     releaseEyeTargets(r);
     if (r->dvlb) {
+        if (r->bakedPassReady) {
+            shaderProgramFree(&r->programBakedPass);
+        }
+        if (r->bakedProgramReady) {
+            shaderProgramFree(&r->programBaked);
+        }
         if (r->casterProgramReady) {
             shaderProgramFree(&r->programCaster);
         }
@@ -526,6 +566,12 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     if (r->shadowTintReady) {
         C3D_TexDelete(&r->shadowTint);
         r->shadowTintReady = false;
+    }
+    // The baked shadow's lightmap: likewise (the mesh uv buffers stay with the
+    // meshes, which this destructor leaves to the process exit, above).
+    if (r->bakeTexReady) {
+        C3D_TexDelete(&r->bakeTex);
+        r->bakeTexReady = false;
     }
     if (r->unitIdleReady) {
         C3D_TexDelete(&r->unitIdle);

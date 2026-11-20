@@ -1528,10 +1528,12 @@ def adjudicate(text, quiet=False):
     # enhancement the owner allows only on the PICA200. C3D_TexBind on unit 1 or 2
     # reads the texture before any check, so a NULL unbind is a data abort on the
     # console, and a bound unit is sampled on every later fragment -- so units 1
-    # and 2 are bound in exactly four places, all the shadowed lit draw's: its
-    # surface (drawRecorded, unit 1), its tint (installShadowLitStages, unit 2),
-    # and the idle 8x8 texture both units go back to (leaveShadowLitStages); and
-    # every path that installs a combiner of its own leaves that layout first.
+    # and 2 are bound in exactly five places, the shadowed lit draw's and the
+    # baked light's: its surface (drawRecorded, unit 1), its tint
+    # (installShadowLitStages, unit 2), the baked light's lightmap (drawRecorded,
+    # unit 1, EnhancedToggles::lightBaked), and the idle 8x8 texture both units go
+    # back to (leaveShadowLitStages, which leaves both layouts); and every path
+    # that installs a combiner of its own leaves that layout first.
     mipgen = calls(text, r"C3D_TexGenerateMipmap\(")
     # Every bind goes through bindTexUnit (THE DEDUPE's texture shadow: the one
     # C3D_TexBind, pinned by per-draw-state-dedupe), so the units are read off
@@ -1548,7 +1550,8 @@ def adjudicate(text, quiet=False):
     expected_high = sorted(["bindTexUnit(r, 2, &r->shadowTint);",
                             "bindTexUnit(r, 1, &r->unitIdle);",
                             "bindTexUnit(r, 2, &r->unitIdle);",
-                            "bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);"])
+                            "bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);",
+                            "bindTexUnitIfChanged(r, 1, &r->bakeTex);"])
     # ... and a raw C3D_TexBind on unit 1/2 anywhere but inside the helper is the
     # same hazard spelled around it (a NULL unbind reads through the pointer).
     tb_range = line_range(text, body_span(text, "bindTexUnit"))
