@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Drawing;
 using System.Numerics;
+using System.Reflection;
 using System.Text;
 using Mdk.Formats;
 using Mdk.Game.Fall;
@@ -36,6 +38,17 @@ using Mdk.Game.Kurt;
 // bits. The run stops at the end of the fall, and the last lines are the carry (health and
 // pickups) and the level's inventory after it was carried in.
 //
+// VIEW MODE (`view` in place of `full`, package #17b): the same fall, but each step prints what
+// the C#'s FallScreen.Frame and FallView.Draw make of the sim instead of the sim itself -- the
+// palette's effects (FallPalette.Set, its applied tuple and an FNV-1a of the palette when it
+// changes), the intro's progress, the ground (FallGround.CentreRow, UpdateTrack with a hash of the
+// track rows it wrote, Visible and Crawler on the 3DS's 600-wide view), the haze's alphas for the
+// wind level, the models drawn (Kurt's animation and frame, Bones, each missile's Orient matrix,
+// each pickup's yaw and chute, each explosion's frame and scale), the radar's four rings
+// (FallView.RadarRing) and the effects' fills. Its output is golden/L*_fallview_*.txt; the C++ twin
+// is `tick1 dump fallview ...` (skydive_dump.cpp, fallViewDump). Orient and HazeBlend are private
+// to FallView and read here by reflection, so the probe computes nothing the view does not.
+//
 // HOW IT WAS BUILT AND RUN (2026-11-20, .NET SDK 10.0.404): as tests/scripts/fire_probe -- copy
 // src/Mdk.Formats, src/Mdk.Engine, src/Mdk.Game and Directory.Build.props into a scratch tree
 // with this directory beside src/; in the scratch Mdk.Engine.csproj drop the shader targets and
@@ -51,6 +64,7 @@ var steps = int.Parse(args[3]);
 var delta = float.Parse(args[4]);
 var schedule = args[5];
 var fullMode = args.Length > 6 && args[6] == "full";
+var viewMode = args.Length > 6 && args[6] == "view";
 
 var data = MdkData.Find() ?? throw new Exception("no data");
 // FallScreen: the falls are those of the level indices 0-4 (LEVEL5 has none: it clamps to 4).
@@ -66,6 +80,14 @@ FallSim.Animation Animation(string name)
 var setup = new FallSim.Setup(index, difficulty, Fall3d.Pickups(bni, $"FALLPU_{n}"),
     Animation("KURTANIM"), Animation("KURT_HIT"), Animation("BONESANM"));
 var sim = new FallSim(setup, new Random(seed));
+// The view's parts (view mode): FALLPn's effects, the ground of FALL3D_n.MTI, FallView's privates.
+var mti = TextureArchive.Load(data.PathOf($"FALL3D/FALL3D_{n}.MTI"));
+var effects = new FallPalette(Palette.FromRgb(bni.Bytes.AsSpan(bni.Entries[$"FALLP{n}"].Offset, Palette.Size * 3)).Rgba);
+var ground = new FallGround(mti.Textures[$"LEVEL{n}"], mti.Textures[$"POD{n}"]);
+var trackRowField = typeof(FallGround).GetField("_trackRow", BindingFlags.NonPublic | BindingFlags.Instance)!;
+var orientMethod = typeof(FallView).GetMethod("Orient", BindingFlags.NonPublic | BindingFlags.Static)!;
+var hazeBlend = (int[])typeof(FallView).GetField("HazeBlend", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+const float ViewWidth = 600f;
 var events = new List<string>();
 sim.Sound += name => events.Add(name);
 sim.Message += name => events.Add("msg:" + name);
@@ -242,6 +264,12 @@ for (var s = 1; s <= steps && sim.State == FallSim.Outcome.Running; s++)
     H((uint)inv.SelectedAmmo);
     H((uint)inv.SuperChainGun);
 
+    if (viewMode)
+    {
+        Console.WriteLine(View(s));
+        continue;
+    }
+
     var sb = new StringBuilder();
     sb.Append($"s={s} st={(int)sim.State} tk={sim.Ticks} hp={sim.Health} m={sim.Missiles.Count} p={sim.Pickups.Count} e={sim.Explosions.Count} c={sim.Collected.Count} ev={(events.Count == 0 ? "-" : string.Join(";", events))} h={hash:X8}");
     Console.WriteLine(sb.ToString());
@@ -268,6 +296,142 @@ for (var s = 1; s <= steps && sim.State == FallSim.Outcome.Running; s++)
 
         Console.WriteLine($"  collected={(sim.Collected.Count == 0 ? "-" : string.Join(",", sim.Collected))} inv={Inv(inv)}");
     }
+}
+
+string View(int s)
+{
+    static string R(RectangleF r) => $"{B(r.X)},{B(r.Y)},{B(r.Width)},{B(r.Height)}";
+    uint Fnv(byte[] bytes, int from, int count)
+    {
+        var v = 2166136261u;
+        for (var i = from; i < from + count; i++)
+        {
+            v ^= bytes[i];
+            v *= 16777619u;
+        }
+
+        return v;
+    }
+
+    var line = new StringBuilder();
+    // FallView.SetEffects.
+    var brightness = sim.InIntro ? 1f : sim.Whiten;
+    var zero = sim.Time < 1f ? FallPalette.Zero.Whitened : FallPalette.Zero.Kept;
+    var changed = effects.Set(brightness, sim.Red, zero);
+    line.Append($"v s={s} pal={FallPalette.Level(brightness)}:{(int)MathF.Round(sim.Red * byte.MaxValue)}:{(int)zero}");
+    if (changed)
+    {
+        line.Append($":{Fnv(effects.Rgba, 0, effects.Rgba.Length):X8}");
+    }
+
+    var c0 = effects.Colour(0);
+    line.Append($" back={B(c0.X)},{B(c0.Y)},{B(c0.Z)}");
+    var camera = sim.CameraPosition;
+    if (sim.InIntro)
+    {
+        line.Append($" intro={B(1f - sim.IntroLeft / (float)FallSim.IntroTicks)}");
+    }
+    else
+    {
+        // FallView.QueueGround.
+        var centreRow = FallGround.CentreRow(sim.Time);
+        var oldRow = (int)trackRowField.GetValue(ground)!;
+        var track = ground.UpdateTrack(centreRow);
+        var row = (int)trackRowField.GetValue(ground)!;
+        line.Append($" row={B(centreRow)} track={row}");
+        if (track)
+        {
+            var hash = 2166136261u;
+            for (var y = row; y < Math.Min(oldRow + 24, FallGround.Size); y++)
+            {
+                var h = Fnv(ground.Indices, y * FallGround.Size + 512 - 32, 64);
+                hash = (hash ^ h) * 16777619u;
+            }
+
+            line.Append($":{hash:X8}");
+        }
+
+        var (screen, texels) = FallGround.Visible(camera, centreRow, ViewWidth);
+        line.Append($" vis={R(screen)}/{R(texels)}");
+        var (centre, scale) = FallGround.Crawler(camera, ViewWidth);
+        line.Append($" crawler={B(centre.X)},{B(centre.Y)},{B(scale)}:{(int)sim.CrawlerFrame % FallSim.CrawlerFrames}");
+        var level = sim.Wind >> FallSim.WindShift;
+        line.Append(" haze=").Append(sim.HazeFrame);
+        for (var b = 1; b <= 8; b++)
+        {
+            var alpha = hazeBlend[Math.Clamp(level + b, 1, hazeBlend.Length) - 1] / 256f;
+            if (alpha > 0f)
+            {
+                line.Append($",{b}:{B(alpha)}");
+            }
+        }
+    }
+
+    // FallView.QueueModels.
+    if (sim.KurtVisible)
+    {
+        line.Append($" kurt={(sim.KurtPose == FallSim.KurtAnimation.Hit ? "KURT_HIT" : "KURTANIM")}:{(int)sim.KurtFrame}");
+    }
+
+    if (sim.BonesPosition is { } bonesAt)
+    {
+        line.Append($" bones={(int)sim.BonesFrame}");
+    }
+
+    foreach (var missile in sim.Missiles)
+    {
+        if (FallView.NearCamera(missile.Position, camera))
+        {
+            line.Append(" m=near");
+            continue;
+        }
+
+        var m = (Matrix4x4)orientMethod.Invoke(null, [missile.Velocity])!;
+        line.Append($" m={B(m.M11)},{B(m.M12)},{B(m.M13)},{B(m.M21)},{B(m.M22)},{B(m.M23)},{B(m.M31)},{B(m.M32)},{B(m.M33)}");
+    }
+
+    foreach (var pickup in sim.Pickups)
+    {
+        if (FallView.NearCamera(pickup.Position, camera))
+        {
+            line.Append(" p=near");
+            continue;
+        }
+
+        var chute = pickup.Position + new Vector3(0f, 0f, 2f);
+        line.Append($" p={pickup.Name}:{B(float.DegreesToRadians(pickup.Yaw))}:{(pickup.Chute && !FallView.NearCamera(chute, camera) ? 1 : 0)}");
+    }
+
+    foreach (var explosion in sim.Explosions)
+    {
+        var frame = (int)explosion.Ticks;
+        line.Append($" e={frame}:{B(MathF.Max(2f * frame / FallSim.ExplosionTicks, 0.01f))}");
+    }
+
+    // FallView.QueueRadar.
+    if (sim.RadarActive)
+    {
+        var basePoint = new Vector3(-4f * camera.X, -4f * camera.Y, 0f);
+        line.Append(" radar");
+        for (var k = 0; k < 4; k++)
+        {
+            var (ringCentre, radius) = FallView.RadarRing(basePoint, sim.RadarSpot, sim.RadarSpotRadius, k);
+            line.Append($"={V3(ringCentre)}:{B(radius)}");
+        }
+    }
+
+    // FallView.DrawEffects.
+    if (sim.InIntro && sim.Whiten < 1f)
+    {
+        line.Append($" white={B(1f - sim.Whiten)}");
+    }
+
+    if (sim.Dark < 1f)
+    {
+        line.Append($" dark={B(1f - sim.Dark)}");
+    }
+
+    return line.ToString();
 }
 
 // FallScreen.Next: Landed carries the health and the pickups into the level; GameOver goes to

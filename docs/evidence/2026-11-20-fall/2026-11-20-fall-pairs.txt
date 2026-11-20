@@ -1,0 +1,9 @@
+frame pairs: the fall before LEVEL7 (package #17b), left the C# oracle, right the Linux port; downscaled to 320x240 each for the record
+oracle: mdk_sdl --hidden --original --gpu=vulkan --mute --size=1280x960 --fall=7 --screenshot=.. --wait=<s> (lavapipe, DISPLAY :99); its fall is seeded from the clock (FallScreen's `new Random()`)
+port:   build-linux/mdk --headless --fixed-step --seed 1 --size=1280x960 --fall=7 --capture-frame=<n>
+measured at 1280x960 (tests/frames/compare_frames.py --measure: bad_percent max_delta mean_delta):
+  intro-pair          C# --wait=2    vs port frame 120: 0.000 0 0.0000 (byte-identical: space, the moon and the earth rising)
+  whiten-pair         C# --wait=5.08 vs port frame 305: 67.923 21 0.2768 (0.08 s into the fall, k=21: the palette's whitening drawn as a fill; every probed pixel within 1 of the C#'s)
+  radar-message-pair  C# --wait=5.5  vs port frame 330: 81.153 128 0.6749 (0.5 s in: "Avoid the RADAR!", half whitened; the remaining delta is the C#'s clock-seeded random and the frame's time)
+desktop-vs-lean: port frame 1000 of the same fall, left the desktop's way (the C#'s), right --fall-lean (the 3DS's: the track over the ground, the haze, radar and trails on the canvas)
+carried-into-level7: --fall=7 --fall-chase, frame 2400: LEVEL7 entered at the fall's health (67) with the super chain gun it took (the HUD's 200) and 16 homing missiles

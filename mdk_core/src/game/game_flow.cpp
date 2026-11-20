@@ -163,6 +163,10 @@ Screen GameFlow::skipUnported(SkipTrail* trail) {
         if (skipped == Screen::Briefing) {
             break;
         }
+        // The Fall is shown since package #17b (fall/fall_screen.h); its arm stays.
+        if (skipped == Screen::Fall) {
+            break;
+        }
         const Event next = skipScreen();
         if (next == Event::None) {
             break;
@@ -256,9 +260,9 @@ Screen GameFlow::play() {
     // Fall screen would be the other. With no carry the fresh result stays at
     // kFullHealth, which is what a viewer that has taken no damage reports.
     //
-    // The carry's PICKUPS are not collected here: the inventory is cut with the
-    // rest of the pickup subsystem (game_state.h), so the health is the half of
-    // CarryFromFall this port can honour and the pickups are the half it cannot.
+    // The carry's PICKUPS go to the level's Kurt too since package #17b: the
+    // carry is kept whole as levelCarry() for the frontend's
+    // fall::carryIntoLevel (Viewer.CarryFromFall: the pickups, then the health).
     // C# Play's --save (Game.cs:488-491): the first level's light save, made as
     // it starts.
     if (firstLevel_ && !options_.save.empty() &&
@@ -269,8 +273,11 @@ Screen GameFlow::play() {
         say(line);
     }
     level_ = LevelResult();
+    levelCarry_ = FallCarry();
+    levelCarry_.health = kFullHealth;
     if (state_.hasCarry) {
         level_.health = state_.carry.health;
+        levelCarry_ = state_.carry;
         state_.carry = FallCarry();
         state_.hasCarry = false;
     }

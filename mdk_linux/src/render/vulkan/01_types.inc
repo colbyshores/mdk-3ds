@@ -356,6 +356,8 @@ struct RendererVk {
         int32_t palette = -1;
         int32_t frameCount = 1;
         float colour[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        // mdk::Blend: the C#'s AddRect is an Overlay quad with Blend.Add.
+        int32_t blend = 0;
     };
     std::vector<CanvasRecord> canvasRecords;
     std::vector<PipelineVk> pipelines;

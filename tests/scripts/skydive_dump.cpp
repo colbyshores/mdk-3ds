@@ -12,10 +12,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <memory>
 #include <vector>
 
+#include "fall/fall_ground.h"
+#include "fall/fall_layout.h"
+#include "fall/fall_palette.h"
 #include "fall/fall_sim.h"
 #include "formats/bni.h"
+#include "formats/palette.h"
+#include "formats/texture_archive.h"
 #include "game/kurt.h"
 
 namespace mdk {
@@ -171,11 +177,161 @@ struct Hash {
     }
 };
 
-}  // namespace
+uint32_t fnv(const uint8_t* bytes, size_t count) {
+    uint32_t v = 2166136261u;
+    for (size_t i = 0; i < count; i++) {
+        v ^= bytes[i];
+        v *= 16777619u;
+    }
+    return v;
+}
 
-bool skydiveDump(int level, int difficulty, int seed, int steps, const std::string& deltaText,
-                 const std::string& schedule, bool full, const formats::MdkData& data, std::string* out,
-                 std::string* why) {
+std::string rect(const fall::FallRect& r) {
+    return hexOf(r.x) + "," + hexOf(r.y) + "," + hexOf(r.width) + "," + hexOf(r.height);
+}
+
+// The view's parts the probe's view mode builds: FALLPn's effects and the ground.
+struct ViewParts {
+    formats::TextureArchive mti;
+    std::unique_ptr<fall::FallPalette> effects;
+    fall::FallGround ground;
+};
+
+bool loadView(const formats::Bni& bni, int32_t index, const formats::MdkData& data, ViewParts* parts,
+              std::string* why) {
+    const int n = index + 1;
+    std::vector<uint8_t> bytes;
+    const std::string path = format("FALL3D/FALL3D_%d.MTI", n);
+    if (!data.read(path, &bytes)) {
+        *why = path + " did not load";
+        return false;
+    }
+    parts->mti = formats::TextureArchive::parse(bytes.data(), (int32_t)bytes.size(), formats::TextureArchive::kFileBase,
+                                                formats::TextureArchive::kHeader,
+                                                formats::TextureArchive::Names::AsStored,
+                                                formats::TextureArchive::Zero::SeeThrough);
+    const formats::ArchiveIndex::Entry* entry = bni.index().find(format("FALLP%d", n));
+    const formats::Texture* ground = parts->mti.findTexture(format("LEVEL%d", n));
+    const formats::Texture* pod = parts->mti.findTexture(format("POD%d", n));
+    if (entry == nullptr || ground == nullptr || pod == nullptr || !parts->ground.load(*ground, *pod, true)) {
+        *why = "the fall's palette or ground did not load";
+        return false;
+    }
+    const formats::Palette palette =
+        formats::Palette::fromRgb(bni.bytes().data() + entry->offset, formats::Palette::kSize * 3);
+    parts->effects.reset(new fall::FallPalette(palette.rgba()));
+    return true;
+}
+
+// The probe's View(s): FallView.SetEffects, QueueGround, QueueModels, QueueRadar and
+// DrawEffects' inputs, on a 600-wide view.
+std::string viewLine(int s, const FallSim& sim, ViewParts* parts) {
+    const float viewWidth = 600.0f;
+    std::string line;
+    const float brightness = sim.inIntro() ? 1.0f : sim.whiten();
+    const fall::FallPalette::Zero zero = sim.time() < 1.0f ? fall::FallPalette::Whitened : fall::FallPalette::Kept;
+    const bool changed = parts->effects->set(brightness, sim.red(), zero);
+    line += format("v s=%d pal=%d:%d:%d", s, (int)fall::FallPalette::level(brightness),
+                   (int)rintf(sim.red() * 255.0f), (int)zero);
+    if (changed) {
+        line += format(":%08X", (unsigned)fnv(parts->effects->rgba(), 256 * 4));
+    }
+    const Colour c0 = parts->effects->colour(0);
+    line += format(" back=%s,%s,%s", hexOf(c0.r).c_str(), hexOf(c0.g).c_str(), hexOf(c0.b).c_str());
+    const Vec3f camera = sim.cameraPosition();
+    if (sim.inIntro()) {
+        line += format(" intro=%s", hexOf(1.0f - (float)sim.introLeft() / (float)FallSim::kIntroTicks).c_str());
+    } else {
+        const float centreRow = fall::FallGround::centreRow(sim.time());
+        const int32_t oldRow = parts->ground.trackRow();
+        const bool track = parts->ground.updateTrack(centreRow);
+        const int32_t row = parts->ground.trackRow();
+        line += format(" row=%s track=%d", hexOf(centreRow).c_str(), (int)row);
+        if (track) {
+            uint32_t hash = 2166136261u;
+            const int32_t end = oldRow + 24 < fall::FallGround::kSize ? oldRow + 24 : fall::FallGround::kSize;
+            for (int32_t y = row; y < end; y++) {
+                const uint32_t h = fnv(parts->ground.indices().data() + (size_t)y * fall::FallGround::kSize + 512 - 32, 64);
+                hash = (hash ^ h) * 16777619u;
+            }
+            line += format(":%08X", (unsigned)hash);
+        }
+        fall::FallRect screen;
+        fall::FallRect texels;
+        fall::FallGround::visible(camera, centreRow, viewWidth, &screen, &texels);
+        line += " vis=" + rect(screen) + "/" + rect(texels);
+        float x = 0.0f;
+        float y = 0.0f;
+        float scale = 0.0f;
+        fall::FallGround::crawler(camera, viewWidth, &x, &y, &scale);
+        line += format(" crawler=%s,%s,%s:%d", hexOf(x).c_str(), hexOf(y).c_str(), hexOf(scale).c_str(),
+                       (int)sim.crawlerFrame() % FallSim::kCrawlerFrames);
+        const int32_t level = sim.wind() >> FallSim::kWindShift;
+        line += format(" haze=%d", (int)sim.hazeFrame());
+        for (int32_t b = 1; b <= fall::kHazeLevels; b++) {
+            const float alpha = fall::hazeAlpha(level, b);
+            if (alpha > 0.0f) {
+                line += format(",%d:%s", (int)b, hexOf(alpha).c_str());
+            }
+        }
+    }
+
+    if (sim.kurtVisible()) {
+        line += format(" kurt=%s:%d", sim.kurtPose() == FallSim::AnimHit ? "KURT_HIT" : "KURTANIM",
+                       (int)sim.kurtFrame());
+    }
+    if (sim.hasBones()) {
+        line += format(" bones=%d", (int)sim.bonesFrame());
+    }
+    for (size_t i = 0; i < sim.missiles().size(); i++) {
+        const fall::FallMissile& missile = sim.missiles()[i];
+        if (fall::nearCamera(missile.position, camera)) {
+            line += " m=near";
+            continue;
+        }
+        const Mat4 m = fall::orient(missile.velocity);
+        line += format(" m=%s,%s,%s,%s,%s,%s,%s,%s,%s", hexOf(m.m[0]).c_str(), hexOf(m.m[1]).c_str(),
+                       hexOf(m.m[2]).c_str(), hexOf(m.m[4]).c_str(), hexOf(m.m[5]).c_str(), hexOf(m.m[6]).c_str(),
+                       hexOf(m.m[8]).c_str(), hexOf(m.m[9]).c_str(), hexOf(m.m[10]).c_str());
+    }
+    for (size_t i = 0; i < sim.pickups().size(); i++) {
+        const FallSim::Pickup& pickup = sim.pickups()[i];
+        if (fall::nearCamera(pickup.position, camera)) {
+            line += " p=near";
+            continue;
+        }
+        Vec3f chute = pickup.position;
+        chute.z += fall::kChuteAbove;
+        line += format(" p=%s:%s:%d", pickup.name.c_str(), hexOf(fall::degreesToRadians(pickup.yaw)).c_str(),
+                       pickup.chute && !fall::nearCamera(chute, camera) ? 1 : 0);
+    }
+    for (size_t i = 0; i < sim.explosions().size(); i++) {
+        const int32_t frame = (int32_t)sim.explosions()[i].ticks;
+        line += format(" e=%d:%s", (int)frame, hexOf(fall::explosionScale(frame)).c_str());
+    }
+    if (sim.radarActive()) {
+        Vec3f basePoint;
+        basePoint.x = -4.0f * camera.x;
+        basePoint.y = -4.0f * camera.y;
+        line += " radar";
+        for (int32_t k = 0; k < fall::kRadarRings; k++) {
+            Vec3f centre;
+            float radius = 0.0f;
+            fall::radarRing(basePoint, sim.radarSpot(), sim.radarSpotRadius(), k, &centre, &radius);
+            line += format("=%s:%s", v3(centre).c_str(), hexOf(radius).c_str());
+        }
+    }
+    if (sim.inIntro() && sim.whiten() < 1.0f) {
+        line += format(" white=%s", hexOf(1.0f - sim.whiten()).c_str());
+    }
+    if (sim.dark() < 1.0f) {
+        line += format(" dark=%s", hexOf(1.0f - sim.dark()).c_str());
+    }
+    return line + "\n";
+}
+
+bool run(int level, int difficulty, int seed, int steps, const std::string& deltaText, const std::string& schedule,
+         bool full, bool view, const formats::MdkData& data, std::string* out, std::string* why) {
     std::vector<Hold> plan;
     if (!parseSchedule(schedule, &plan, why)) {
         return false;
@@ -195,6 +351,10 @@ bool skydiveDump(int level, int difficulty, int seed, int steps, const std::stri
     }
 
     FallSim sim(setup, seed);
+    ViewParts parts;
+    if (view && !loadView(bni, setup.index, data, &parts, why)) {
+        return false;
+    }
     std::vector<std::string> events;
     FallSim::Hooks hooks;
     hooks.context = &events;
@@ -234,6 +394,10 @@ bool skydiveDump(int level, int difficulty, int seed, int steps, const std::stri
         }
 
         sim.update(delta, input);
+        if (view) {
+            o += viewLine(s, sim, &parts);
+            continue;
+        }
 
         Hash h;
         h.word((uint32_t)sim.state());
@@ -359,6 +523,19 @@ bool skydiveDump(int level, int difficulty, int seed, int steps, const std::stri
         o += "carry none\n";
     }
     return true;
+}
+
+}  // namespace
+
+bool skydiveDump(int level, int difficulty, int seed, int steps, const std::string& deltaText,
+                 const std::string& schedule, bool full, const formats::MdkData& data, std::string* out,
+                 std::string* why) {
+    return run(level, difficulty, seed, steps, deltaText, schedule, full, false, data, out, why);
+}
+
+bool fallViewDump(int level, int difficulty, int seed, int steps, const std::string& deltaText,
+                  const std::string& schedule, const formats::MdkData& data, std::string* out, std::string* why) {
+    return run(level, difficulty, seed, steps, deltaText, schedule, false, true, data, out, why);
 }
 
 }  // namespace test

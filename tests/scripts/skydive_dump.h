@@ -16,5 +16,12 @@ bool skydiveDump(int level, int difficulty, int seed, int steps, const std::stri
                  const std::string& schedule, bool full, const formats::MdkData& data, std::string* out,
                  std::string* why);
 
+// The same fall in the probe's `view` mode (package #17b): each step what the C#'s
+// FallView makes of the sim (fall_palette.h, fall_ground.h, fall_layout.h), against
+// golden/L*_fallview_*.txt.
+bool fallViewDump(int level, int difficulty, int seed, int steps, const std::string& delta,
+                  const std::string& schedule, const formats::MdkData& data, std::string* out,
+                  std::string* why);
+
 }  // namespace test
 }  // namespace mdk

@@ -142,6 +142,15 @@ $(error LEVEL=$(LEVEL) needs AUTOQUIT: the level override is a harness-build fea
 endif
 DEFINES += -DMDK_HW_LEVEL=$(LEVEL)
 endif
+# `make AUTOQUIT=90 FALL=<3..8>` starts the run in the fall before that level, then
+# the level (the C#'s --fall; package #17b). Only main_3ds.cpp reads it: touch it
+# after changing FALL. FIXED=1 seeds the fall with 1 (the Linux --fixed-step's).
+ifneq ($(strip $(FALL)),)
+ifndef AUTOQUIT
+$(error FALL=$(FALL) needs AUTOQUIT: the fall start is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_FALL=$(FALL)
+endif
 # `make AUTOQUIT=90 AT=x,y,z,yaw` puts Kurt there instead of at the level's start
 # (the Linux build's and the oracle's --at): a scene past the start arena, for the
 # arena-streaming comparisons. All four numbers. Only main_3ds.cpp reads it: touch

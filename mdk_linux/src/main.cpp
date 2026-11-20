@@ -44,6 +44,7 @@
 #include "game/cutscene_camera.h"
 #include "game/strike_view.h"
 #include "game/follow_camera.h"
+#include "fall/fall_sim.h"
 #include "game/game_flow.h"
 #include "game/game_settings.h"
 #include "game/cheats.h"
@@ -391,6 +392,18 @@ int main(int argc, char** argv) {
     // Without it the run starts at the main menu (the C#'s Start.Menu, package
     // #20a), so every test and harness run that passes --level is unchanged.
     bool levelGiven = false;
+    // --fall=N: the fall before level N, then the level (the C#'s --fall, Start.Fall;
+    // package #17b). --fall-lean draws it the 3DS's way (fall/fall_view.h).
+    bool fallGiven = false;
+    bool fallLean = false;
+    // --skip-falls: every fall skipped the C#'s Esc way before its first frame (a
+    // test aid, as --event-every-level: the level chain and the menu tests time
+    // their frames without the 38-second fall).
+    bool skipFalls = false;
+    // --fall-chase: the fall steers itself onto the first pickup under its chute
+    // (the fall probe's `chase` schedule; a test aid, so a headless run carries
+    // pickups into the level).
+    bool fallChase = false;
     // --press: menu keys at game times (the C#'s TestPresses, game/menu_presses.h).
     mdk::MenuPresses presses;
     // --stream=N / --health=N (package #18b): start in the stream after level N.
@@ -544,6 +557,21 @@ int main(int argc, char** argv) {
                 return 1;
             }
             levelGiven = true;
+        } else if ((value = optionValue(argv[i], "--fall")) != nullptr) {
+            if (!positiveCount("--fall", value, &levelNumber)) {
+                return 1;
+            }
+            if (levelNumber < 3 || levelNumber > 8) {
+                std::fprintf(stderr, "[main] --fall must be 3-8\n");
+                return 1;
+            }
+            fallGiven = true;
+        } else if (std::strcmp(argv[i], "--fall-lean") == 0) {
+            fallLean = true;
+        } else if (std::strcmp(argv[i], "--skip-falls") == 0) {
+            skipFalls = true;
+        } else if (std::strcmp(argv[i], "--fall-chase") == 0) {
+            fallChase = true;
         } else if ((value = optionValue(argv[i], "--press")) != nullptr) {
             std::string error;
             if (!presses.parse(value, &error)) {
@@ -912,11 +940,14 @@ int main(int argc, char** argv) {
     // menu without it (Start::Menu, package #20a).
     // ---------------------------------------------------------------------
     mdk::flow::FlowOptions flowOptions;
-    flowOptions.start = startStream ? mdk::flow::Start::Stream
-                        : (levelGiven ? mdk::flow::Start::Level : mdk::flow::Start::Menu);
-    // Without --level (or --stream) the C#'s default first level (ViewerOptions, the
-    // order's first: LEVEL7), which is where the menu's "Level: 1" starts.
-    if (levelGiven || startStream) {
+    flowOptions.start = fallGiven     ? mdk::flow::Start::Fall
+                        : startStream ? mdk::flow::Start::Stream
+                        : levelGiven  ? mdk::flow::Start::Level
+                                      : mdk::flow::Start::Menu;
+    // Without --level (or --stream, --fall) the C#'s default first level
+    // (ViewerOptions, the order's first: LEVEL7), which is where the menu's "Level: 1"
+    // starts.
+    if (levelGiven || startStream || fallGiven) {
         flowOptions.level = levelNumber;
     }
     flowOptions.load = loadName;
@@ -952,10 +983,11 @@ int main(int argc, char** argv) {
     mdk::flow::Screen screen = flow.handle(flow.firstEvent());
     printFlowReport();
     // --load of a before-level save starts at its briefing (the menus' screens);
-    // --stream=N starts in the stream (package #18b).
+    // --stream=N starts in the stream (package #18b), --fall=N in the fall (#17b).
     if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
-        screen != mdk::flow::Screen::Briefing && screen != mdk::flow::Screen::Stream) {
-        std::fprintf(stderr, "[main] the flow did not start in a level, the menu, the briefing or the stream\n");
+        screen != mdk::flow::Screen::Briefing && screen != mdk::flow::Screen::Stream &&
+        screen != mdk::flow::Screen::Fall) {
+        std::fprintf(stderr, "[main] the flow did not start in a level, the menu, the briefing, the stream or the fall\n");
         mdk_render_destroy(renderer);
         mdk::audioClose();
         mdk::windowDestroy(&window);
@@ -978,6 +1010,11 @@ int main(int argc, char** argv) {
     front.maxFrames = maxFrames;
     front.captureFrame = captureFrame;
     front.capturePath = capturePath.empty() ? nullptr : capturePath.c_str();
+    front.fallLean = fallLean;
+    front.skipFalls = skipFalls;
+    front.fallChase = fallChase;
+    front.fallSeedSet = scriptSeedSet || fixedStep;
+    front.fallSeed = scriptSeedSet ? scriptSeed : 1;
     // THE PAUSE MENU (C# PauseMenu: Esc in a level). It outlives the levels; its
     // options change `settings` and save them, and the volumes reach the live
     // mixer at once (C# Settings.Apply), through `pauseDevice`.
@@ -1003,7 +1040,7 @@ int main(int argc, char** argv) {
     printMemory("run-start", levelNumber, memorySample(renderer));
     // A run that starts at the menu hands no test option to a level (C#
     // Handle(Menu) clears _firstLevel before any level is played).
-    if (screen == mdk::flow::Screen::Menu) {
+    if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall) {
         firstLevel = false;
     }
 
@@ -1089,6 +1126,12 @@ int main(int argc, char** argv) {
                         mdk::flow::GameFlow::screenName(trail.skipped[i]),
                         (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
         }
+        if (after == mdk::flow::Screen::Fall && skipFalls) {
+            // --skip-falls (package #17b): the next level's fall skipped the C#'s Esc way,
+            // as the level-end hook below does.
+            std::printf("[main] flow: skipped Fall (--skip-falls)\n");
+            after = flow.handle(flow.skipScreen());
+        }
         if (after == mdk::flow::Screen::Level && replayLevel && !firstLevel) {
             std::printf("[main] flow: --replay-level: level %d again instead of %d\n",
                         (int)streamLevel, (int)flow.state().level);
@@ -1098,9 +1141,12 @@ int main(int argc, char** argv) {
         if (after == mdk::flow::Screen::Level) {
             std::printf("[main] flow: next level %d at frame %u, entered at health %d\n",
                         (int)flow.state().level, frame, (int)flow.levelHealth());
-        } else if (after == mdk::flow::Screen::Menu) {
-            // Kurt died in the Gunter stream: the main menu (package #20a), below.
-            std::printf("[main] flow: the menu follows\n");
+        } else if (after == mdk::flow::Screen::Menu || after == mdk::flow::Screen::Fall) {
+            // Kurt died in the Gunter stream: the main menu (package #20a), below. Or
+            // the next level's fall (#17b, after the statistics): the front screens
+            // show it, then the level.
+            std::printf("[main] flow: the %s follows\n",
+                        after == mdk::flow::Screen::Fall ? "fall" : "menu");
         } else {
             std::printf("[main] flow: %s follows, which this frontend cannot show; exiting\n",
                         mdk::flow::GameFlow::screenName(after));
@@ -1499,6 +1545,9 @@ int main(int argc, char** argv) {
     // LEVEL5 (GameFlow::levelHealth, Viewer.CarryFromFall). The level's first spawn
     // takes it; a respawn after a death is a fresh Kurt.
     const int32_t entryHealth = flow.levelHealth();
+    // ...and the pickups the fall carried (package #17b, Viewer.CarryFromFall: the
+    // pickups taken again, then the health; fall::carryIntoLevel).
+    const mdk::flow::FallCarry entryCarry = flow.levelCarry();
     bool firstSpawn = true;
     auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
@@ -1507,7 +1556,26 @@ int main(int argc, char** argv) {
         // `_kurt.Inventory.Difficulty = ui.Settings.Difficulty`).
         player.combat().setDifficulty((mdk::Kurt::Difficulty)settings.difficulty);
         if (firstSpawn) {
-            player.setHealth(entryHealth);
+            mdk::fall::carryIntoLevel(entryCarry, &player.combat());
+            if (!entryCarry.pickups.empty()) {
+                std::string slots;
+                const mdk::Kurt& kurt = player.combat();
+                for (int32_t s = 0; s < kurt.slotCount(); s++) {
+                    char slot[24];
+                    std::snprintf(slot, sizeof(slot), "%s%d:%d", s == 0 ? "" : ";",
+                                  (int)kurt.slots()[s].item, (int)kurt.slots()[s].count);
+                    slots += slot;
+                }
+                std::string names;
+                for (size_t p = 0; p < entryCarry.pickups.size(); p++) {
+                    names += (p == 0 ? "" : ",") + entryCarry.pickups[p];
+                }
+                std::printf("[main] level: the fall's carry: health %d, pickups %s; inventory "
+                            "slots %s ammo %d:%d:%d:%d:%d sgun %d\n",
+                            (int)entryHealth, names.c_str(), slots.empty() ? "-" : slots.c_str(),
+                            (int)kurt.ammo(1), (int)kurt.ammo(2), (int)kurt.ammo(3),
+                            (int)kurt.ammo(4), (int)kurt.ammo(5), (int)kurt.superChainGun());
+            }
             firstSpawn = false;
         }
         // --at is a test option, so the first level's alone (Game.cs:487).
@@ -2713,6 +2781,12 @@ int main(int argc, char** argv) {
                             mdk::flow::GameFlow::screenName(trail.skipped[i]),
                             (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
             }
+            if (after == mdk::flow::Screen::Fall && skipFalls) {
+                // --skip-falls: the fall skipped here, the C#'s Esc way, so the run
+                // goes on to the level exactly as it did before package #17b.
+                std::printf("[main] flow: skipped Fall (--skip-falls)\n");
+                after = flow.handle(flow.skipScreen());
+            }
             if (after == mdk::flow::Screen::Level && replayLevel) {
                 std::printf("[main] flow: --replay-level: level %d again instead of %d\n",
                             levelNumber, (int)flow.state().level);
@@ -2722,10 +2796,12 @@ int main(int argc, char** argv) {
                 nextLevel = true;
                 std::printf("[main] flow: next level %d at frame %u, entered at health %d\n",
                             (int)flow.state().level, frame, (int)flow.levelHealth());
-            } else if (after == mdk::flow::Screen::Menu) {
+            } else if (after == mdk::flow::Screen::Menu || after == mdk::flow::Screen::Fall) {
                 // The main menu follows (package #20a): after LEVEL5, a game over, a
-                // level outside the order.
-                std::printf("[main] flow: the menu follows\n");
+                // level outside the order. Or the next level's fall (#17b): the
+                // front screens show it, then the level.
+                std::printf("[main] flow: the %s follows\n",
+                            after == mdk::flow::Screen::Fall ? "fall" : "menu");
                 screen = after;
                 toMenu = true;
             } else {

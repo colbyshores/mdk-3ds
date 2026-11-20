@@ -7646,6 +7646,25 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "fallview") {
+            // `tick1 dump fallview <level> <difficulty> <seed> <steps> <delta> <schedule>`: the
+            // fall's view (fall/fall_palette.h, fall_ground.h, fall_layout.h) per step, the C++
+            // side of the fall probe's `view` mode (package #17b).
+            if (argc < 9) {
+                printf("usage: tick1 dump fallview <level> <difficulty> <seed> <steps> <delta> "
+                       "<schedule>\n");
+                return 1;
+            }
+            std::string got;
+            std::string why;
+            if (!mdk::test::fallViewDump(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]), atoi(argv[6]),
+                                         argv[7], argv[8], data, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "fall") {
             std::string got;
             std::string why;
@@ -9405,6 +9424,57 @@ int main(int argc, char** argv) {
             std::string why;
             if (!mdk::test::skydiveDump(c.level, c.difficulty, c.seed, c.steps, c.delta, c.schedule,
                                         false, data, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The fall's VIEW (package #17b: fall/fall_palette.h, fall_ground.h, fall_layout.h)
+    // against the fall probe's `view` mode: per step, what the C#'s FallView makes of
+    // the sim -- the palette's effects, the ground's track and window, the crawler, the
+    // haze's alphas, the models' poses, the missiles' Orient, the radar's rings, the
+    // fills. The arguments are the probe's, byte for byte.
+    {
+        struct FallViewCase {
+            const char* name;
+            const char* path;
+            int level;
+            int difficulty;
+            int seed;
+            int steps;
+            const char* delta;
+            const char* schedule;
+            const char* pass;
+        };
+        static const FallViewCase kFallViewCases[] = {
+            {"L6_fallview_chase", "golden/L6_fallview_chase.txt", 6, 1, 1, 1200, "0.0333333333",
+             "chase:150-1200",
+             "LEVEL6's fall drawn: the intro, the first second's whitening, the track written "
+             "under the crawler, the radar's rings, the missiles' Orient, the pickups' yaw and "
+             "chutes, the explosions, the pull back and the fade"},
+            {"L8_fallview_hard", "golden/L8_fallview_hard.txt", 8, 2, 1, 1200, "0.0333333333",
+             "right:200-260,up:300-340",
+             "LEVEL8's fall drawn on hard: Bones, the hits' flashes, the red of death and the "
+             "skull's palette"},
+        };
+        for (size_t i = 0; i < sizeof(kFallViewCases) / sizeof(kFallViewCases[0]); i++) {
+            const FallViewCase& c = kFallViewCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!mdk::test::fallViewDump(c.level, c.difficulty, c.seed, c.steps, c.delta, c.schedule,
+                                         data, &got, &why)) {
                 printf("FAIL %s: %s\n", c.name, why.c_str());
                 failures++;
             } else if (got == expected) {

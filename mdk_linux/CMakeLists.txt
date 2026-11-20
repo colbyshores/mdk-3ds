@@ -80,8 +80,15 @@ set(SOURCES
 
     # ---- mdk_core: the shared game, compiled into BOTH targets ----
     ${CORE}/src/audio/limiter.cpp
+    ${CORE}/src/fall/fall_ground.cpp
+    ${CORE}/src/fall/fall_hud.cpp
+    ${CORE}/src/fall/fall_layout.cpp
     ${CORE}/src/fall/fall_missile.cpp
+    ${CORE}/src/fall/fall_models.cpp
+    ${CORE}/src/fall/fall_palette.cpp
+    ${CORE}/src/fall/fall_screen.cpp
     ${CORE}/src/fall/fall_sim.cpp
+    ${CORE}/src/fall/fall_view.cpp
     ${CORE}/src/audio/sound.cpp
     ${CORE}/src/audio/sound_bank.cpp
     ${CORE}/src/audio/sound_device.cpp

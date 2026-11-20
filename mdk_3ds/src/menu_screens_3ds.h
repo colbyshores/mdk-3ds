@@ -16,6 +16,14 @@
 // "Really Quit?" on the main page, up a page in the options). The briefing
 // takes any button, B finishes its typing, and Fire or Jump held runs it fast.
 //
+// THE FALL (package #17b, fall/fall_screen.h) is shown here too, after a
+// briefing, after a level's statistics and from a harness FALL=<n>: the circle
+// pad, the D-pad and the movement actions of controls.ini (forward/back,
+// strafe/turn left/right) steer, START skips it (the C#'s Esc; a harness
+// MENU=...Menu.Back@t too). It is drawn the lean way (fall_view.h), its sounds
+// on the DSP path (audio_dsp_3ds.h, opened for its bank and closed before the
+// level opens its own), and everything it made is released when it ends.
+//
 // DRAWN through the canvas and MDKFONT.FTI's FONTBIG/FONTSML -- the fonts the
 // START menu and the HUD already use -- over MDKOPT (the C#'s background when
 // MDK12.FLC is missing; the video is #20c's). On the 400 x 240 top screen the
@@ -60,8 +68,8 @@ struct FrontScreens3ds {
     const char* exitReason = nullptr;
 };
 
-// Runs the Menu and the Briefing (whichever the flow shows) until the flow
-// names a Level (returned) or the run ends (Screen::None: Quit, aptMainLoop,
+// Runs the Menu, the Briefing and the Fall (whichever the flow shows) until the
+// flow names a Level (returned) or the run ends (Screen::None: Quit, aptMainLoop,
 // the harness deadline, the frame budget).
 flow::Screen runFrontScreens3ds(FrontScreens3ds* front);
 

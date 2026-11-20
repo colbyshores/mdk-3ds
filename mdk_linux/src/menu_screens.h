@@ -8,9 +8,13 @@
 // The game starts here unless --level names a level (the C#'s `--level`: the
 // level at once; with no start option the C#'s Start.Menu). The flow decides
 // what follows each screen (game/game_flow.h); the screens this port still
-// lacks after a briefing (the fall, #17b) are skipped the C#'s way
-// (GameFlow::skipUnported), and the function returns when the flow names a
-// level, or when the run ends.
+// lacks are skipped the C#'s way (GameFlow::skipUnported), and the function
+// returns when the flow names a level, or when the run ends.
+//
+// THE FALL (package #17b, fall/fall_screen.h) is shown here too: after a
+// briefing, after a level's statistics, and from --fall=N. The arrow/WASD keys
+// steer (the level's movement keys), Esc skips it; it lands in the level with
+// Kurt's health and pickups (the flow's levelCarry), or ends at the menu.
 //
 // THE SETTINGS FILE is the C#'s: settings.cfg in the user folder
 // ($MDK_USER_DIR, the C#'s override; ./ otherwise, where this frontend's
@@ -64,10 +68,19 @@ struct FrontScreens {
     const char* capturePath = nullptr;
     // Set when the run ends here: why.
     const char* exitReason = nullptr;
+    // The fall: drawn the 3DS's way (--fall-lean), its seed (--seed, or 1 under
+    // --fixed-step; the clock otherwise), and --skip-falls (a test aid: each fall
+    // skipped the C#'s Esc way before its first frame, as before #17b).
+    bool fallLean = false;
+    bool fallSeedSet = false;
+    int32_t fallSeed = 1;
+    bool skipFalls = false;
+    // --fall-chase: steer onto the first pickup under its chute (a test aid).
+    bool fallChase = false;
 };
 
-// Runs the Menu and the Briefing (whichever the flow shows) until the flow
-// names a Level (returned) or the run ends (Screen::None: Quit, the window
+// Runs the Menu, the Briefing and the Fall (whichever the flow shows) until the
+// flow names a Level (returned) or the run ends (Screen::None: Quit, the window
 // closed, the frame budget, the capture taken).
 flow::Screen runFrontScreens(FrontScreens* front);
 

@@ -14,6 +14,9 @@
 #      log must name each skipped screen (Statistics, Fall; after 8's Gunter stream
 #      the save prompt) and each next level -- LEVEL5 entered at the Gunter stream's
 #      end health, 63.
+#      The fall is shown since package #17b; every arm passes --skip-falls (a test
+#      aid: each fall skipped the C#'s Esc way before its first frame), so the
+#      frame numbers below are the ones the stream's package wrote.
 #
 #   2. A CLEAN RELOAD. The frame the chained run draws 111 frames into level 4 must be
 #      BYTE-IDENTICAL to the frame a run started directly in level 4 draws at its own
@@ -65,7 +68,7 @@ bad() {
 run() {
     log=$1
     shift
-    timeout 600 "$BIN" --headless --fixed-step --size=320x240 --seed 1 "$@" >"$log" 2>&1
+    timeout 600 "$BIN" --headless --fixed-step --size=320x240 --seed 1 --skip-falls "$@" >"$log" 2>&1
 }
 
 # has <log> <text>: the log holds this line fragment (grep -F, no pipe).
@@ -83,7 +86,7 @@ for line in \
     "Stream ended after LEVEL3: Survived, health 1, segment 185, 33.7 s" \
     "flow: the stream after level 3 ended (health 1); the flow shows Statistics" \
     "flow: skipped Statistics (package #20 not ported)" \
-    "flow: skipped Fall (package #17 not ported)" \
+    "flow: skipped Fall (--skip-falls)" \
     "flow: next level 4 at frame 2513, entered at health 100" \
     "Stream ended after LEVEL4: Survived, health 1, segment 187, 33.9 s" \
     "flow: next level 8 at frame 5037, entered at health 100" \

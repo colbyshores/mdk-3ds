@@ -78,11 +78,13 @@ run "$LOG2" --press=Menu.Down@0.5,Menu.Down@0.6,Menu.Down@0.7,Menu.Accept@1,Menu
 has "$LOG2" "Menu: Difficulty: Hard | Back" || bad "[options] the second run did not read difficulty=Hard back"
 
 # --- 2. New game: the briefing, the fall skipped, the level; the pause menu -------
+# The fall is shown since package #17b (fall_frontend_test.sh); --skip-falls skips it
+# the C#'s Esc way before its first frame, so the presses keep their times.
 LOG3="$WORK/newgame.log"
-run "$LOG3" --press=Menu.Accept@0.5,Menu.Back@1.2,Menu.Accept@1.4,Menu.Back@4,Menu.Down@4.2,Menu.Down@4.3,Menu.Accept@4.5 --frames 330
+run "$LOG3" --skip-falls --press=Menu.Accept@0.5,Menu.Back@1.2,Menu.Accept@1.4,Menu.Back@4,Menu.Down@4.2,Menu.Down@4.3,Menu.Accept@4.5 --frames 330
 for line in \
     "flow: the briefing of level 7 (L1_MAP)" \
-    "flow: skipped Fall (package #17 not ported)" \
+    "flow: skipped Fall (--skip-falls)" \
     "Menu: Resume | Options | Main menu | Quit" \
     "flow: pause menu: the main menu" \
     "mem[level-teardown]: level 7"; do

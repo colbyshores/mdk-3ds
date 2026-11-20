@@ -51,7 +51,7 @@ void replayCanvas(RendererVk* r) {
         pc.frame = 0;
         pc.unused_ = 0;
 
-        VkPipeline pipeline = getPipeline(r, (int)mdk::Pass::Overlay, (int)mdk::Blend::Alpha, 0);
+        VkPipeline pipeline = getPipeline(r, (int)mdk::Pass::Overlay, rec.blend, 0);
         if (!pipeline) {
             continue;
         }
@@ -88,20 +88,19 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
     const float vs[4] = {q->v0, q->v1, q->v2, q->v3};
     const int order[6] = {0, 1, 2, 0, 2, 3};
 
+    // THE VERTEX COLOUR IS WHITE, as the C#'s canvas vertices are (Renderer.cs
+    // AddQuad: `new Vertex(position, uv)`, Vertex.Colour = White). The quad's
+    // colour is the material's tint alone (the push constant): palette.hlsl
+    // multiplies `colour * input.colour`, so a vertex carrying the tint as well
+    // drew every translucent fill at alpha² and every tinted quad at colour² (the
+    // fall's 0.92 whitening came out 0.84, package #17b, measured against the
+    // C#'s frame).
     mdk::Vertex verts[6];
-    auto pack = [](float c) -> uint32_t {
-        int v = (int)(c * 255.0f + 0.5f);
-        if (v < 0) v = 0;
-        if (v > 255) v = 255;
-        return (uint32_t)v;
-    };
-    const uint32_t packed = pack(q->colour.r) | (pack(q->colour.g) << 8) |
-                            (pack(q->colour.b) << 16) | (pack(q->colour.a) << 24);
     for (int i = 0; i < 6; i++) {
         const int c = order[i];
         verts[i].pos = mdk::Vec3{xs[c], ys[c], 0.0f};
         verts[i].uv = mdk::Vec2{us[c], vs[c]};
-        verts[i].colour = packed;
+        verts[i].colour = mdk::kVertexWhite;
     }
 
     const VkDeviceSize bytes = sizeof(verts);
@@ -139,6 +138,7 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
         rec.colour[1] = q->colour.g;
         rec.colour[2] = q->colour.b;
         rec.colour[3] = q->colour.a;
+        rec.blend = q->additive ? (int)mdk::Blend::Add : (int)mdk::Blend::Alpha;
         r->canvasRecords.push_back(rec);
         r->canvasOffset += bytes;
         return;
@@ -153,7 +153,10 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
         return;
     }
 
-    VkPipeline pipeline = getPipeline(r, (int)mdk::Pass::Overlay, (int)mdk::Blend::Alpha, 0);
+    // The C#'s AddRect (`Blend = Blend.Add`, Renderer.cs:329) adds; every other
+    // canvas quad alpha-blends. The Citro3D canvas reads the same flag.
+    VkPipeline pipeline = getPipeline(r, (int)mdk::Pass::Overlay,
+                                      q->additive ? (int)mdk::Blend::Add : (int)mdk::Blend::Alpha, 0);
     if (!pipeline) {
         return;
     }

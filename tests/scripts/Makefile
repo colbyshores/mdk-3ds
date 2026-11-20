@@ -127,6 +127,9 @@ SOURCES := \
 	save_dump.cpp \
 	$(CORE)/fall/fall_sim.cpp \
 	$(CORE)/fall/fall_missile.cpp \
+	$(CORE)/fall/fall_palette.cpp \
+	$(CORE)/fall/fall_ground.cpp \
+	$(CORE)/fall/fall_layout.cpp \
 	$(CORE)/formats/fall3d.cpp \
 	$(CORE)/game/sniper_overlay.cpp \
 	$(CORE)/game/sniper_view.cpp \
@@ -209,6 +212,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh level_chain_test.sh
 	@sh menu_frontend_test.sh
 	@sh stream_screen_test.sh
+	@sh fall_frontend_test.sh
 	@sh panel_geom_test.sh
 	@bash emurun_harness_test.sh
 	@bash frame_gate_test.sh

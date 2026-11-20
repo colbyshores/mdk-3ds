@@ -692,19 +692,41 @@ void testSkipTrail() {
     expect("LEVEL3 ends to the stream", static_cast<long long>(game.handle(flow::Event::LevelEnded)),
            static_cast<long long>(flow::Screen::Stream));
     flow::GameFlow::SkipTrail trail;
-    expect("skipping through LEVEL3's screens reaches a level",
+    // Since package #17b the frontends SHOW the fall: the walk stops there.
+    expect("skipping through LEVEL3's screens stops at the fall",
            static_cast<long long>(game.skipUnported(&trail)),
-           static_cast<long long>(flow::Screen::Level));
-    expect("three screens skipped", trail.count, 3);
+           static_cast<long long>(flow::Screen::Fall));
+    expect("two screens skipped", trail.count, 2);
     expect("first the stream", static_cast<long long>(trail.skipped[0]),
            static_cast<long long>(flow::Screen::Stream));
     expect("then the statistics", static_cast<long long>(trail.skipped[1]),
            static_cast<long long>(flow::Screen::Statistics));
-    expect("then the fall", static_cast<long long>(trail.skipped[2]),
-           static_cast<long long>(flow::Screen::Fall));
     expect("the level after LEVEL3 is LEVEL4", game.state().level, 4);
-    expect("entered at the fall's health, not the last level's", game.levelHealth(), 100);
+    // The fall lands (FallScreen.Next: Carry = (Health, Collected), Event.Play).
+    game.state().carry = flow::FallCarry();
+    game.state().carry.health = 64;
+    game.state().carry.pickups.push_back("SW_HOME");
+    game.state().carry.pickups.push_back("SW_GATT");
+    game.state().hasCarry = true;
+    expect("the fall's Play shows the level", static_cast<long long>(game.handle(flow::Event::Play)),
+           static_cast<long long>(flow::Screen::Level));
+    expect("entered at the fall's health, not the last level's", game.levelHealth(), 64);
     expect("the carry is consumed by the level", game.state().hasCarry ? 1 : 0, 0);
+    expect("and kept whole for carryIntoLevel: its health", game.levelCarry().health, 64);
+    expect("its pickups", static_cast<long long>(game.levelCarry().pickups.size()), 2);
+    expect("in order", game.levelCarry().pickups.size() == 2 &&
+                           game.levelCarry().pickups[0] == "SW_HOME" &&
+                           game.levelCarry().pickups[1] == "SW_GATT" ? 1 : 0, 1);
+    // The fall skipped (its Esc, skipScreen's arm) carries full health and nothing.
+    flow::GameFlow skipped(levelOptions(3));
+    skipped.handle(skipped.firstEvent());
+    skipped.reportLevel(result);
+    skipped.handle(flow::Event::LevelEnded);
+    skipped.skipUnported(&trail);
+    expect("the fall's skip is Play", static_cast<long long>(skipped.handle(skipped.skipScreen())),
+           static_cast<long long>(flow::Screen::Level));
+    expect("at full health", skipped.levelCarry().health, 100);
+    expect("with no pickups", static_cast<long long>(skipped.levelCarry().pickups.size()), 0);
     // A level shown again is not skipped: the walk stops at once.
     expect("a level is not skipped", static_cast<long long>(game.skipUnported(&trail)),
            static_cast<long long>(flow::Screen::Level));
@@ -719,6 +741,8 @@ void testSkipTrail() {
     expect("two screens skipped (stream, save prompt)", trail.count, 2);
     expect("LEVEL5", gunter.state().level, 5);
     expect("at LEVEL8's end health", gunter.levelHealth(), 55);
+    expect("the carry into LEVEL5 is that health", gunter.levelCarry().health, 55);
+    expect("and no pickups", static_cast<long long>(gunter.levelCarry().pickups.size()), 0);
     // The menu is not skipped: LEVEL5 ends there, and the frontend stops.
     flow::GameFlow last(levelOptions(5));
     last.handle(last.firstEvent());

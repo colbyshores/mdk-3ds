@@ -1434,28 +1434,43 @@ The batch that ported 158/159/167/172/178/184 and `UpdatePathSpeed` (PORT_GAPS p
 - **The boxes' fire light** (`LightSources`, FIRE boxes as point lights) is the enhanced
   look's and is not ported; the box SPRITES are, in `EffectsView` (both frontends).
 
-## The fall before a level (2026-11-20, gap package 17a): what landed and what is still open
+## The fall before a level (2026-11-20, gap packages 17a and 17b): what landed and what is still open
 
-Landed: `fall/fall_sim.{h,cpp}` and `fall/fall_missile.{h,cpp}`, the C#'s FallSim (and its partials
-Missiles, Pickups, Radar) and FallMissile, byte-identical to the C# probe
-`tests/scripts/fall_probe` on `golden/L*_skydive_*.txt` (`tick1 dump skydive`). Open:
+Landed: `fall/fall_sim.{h,cpp}` and `fall/fall_missile.{h,cpp}` (17a), the C#'s FallSim (and its
+partials Missiles, Pickups, Radar) and FallMissile, byte-identical to the C# probe
+`tests/scripts/fall_probe` on `golden/L*_skydive_*.txt` (`tick1 dump skydive`). 17b: the screen
+(`fall/fall_screen`), the view (`fall_view`, `fall_models`, `fall_ground`, `fall_palette`,
+`fall_hud`, `fall_layout`) on both frontends; the view's arithmetic byte-identical to the probe's
+`view` mode on `golden/L*_fallview_*.txt`; the flow shows the fall and the level takes the whole
+carry (`GameFlow::levelCarry`, `fall::carryIntoLevel`). Open:
 
-- **17b, the screen and the view:** FallScreen (the keys to `FallSim::Input`, the sounds on 8
-  voices, the WINDLOOP/C_GRIND loops at `windVolume()`/`grindVolume()`, the 3 s zoomed messages),
-  FallView, FallModels, FallGround (its minecrawler track and the `CentreRow` scroll, which are
-  view arithmetic over `time()`), FallPalette and FallHud. None of it is ported; the sim exposes
-  every field they read.
-  **Its sound on Linux:** the screen's device must be given the SDL stream the way the level's is
-  (`device.setSink(mdk::audioSink, nullptr, mdk::audioQueued)` when `mdk::audioIsOpen()`,
-  mdk_linux/src/main.cpp after the runtime is built, 2026-11-20); without that line it mixes into
-  the muted branch and is silent, which is what the level was until then.
-- **The flow (package 2) does not enter the fall.** `GameFlow::play` takes `state_.carry`'s health
-  only. The fall is entered by `Event.Fall`/`Start.Fall`; on Landed the screen should store
-  `FallSim::carry()` in `GameState::carry` and the level should call `fall::carryIntoLevel` on
-  its Kurt (before binding the HUD's PickupHook, though the helper clears it anyway). On GameOver
-  the C# goes to the menu.
-- **The seed.** FallScreen uses an unseeded `new Random()`; the C++ sim takes a seed, and the
-  screen must pick one (a clock).
+- **The palette's effects are drawn over the frame, not into the palette.** The C# re-uploads
+  FALLPn with its whitening and red (FallPalette.Set); the seam has no palette update, and the 3DS
+  could not afford one (every texture expanded through it would be expanded again). The view
+  draws the same arithmetic as a white fill of alpha (256 − k)/256 and an additive red of
+  add/255 over the whole frame (measured on Linux against the C#'s frame 0.08 s into the fall:
+  every channel within 1). What it cannot do: colour 0 is whitened after the first second
+  (the C# keeps it; it is only the backdrop where the ground does not reach), and the red also
+  reaches colours 0 and 255.
+- **The 3DS's lean way (`FallViewOptions::lean`, `--fall-lean` on Linux).** The track is PODn
+  drawn over the ground (its 24-row ramp one trapezoid, not the C#'s stair of rows); the haze
+  is one half-resolution RGBA image on the canvas, so it lies over the models (the C#'s is
+  under them); the radar beam and the trails are projected onto the canvas, so they lie over the
+  models too; EXPLODE's frames are a texture each. None of it is measured on a console yet.
+- **The 3DS fall is unrun.** Release and harness builds compile; the parent's Mandarine run is
+  `make -C mdk_3ds AUTOQUIT=90 FALL=7` (or the menus' New Game path). Unmeasured there: the
+  frame time (Kurt is ~1100 vertices rewritten a frame, the haze 27 K texels when its frame
+  changes, 30 times a second), the DSP voices of the wind and grind loops, START's skip.
+- **The HUD's mod images** (C# FallHud's CanvasImages.Replace through ModImages) are not
+  wired: the fall's HUD draws FALL3D.BNI's own images.
+- ~~**The Linux fall is silent**~~: since the integration with the Linux level sound (a6fbb7e)
+  the fall's mixer is given the SDL stream when it is open (`menu_screens.cpp`'s openFall, as
+  the level's and the stream's); a headless or `--mute` run stays muted. Not heard by a test.
+- **The enhanced look's canvas ignores `CanvasQuad::additive`** (`drawEnhancedCanvas` has one
+  blend); the original look's canvas honours it since 17b, as the C#'s AddRect.
+- **Test aids, not the C#'s:** `--skip-falls` (the level chain and menu tests keep their
+  frames), `--fall-chase` (the probe's chase steering, so a headless run carries pickups).
+
 - **Target libm.** The missile's launch direction is `sinf`/`cosf` and the intro's ease is
   `powf(x, 2)`; the host matches the oracle, newlib on the 3DS is unmeasured (the same leaf as
   "The 3DS build's libm trig leaf" above).
@@ -1478,7 +1493,7 @@ Still open:
   the heap and linear figures (`mem[run-start]`, `mem[level-teardown]`) are unmeasured there,
   as is the DSP path's close/reopen per level and ndsp's re-init.
 - **The skipped screens' effects**: a skipped fall carries 100 health and no pickups (FallSim
-  at its start); the real fall (#17) hands on what Kurt took and lost. A skipped stream keeps
+  at its start); the real fall (#17, shown since #17b) hands on what Kurt took and lost. A skipped stream keeps
   the level's health; the real stream (#18) changes it, and its health bonus is what LEVEL5
   gets after LEVEL8. The statistics' Score-O-matic, the save prompt and the briefing
   (#19/#20) show nothing. `GameState.StrikeUsed` is carried as the C# Viewer carries it

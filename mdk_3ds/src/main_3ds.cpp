@@ -77,6 +77,7 @@
 #include "game/cutscene_camera.h"
 #include "game/strike_view.h"
 #include "game/follow_camera.h"
+#include "fall/fall_sim.h"
 #include "game/game_flow.h"
 #include "game/game_settings.h"
 #include "game/pause_menu.h"
@@ -709,6 +710,13 @@ int main(int argc, char** argv) {
     mdk::log3dsPrintf("main: harness stream override STREAM=1 (the stream after level %d)",
                       (int)options.level);
 #endif
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_FALL)
+    // `make AUTOQUIT=.. FALL=<n>`: the fall before level n, then the level (the C#'s
+    // --fall, Start.Fall; package #17b). Harness builds only.
+    options.start = mdk::flow::Start::Fall;
+    options.level = (int32_t)(MDK_HW_FALL);
+    mdk::log3dsPrintf("main: harness fall FALL=%d", (int)(MDK_HW_FALL));
+#endif
     mdk::flow::GameFlow flow(options);
     // THE SAVES (package #19): sdmc:/3ds/mdk/saves, an explicit path (AGENTS.md P5),
     // the C#'s `<user folder>/saves`. LASTGAME goes at start, as the C#'s Game
@@ -721,7 +729,8 @@ int main(int argc, char** argv) {
     mdk::flow::Screen screen = flow.handle(flow.firstEvent());
     mdk::log3dsPrintf("flow: screen=%d level=%d", (int)screen, (int)flow.state().level);
     if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
-        screen != mdk::flow::Screen::Briefing && screen != mdk::flow::Screen::Stream) {
+        screen != mdk::flow::Screen::Briefing && screen != mdk::flow::Screen::Stream &&
+        screen != mdk::flow::Screen::Fall) {
         mdk::log3dsPrintf("flow asked for screen %d, which this frontend cannot show; exiting",
                           (int)screen);
         mdk_render_destroy(renderer);
@@ -755,7 +764,7 @@ int main(int argc, char** argv) {
     front.frameBudget = g_frameBudget;
     // The main menu's Continue and Saved Game page read the saves (package #19).
     front.saves = &saves;
-    if (screen == mdk::flow::Screen::Menu) {
+    if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall) {
         firstLevel = false;
     }
     // The START menu's OPTIONS row opens the C# PauseMenu's options pages
@@ -860,9 +869,12 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("flow: next level %d at frame %lu, entered at health %d",
                               (int)flow.state().level, (unsigned long)frame,
                               (int)flow.levelHealth());
-        } else if (screen == mdk::flow::Screen::Menu) {
-            // Kurt died in the Gunter stream: the main menu (package #20a), below.
-            mdk::log3dsPrintf("flow: the menu follows");
+        } else if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall) {
+            // Kurt died in the Gunter stream: the main menu (package #20a), below. Or
+            // the next level's fall (#17b, after the statistics): the front screens
+            // show it, then the level.
+            mdk::log3dsPrintf("flow: the %s follows",
+                              screen == mdk::flow::Screen::Fall ? "fall" : "menu");
         } else {
             mdk::log3dsPrintf("flow: %s follows, which this frontend cannot show; exiting",
                               mdk::flow::GameFlow::screenName(screen));
@@ -1524,6 +1536,9 @@ int main(int argc, char** argv) {
     // result by the time this frontend has a Kurt to seed, which is why the value
     // is read from `levelHealth()` and not from `state().carry` (review-8 F3).
     const int32_t entryHealth = flow.levelHealth();
+    // ...and the pickups the fall carried (package #17b, Viewer.CarryFromFall: the
+    // pickups taken again without their messages, then the health).
+    const mdk::flow::FallCarry entryCarry = flow.levelCarry();
     bool firstSpawn = true;
     auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
@@ -1563,7 +1578,16 @@ int main(int argc, char** argv) {
         }
 #endif
         if (firstSpawn) {
-            player.setHealth(entryHealth);
+            mdk::fall::carryIntoLevel(entryCarry, &player.combat());
+            if (!entryCarry.pickups.empty()) {
+                const mdk::Kurt& kurt = player.combat();
+                mdk::log3dsPrintf("level: the fall's carry: health %d, %d pickups; %d slots, "
+                                  "ammo %d:%d:%d:%d:%d, sgun %d",
+                                  (int)entryHealth, (int)entryCarry.pickups.size(),
+                                  (int)kurt.slotCount(), (int)kurt.ammo(1), (int)kurt.ammo(2),
+                                  (int)kurt.ammo(3), (int)kurt.ammo(4), (int)kurt.ammo(5),
+                                  (int)kurt.superChainGun());
+            }
             firstSpawn = false;
         }
         player.setSpace(&space);
@@ -3466,9 +3490,11 @@ int main(int argc, char** argv) {
                 mdk::log3dsPrintf("flow: next level %d at frame %lu, entered at health %d",
                                   (int)flow.state().level, (unsigned long)frame,
                                   (int)flow.levelHealth());
-            } else if (screen == mdk::flow::Screen::Menu) {
+            } else if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall) {
                 // The main menu follows (package #20a): after LEVEL5, a game over.
-                mdk::log3dsPrintf("flow: the menu follows");
+                // Or the next level's fall (#17b): the front screens show it.
+                mdk::log3dsPrintf("flow: the %s follows",
+                                  screen == mdk::flow::Screen::Fall ? "fall" : "menu");
                 menu.setOpen(false);
                 toMenu = true;
             } else {

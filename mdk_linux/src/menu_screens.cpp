@@ -1,7 +1,8 @@
 // menu_screens.cpp -- see menu_screens.h. The C#'s Game.Run loop (Game.cs:284-364)
-// for the two screens this frontend shows besides the level: the elapsed, the
+// for the screens this frontend shows besides the level: the elapsed, the
 // presses, the screen's frame, its event handled (Game.Handle) -- with the
-// screen's own Frame order inside (MainMenu.Frame, StatsScreen.Frame).
+// screen's own Frame order inside (MainMenu.Frame, StatsScreen.Frame,
+// FallScreen.Frame), and the sound device's update after it (Game.cs:334-337).
 
 #include "menu_screens.h"
 
@@ -11,7 +12,10 @@
 
 #include <chrono>
 #include <memory>
+#include <string>
 
+#include "audio/audio_sdl.h"
+#include "fall/fall_screen.h"
 #include "formats/bni.h"
 #include "formats/font.h"
 #include "formats/fti.h"
@@ -175,6 +179,51 @@ flow::Screen runFrontScreens(FrontScreens* front) {
     menu::MainMenu mainMenu;
     Briefing briefing;
     PalettedImage map;
+    // THE FALL (package #17b): made when the flow shows it, closed (its voices
+    // stopped, its renderer scope released) when the flow leaves it.
+    std::unique_ptr<fall::FallScreen> fall(new fall::FallScreen());
+    fall::FallScreen::Print fallPrint;
+    fallPrint.line = printLine;
+    // C# Show for the fall: a new FallScreen. False when it cannot be shown (its
+    // data did not load): the caller skips it the C#'s way.
+    auto openFall = [&]() -> bool {
+        fall::FallViewOptions options;
+        options.lean = front->fallLean;
+        // The C#'s `new Random()` is the clock; a test's --seed or --fixed-step is 1.
+        const int32_t seed =
+            front->fallSeedSet
+                ? front->fallSeed
+                : (int32_t)std::chrono::steady_clock::now().time_since_epoch().count();
+        std::string why;
+        if (!fall->open(front->renderer, data, ui->fti, *ui->bigFont, *ui->smallFont,
+                        flow.state().level, (Kurt::Difficulty)front->settings->difficulty, seed,
+                        options, fallPrint, &why)) {
+            std::printf("[main] flow: the fall of level %d did not load (%s)\n",
+                        (int)flow.state().level, why.c_str());
+            return false;
+        }
+        std::printf("[main] flow: the fall before level %d%s\n", (int)flow.state().level,
+                    front->fallLean ? " (the 3DS's lean way)" : "");
+        // The fall's sound to the speakers when the stream is open (a headless or
+        // --mute run stays silent), as the level's and the stream's mixers are.
+        if (!front->headless && audioIsOpen()) {
+            fall->mixer().device().setSink(audioSink, nullptr, audioQueued);
+        }
+        return true;
+    };
+    // The flow's screen after an event, past the falls a run skips (--skip-falls,
+    // or one that did not load): FallSim.Skip's carry, then the level.
+    auto settle = [&](flow::Screen shown) -> flow::Screen {
+        for (int32_t i = 0; i < flow::GameFlow::kMaxSkips && shown == flow::Screen::Fall; i++) {
+            if (!front->skipFalls && openFall()) {
+                break;
+            }
+            std::printf("[main] flow: skipped Fall (%s)\n",
+                        front->skipFalls ? "--skip-falls" : "it did not load");
+            shown = flow.handle(flow.skipScreen());
+        }
+        return shown;
+    };
     // Opens the screen the flow shows (C# Show: a new MainMenu / StatsScreen).
     auto open = [&](flow::Screen shown) {
         if (shown == flow::Screen::Menu) {
@@ -200,6 +249,13 @@ flow::Screen runFrontScreens(FrontScreens* front) {
                         name);
         }
     };
+    if (screen == flow::Screen::Fall) {
+        screen = settle(screen);
+        if (screen == flow::Screen::Level) {
+            mdk_render_release(front->renderer, scope);
+            return screen;
+        }
+    }
     open(screen);
 
     auto last = std::chrono::steady_clock::now();
@@ -228,7 +284,14 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         }
 
         flow::Event next = flow::Event::None;
-        if (screen == flow::Screen::Menu) {
+        if (screen == flow::Screen::Fall) {
+            // C# FallScreen.Frame: Esc (MenuKey.Back) skips, the keys steer.
+            fall::FallSim::Input steer = fall::FallScreen::steering(input, keys.back);
+            if (front->fallChase) {
+                fall::FallScreen::chase(fall->sim(), &steer);
+            }
+            fall->frame(steer, elapsed);
+        } else if (screen == flow::Screen::Menu) {
             next = mainMenu.frame(keys, elapsed);
         } else {
             next = briefing.frame(keys.any, keys.back,
@@ -238,12 +301,19 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         MdkFrameParams params;
         params.elapsed = elapsed;
         params.frame_index = *front->frame;
-        params.clear_colour = 0xFF000000u;
+        params.clear_colour = screen == flow::Screen::Fall ? fall->backdrop() : 0xFF000000u;
         params.present = true;
         const bool capture =
             front->captureFrame > 0 && (int)*front->frame + 1 == front->captureFrame;
         params.screenshot_path = capture ? front->capturePath : nullptr;
         mdk_render_begin_frame(front->renderer, &params);
+        if (screen == flow::Screen::Fall) {
+            fall->draw(front->renderer);
+            mdk_render_end_frame(front->renderer);
+            // Game.Run: the device after the screen's frame; then FallScreen.Next.
+            fall->mixer().device().update(elapsed);
+            next = fall->next(&flow.state());
+        } else {
         mdk_render_canvas_begin(front->renderer);
         ScreenView view;
         view.layoutInside(mdk_render_canvas_width(front->renderer), kCanvasHeight);
@@ -257,6 +327,7 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         }
         mdk_render_canvas_end(front->renderer);
         mdk_render_end_frame(front->renderer);
+        }
         (*front->frame)++;
         if (capture) {
             front->exitReason = "capture taken";
@@ -271,7 +342,11 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         if (next == flow::Event::None) {
             continue;
         }
-        // C# Game.Handle, then the screens this port lacks skipped (the fall).
+        // C# Game.Handle (Show closes the screen that ends: the fall's voices and
+        // scope), then the screens this port lacks skipped.
+        if (screen == flow::Screen::Fall) {
+            fall->close(front->renderer);
+        }
         flow::Screen shown = flow.handle(next);
         flow::GameFlow::SkipTrail trail;
         shown = flow.skipUnported(&trail);
@@ -279,6 +354,11 @@ flow::Screen runFrontScreens(FrontScreens* front) {
             std::printf("[main] flow: skipped %s (package #%d not ported)\n",
                         flow::GameFlow::screenName(trail.skipped[i]),
                         (int)flow::GameFlow::screenPackage(trail.skipped[i]));
+        }
+        shown = settle(shown);
+        if (shown == flow::Screen::Fall) {
+            screen = shown;
+            continue;
         }
         if (shown == flow::Screen::Menu || shown == flow::Screen::Briefing) {
             screen = shown;
@@ -296,6 +376,7 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         screen = shown;
         break;
     }
+    fall->close(front->renderer);
     mdk_render_release(front->renderer, scope);
     return screen;
 }

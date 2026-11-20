@@ -266,7 +266,8 @@ public:
     // The skip for the screen shown, handled: handle(skipScreen()) until a screen
     // that is not skipped through, at most kMaxSkips times. Since package #20a
     // the frontends SHOW the Menu and the Briefing (game/main_menu.h,
-    // game/briefing.h), so the walk stops at those as at a Level or None;
+    // game/briefing.h), and since #17b the Fall (fall/fall_screen.h), so the
+    // walk stops at those as at a Level or None;
     // skipScreen keeps the Briefing's arm, which is the C#'s skip of it (Esc,
     // then a key: Event.Fall). `trail`, when given, receives the screens skipped in order (up to
     // kMaxSkips of them), so the frontend can log each one.
@@ -292,6 +293,15 @@ public:
     // moment it is the entry health is when the level is shown -- which is also
     // the only moment a frontend has a fresh Kurt to seed.
     int32_t levelHealth() const { return level_.health; }
+
+    // What the level shown was ENTERED with, whole (package #17b): the fall's
+    // carry -- its health and the pickups taken, in order -- when the level was
+    // entered through a carry (the fall, or LEVEL5 after the stream), and
+    // otherwise full health and no pickups. The frontend hands it to
+    // fall::carryIntoLevel on the level's first Kurt (Viewer.CarryFromFall), which
+    // is setHealth(levelHealth()) plus the pickups. Unlike levelHealth() it is
+    // not replaced by reportLevel.
+    const FallCarry& levelCarry() const { return levelCarry_; }
 
     // The level's live counts and health (C# _viewer.Stats and _viewer.Health).
     // Call it with the level's current values when the level ends, which is when
@@ -336,6 +346,7 @@ private:
     bool streamDirect_ = false;
     bool hasLevel_ = false;
     LevelResult level_;
+    FallCarry levelCarry_;
     SaveGames saves_;
     std::string report_;
     // C# MainMenu.Load / FirstEvent's load: the state of the save, and the event
