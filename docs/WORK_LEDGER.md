@@ -115,3 +115,16 @@ Newest entries are at the bottom. Performance experiments keep their own table i
 - **Merge order:** they merge one at a time; #2 (loading the next level) starts after #1 lands.
 - **Open for the owner:** packages #19 (save/load) and #20 (menus and screens) were cut by the owner's 2026-11-05 directive. Whether "port everything" brings them back is the owner's call.
 - **Commit:** this entry, with `docs/PORT_GAPS.md`.
+
+### Level 7, DANT_1 -> CDANT_1: the second arena is faithful; Kurt walks through closed doors
+- **What:** reproduced the walk harness's report on Linux headless: DANT_1 stays the active second arena from frame 227 to frame 683.
+  - Wrote the C# probe `tests/scripts/corridor_probe` and its C++ twin, `tick1 dump corridor`. Both print, per step, Kurt's arena, the second arena, the solid list, his feet, and the wall he ran into.
+  - Pinned `golden/L7_corridor_middle.txt` (800 steps down the middle of CDANT_1's north leg) and added a note to `docs/OPEN_ITEMS.md`.
+  - No behaviour change.
+- **Why:** to find out whether DANT_1 staying solid and blocking the corridor is the C#'s behaviour or a bug in the port's second-arena logic.
+- **Evidence:**
+  - The C# and C++ output is byte-identical over 800 steps, and over the harness's 1,400-step route.
+  - Breaking the door-close release makes the golden fail.
+  - The divergence happens earlier, at the door. X7DOOR starts locked. In the C# a locked door is solid (SolidsWithin, Solids.cs), so Kurt stops at y=478.4. The C++ has no Kurt-vs-object collision, so he walks through. The door never closes behind him, DANT_1 is never released, and its triangle 60 then blocks the middle of the corridor.
+  - The fix is package #3 (solids, in flight). The probe's Kurt is let through by clearing the door's locked bit at step 40, so this golden must stay identical after #3.
+- **Commit:** 202d811 on the agent's branch, cherry-picked here.

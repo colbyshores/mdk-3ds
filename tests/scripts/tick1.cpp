@@ -1529,6 +1529,172 @@ bool kurtItemsDump(int level, int steps, const std::string& schedule, const MdkD
     return true;
 }
 
+// KURT THROUGH A DOORWAY AND DOWN A CORRIDOR (golden/L7_corridor_*.txt). Kurt and the
+// scripts runtime stepped together at 1/60 s from a placed start (the frontends' --at), as
+// Viewer.RunSteps does: Kurt, then the scripts, then ArenaSpace::setSolid(solidArenas()) --
+// the step kurtItemsDump leaves out, and the one this dump is about: which arenas Kurt's next
+// move collides with. The oracle is tests/scripts/corridor_probe (`Probe <level> <steps>
+// <x,y,z,yaw> <schedule>`). The schedule is the items probe's key holds plus `unlock:step`,
+// which clears every door's locked bit (0x40) before that step, the same way on both sides.
+// Level 7's DANT_1 -> CDANT_1 door starts locked, and in the oracle a locked door is solid
+// to Kurt (ScriptRuntime.SolidsWithin, Collision/Solids.cs), so a key-only run never reaches
+// the corridor there; this port does not collide Kurt with objects yet, so without the unlock
+// he walks through the closed door and the door never opens or closes (docs/OPEN_ITEMS.md,
+// "Kurt walks through closed doors"). Per step:
+//
+//   arena / second   currentArena(), secondArena() and `+` when it is active: the door's
+//                    ShowBehind, the doorway crossing (CrossedArena), the door closing
+//                    behind him (ShowArena("")), the corridor's load triggers (PreloadArena).
+//   solid            solidArenas(): what his NEXT move collides with.
+//   feet             where he stands, to the unit (the oracle's facing is libm, this port's
+//                    the trig LUT: a diagonal walk differs by a 64th now and then).
+//   wall             the walk move he meant this step (facing * forwardSpeed + right *
+//                    strafeSpeed, over the step) swept again from where he stood against the
+//                    same solid list: the arena and triangle it ran into, or `-`.
+bool kurtCorridorDump(int level, int steps, const std::string& at, const std::string& schedule,
+                      const MdkData& data, const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    float place[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    int placed = 0;
+    {
+        size_t start = 0;
+        while (placed < 4 && start <= at.size()) {
+            size_t end = at.find(',', start);
+            if (end == std::string::npos) {
+                end = at.size();
+            }
+            place[placed++] = (float)atof(at.substr(start, end - start).c_str());
+            start = end + 1;
+        }
+    }
+    if (placed < 3) {
+        *why = "the start did not parse (want x,y,z[,yaw]): " + at;
+        return false;
+    }
+    // The unlocks come out of the schedule first; the rest is the items probe's.
+    std::vector<int> unlocks;
+    std::string keys;
+    {
+        size_t start = 0;
+        while (start < schedule.size()) {
+            size_t end = schedule.find(',', start);
+            if (end == std::string::npos) {
+                end = schedule.size();
+            }
+            const std::string token = schedule.substr(start, end - start);
+            start = end + 1;
+            if (token.compare(0, 7, "unlock:") == 0) {
+                unlocks.push_back(atoi(token.substr(7).c_str()));
+            } else if (!token.empty()) {
+                keys += (keys.empty() ? "" : ",") + token;
+            }
+        }
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<ItemsGive> gives;
+    if (!parseItemsSchedule(keys, &holds, &gives) || !gives.empty()) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    Player player;
+    player.feet = Vec3{place[0], place[1], place[2]};
+    player.yaw = placed > 3 ? place[3] : levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    // Kurt's walk slide (C# Kurt.WalkSlide): the replayed move slides as his did.
+    const float kReplaySlide = 0.75f;
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) + " at=" + at +
+           " schedule=" + schedule + "\n";
+    char buffer[512];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < unlocks.size(); i++) {
+            if (unlocks[i] != step) {
+                continue;
+            }
+            std::deque<scripts::MdkObject>& objects = runtime.objects();
+            for (size_t j = 0; j < objects.size(); j++) {
+                if (!objects[j].dead && (objects[j].flags & scripts::MdkObject::FlagDoor) != 0) {
+                    objects[j].door_state &= ~0x40;
+                }
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        const Vec3 before = player.feet;
+        player.update(input, 1.0f / 60.0f);
+        const Vec3 f = player.facing();
+        const Vec3 r = player.right();
+        const float step60 = 1.0f / 60.0f;
+        const Vec meant{(f.x * player.forwardSpeed + r.x * player.strafeSpeed) * step60,
+                                    (f.y * player.forwardSpeed + r.y * player.strafeSpeed) * step60,
+                                    0.0f};
+        std::string wall = "-";
+        if (meant.x != 0.0f || meant.y != 0.0f) {
+            const ArenaSpace::Result replay =
+                space.move(Vec{before.x, before.y, before.z}, meant,
+                           ArenaSpace::kMotionWalk, kReplaySlide);
+            if (replay.hit() && replay.bsp != nullptr) {
+                snprintf(buffer, sizeof(buffer), "%s:%d", replay.bsp->arena()->name().c_str(),
+                         replay.triangle);
+                wall = buffer;
+            }
+        }
+        runtime.update(1.0f / 60.0f);
+        space.setSolid(runtime.solidArenas());
+        const std::vector<std::string>& solid = runtime.solidArenas();
+        std::string solidText;
+        for (size_t i = 0; i < solid.size(); i++) {
+            solidText += (i ? "|" : "") + solid[i];
+        }
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d arena=%s second=%s%s solid=%s feet=%.0f,%.0f,%.0f yaw=%.1f wall=%s\n",
+                 step, runtime.currentArena().empty() ? "-" : runtime.currentArena().c_str(),
+                 runtime.secondArena().empty() ? "-" : runtime.secondArena().c_str(),
+                 runtime.secondActive() ? "+" : "", solidText.empty() ? "-" : solidText.c_str(),
+                 player.feet.x, player.feet.y, player.feet.z, player.yaw, wall.c_str());
+        *out += buffer;
+    }
+    return true;
+}
+
 // Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
 // the ScriptRuntime bound to the Player it drives. Shared by the golden and by
 // `tick1 dump hurt`, so a failing golden diffs the same text it compares.
@@ -3314,6 +3480,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "corridor") {
+            // `tick1 dump corridor <level> <steps> <x,y,z,yaw> <schedule>`:
+            // kurtCorridorDump's text, the C++ side of the corridor probe.
+            std::string got;
+            std::string why;
+            if (!kurtCorridorDump(level, ticks, argc > 5 ? argv[5] : "", argc > 6 ? argv[6] : "",
+                                  data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "fire" || what == "firerun") {
             std::string got;
             std::string why;
@@ -4159,6 +4338,38 @@ int main(int argc, char** argv) {
                 printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
                 failures++;
             }
+        }
+    }
+
+    // Kurt out of DANT_1 and down the middle of CDANT_1's north leg, against the corridor
+    // probe (tests/scripts/corridor_probe; see kurtCorridorDump). It pins the second arena's
+    // whole life over a doorway: the unlocked door's ShowBehind makes CDANT_1 the active
+    // second (s=204) and the solid list takes it at s=206, the crossing swaps the pair
+    // (s=228), the door closing behind him drops DANT_1 (second at s=276, solid at s=278),
+    // and the corridor's load triggers preload DANT_1 (s=701) and DANT_2 (s=721). With
+    // DANT_1 released he runs the leg at x 140.5 unblocked; were it still solid, its triangle
+    // 60 crosses that line at y 575 (docs/OPEN_ITEMS.md, "Kurt walks through closed doors").
+    {
+        static const char* kCorridorSchedule =
+            "unlock:40,fwd:61-261,turbo:61-261,right:271-308,fwd:321-553,turbo:321-553,"
+            "left:563-600,sright:606-640,fwd:650-800,turbo:650-800";
+        std::string expected;
+        std::string got;
+        std::string why;
+        if (!readText("golden/L7_corridor_middle.txt", &expected)) {
+            printf("FAIL L7_corridor_middle: no golden file golden/L7_corridor_middle.txt\n");
+            failures++;
+        } else if (!kurtCorridorDump(7, 800, "0,380,15,90", kCorridorSchedule, data, spritesArg,
+                                     &got, &why)) {
+            printf("FAIL L7_corridor_middle: %s\n", why.c_str());
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L7_corridor_middle: the second arena over DANT_1's door (ShowBehind, "
+                   "the crossing, the door closing behind him) and the solid list that follows "
+                   "behind it\n");
+        } else {
+            printf("FAIL L7_corridor_middle: %s\n", firstDifference(got, expected).c_str());
+            failures++;
         }
     }
 

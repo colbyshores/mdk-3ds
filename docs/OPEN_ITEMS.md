@@ -1288,6 +1288,40 @@ Still open:
   `vm_tests` case each (the rule in `docs/OPCODE_COVERAGE.md`).
 - **Kurt's own updraft** (`Kurt.Updraft.cs`) is still unported; the objects' is not.
 
+## Kurt walks through closed doors; the second arena over a doorway is faithful (2026-11-20)
+
+Reported by the level-7 walk harness: walking DANT_1 -> CDANT_1 leaves DANT_1 the active
+second arena, one of DANT_1's walls then blocks the corridor, and only a route hugging
+x ~ 132 gets through. Reproduced on Linux headless (`build-linux/mdk --headless
+--fixed-step --level=7 --seed 1 --at=0,380,15,90 --walk=...`): DANT_1 stays second from frame
+227 (`arena DANT_1 -> CDANT_1 (second DANT_1 active)`) until a load trigger at frame 683.
+
+**The second-arena selection and release are FAITHFUL.** The C# probe
+`tests/scripts/corridor_probe` (Kurt + ScriptRuntime + `SetSolid(SolidArenas)`, as
+`Viewer.RunSteps`) and `tick1 dump corridor` print the same bytes for 800 steps down the
+middle of the north leg (`golden/L7_corridor_middle.txt`): ShowBehind (s=204), the crossing
+(s=228), the door closing behind Kurt dropping DANT_1 through `ShowArena("")` (s=276), the
+load triggers (s=701, s=721). Over the harness's own 1400-step route the arena, second and
+solid columns agree on every step too.
+
+**What differs is upstream: Kurt does not collide with objects in this port.** DANT_1's
+X7DOOR (0,481,15) starts locked (`door_set_flags 0x50` -> state 0x58), and nothing in a
+key-only walk unlocks it. In the C# a locked door is solid (`ScriptRuntime.SolidsWithin`,
+`Collision/Solids.cs`, the `ArenaSpace.Move` overload with solids, called through
+`Kurt.Nearby`): the probe's Kurt stops at y = 478.4 and never enters CDANT_1. The port has no
+object pass, so its Kurt walks through the closed door; the door never opens, so it never
+closes behind him, so `ShowArena("")` never fires and DANT_1 stays the active second -- a
+state the oracle cannot reach. DANT_1's triangle 60 is a slanted face crossing the north leg
+(x 133-142, y ~ 565-598); with DANT_1 solid it stops a run at x 140.5 at y = 575.2
+(`wall=DANT_1:60`), and at x ~ 133 it lies beyond the trigger that drops DANT_1 at y ~ 582,
+which is why the harness's route had to hug the west wall.
+
+Still open: **port the object pass** (`Solids.Walk`/`Platform`/`Touching`, `SolidsWithin`,
+`MdkObject.PartBounds`/`GetWorldBounds(obj, part)`/`Footing`, `Kurt.Nearby`, the platform and
+`Touched` consumers). Until then a walk harness that crosses a door must not treat "Kurt got
+through" as evidence the door was open. The corridor probe's `unlock:<step>` is how a probe
+reaches the corridor in the oracle.
+
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 
 Batch 40 removed the duplicated *health*; the same split still duplicated the *state*.
