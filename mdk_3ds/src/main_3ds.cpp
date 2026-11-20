@@ -2249,6 +2249,10 @@ int main(int argc, char** argv) {
             kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
+        if (runtime) {
+            // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it).
+            runtime->eye = camera.position;
+        }
         if (hudReady || menu.open()) {
             // The HUD is the last thing drawn before the frame ends, which is the
             // C#'s order (Viewer.DrawScene: the canvas is the Overlay pass, and
@@ -2258,9 +2262,9 @@ int main(int argc, char** argv) {
             //
             // What the state carries is what this port has: health, death and the
             // two combat flashes, all read off Kurt himself exactly as
-            // Viewer.HudStateOf passes them (Viewer.cs:913). The inventory and the
-            // target bar stay empty until the pickup and shooting subsystems land,
-            // because the C# starts them empty and nothing here may invent them.
+            // Viewer.HudStateOf passes them (Viewer.cs:913), and the chain gun's target
+            // bar off the scripts. The inventory stays empty until the pickup subsystem
+            // lands, because the C# starts it empty and nothing here may invent it.
             mdk_render_canvas_begin(renderer);
             if (hudReady) {
                 mdk::HudState state;
@@ -2268,6 +2272,12 @@ int main(int argc, char** argv) {
                 state.dead = player.dead;
                 state.hurtFlash = player.combat().hurtFlash();
                 state.whiteFlash = player.combat().whiteFlash();
+                // The target's health bar while the chain gun hits it (Viewer.cs:912, GetBar).
+                if (runtime) {
+                    const mdk::scripts::ScriptRuntime::BarValues bar = runtime->bar();
+                    state.barHealth = bar.health;
+                    state.barMax = bar.max;
+                }
                 hud.draw(renderer, state);
             }
             if (menu.open()) {

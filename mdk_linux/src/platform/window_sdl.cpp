@@ -15,6 +15,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <cstdio>
 
 namespace mdk {
@@ -54,7 +55,7 @@ void windowCaptureMouse(Window* window, bool on) {
 
 namespace {
 
-// The default bindings (the C# Input.DefaultKeys movement subset).
+// The default bindings (the C# Input.DefaultKeys: the movement subset, fire and use).
 int keyForScancode(SDL_Scancode sc) {
     switch (sc) {
         case SDL_SCANCODE_W:
@@ -76,11 +77,29 @@ int keyForScancode(SDL_Scancode sc) {
         case SDL_SCANCODE_LSHIFT:
         case SDL_SCANCODE_RSHIFT:
             return kKeyTurbo;
+        case SDL_SCANCODE_LCTRL:
+        case SDL_SCANCODE_RCTRL:
+            return kKeyFire;
+        case SDL_SCANCODE_RETURN:
+        case SDL_SCANCODE_E:
+            return kKeyUseItem;
         case SDL_SCANCODE_ESCAPE:
             return kKeyEscape;
         default:
             return -1;
     }
+}
+
+// The keys bound to more than one control, held while ANY of their controls is: the C#'s
+// Input.IsDown is the union of its key set and its mouse-button set, so letting go of the
+// mouse button while Ctrl is still down must not stop the gun (nor RCtrl's release while
+// LCtrl is held). One bit per control.
+uint32_t fireHeld = 0;  // 1 LCtrl, 2 RCtrl, 4 left mouse button
+uint32_t useHeld = 0;   // 1 Return, 2 E
+
+void hold(Input* input, int key, uint32_t* held, uint32_t bit, bool down) {
+    *held = down ? (*held | bit) : (*held & ~bit);
+    input->down[key] = *held != 0;
 }
 
 } // namespace
@@ -97,12 +116,27 @@ bool windowPump(Window* window, Input* input) {
                 if (!input) {
                     break;
                 }
-                const int key = keyForScancode(event.key.scancode);
-                if (key >= 0) {
-                    input->down[key] = (event.type == SDL_EVENT_KEY_DOWN);
+                const bool down = event.type == SDL_EVENT_KEY_DOWN;
+                const SDL_Scancode sc = event.key.scancode;
+                const int key = keyForScancode(sc);
+                if (key == kKeyFire) {
+                    hold(input, kKeyFire, &fireHeld, sc == SDL_SCANCODE_LCTRL ? 1u : 2u, down);
+                } else if (key == kKeyUseItem) {
+                    hold(input, kKeyUseItem, &useHeld, sc == SDL_SCANCODE_RETURN ? 1u : 2u, down);
+                } else if (key >= 0) {
+                    input->down[key] = down;
                 }
                 break;
             }
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                // The C# Input.DefaultButtons: the left button fires. (Right is the
+                // sniper and the wheel the item keys, which are not ported.)
+                if (input && event.button.button == SDL_BUTTON_LEFT) {
+                    hold(input, kKeyFire, &fireHeld, 4u,
+                         event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                }
+                break;
             case SDL_EVENT_MOUSE_MOTION:
                 if (input) {
                     input->mouseX += event.motion.xrel;

@@ -281,12 +281,12 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
     }
 
     // The sprite effects: a quad per effect, one frame of its texture.
-    const std::deque<scripts::Effects::Effect>& effects = scripts.effects.all();
+    const std::vector<scripts::Effects::Effect*>& effects = scripts.effects.all();
     lastSprites_ = 0;
     lastGlowing_ = 0;
     lastUnmeasured_ = 0;
     for (size_t i = 0; i < effects.size(); i++) {
-        const scripts::Effects::Effect& effect = effects[i];
+        const scripts::Effects::Effect& effect = *effects[i];
         SpriteEntry& entry = sprite(effect.arena, effect.texture);
         if (!entry.present) {
             continue;

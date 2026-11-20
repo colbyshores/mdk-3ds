@@ -78,6 +78,24 @@ float mathfRound(float v) {
     return ((int32_t)f & 1) != 0 ? f + 1.0f : f;
 }
 
+// ScriptMath.Round, `(int)MathF.Round(value, MidpointRounding.AwayFromZero)`: halves
+// away from zero, and the conversion to int saturates as .NET's does (.NET 9 and later:
+// NaN is 0, out-of-range values clamp), where a plain C cast of an out-of-range float is
+// undefined. Only the boss bar's ratio can reach the edges (a zero span divides by zero).
+int32_t roundAwaySaturating(float v) {
+    if (v != v) {
+        return 0;
+    }
+    const float r = roundf(v);
+    if (r >= 2147483648.0f) {
+        return INT32_MAX;
+    }
+    if (r < -2147483648.0f) {
+        return INT32_MIN;
+    }
+    return (int32_t)r;
+}
+
 const std::vector<ScriptValue>& listval(const ScriptValue& v) {
     return v.kind == ScriptValueKind::List ? v.items : kEmpty;
 }
@@ -1547,6 +1565,15 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             return branch(obj, ins, hit);
         }
+        case 209: {  // if_player_on_me_low: Kurt stands on it, fires, and isn't above its top
+            // ScriptVm.cs:1269-1273. The platform half is Kurt.Platform, which is not
+            // ported (ScriptRuntime::getKurtPlatform answers null, the C#'s answer for a
+            // Kurt on the arena's own floor), so the branch is not taken until the
+            // platform footing lands; the firing half is the live flag.
+            const bool onMe = runtime_.getKurtPlatform() == obj && runtime_.kurt().firing();
+            return branch(obj, ins,
+                          onMe && runtime_.kurtPosition().z <= runtime_.worldBounds(obj).max.z);
+        }
         case 174: {  // if_ammo: 0 is the super chain gun's ticks; 1-5 are sniper ammo
             const int32_t kind = ival(op(ins, 0));
             const int32_t amount = kind == 0 ? runtime_.kurt().superChainGun()
@@ -1923,6 +1950,46 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 247:  // hud_message: [flags, text name, seconds]
             runtime_.pushMessage(strval(op(ins, 1)), ival(op(ins, 0)), fval(op(ins, 2)));
             break;
+        case 181: {  // boss_bar: the health bar shows a counter (mode 0) or an arena variable (mode 1)
+            // ScriptVm.cs BossBar (:1854-1878): only while Kurt fires. Mode 0 is max minus
+            // a group counter; mode 1 an arena variable going from high (0) to low (max),
+            // rounded away from zero (ScriptMath.Round). An operand past the list's end
+            // reads as the null operand (0) where the C# would throw.
+            const std::vector<ScriptValue>& source = listval(op(ins, 0));
+            const ScriptValue& s0 = source.size() > 0 ? source[0] : kNull;
+            const ScriptValue& s1 = source.size() > 1 ? source[1] : kNull;
+            const ScriptValue& s2 = source.size() > 2 ? source[2] : kNull;
+            const ScriptValue& s3 = source.size() > 3 ? source[3] : kNull;
+            const ScriptValue& s4 = source.size() > 4 ? source[4] : kNull;
+            ArenaState& state = runtime_.getArenaState(obj->arena);
+            int32_t maxHealth = 0;
+            int32_t value = 0;
+            switch (ival(s0)) {
+                case 0:
+                    maxHealth = ival(s2);
+                    value = maxHealth -
+                            state.group_counters[(size_t)((ival(s1) - 1) &
+                                                          (ScriptRuntime::kGroupCount - 1))];
+                    break;
+                case 1: {
+                    maxHealth = ival(s4);
+                    // The C#'s `I(source[1]) <= VariableCount - 1 ? I(source[1]) : 0`; a
+                    // negative index would throw there and reads variable 0 here.
+                    const int32_t raw = ival(s1);
+                    const int32_t index = raw >= 0 && raw <= 3 ? raw : 0;
+                    const float high = fval(s3);
+                    value = roundAwaySaturating((high - state.variables[(size_t)index]) /
+                                                (high - fval(s2)) * (float)maxHealth);
+                    break;
+                }
+                default:
+                    break;
+            }
+            if (maxHealth > 0 && runtime_.kurt().firing()) {
+                runtime_.showBarValues(value < maxHealth ? value : maxHealth, maxHealth);
+            }
+            break;
+        }
         case 142:  // fan_create: [hotspot, name, param, type, strength]
             runtime_.fans.create(obj->arena, ival(op(ins, 0)), strval(op(ins, 1)),
                                  ival(op(ins, 2)), ival(op(ins, 3)), fval(op(ins, 4)));

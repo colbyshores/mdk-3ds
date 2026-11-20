@@ -1,0 +1,4 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-20T06:06:19Z at a5f8b97
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the picture did not move: the pinned frame is level 3's first frame with no input, and this batch only changes what happens while fire is held (Kurt's SHOT/RUN_FIRE states, the muzzle flash, the chain gun's hits and the explosions they cause) plus effects/debris bookkeeping no frame-1 scene reaches; the live measurement above equals the recorded ceiling (1.240 / 247 / 0.1819) to the last digit. The firing itself is pinned by tests/scripts/golden/L8_fire.txt, L8_fire_run.txt and L7_fire_run.txt.

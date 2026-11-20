@@ -1222,6 +1222,33 @@ combat fade/skull implementation is described in `docs/CONTINUATION.md`'s verifi
 and the batch 45/46 narratives in `docs/PROGRESS_LOG.md`; remaining flash writers and render
 consumers stay deferred with their subsystems.
 
+## Kurt fires (2026-11-19, branch port/kurt-firing): what landed and what is still open
+
+The chain gun was unreachable: `kKeyFire` was read by nothing. Landed, all pinned by
+`golden/L8_fire.txt`, `L8_fire_run.txt` and `L7_fire_run.txt` (byte-identical to the C#
+probe `tests/scripts/fire_probe/`): `Kurt.UpdateFiring`/`StopFiring`/`UpdateMuzzle` and the
+SHOT/RUN_FIRE states (`Player`), the MULTIFIRE/GATTFIRE loop, the K_MUZZF flash drawn behind
+Kurt (`KurtSprite`), `ScriptRuntime.FireChainGun`/`AimScore`/`ChainGunHit`/`SparkAt`, the
+wall shot through `HitGroup`, the health bar (`ShowBarValues`/`UpdateBar`/`GetBar`, fed to
+both HUDs), the kill's `Explode` (sound, `FlashAt`, `BreakUp` with `Debris.BreakUp` and gore
+drops, `SpawnExplosion` and the effect branch of `ObjectMotion.Update`), opcodes 181 and 209,
+and the Debris `Trail`/`Updraft` delegates. Found on the way and fixed: `Effects` erased from
+the middle of a deque of values, which moved the elements behind the hole, so the update
+pass skipped the effect after every removal and a wound's pointer named its neighbour.
+
+Still open:
+- **Items** (`Kurt.UpdateItems`, the THROW state, `ItemUsed` -> `Items.UseItem`, `Items.cs`,
+  `Twister.cs`, the bomb): unreachable until pickups are collected (`CollectPickups` and
+  `Inventory.Collect` are not ported, so the inventory is always empty and the C#'s
+  `item is None` return is the only path). A slice of its own.
+- **Opcode 209's platform half** waits for `Kurt.Platform` (the platform footing).
+- **The sniper half of `StopFiring`** (`LeaveSniper`) and the ride's K_SURF muzzle offset
+  wait for the sniper and the ride.
+- **The run goldens print no `pc=`**: `Player::facing()`'s trig LUT (the owner-gated item
+  above) leaves a running Kurt ~1e-5 off the oracle, and the sum of the pieces' centres
+  straddles a printed decimal on four lines of 480; with `cosf`/`sinf` it matches byte for
+  byte (measured). `life=` pins the random stream there instead.
+
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 
 Batch 40 removed the duplicated *health*; the same split still duplicated the *state*.

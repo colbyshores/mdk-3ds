@@ -236,7 +236,56 @@ public:
                      int32_t weapon);
     void setGroupTexture(const std::string& arena, int32_t group, int32_t value);
 
-    void kill(MdkObject* obj);
+    // C# Kill (ScriptRuntime.cs:1678, object_kill 0x43d670): the object switches to its
+    // death script if it has one, otherwise it explodes, the explosion facing `yaw`.
+    void kill(MdkObject* obj, float yaw = 0.0f);
+    // C# Explode (ScriptRuntime.cs:1710, 0x43d224): its explosion sound (opcode 25's
+    // label, or EXPLODE), a white flash by distance, its pieces flying off, its removal,
+    // and the global model 0 (EXPLODE, an animated texture) scaled to its height.
+    void explode(MdkObject* obj, float yaw);
+    // C# SpawnExplosion (ScriptRuntime.cs:1770, 0x43cb2c): the CMI's first model,
+    // whose animated texture plays once, one frame per tick, pitched towards the eye
+    // `lift` units above it unless the eye is close. Null when it could not spawn.
+    MdkObject* spawnExplosion(const std::string& arena, const Vec3& center, float scale,
+                              float yaw, float lift);
+
+    // ---- The chain gun (ScriptRuntime.cs:1816-2137) ----
+    // C# FireChainGun (0x41a304): one tick of fire. It hits the best target in front of
+    // Kurt (aimScore) or, without one, the arena up to 150 units away. runTick calls it
+    // while Kurt fires, where the C# does (after CollectPickups and the KurtVelocity
+    // write).
+    void fireChainGun();
+    // C# ScriptRuntime.Spark (:89): what a spark is made of.
+    enum class Spark { Flesh, Hard, Group, Fire };
+    // C# SparkAt (:2201, 0x41e8f4): sparks where a shot hits, and a ricochet sound (the
+    // given one, or RICO1-RICO3) every 4 ticks, always for bursts and when the arena has
+    // no effects.
+    void sparkAt(const Vec3& point, int32_t count, const std::string& sound, Spark kind);
+    // C# PlaySoundAt (:2503): a sound at a point.
+    void playSoundAt(const std::string& name, const Vec3& point);
+    // The health bar (C# BarTime/BarObject/BarHealth/BarMax, :224-227): an object's
+    // health while the chain gun hits it, or a script's values (boss_bar, opcode 181).
+    // showBarValues is the C#'s ShowBarValues (:2157); bar() is GetBar (:2165), zeros
+    // while the bar is hidden.
+    void showBarValues(int32_t health, int32_t maxHealth);
+    struct BarValues {
+        int32_t health;
+        int32_t max;
+    };
+    BarValues bar() const;
+    float barTime = 0.0f;
+    MdkObject* barObject = nullptr;
+    int32_t barHealth = 0;
+    int32_t barMax = 0;
+    // C# GetKurtPlatform (:2720): the object Kurt stands on, when he is on a floor.
+    // Kurt.Platform (the platform footing, Kurt.cs:110) is not ported, so this is null on
+    // every step, which is what the C# answers for a Kurt on the arena's own floor.
+    // Opcode 209 (if_player_on_me_low) reads it.
+    MdkObject* getKurtPlatform() const { return nullptr; }
+    // C# ScriptRuntime.Eye (:206): the camera's position, which the frontend sets each
+    // frame (Viewer.cs:699) and an explosion turns its face to. A harness with no camera
+    // leaves it at the origin, as the C#'s headless probe does.
+    Vec3 eye{};
     // C# Remove: the object leaves the object list (Dead set, then removed). The
     // C++ deque keeps its slot — every held pointer stays valid — so the object
     // is marked removed here. The oracle clears no inbound reference, so none is
@@ -760,6 +809,37 @@ private:
     // again when the waypoint was a detour, else probe detours from 3/4 there
     // and then from itself.
     void replan(MdkObject* obj);
+    // C# Raycast (ScriptRuntime.cs:2886) with its whole RayHit: the nearest hit's point,
+    // the triangle's normal, its arena and its group. The chain gun's wall shot needs the
+    // arena and group (HitGroupAt) as well as the point.
+    bool raycastHit(const Vec3& from, const Vec3& to, DebrisRayHit* out);
+    // C# AimScore (:2029, 0x41ab2c): a box is a target when it is within its size + 140
+    // of the origin, inside a cone around Kurt's yaw that is wider for big and close boxes,
+    // and visible. Its score (squared distance, height counting double; lower is better),
+    // or -1.
+    float aimScore(const formats::Box& bounds, const Vec3& origin, float bestScore);
+    // C# ChainGunHit (:2075): a tick of the chain gun on an object (or one of its weak
+    // parts): the damage, the bar, sparks on the side facing Kurt, or the kill.
+    void chainGunHit(MdkObject* obj, int32_t part, const formats::Box& bounds, const Vec3& origin,
+                     int32_t damage, bool superGun);
+    // C# UpdateBar (:2177): the bar goes after its second, or when its object dies or
+    // cannot show a bar.
+    void updateBar();
+    // C# FlashAt (:1725): an explosion's white flash, 1000 / distance more, up to 150.
+    void flashAt(const Vec3& point);
+    // C# BreakUp (:1738): the parts of an exploding object's break-up model (model + "D")
+    // and slime drops with gore, or 16 fire sparks when it has none.
+    void breakUp(MdkObject* obj);
+    // The effect half of ObjectMotion.Update (ObjectMotion.cs:54-68): an effect only
+    // plays its texture animation, one frame per tick, and goes after its last frame.
+    void motionEffect(MdkObject* obj);
+    // C# FindTexture (:3224): an arena's texture, else the level's. False is the C#'s
+    // null; otherwise `frames` is the texture's frame count.
+    bool findTextureFrames(const std::string& arena, const std::string& name, int32_t* frames);
+    // A model's material names as the C#'s Model.Materials list (a piece of its
+    // break-up borrows them). Cached per model, stable addresses.
+    const std::vector<std::string>* materialNamesOf(const formats::Model* model);
+
     // Raycast (0x421680): whether any triangle of the active arenas crosses the
     // segment. Only the hit/no-hit answer is used by the move planner.
     // The pickup half of ObjectMotion.Update (UpdatePickup 0x43d8f0), run after
@@ -792,6 +872,10 @@ private:
                                     const Vec3& to, DebrisRayHit* out);
     static bool debrisFacetsTrampoline(void* ctx, const std::string& arena, int32_t group,
                                        DebrisGroup* out);
+    // Debris.Trail (Effects.SpawnTrail) and Debris.Updraft (Fans.Query, MaskEffects).
+    static void debrisTrailTrampoline(void* ctx, const std::string& arena, const Vec3& point);
+    static float debrisUpdraftTrampoline(void* ctx, const std::string& arena, const Vec3& point,
+                                         float vz, float dt);
     // AnimatedTextures' frame-count lookup (TextureFrames, ScriptRuntime.cs:2246).
     static int32_t animatedFrameCount(void* ctx, const std::string& arena,
                                       const std::string& texture);
@@ -833,6 +917,9 @@ private:
     std::vector<ScriptMessage> messages_;
     std::map<std::string, ArenaState> arenas_;
     std::map<std::string, formats::Model> modelCache_;  // global models, stable addresses
+    // materialNamesOf's cache: a model's materials as names (map nodes are stable, so a
+    // debris piece may borrow the vector for as long as the runtime lives).
+    std::map<const formats::Model*, std::vector<std::string>> materialNames_;
     int32_t nextInstance_ = 1000;
 
     ArenaSpace space_;

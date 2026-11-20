@@ -8,11 +8,12 @@
 // A port of the Hurt/Damage half of src/Mdk.Game/Kurt/Kurt.Combat.cs and the
 // slot, ammo and super-chain-gun state of src/Mdk.Game/Kurt/Inventory.cs. The
 // movement state machine now lives in game/player.h (the C#'s Kurt is one
-// class; this port splits the movement half from the combat half), and the
-// pickup collection and the sniper/chain-gun combat are later slices: until
-// they land, the slots, ammo and super-chain-gun timer stay empty — which is
-// exactly what the C# reads in a world where Kurt never collects (the
-// headless oracle ticks no Kurt.Update, so nothing else writes this state).
+// class; this port splits the movement half from the combat half). The chain
+// gun's state (Firing, the muzzle flash) lives here too, written by the
+// movement half's updateFiring/updateMuzzle and read by the scripts runtime.
+// The pickup collection and the sniper are later slices: until they land, the
+// slots, ammo and super-chain-gun timer stay empty — which is exactly what the
+// C# reads in a world where Kurt never collects.
 //
 // The addresses are the original's: health 0x574324, the invulnerability
 // 0x573bd4, the knock damage 0x573b20, the slots 0x57432c, the super-chain-
@@ -218,6 +219,40 @@ public:
     void setAmmo(int32_t type, int32_t count);
     void setSuperChainGun(int32_t ticks);
 
+    // Inventory.TickSuperChainGun (Inventory.cs:290): the super chain gun's time runs
+    // while it fires (ScriptRuntime::fireChainGun, one tick per script tick); at 0 its
+    // slot goes. Nothing in this port fills the slots yet (pickup collection is a later
+    // slice), so the slot removal is the oracle's and inert today.
+    void tickSuperChainGun(int32_t ticks);
+
+    // ---- The chain gun (Kurt.Combat.cs:86-88) ----
+    // C# Kurt.Firing (0x573a38): the chain gun fires. Player::updateFiring is its only
+    // writer that sets it, Player::stopFiring the one that clears it (the C#'s
+    // UpdateFiring/StopFiring, which are Kurt's own methods; the port's movement half
+    // owns the mixer they play on, so they live there). The readers are the scripts
+    // runtime's tick (ScriptRuntime::fireChainGun runs while it is set), opcodes 181
+    // (boss_bar) and 209 (if_player_on_me_low), and Kurt's own state machine (SHOT and
+    // RUN_FIRE).
+    bool firing() const { return firing_; }
+    void setFiring(bool firing) { firing_ = firing; }
+
+    // C# Kurt.MuzzleFlash (Kurt.Combat.cs:72): the K_MUZZF frame drawn behind Kurt with
+    // its hotspot at his plus the offset (pixels, y down). C# Kurt.Muzzle is a nullable;
+    // here it is the value plus hasMuzzle(). Player::updateMuzzle is the writer and
+    // KurtSprite::draw the reader.
+    struct MuzzleFlash {
+        int32_t frame;
+        int32_t x;
+        int32_t y;
+    };
+    bool hasMuzzle() const { return hasMuzzle_; }
+    const MuzzleFlash& muzzle() const { return muzzle_; }
+    void setMuzzle(const MuzzleFlash& flash) {
+        muzzle_ = flash;
+        hasMuzzle_ = true;
+    }
+    void clearMuzzle() { hasMuzzle_ = false; }
+
 private:
     // Scaled: easy takes 2/3 (at least 1), hard takes double, normal as-is.
     int32_t scaled(int32_t damage) const;
@@ -238,6 +273,9 @@ private:
     int32_t slotCount_ = 0;
     int32_t ammo_[kAmmoTypes]{};
     int32_t superChainGun_ = 0;
+    bool firing_ = false;
+    bool hasMuzzle_ = false;
+    MuzzleFlash muzzle_{0, 0, 0};
 };
 
 } // namespace mdk

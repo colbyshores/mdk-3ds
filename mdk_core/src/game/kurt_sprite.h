@@ -14,10 +14,11 @@
 // backend's residency bound; the per-frame path only rewrites twelve vertices
 // and draws the selected frame.
 //
-// The ride pose, the beta-only roll/helmet frames and the muzzle flash belong
-// to subsystems that are not ported yet, and neither are Kurt.Visible nor his
-// sniper mode, so the C#'s branches on all of them are taken the way they are
-// false. The ordinary movement, jump, fall, chute, landing and death states ARE
+// The ride pose and the beta-only roll/helmet frames belong to subsystems that
+// are not ported yet, and neither are Kurt.Visible nor his sniper mode, so the
+// C#'s branches on all of them are taken the way they are false. The chain
+// gun's muzzle flash (K_MUZZF, Kurt::muzzle()) is drawn behind him as the C#
+// draws it. The ordinary movement, jump, fall, chute, landing and death states ARE
 // implemented here; see Player's state machine. The missing consumers are
 // recorded in docs/OPEN_ITEMS.md. The frontend draws him at Kurt's own feet:
 // the C# draws at FrameBlend.Feet, which is Kurt's feet exactly when blending
@@ -511,7 +512,8 @@ private:
     // is replaced, so its GPU copies do not leak.
     void releaseAnimation(int32_t animation);
 
-    bool drawFrame(MdkRenderer renderer, int32_t animation, int32_t frame, const Vec3& eye,
+    bool drawFrame(MdkRenderer renderer, int32_t mesh, int32_t animation, int32_t frame,
+                   const Vec3& eye,
                    const Quad& at, int32_t dx, int32_t dy, const Pull& pull);
     bool floorDepth(ArenaSpace* space, const Vec3& eye, const Vec3& forward, const Quad& at,
                     const Frame& frame, float rise, float* outDepth);
@@ -524,6 +526,9 @@ private:
     ModImages* mods_ = nullptr;
     int32_t palette_ = -1;
     int32_t mesh_ = -1;
+    // C# KurtSprite._muzzleMesh: the muzzle flash's own quad, so the flash drawn behind
+    // Kurt does not overwrite the vertices of the frame drawn just before it.
+    int32_t muzzleMesh_ = -1;
     std::vector<uint8_t> paletteRgba_;
     std::vector<Animation> animations_;
     std::vector<StateSpec> stateSpecs_;

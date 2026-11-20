@@ -42,9 +42,7 @@ const float kTurnFrameDegrees = 45.0f;
 const int kCrashTicksPerFrame = 2;
 const int kCrashHoldTick = 8;
 // Kurt's footsteps (Kurt.cs:88-93): the run frames that stamp, and the same pair
-// while running and firing. RunFire is not reachable from this movement-only
-// Player (nothing writes Firing yet), but its frames are ported with the rest of
-// Footstep so the firing slice cannot quietly use the walking pair.
+// while running and firing (K_RUNFIR).
 const int kLeftStep = 0;
 const int kRightStep = 13;
 const int kFireLeftStep = 4;
@@ -65,6 +63,14 @@ const float kChuteBrake = 256.0f;
 // C# Kurt.Combat.cs: PushDrain. The horizontal knock-down push fades toward
 // zero at this rate (u/s^2).
 const float kPushDrain = 0.1f * kTicks * kTicks;
+
+// The chain gun (Kurt.Combat.cs:47-70): its loop (0x46c3e4), MULTIFIRE, GATTFIRE with
+// the super chain gun; K_MUZZF has 4 frames and a random 0-4 pixels is added to the
+// state's offset.
+const char kGunSound[] = "MULTIFIRE";
+const char kSuperGunSound[] = "GATTFIRE";
+const int32_t kMuzzleFrameMask = 3;
+const int32_t kMuzzleJitter = 5;
 
 // damp_collide_move's slide factors: walking stops within 30 degrees of
 // head-on; falling slides off 45 degrees.
@@ -256,7 +262,103 @@ void Player::update(const Input& input, float delta) {
     if (state() == Kurt::HardLand) {
         return;
     }
+    // C# Kurt.cs:242-245, in that order: UpdateItems (the item slice, not ported --
+    // nothing fills the inventory, so the C#'s `item is None` return is the only path),
+    // then UpdateFiring, the state machine (which reads Firing for SHOT and RUN_FIRE),
+    // and UpdateMuzzle, which reads the state the machine just chose.
+    updateFiring(input);
     updateState(forward, strafe, delta);
+    updateMuzzle(delta);
+}
+
+void Player::updateFiring(const Input& input) {
+    // C# Kurt.UpdateFiring (Kurt.Combat.cs:345-358). The gun fires while the key is
+    // held, Kurt is alive, not throwing and not knocked down. Nothing changes while the
+    // same gun keeps firing (or keeps not firing); a start, a stop or a change of gun
+    // stops the old loop first, so the super chain gun running out mid-burst swaps
+    // GATTFIRE for MULTIFIRE on the step its time ends.
+    const bool fire = input.isDown(kKeyFire) && health() > 0 && state() != Kurt::Throw &&
+                      !combat_.knocked();
+    const bool superGun = combat_.superChainGun() > 0;
+    if (fire == combat_.firing() && (!combat_.firing() || superGun == _gunSuper)) {
+        return;
+    }
+
+    stopFiring();
+    combat_.setFiring(fire);
+    _gunSuper = superGun;
+    if (fire && _mixer != nullptr) {
+        _gunVoice = _mixer->playLooped(superGun ? kSuperGunSound : kGunSound);
+    }
+}
+
+void Player::stopFiring() {
+    // C# Kurt.StopFiring (Kurt.Combat.cs:183-190). LeaveSniper() comes first there and
+    // belongs to the unported sniper mode. StopVoice(0) is a no-op on both sides.
+    combat_.setFiring(false);
+    if (_mixer != nullptr) {
+        _mixer->stopVoice(_gunVoice);
+    }
+    _gunVoice = 0;
+    combat_.clearMuzzle();
+}
+
+void Player::updateMuzzle(float delta) {
+    // C# Kurt.UpdateMuzzle (Kurt.Combat.cs:363-380). The clock counts original ticks
+    // (30 a second) whether or not he fires; a flash shows on the odd ticks only, in the
+    // states whose frames do not draw it themselves, and a new frame and jitter are
+    // drawn once per such tick -- the second 1/60 step of a tick keeps the flash it has.
+    // The truncation is the C#'s `(int)_muzzleTicks`; this is once a step, not a loop.
+    _muzzleTicks += kTicks * delta;
+    const int32_t tick = (int32_t)_muzzleTicks;
+    int32_t offsetX = 0;
+    int32_t offsetY = 0;
+    if (!combat_.firing() || !muzzleOffset(&offsetX, &offsetY) || (tick & 1) == 0) {
+        combat_.clearMuzzle();
+        return;
+    }
+
+    if (tick == _muzzleTick) {
+        return;
+    }
+
+    _muzzleTick = tick;
+    // The next frame is (previous + 1-3) & 3, so the flash never repeats a frame; then
+    // the X jitter and the Y jitter, in the C#'s argument order.
+    _muzzleFrame = (_muzzleFrame + _muzzleRandom.next(kMuzzleFrameMask) + 1) & kMuzzleFrameMask;
+    Kurt::MuzzleFlash flash;
+    flash.frame = _muzzleFrame;
+    flash.x = offsetX + _muzzleRandom.next(kMuzzleJitter);
+    flash.y = offsetY + _muzzleRandom.next(kMuzzleJitter);
+    combat_.setMuzzle(flash);
+}
+
+bool Player::muzzleOffset(int32_t* x, int32_t* y) const {
+    // C# Kurt.MuzzleOffsets (Kurt.Combat.cs:57-65): the states that don't show the gun
+    // firing by themselves. The board's K_SURF pose (-42, 12) comes first in the C# and
+    // belongs to the unported ride.
+    switch (state()) {
+        case Kurt::Turn:
+        case Kurt::Side:
+        case Kurt::Jump:
+            *x = 0;
+            *y = 0;
+            return true;
+        case Kurt::Fall:
+            *x = 40;
+            *y = 6;
+            return true;
+        case Kurt::RunJump:
+            *x = 0;
+            *y = -10;
+            return true;
+        case Kurt::Chute:
+            *x = 20;
+            *y = 0;
+            return true;
+        default:
+            return false;
+    }
 }
 
 void Player::updateState(float forward, float strafe, float delta) {
@@ -269,12 +371,14 @@ void Player::updateState(float forward, float strafe, float delta) {
     // whenever it does not apply, which is the same behaviour as not having it.
     if (health() == 0 && onFloor) {
         // C# UpdateCombatState's first arm (Kurt.Combat.cs:371-377): StopFiring, the
-        // flash zeroed, State.Dead. StopFiring is inert here for the reason Player::land
-        // records for the C#'s own call to it. The zeroing is not: it is what makes the
+        // flash zeroed, State.Dead. updateFiring has already refused a corpse the gun
+        // (Health > 0 is in its test), so the StopFiring is the oracle's belt and braces.
+        // The zeroing is not: it is what makes the
         // death beat the oracle's 255 steps whatever the red flash was doing a step
         // earlier, and it is the reason the frontend's old stand-in (a skull fade of its
         // own, started from its own clock) could not be too far out -- it was starting
         // from the same zero, for the same 255/60 s.
+        stopFiring();
         combat_.setHurtFlash(0.0f);
         setState(Kurt::Dead);
         return;
@@ -338,11 +442,16 @@ void Player::updateState(float forward, float strafe, float delta) {
     } else if (state() == Kurt::Land && !done && forward == 0.0f && strafe == 0.0f) {
         // The landing animation keeps running while he stands still.
     } else if (forward != 0.0f || std::fabs(forwardSpeed) > kMovingSpeed) {
-        setState(Kurt::Run);
+        // Kurt.cs:663: running while the gun fires is K_RUNFIR.
+        setState(combat_.firing() ? Kurt::RunFire : Kurt::Run);
     } else if (strafe != 0.0f || std::fabs(strafeSpeed) > kMovingSpeed) {
         setState(Kurt::Side);
     } else if (std::fabs(turnRate) > kMovingSpeed) {
         setState(Kurt::Turn);
+    } else if (combat_.firing()) {
+        // Kurt.cs:673: standing and firing is K_SHOT, ahead of the idle test, so a
+        // Kurt who fires never goes idle.
+        setState(Kurt::Shot);
     } else if (state() == Kurt::Idle && !done) {
         // The idle animation keeps running.
     } else if (state() == Kurt::Still && _stateTime > kIdleDelay) {
@@ -598,8 +707,9 @@ void Player::knockDown(const Vec2& push) {
     combat_.setKnockDamage(0.0f);
     combat_.setInvulnerable(Kurt::kKnockdownInvulnerability);
     addKnockdownPush(push);
-    // StopFiring() is inert here for the reason Player::land records for the C#'s own
-    // call to it: no firing, sniper or muzzle state exists in this port yet.
+    // Kurt.Combat.cs:178: a knocked-down Kurt stops firing (and updateFiring refuses
+    // the gun while he is down, so it stays stopped until he is up).
+    stopFiring();
     chuteOpen = false;
     setState(Kurt::Knocked);
 }
@@ -805,11 +915,9 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         // writer yet -- the same deferral Player::damage records -- and it moves with
         // that, not with this.
         //
-        // What else the C#'s HardLanding does that this does not: Kurt.cs:589 also
-        // calls StopFiring() (leave the sniper, stop the chain-gun voice, drop the
-        // muzzle flash) inside the same guard. Nothing in the port fires -- no
-        // firing, sniper or muzzle state exists yet (grep finds no Firing member) --
-        // so the omission is inert today and lands with the firing slice.
+        // Kurt.cs:589 also calls StopFiring() (stop the chain-gun voice, drop the
+        // muzzle flash) inside the same guard, below; the sniper half of it is not
+        // ported.
         if (health() > 0) {
             damage(kHardLandingDamage);
         }
@@ -824,6 +932,7 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         combat_.setKnockDamage(0.0f);
         if (health() > 0 && state() != Kurt::Dead && state() != Kurt::Knocked &&
             state() != Kurt::GetUp) {
+            stopFiring();
             chuteOpen = false;
             setState(Kurt::HardLand);
         }

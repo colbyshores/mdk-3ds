@@ -1310,10 +1310,15 @@ int main(int argc, char** argv) {
             kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
+        if (runtime) {
+            // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it).
+            runtime->eye = camera.position;
+        }
         if (hudReady) {
-            // The health, skull and its fade are Kurt's now. The C# starts with
-            // an empty inventory and no target bar; those writers land with the
-            // pickup and shooting subsystems, so the HUD must not invent them.
+            // The health, skull and its fade are Kurt's now, and the target bar is the
+            // chain gun's (the scripts' GetBar). The C# starts with an empty
+            // inventory; its writer lands with the pickup subsystem, so the HUD must
+            // not invent it.
             //
             // Both flashes are read off the combat half, exactly as Viewer.HudStateOf
             // passes kurt.HurtFlash and kurt.WhiteFlash (Viewer.cs:913). The frontend
@@ -1327,6 +1332,12 @@ int main(int argc, char** argv) {
             state.dead = player.dead;
             state.hurtFlash = player.combat().hurtFlash();
             state.whiteFlash = player.combat().whiteFlash();
+            // The target's health bar while the chain gun hits it (Viewer.cs:912, GetBar).
+            if (runtime) {
+                const mdk::scripts::ScriptRuntime::BarValues bar = runtime->bar();
+                state.barHealth = bar.health;
+                state.barMax = bar.max;
+            }
             mdk_render_canvas_begin(renderer);
             hud.draw(renderer, state);
             mdk_render_canvas_end(renderer);

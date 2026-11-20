@@ -9,10 +9,12 @@
 // visual state machine too (Kurt.UpdateState, Kurt.Animate, Kurt.UpdateSpecial
 // and Kurt.UpdateDeath), so the renderer can pick Kurt's frame, and it carries the
 // knock-down too (Kurt.KnockDown and the Knocked/GetUp arms of
-// Kurt.UpdateCombatState); the states
-// whose branches belong to other subsystems (the firing and throwing states,
-// the crouch-slide, the ledges, the ride, the beta moves) are not reachable
-// here, and the C#'s branches on them are taken the way they are false.
+// Kurt.UpdateCombatState), and the chain gun (Kurt.UpdateFiring, StopFiring,
+// UpdateMuzzle and the SHOT / RUN_FIRE states; the hits are the scripts
+// runtime's ScriptRuntime::fireChainGun). The states whose branches belong to
+// other subsystems (throwing an item, the crouch-slide, the ledges, the ride,
+// the beta moves) are not reachable here, and the C#'s branches on them are
+// taken the way they are false.
 //
 // Units and convention match the C#: world units, Z up; Yaw in degrees,
 // counter-clockwise, Facing = (cos yaw, sin yaw, 0); the follow camera's pitch
@@ -25,6 +27,7 @@
 #include "game/input.h"
 #include "game/kurt.h"
 #include "render/render_types.h"
+#include "util/random.h"
 
 namespace mdk {
 
@@ -121,9 +124,17 @@ public:
     // The C# always has one; a Player without one plays nothing, which is what a
     // frontend with no audio -- or a host harness that only wants the physics --
     // is. The sounds are the ones the ported state machine makes: FOOT1-4, LAND,
-    // CHUTEOUT, CHUTEON and CHUTEIN. The gun, the slide, the sniper, the roll and
-    // the updraft fan belong to subsystems that are not ported (OPEN_ITEMS.md).
+    // CHUTEOUT, CHUTEON, CHUTEIN and the chain gun's loop (MULTIFIRE, GATTFIRE with
+    // the super chain gun). The slide, the sniper, the roll and the updraft fan
+    // belong to subsystems that are not ported (OPEN_ITEMS.md).
     void setMixer(audio::SoundMixer* mixer) { _mixer = mixer; }
+
+    // C# Kurt.StopFiring (Kurt.Combat.cs:183): the gun stops, its looped voice is
+    // stopped and the muzzle flash goes. Public as in the C#: the knock-down, the hard
+    // landing and the death call it here, and the cutscene, the level's end and the
+    // rides call it from the scripts runtime when those slices land. The C#'s first
+    // statement, LeaveSniper(), belongs to the sniper mode, which is not ported.
+    void stopFiring();
 
     Vec3 facing() const;
     Vec3 right() const;
@@ -153,8 +164,7 @@ public:
 
     // C# Kurt.KnockDown (Kurt.Combat.cs:173, state 901): the counter is spent, he is
     // invulnerable for KnockdownInvulnerability seconds, the push is added, the chute
-    // closes, and K_BANG starts. The C#'s StopFiring() is inert here for the reason
-    // Player::land records for its own call to it -- nothing in this port fires.
+    // closes, and K_BANG starts, after the gun stops (the C#'s StopFiring() there).
     // The push argument is non-zero only from ScriptRuntime::pushKurt (opcode 248);
     // updateKnockDamage passes zero, exactly as Kurt.Combat.cs:225 does.
     void knockDown(const Vec2& push);
@@ -210,6 +220,16 @@ private:
     // and Kurt::declineKnockDamage as its tail on every other step.
     void updateKnockDamage(float delta);
     void updateState(float forward, float strafe, float delta);
+    // C# Kurt.UpdateFiring (Kurt.Combat.cs:345): holding fire fires the chain gun and
+    // loops its sound; a change of gun (the super chain gun's time) restarts the loop.
+    void updateFiring(const Input& input);
+    // C# Kurt.UpdateMuzzle (Kurt.Combat.cs:363): every other tick while firing, a
+    // random K_MUZZF frame behind Kurt in the states whose frames don't show it.
+    void updateMuzzle(float delta);
+    // C# Kurt.MuzzleOffset (Kurt.Combat.cs:383): the flash's offset in the current
+    // state, or false when the state's frames show the flash themselves (SHOT,
+    // RUN_FIRE) or have none. The ride's K_SURF pose is not ported.
+    bool muzzleOffset(int32_t* x, int32_t* y) const;
     void updateSpecial(float delta);
     void updateDeath(float delta);
     void animate(float delta);
@@ -238,6 +258,20 @@ private:
     Vec3 _floorNormal = {0.0f, 0.0f, 1.0f};
     int _jumpTicksLeft = 0;
     bool _jumpReleased = true;
+    // The chain gun's private state (Kurt.Combat.cs:110-114): the looped voice, which
+    // gun it is, and the muzzle flash's tick clock, last tick and frame.
+    int32_t _gunVoice = 0;
+    bool _gunSuper = false;
+    float _muzzleTicks = 0.0f;
+    int32_t _muzzleTick = -1;
+    int32_t _muzzleFrame = 0;
+    // C# Kurt._random (Kurt.Combat.cs:115): the muzzle flash's OWN generator, never the
+    // scripts runtime's -- the oracle builds it unseeded (`new Random()`), so its draws
+    // are not part of the game's golden random stream and must not consume from it. The
+    // port seeds it with a constant so a host run is reproducible; the oracle's flash
+    // frame and jitter are not, which is why the fire golden prints only whether a
+    // flash is up.
+    Random _muzzleRandom{0x4D555A};
 };
 
 } // namespace mdk

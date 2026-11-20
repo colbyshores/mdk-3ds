@@ -8,18 +8,16 @@
 // some leave a smoke trail. The arena queries the C# gets as delegates
 // (Debris.Ray / Trail / Updraft / GroupFacets) are plain function pointers
 // with a context, set by ScriptRuntime at construction — no std::function
-// (AGENTS.md §10). Until the Effects and Fans slices land, the runtime
-// leaves Trail and Updraft unset: SpawnTrail consumes no RNG in the C# and
-// Fans.Query returns the input speed unchanged for a point no fan covers,
-// so an unset delegate does not perturb the golden RNG stream; it only
-// means trail puffs and fan lift are not simulated yet.
+// (AGENTS.md §10). ScriptRuntime wires all four, as the C# does; an unset
+// Trail or Updraft (a harness's Debris) spawns no puff and lifts nothing,
+// which perturbs no random stream -- SpawnTrail consumes no RNG in the C# --
+// but leaves the effects list short of the oracle's puffs.
 //
 // Ownership: a Piece's `names` borrows the material-name list of the arena
-// it came from (level-owned, outlives the runtime). Pieces are pooled (600
-// made up front, reused), exactly as the C#. BreakUp (an object's break-up
-// model) is not in this slice: its only C# callers (the object death path)
-// are unported, and a model's material names cannot be borrowed the same
-// way in C++; it lands with that slice, not as a stub here.
+// it came from (level-owned, outlives the runtime), or -- for a break-up
+// piece -- the runtime's cached name list of the model's materials
+// (ScriptRuntime::materialNamesOf, stable for the runtime's life). Pieces are
+// pooled (600 made up front, reused), exactly as the C#.
 // ============================================================================
 
 #include <stdint.h>
@@ -32,7 +30,12 @@
 #include "util/random.h"
 
 namespace mdk {
+namespace formats {
+class Model;
+} // namespace formats
 namespace scripts {
+
+struct MdkObject;
 
 // A segment hit in an arena: point, surface normal, arena, triangle group
 // (the C# ScriptRuntime.RayHit).
@@ -115,6 +118,12 @@ public:
     // point when it is zero.
     void shatter(const std::string& arena, int32_t group, float life, float size,
                  float speed, const Vec3& point, const Vec3& direction);
+    // An object's break-up (Debris.cs:287, the exploding object's model + "D"): one
+    // piece per part not hidden on the object, its triangles turned by the object's roll
+    // and yaw, launched from two units above the object with its last move added. The
+    // names are the model's material names, borrowed (see the ownership note above).
+    void breakUp(const MdkObject& obj, const formats::Model& model,
+                 const std::vector<std::string>* names);
     // Sparks at a point: size 0.5 or 1.0, palette colours colour..colour+range.
     void spark(const std::string& arena, const Vec3& point, int32_t count, float size,
                int32_t colour, int32_t range, float speed = 1.0f,

@@ -1093,6 +1093,167 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
     return out;
 }
 
+// THE CHAIN GUN, end to end (golden/L8_fire.txt, L8_fire_run.txt, L7_fire_run.txt).
+// Kurt and the scripts runtime are
+// stepped together at 1/60 s, the way the C# Viewer steps them (Kurt, then the scripts),
+// with a scripted input that holds fire, and the oracle probe (`Probe <level> <steps>`,
+// a C# console program over src/Mdk.Game that builds the same world) prints the same
+// line per step. What each column pins:
+//
+//   state / frame   Kurt.UpdateFiring and the state machine: K_SHOT while he stands and
+//                   fires, K_RUNFIR while he runs and fires, K_TRN45 while he turns.
+//   fire / muzzle   Kurt.Firing, and whether a muzzle flash is up (UpdateMuzzle: odd
+//                   ticks only, and only in the states whose frames do not draw it --
+//                   the turn here). The flash's FRAME and jitter come from the oracle's
+//                   unseeded `new Random()`, so they are not reproducible and not
+//                   printed; that the game's random stream is untouched by them is what
+//                   life= and pc= below pin.
+//   shots / hits /  ScriptRuntime.FireChainGun and ChainGunHit: 6 shots a fired tick,
+//   kills           a hit a tick on the best target, the kill that explodes it.
+//   ohp / bar       the targets' health and the health bar the hits raise (BarObject).
+//   pieces / life / the sparks and the break-up pieces: the count, the sum of their
+//   pc / effects    remaining ticks and of their centres (one decimal), all of which
+//                   move with every random draw the hits, the ricochets and the
+//                   explosion make -- so a draw out of the C#'s order shows here -- and
+//                   the explosion's gore drops and its pieces' smoke trails.
+//   white           the explosion's flash (FlashAt).
+//   voices          MULTIFIRE looping while he fires (stopped when he stops), the
+//                   ricochets every 4 ticks, the explosion's sound.
+//
+// The world is the hurt dump's -- the reachable arenas, no pinned solid arena -- with one
+// difference that is the oracle's own: Kurt's sounds go to the RUNTIME's mixer, because
+// the C# has one mixer that Kurt and the scripts share, and the voices column interleaves
+// the gun with the ricochets.
+//
+// TWO SCHEDULES, because one run cannot reach both stops of the gun. The first
+// (golden/L8_fire.txt) stands on the start pad, so an alien's laser knocks him down at
+// step 297 with the gun held: KnockDown's StopFiring, the gun refused while he is down
+// (updateFiring's !Knocked), and the forward key ignored inside K_BANG. The second
+// (golden/L8_fire_run.txt) runs forward at 250, which takes him out of that laser's way,
+// so he fires while running (K_RUNFIR and its FOOT3/FOOT4 frames 4 and 17) and stops
+// because the key comes up (the loop stopped, Shot back to Still).
+//
+// WHY THE RUN SCHEDULE PRINTS NO pc=. Player::facing() takes its sine and cosine from the
+// trig LUT where C# Kurt.Facing calls MathF.Cos/Sin -- the owner-gated difference
+// docs/OPEN_ITEMS.md records for golden/L3_kurt_steps.txt. Thirty steps of running leave
+// the feet ~1e-5 off the oracle's (feet64= still matches), the hit points and the sparks
+// placed from them inherit it, and the sum of ~50 centres then straddles a rounding
+// boundary of the printed decimal on four of 480 lines. Measured 2026-11-19: with
+// facing() switched to cosf/sinf the run schedule matches the oracle byte for byte, pc=
+// included. So the run schedule pins the random stream through life= (the pieces'
+// remaining ticks, an integer every Debris.Start draws into) and keeps pc= off; the
+// standing schedule never moves Kurt and prints both.
+struct FireSchedule {
+    int fireFrom, fireTo, turnFrom, turnTo, runFrom, runTo;
+    bool centres;
+};
+const FireSchedule kFireStand = {10, 400, 200, 230, 300, 330, true};
+const FireSchedule kFireRun = {10, 460, 200, 230, 250, 280, false};
+
+bool kurtFireDump(int level, int steps, const FireSchedule& plan, const MdkData& data,
+                  const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    char line[256];
+    snprintf(line, sizeof(line), "level=%d steps=%d seed=1 fire=%d-%d turn=%d-%d run=%d-%d\n",
+             level, steps, plan.fireFrom, plan.fireTo, plan.turnFrom, plan.turnTo, plan.runFrom,
+             plan.runTo);
+    *out = line;
+    for (int step = 1; step <= steps; step++) {
+        Input input;
+        input.down[kKeyFire] = step >= plan.fireFrom && step < plan.fireTo;
+        input.down[kKeyTurnLeft] = step >= plan.turnFrom && step < plan.turnTo;
+        input.down[kKeyForward] = step >= plan.runFrom && step < plan.runTo;
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+
+        int32_t ohp = 0;
+        const std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            if (!objects[i].dead) {
+                ohp += objects[i].health;
+            }
+        }
+        Vec3 pc{0.0f, 0.0f, 0.0f};
+        int32_t life = 0;
+        const std::vector<scripts::Debris::Piece*>& pieces = runtime.debris().pieces();
+        for (size_t i = 0; i < pieces.size(); i++) {
+            pc.x += pieces[i]->center.x;
+            pc.y += pieces[i]->center.y;
+            pc.z += pieces[i]->center.z;
+            life += pieces[i]->ticks;
+        }
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& live = runtime.mixer().voices();
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) {
+                voices += ",";
+            }
+            voices += live[i].name;
+        }
+        char centres[96] = "";
+        if (plan.centres) {
+            snprintf(centres, sizeof(centres), " pc=%.1f,%.1f,%.1f", pc.x, pc.y, pc.z);
+        }
+        const scripts::ScriptRuntime::BarValues bar = runtime.bar();
+        char head[512];
+        snprintf(head, sizeof(head),
+                 "s=%d state=%s feet64=%d,%d,%d frame=%.4f fire=%d muzzle=%d hp=%d shots=%d "
+                 "hits=%d kills=%d objs=%d ohp=%d bar=%d/%d pieces=%d life=%d%s effects=%d "
+                 "white=%.4f voices=",
+                 step, kurtStateName(player.state()), (int)std::floor(player.feet.x * 64.0f),
+                 (int)std::floor(player.feet.y * 64.0f), (int)std::floor(player.feet.z * 64.0f),
+                 player.animationFrame(), player.combat().firing() ? 1 : 0,
+                 player.combat().hasMuzzle() ? 1 : 0, player.health(), runtime.stats.shots,
+                 runtime.stats.shotHits, runtime.stats.kills, runtime.objectCount(), ohp,
+                 bar.health, bar.max, runtime.debris().pieceCount(), life, centres,
+                 runtime.effects.count(), player.combat().whiteFlash());
+        *out += head;
+        *out += voices.empty() ? "-" : voices;
+        *out += "\n";
+    }
+    return true;
+}
+
 // Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
 // the ScriptRuntime bound to the Player it drives. Shared by the golden and by
 // `tick1 dump hurt`, so a failing golden diffs the same text it compares.
@@ -2865,6 +3026,17 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "fire" || what == "firerun") {
+            std::string got;
+            std::string why;
+            if (!kurtFireDump(level, ticks, what == "fire" ? kFireStand : kFireRun, data,
+                              spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "hurt" || what == "hurtland" || what == "knock" || what == "invuln" ||
             what == "knockdown" || what == "flashes" || what == "push" || what == "camroll") {
             std::string got;
@@ -3580,6 +3752,51 @@ int main(int argc, char** argv) {
                        "landing is the health-zero-on-a-floor step L3_kurt_lethal pins\n");
             } else {
                 printf("FAIL L3_kurt_hurt: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The chain gun, end to end against the oracle probe (see kurtFireDump for what each
+    // column pins and why there are two schedules). L8 stands on the pad and fires into
+    // the aliens until a laser knocks him down; L8 run fires on the run and lets go; L7 is
+    // the level the hardware check uses, where every shot is a wall shot (HitGroup and a
+    // Hard spark) and he falls off the pad firing (the Fall muzzle offset).
+    {
+        struct FireCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const FireSchedule* plan;
+            const char* pass;
+        };
+        static const FireCase kFireCases[] = {
+            {"L8_fire", "golden/L8_fire.txt", 8, 420, &kFireStand,
+             "K_SHOT, the turn's muzzle flash, 112 hits and a kill that explodes (sound, white "
+             "flash, break-up, gore drops, trails), and the knock-down that stops the gun"},
+            {"L8_fire_run", "golden/L8_fire_run.txt", 8, 480, &kFireRun,
+             "K_RUNFIR and its footsteps, the gun loop stopped when fire comes up"},
+            {"L7_fire_run", "golden/L7_fire_run.txt", 7, 480, &kFireRun,
+             "every tick a wall shot (HitGroup, Hard sparks, ricochets), the Fall muzzle"},
+        };
+        for (size_t i = 0; i < sizeof(kFireCases) / sizeof(kFireCases[0]); i++) {
+            const FireCase& c = kFireCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!kurtFireDump(c.level, c.steps, *c.plan, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
                 failures++;
             }
         }

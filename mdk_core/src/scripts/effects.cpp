@@ -117,7 +117,7 @@ void Effects::spawnBubble(const std::string& arena, const Vec3& point) {
 
 bool Effects::hasEffects(const std::string& arena) const {
     for (size_t i = 0; i < effects_.size(); i++) {
-        if (effects_[i].arena == arena) {
+        if (effects_[i]->arena == arena) {
             return true;
         }
     }
@@ -133,16 +133,24 @@ Effects::Effect* Effects::create(const std::string& arena, const std::string& te
     if (frames == 0) {
         return nullptr;
     }
-    Effect effect;
-    effect.kind = kind;
-    effect.arena = arena;
-    effect.texture = texture;
-    effect.frames = frames;
-    effect.position = point;
-    effect.scale = scale;
-    effect.speed = speed;
+    Effect* effect = nullptr;
+    if (!free_.empty()) {
+        effect = free_.back();
+        free_.pop_back();
+        *effect = Effect();
+    } else {
+        pool_.push_back(Effect());
+        effect = &pool_.back();
+    }
+    effect->kind = kind;
+    effect->arena = arena;
+    effect->texture = texture;
+    effect->frames = frames;
+    effect->position = point;
+    effect->scale = scale;
+    effect->speed = speed;
     effects_.push_back(effect);
-    return &effects_.back();
+    return effect;
 }
 
 void Effects::remove(Effect* effect) {
@@ -154,8 +162,9 @@ void Effects::remove(Effect* effect) {
         }
     }
     for (size_t i = 0; i < effects_.size(); i++) {
-        if (&effects_[i] == effect) {
+        if (effects_[i] == effect) {
             effects_.erase(effects_.begin() + (long)i);
+            free_.push_back(effect);
             return;
         }
     }
@@ -164,11 +173,9 @@ void Effects::remove(Effect* effect) {
 void Effects::update(float ticks) {
     // A copy of the current effects (spawns during the update join next
     // tick, as the C#'s ListCopy gives it).
-    std::vector<Effect*> copy;
-    copy.reserve(effects_.size());
-    for (size_t i = 0; i < effects_.size(); i++) {
-        copy.push_back(&effects_[i]);
-    }
+    // The scratch is a member, reused: no list per tick (the C#'s ListCopy pools it too).
+    std::vector<Effect*>& copy = updateCopy_;
+    copy.assign(effects_.begin(), effects_.end());
     for (size_t i = 0; i < copy.size(); i++) {
         Effect* effect = copy[i];
         // The effect may have been removed by an earlier update in this
@@ -195,7 +202,7 @@ void Effects::update(float ticks) {
         if (effect->done || (effect->life <= 0.0f && effect->kind != Kind::Wound)) {
             // Still in the pool? (It is, unless it removed itself.)
             for (size_t j = 0; j < effects_.size(); j++) {
-                if (&effects_[j] == effect) {
+                if (effects_[j] == effect) {
                     remove(effect);
                     break;
                 }

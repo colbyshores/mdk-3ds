@@ -355,12 +355,23 @@ one-line branch on `Rides.Ridden == obj`, and the runtime already carries that
 state as `ridesRidden_` (the ride slice is unported, so it is null and the branch
 is false for every object — the value the C# reads on foot). It never fires in
 levels 3–8; a synthetic `vm_tests` case pins the dispatch and the false branch.
-Remaining 13:
+Remaining 11 (after the chain-gun batch below):
 28,
 114,
 130, 131, 158, 159, 167,
-172, 178, 181, 184,
-209, 224
+172, 178, 184,
+224
+
+**Chain-gun batch (2026-11-19):** 181 (`boss_bar`) and 209
+(`if_player_on_me_low`) ported with Kurt's firing (`Kurt::firing()`, written by
+`Player::updateFiring`). 181 shows the health bar through the new
+`ScriptRuntime::showBarValues` only while Kurt fires (mode 0 a group counter,
+mode 1 an arena variable, rounded away from zero, capped at the maximum); 209 is
+`GetKurtPlatform() == obj && Kurt.Firing && KurtPosition.Z <= top`, and
+`Kurt.Platform` is not ported, so its platform half answers null (the C#'s answer
+on the arena's own floor) and the branch is not taken until the platform footing
+lands. Neither fires in levels 3-8 to t30000; both are pinned by `vm_tests`
+(`BossBarShowsOnlyWhileKurtFires`, `IfPlayerOnMeLowNeedsThePlatform`).
 
 **Reachability, re-probed to t30000 (2026-10-28, `tick1 probe 30000`):**
 after the Debris slice the only remaining opcode that fires anywhere in
@@ -379,8 +390,8 @@ two-line dispatch.
 By blocking subsystem (carried grouping, corrected for this batch):
 
 - **Kurt/player/HUD (needs Kurt items, ammo, platform, firing, camera
-  state):** 114 (if_player_on_me), 178, 181, 189,
-  209, 215, 240, 244, 247.
+  state):** 114 (if_player_on_me), 178, 189,
+  215, 240, 244, 247 (181 and 209 landed with the chain-gun batch).
   (171 (`if_is_573c30`) landed over the runtime's `ridesRidden_` (the
   `Rides.Ridden` equivalent): it is not gated by the Kurt items/platform/firing
   subsystem at all, only by the ride slice, and it reads the same null the C#

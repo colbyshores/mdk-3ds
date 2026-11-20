@@ -87,6 +87,14 @@ public:
 
     Effects() = default;
     explicit Effects(Random* rng) : rng_(rng) {}
+    // Move-only: the live list, the free list and the wounds point into pool_'s slots, so
+    // a copy would point into the original's pool. A move takes the pool (a deque's
+    // elements do not move with it), so those pointers stay valid; ScriptRuntime moves a
+    // fresh Effects into its member once.
+    Effects(const Effects&) = delete;
+    Effects& operator=(const Effects&) = delete;
+    Effects(Effects&&) = default;
+    Effects& operator=(Effects&&) = default;
 
     void setFrameCount(FrameCountFn fn, void* user) {
         frameCount_ = fn;
@@ -118,7 +126,14 @@ public:
     // Updates the effects by `ticks`.
     void update(float ticks);
 
-    const std::deque<Effect>& all() const { return effects_; }
+    // The live effects in the C#'s list order (Effects.All). Pointers, not values: an
+    // effect lives in a stable pool slot, so a wound's entry in wounds_ and the update's
+    // copy of the list keep naming the same effect when another one is removed. (The
+    // list used to be a deque of values erased in the middle, which moves the elements
+    // behind the hole: the update pass then skipped the effect after every removal and
+    // a wound's pointer named its neighbour -- golden/L8_fire.txt's trail puffs are what
+    // showed it.)
+    const std::vector<Effect*>& all() const { return effects_; }
     int32_t count() const { return (int32_t)effects_.size(); }
 
 private:
@@ -135,7 +150,14 @@ private:
     void* frameCountUser_ = nullptr;
     RayFn ray_ = nullptr;
     void* rayUser_ = nullptr;
-    std::deque<Effect> effects_;
+    // The slots (a deque: growing it never moves an existing slot), the free ones, and
+    // the live list. The pool grows lazily, so a default or freshly made Effects owns no
+    // slot and copying one (ScriptRuntime assigns its Effects once, empty) copies no
+    // pointer into another object's pool.
+    std::deque<Effect> pool_;
+    std::vector<Effect*> free_;
+    std::vector<Effect*> effects_;
+    std::vector<Effect*> updateCopy_;  // update()'s copy of the list, reused
     std::map<std::pair<MdkObject*, int32_t>, Effect*> wounds_;
 };
 

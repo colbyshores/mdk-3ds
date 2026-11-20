@@ -10,6 +10,8 @@
 
 #include <cmath>
 
+#include "formats/model.h"
+#include "scripts/object.h"
 #include "util/math_minmax.h"
 
 namespace mdk {
@@ -32,6 +34,8 @@ const float kSpinDegrees = 28.0f / 32768.0f;
 const float kShatterSpinDegrees = 0.000854492f;
 const float kCornerJitter = 2e-5f;
 const float kTicksPerSecond = 30.0f;
+// A break-up's pieces start this far above the object (Debris.cs BreakUpRise).
+const float kBreakUpRise = 2.0f;
 // A hit this close to the start is the surface the piece rests on.
 const float kOnSurface = 1e-3f;
 
@@ -310,6 +314,58 @@ void Debris::split(const Vec3 c[3], const Vec2 uv[3], int32_t material, const Sh
     randomSpin(kShatterSpinDegrees * f, piece->spin);
     piece->ticks = (int32_t)rintf(shot.life * kTicksPerSecond);
     pieces_.push_back(piece);
+}
+
+void Debris::breakUp(const MdkObject& obj, const formats::Model& model,
+                     const std::vector<std::string>* names) {
+    // C# Debris.BreakUp (Debris.cs:287-318). The turn is the row-vector
+    // CreateRotationX(roll) * CreateRotationZ(yaw), so a corner is rolled first and then
+    // yawed; the corners only shape the drawn triangles, nothing in the simulation reads
+    // them. The degrees go through .NET's left-associative DegreesToRadians.
+    /* @vfp-exempt R6 — an object's break-up, cold: once per exploding object, never per
+     * frame; the libm sinf/cosf are what System.Numerics' CreateRotationX/Z call, and the
+     * LUT would turn the drawn pieces differently from the oracle's. measured n/a
+     * (corpus empty). Verified 2026-11-19. */
+    const float roll = degreesToRadians(obj.roll);
+    const float yaw = degreesToRadians(obj.yaw);
+    const float cr = cosf(roll), sr = sinf(roll);
+    const float cy = cosf(yaw), sy = sinf(yaw);
+    // X(roll) = [1 0 0; 0 cr sr; 0 -sr cr], Z(yaw) = [cy sy 0; -sy cy 0; 0 0 1]; their
+    // product's rows, the second and third as the C#'s multiply forms them.
+    const Vec3 row0{cy, sy, 0.0f};
+    const Vec3 row1{cr * -sy, cr * cy, sr};
+    const Vec3 row2{-sr * -sy, -sr * cy, cr};
+    const Vec3 velocity = vsub(obj.position, obj.previous_position);
+    for (size_t p = 0; p < model.partList.size(); p++) {
+        if ((int32_t)pieces_.size() >= kMaxPieces) {
+            return;
+        }
+        const formats::Model::Part& part = model.partList[p];
+        const int32_t index = obj.findPart(part.nameString());
+        // C#'s `1 << index` takes the shift count modulo 32.
+        if (index >= 0 && (obj.hidden_parts & (1 << (index & 31))) != 0) {
+            continue;
+        }
+        Piece* piece = take();
+        piece->names = names;
+        piece->materials.assign(part.triangleMaterials.begin(), part.triangleMaterials.end());
+        for (size_t i = 0; i < part.triangleIndices.size(); i++) {
+            const int32_t vertex = part.triangleIndices[i];
+            const formats::Vec3f v = (vertex >= 0 && (size_t)vertex < part.vertices.size())
+                                         ? part.vertices[(size_t)vertex]
+                                         : formats::Vec3f{0.0f, 0.0f, 0.0f};
+            piece->corners.push_back(Vec3{v.x * row0.x + v.y * row1.x + v.z * row2.x,
+                                          v.x * row0.y + v.y * row1.y + v.z * row2.y,
+                                          v.x * row0.z + v.y * row1.z + v.z * row2.z});
+        }
+        for (size_t i = 0; i < part.triangleUvs.size(); i++) {
+            piece->uvs.push_back(Vec2{part.triangleUvs[i].x, part.triangleUvs[i].y});
+        }
+        piece->center = vadd(obj.position, Vec3{0.0f, 0.0f, kBreakUpRise});
+        start(piece, obj.arena, 1.0f);
+        piece->velocity = vadd(piece->velocity, velocity);
+        pieces_.push_back(piece);
+    }
 }
 
 void Debris::spark(const std::string& arena, const Vec3& point, int32_t count, float size,

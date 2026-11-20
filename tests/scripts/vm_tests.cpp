@@ -86,6 +86,8 @@ const int32_t kIfPointSeesPlayer = 243;
 const int32_t kIfPlayerHealth = 241;
 const int32_t kIfIsRidden = 171;
 const int32_t kIfAmmo = 174;
+const int32_t kBossBar = 181;
+const int32_t kIfPlayerOnMeLow = 209;
 const int32_t kIfPartnerDistance = 213;
 const int32_t kIfPartnerAngle = 214;
 const int32_t kSpawnPartner = 179;
@@ -2156,6 +2158,92 @@ void testIfAmmoReadsSuperChainGunAndSniperAmmo(LevelData* levelData, const Cmi* 
     // An unknown comparison is false in the oracle, and the following
     // instruction still runs.
     CHECK(runIfAmmo(runtime, 0, 0, 0.0f, 0.0f, false) == 1.0f);
+}
+
+// Opcode 181 (boss_bar) has no C# ScriptVmTests counterpart, so this pins the
+// oracle directly (ScriptVm.cs BossBar, :1854-1878): the bar shows ONLY while Kurt
+// fires; mode 0 is the maximum minus a group counter, mode 1 an arena variable going
+// from high (0) to low (the maximum), rounded away from zero; the value is capped at
+// the maximum; and a value of 0 or less hides the bar (ShowBarValues).
+void runBossBar(scripts::ScriptRuntime& runtime, scripts::MdkObject* obj, int32_t mode,
+                int32_t index, float low, float high, int32_t maxHealth) {
+    Code code;
+    code.u8(kBossBar).u8(mode).u8(index);
+    if (mode == 1) {
+        code.f32(low).f32(high);
+    }
+    code.u32(maxHealth);
+    code.end();
+    runProgram(runtime, code, obj);
+    CHECK(!sawUnimplemented(kBossBar));
+}
+
+void testBossBarShowsOnlyWhileKurtFires(LevelData* levelData, const Cmi* cmi,
+                                        audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+    scripts::MdkObject obj;
+    obj.arena = "BOSSBAR";
+    runtime.setGroupCounter("BOSSBAR", 3, 40);
+
+    // Not firing: the opcode leaves the bar alone.
+    runBossBar(runtime, &obj, 0, 3, 0.0f, 0.0f, 100);
+    CHECK(runtime.bar().health == 0 && runtime.bar().max == 0);
+    CHECK(runtime.barTime == 0.0f);
+
+    // Firing: max - counter of group 3.
+    runtime.kurt().setFiring(true);
+    runBossBar(runtime, &obj, 0, 3, 0.0f, 0.0f, 100);
+    CHECK(runtime.bar().health == 60 && runtime.bar().max == 100);
+    CHECK(runtime.barTime == 1.0f);
+    CHECK(runtime.barObject == nullptr);
+
+    // Mode 1: variable 2 at 4 between low 0 and high 10, of 50 -> (10-4)/(10-0)*50 = 30.
+    runtime.getArenaState("BOSSBAR").variables[2] = 4.0f;
+    runBossBar(runtime, &obj, 1, 2, 0.0f, 10.0f, 50);
+    CHECK(runtime.bar().health == 30 && runtime.bar().max == 50);
+    // Away from zero, not to even: (10-7.5)/(10-0)*10 is exactly 2.5 -> 3 (banker's: 2).
+    runtime.getArenaState("BOSSBAR").variables[2] = 7.5f;
+    runBossBar(runtime, &obj, 1, 2, 0.0f, 10.0f, 10);
+    CHECK(runtime.bar().health == 3 && runtime.bar().max == 10);
+
+    // A counter below zero would show more than the maximum: capped at it.
+    runtime.setGroupCounter("BOSSBAR", 3, -25);
+    runBossBar(runtime, &obj, 0, 3, 0.0f, 0.0f, 100);
+    CHECK(runtime.bar().health == 100 && runtime.bar().max == 100);
+
+    // A counter at the maximum is a value of 0: ShowBarValues hides the bar.
+    runtime.setGroupCounter("BOSSBAR", 3, 100);
+    runBossBar(runtime, &obj, 0, 3, 0.0f, 0.0f, 100);
+    CHECK(runtime.barTime == 0.0f);
+    CHECK(runtime.bar().health == 0 && runtime.bar().max == 0);
+
+    // A maximum of 0 shows nothing even while firing.
+    runtime.setGroupCounter("BOSSBAR", 3, 0);
+    runBossBar(runtime, &obj, 0, 3, 0.0f, 0.0f, 0);
+    CHECK(runtime.barTime == 0.0f);
+}
+
+// Opcode 209 (if_player_on_me_low): Kurt stands on the object, fires, and is not above
+// its top (ScriptVm.cs:1269-1273). Kurt.Platform is not ported, so the platform half is
+// null and the branch is not taken even while he fires; what this pins is that the
+// opcode is dispatched (not the unimplemented bucket) and reads the live firing flag
+// through getKurtPlatform, which a platform port will make the whole condition.
+void testIfPlayerOnMeLowNeedsThePlatform(LevelData* levelData, const Cmi* cmi,
+                                         audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+    runtime.kurt().setFiring(true);
+    Code code;
+    code.u8(kIfPlayerOnMeLow).u8(kActionGoto).target("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    code.end();
+    scripts::MdkObject obj;
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kIfPlayerOnMeLow));
+    CHECK(runtime.getKurtPlatform() == nullptr);
+    CHECK(obj.variables[0] == 1.0f);
 }
 
 // Opcodes 213 (if_partner_distance) and 214 (if_partner_angle) have no C#
@@ -8052,6 +8140,10 @@ int main() {
     printf("PASS BlastWeakParts\n");
     testIfAmmoReadsSuperChainGunAndSniperAmmo(&levelData, &cmi, &bank);
     printf("PASS IfAmmoReadsSuperChainGunAndSniperAmmo\n");
+    testBossBarShowsOnlyWhileKurtFires(&levelData, &cmi, &bank);
+    printf("PASS BossBarShowsOnlyWhileKurtFires\n");
+    testIfPlayerOnMeLowNeedsThePlatform(&levelData, &cmi, &bank);
+    printf("PASS IfPlayerOnMeLowNeedsThePlatform\n");
     testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);
     printf("PASS PartnerConditionsUseLiveLinkedObjectAndGeometry\n");
     testIfHitWeaponBranchesOnExactHitType(runtime);

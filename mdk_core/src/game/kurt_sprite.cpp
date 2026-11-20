@@ -40,6 +40,9 @@ const char* kChuteOpening = "K_CHUTE";
 const char* kChuteSway = "K_CHUTEC";
 const int32_t kChuteOpenedFrame = 5;
 const int32_t kChuteClosedFrame = 7;
+// The chain gun's muzzle flash is drawn behind Kurt, a little farther from the camera
+// (KurtSprite.cs MuzzleBehind).
+const float kMuzzleBehind = 0.05f;
 
 const char* kLevelAnimations[] = {"K_SURF", "K_SURFJ", "K_SLIP", "K_SLIDE", "K_FSLIDE", "K_BSLIDE"};
 
@@ -167,7 +170,11 @@ bool KurtSprite::load(MdkRenderer renderer, const formats::Bni& sprites,
     paletteRgba_.assign(palette.rgba(), palette.rgba() + 256 * 4);
     palette_ = mdk_render_create_palette(renderer, paletteRgba_.data());
     mesh_ = mdk_render_create_dynamic_mesh(renderer, kFrameVertices);
-    if (palette_ < 0 || mesh_ < 0) {
+    // The C# makes the muzzle's mesh one quad long; drawFrame can write two (the body
+    // and the feet rows) when a frame's hotspot row is inside it, so it gets the same
+    // room as the body's.
+    muzzleMesh_ = mdk_render_create_dynamic_mesh(renderer, kFrameVertices);
+    if (palette_ < 0 || mesh_ < 0 || muzzleMesh_ < 0) {
         return false;
     }
 
@@ -454,7 +461,29 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
     if (!ensureTexture(selected.animation, selected.frame)) {
         return false;
     }
-    return drawFrame(renderer, selected.animation, selected.frame, eye, at, 0, 0, pull);
+    if (!drawFrame(renderer, mesh_, selected.animation, selected.frame, eye, at, 0, 0, pull)) {
+        return false;
+    }
+
+    // The chain gun's muzzle flash (KurtSprite.cs Draw, after the body): its hotspot at
+    // Kurt's plus the flash's offset, a little farther from the camera than he is, and
+    // pulled towards the eye by the body's scale over all its rows.
+    if (player.combat().hasMuzzle() && muzzleFlash_ >= 0) {
+        const Kurt::MuzzleFlash& muzzle = player.combat().muzzle();
+        const Animation& flash = animations_[(size_t)muzzleFlash_];
+        if (muzzle.frame >= 0 && muzzle.frame < (int32_t)flash.frames.size() &&
+            ensureTexture(muzzleFlash_, muzzle.frame)) {
+            Quad behind = at;
+            behind.feet = addVectors(feet, scale(forward, kMuzzleBehind));
+            Pull flashPull;
+            flashPull.body = pull.body;
+            flashPull.feet = pull.body;
+            flashPull.rise = 0.0f;
+            drawFrame(renderer, muzzleMesh_, muzzleFlash_, muzzle.frame, eye, behind, muzzle.x,
+                      muzzle.y, flashPull);
+        }
+    }
+    return true;
 }
 
 bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
@@ -964,8 +993,9 @@ void KurtSprite::releaseAnimation(int32_t animationIndex) {
     }
 }
 
-bool KurtSprite::drawFrame(MdkRenderer renderer, int32_t animationIndex, int32_t frameIndex,
-                           const Vec3& eye, const Quad& at, int32_t dx, int32_t dy, const Pull& pull) {
+bool KurtSprite::drawFrame(MdkRenderer renderer, int32_t mesh, int32_t animationIndex,
+                           int32_t frameIndex, const Vec3& eye, const Quad& at, int32_t dx,
+                           int32_t dy, const Pull& pull) {
     if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
         return false;
     }
@@ -987,9 +1017,9 @@ bool KurtSprite::drawFrame(MdkRenderer renderer, int32_t animationIndex, int32_t
         return false;
     }
 
-    mdk_render_update_mesh(renderer, mesh_, vertices, count);
+    mdk_render_update_mesh(renderer, mesh, vertices, count);
     MeshDraw draw;
-    draw.mesh = mesh_;
+    draw.mesh = mesh;
     draw.first_vertex = 0;
     draw.vertex_count = count;
     draw.material.texture = frame.texture;

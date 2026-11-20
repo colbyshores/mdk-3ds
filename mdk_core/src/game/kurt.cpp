@@ -126,4 +126,31 @@ void Kurt::setSuperChainGun(int32_t ticks) {
     superChainGun_ = ticks;
 }
 
+void Kurt::tickSuperChainGun(int32_t ticks) {
+    // C# Inventory.TickSuperChainGun (Inventory.cs:290-308), in its order: nothing while
+    // the gun has no time, the time runs, and the step that takes it to 0 or below sets it
+    // to exactly 0 and drops the SuperChainGun slot (the first one, FindIndex). The C#'s
+    // RemoveSlot also clamps the selected slot; this port has no selection yet (the item
+    // keys are the item slice's), so only the slot list moves.
+    if (superChainGun_ <= 0) {
+        return;
+    }
+    superChainGun_ -= ticks;
+    if (superChainGun_ > 0) {
+        return;
+    }
+    superChainGun_ = 0;
+    for (int32_t i = 0; i < slotCount_; i++) {
+        if (slots_[i].item != SuperChainGun) {
+            continue;
+        }
+        for (int32_t j = i + 1; j < slotCount_; j++) {
+            slots_[j - 1] = slots_[j];
+        }
+        slotCount_--;
+        slots_[slotCount_] = Slot{None, 0};
+        return;
+    }
+}
+
 } // namespace mdk
