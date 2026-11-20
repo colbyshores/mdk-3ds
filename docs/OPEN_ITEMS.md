@@ -1508,3 +1508,11 @@ on the model's address, `mdk_core/src/game/object_view.*`), so same-depth parts
 draw in an order that depends on where the allocator put them. Not yet
 investigated; it makes any claim of "N pixels changed" at that place unreadable,
 and it is why the haze batch's 7-pixel attribution was withdrawn.
+
+## The stream's screen (package #18b, after the #18a simulation)
+
+The simulation is in `mdk_core/src/stream/` and pinned by `golden/stream_*.txt`; nothing shows it yet.
+- **StreamScreen** (C# `Stream/StreamScreen.cs`): load `STREAM/STREAM.BNI` and `STREAM.MTI`, the palette (system colours 0-63, the stream's `PAL` above), the clips (`KURTANIM`, `BONESANIM`, `SWHANM`/`GUNTANIM`) and the `WIND` loop. Map the input to `stream::Steering` (turn or strafe right minus left, forward minus back, each signed); Back calls `Flight::stop()`. Play the flight's sounds (at most 8 voices; `HITSIDE` on a wall hit while it isn't playing). The events become `Event::Menu` (Died) or `Event::StreamEnded`.
+- **StreamView** (C# `Stream/StreamView.cs`): the tube from `StreamTube::addTriangles`/`rgba` far to near, the sprites and Kurt/Bones/Other by `Flight::transform`/`kurtTransform` and the `*Frame()` helpers, the scrolling background (`backgroundOffset`), and the fade (`Flight::fade`).
+- **The flow** (`game_flow.cpp` `showStream`/`afterStream`): seed `StreamRun` with `kStreamDefaultSeed` for `--stream`, the tick count otherwise. Pass `levelHealth`/the level's report in, and read `Flight::health()` back for LEVEL5. A `StreamRun` is about 25 KB of fixed arrays, so heap-allocate it on the 3DS.
+- **Not checked by the goldens:** the 3DS's newlib `sinf`/`cosf`/`fmaf` are not glibc's. The tube there is the same game, but not bit-identical to the host's.

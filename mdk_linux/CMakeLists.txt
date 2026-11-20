@@ -174,6 +174,9 @@ set(SOURCES
     ${CORE}/src/scripts/hazards.cpp
     ${CORE}/src/scripts/script_vm.cpp
     ${CORE}/src/scripts/debris.cpp
+    ${CORE}/src/stream/stream_flight.cpp
+    ${CORE}/src/stream/stream_tube.cpp
+    ${CORE}/src/stream/tube_basis.cpp
     ${CORE}/src/util/math_lut.cpp
     ${CORE}/src/util/random.cpp
 )

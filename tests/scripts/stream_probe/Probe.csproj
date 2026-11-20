@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The stream oracle (see Program.cs): the C#'s four simulation files compiled as they are,
+       with Difficulty from Kurt/Inventory.cs restated (that file needs the rest of Mdk.Game). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsRidAgnostic>false</IsRidAgnostic>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../src/Mdk.Game/Stream/Flight.cs" Link="Oracle/Flight.cs" />
+    <Compile Include="../../../src/Mdk.Game/Stream/StreamTube.cs" Link="Oracle/StreamTube.cs" />
+    <Compile Include="../../../src/Mdk.Game/Stream/TubeBasis.cs" Link="Oracle/TubeBasis.cs" />
+    <Compile Include="../../../src/Mdk.Game/Stream/WatcomRandom.cs" Link="Oracle/WatcomRandom.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Mdk.Formats/Mdk.Formats.csproj" />
+  </ItemGroup>
+</Project>

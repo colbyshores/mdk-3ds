@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "test_support.h"
+#include "stream_dump.h"
 #include "audio/sound_bank.h"
 #include "audio/sound_mixer.h"
 #include "formats/case_insensitive_path.h"
@@ -4086,6 +4087,27 @@ int main(int argc, char** argv) {
             printf("%s", dumpBlendCases().c_str());
             return 0;
         }
+        // The stream (stream_dump.h): `tick1 dump stream <level> <difficulty> <seed>
+        // <health> <steps> <dt> [schedule]` and `tick1 dump streamrand <seeds> <count>`,
+        // the C++ side of tests/scripts/stream_probe.
+        if (what == "stream" || what == "streamrand") {
+            std::string got;
+            std::string why;
+            const bool ok =
+                what == "streamrand"
+                    ? argc > 4 && test::streamRandDump(argv[3], atoi(argv[4]), &got, &why)
+                    : argc > 8 && test::streamDump(data, level, atoi(argv[4]), (unsigned)strtoul(argv[5], nullptr, 10),
+                                                   atoi(argv[6]), atoi(argv[7]), argv[8], argc > 9 ? argv[9] : "",
+                                                   &got, &why);
+            if (!ok) {
+                printf("usage: dump stream <level> <difficulty> <seed> <health> <steps> <30|60|mix> "
+                       "[schedule] | dump streamrand <seeds> <count>%s%s\n",
+                       why.empty() ? "" : ": ", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "kurt" || what == "kurtlethal") {
             std::string got;
             std::string why;
@@ -5042,6 +5064,83 @@ int main(int argc, char** argv) {
                 printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
                 failures++;
             }
+        }
+    }
+
+    // The stream after a level (mdk_core/src/stream: Flight, StreamTube, TubeBasis,
+    // WatcomRandom) against the stream probe (tests/scripts/stream_probe; stream_dump.cpp
+    // for the lines). Every float is printed as its bits, so these are exact. The
+    // arguments are the probe's, byte for byte: each golden's first line repeats them.
+    {
+        struct StreamCase {
+            const char* name;
+            const char* path;
+            int level;
+            int difficulty;
+            unsigned seed;
+            int health;
+            const char* dt;
+            const char* schedule;
+            const char* pass;
+        };
+        static const StreamCase kStreamCases[] = {
+            {"stream_L7_weave", "golden/stream_L7_weave.txt", 7, 1, 1, 100, "mix",
+             "right:20-60,up:40-90,left:100-180,down:200-260,right:300-420,up:300-330",
+             "the direct-start seed's tube, steered into the walls 41 times (hurt sounds, damage "
+             "with its random extra, the slow-down) down to 1 health, Bones' rescue and the fade"},
+            {"stream_L7_bonus", "golden/stream_L7_bonus.txt", 7, 1, 1, 100, "fast",
+             "auto:1-60,right:61-75,auto:76-130,down:131-140,auto:141-900",
+             "a pilot catches the walking health bonus (150, APPLE), Bones comes after segment "
+             "177 and the stream ends with 150 health"},
+            {"stream_L8_planet", "golden/stream_L8_planet.txt", 8, 0, 7, 100, "fast",
+             "auto:1-150,left:151-165,auto:166-900",
+             "the Gunter tube: Gunter ahead, the tube straightening after 168, the planet, the "
+             "end at 186 with the health LEVEL5 starts with"},
+            {"stream_L8_death", "golden/stream_L8_death.txt", 8, 2, 2302799999u, 30, "30",
+             "right:10-80,up:30-70,left:90-200,down:150-260,right:220-400,up:300-420",
+             "Hard in the Gunter tube from 30 health: the walls kill Kurt, the red then black "
+             "fade, Died"},
+            {"stream_L3_rescue", "golden/stream_L3_rescue.txt", 3, 0, 42, 1, "30", "left:5-40,up:10-30",
+             "at 1 health Bones comes at once; the keys do nothing while he does"},
+            {"stream_L6_stop", "golden/stream_L6_stop.txt", 6, 2, 305419896u, 100, "30",
+             "auto:1-200,up:15-25,stop:120", "Esc (Stop) fades the stream out early, Survived"},
+        };
+        for (size_t i = 0; i < sizeof(kStreamCases) / sizeof(kStreamCases[0]); i++) {
+            const StreamCase& c = kStreamCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!test::streamDump(data, c.level, c.difficulty, c.seed, c.health, 900, c.dt, c.schedule, &got,
+                                  &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+
+        std::string expected;
+        std::string got;
+        std::string why;
+        if (!readText("golden/stream_rand.txt", &expected)) {
+            printf("FAIL stream_rand: no golden file golden/stream_rand.txt\n");
+            failures++;
+        } else if (!test::streamRandDump("1,0,4294967295,305419896", 256, &got, &why)) {
+            printf("FAIL stream_rand: %s\n", why.c_str());
+            failures++;
+        } else if (got == expected) {
+            printf("PASS stream_rand: Watcom's rand() for four seeds, 256 draws each\n");
+        } else {
+            printf("FAIL stream_rand: %s\n", firstDifference(got, expected).c_str());
+            failures++;
         }
     }
 

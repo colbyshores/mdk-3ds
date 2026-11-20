@@ -89,7 +89,10 @@ COMMON_SOURCES := \
 	$(CORE)/scripts/items.cpp \
 	$(CORE)/scripts/end_level.cpp \
 	$(CORE)/scripts/hazards.cpp \
-	$(CORE)/scripts/debris.cpp
+	$(CORE)/scripts/debris.cpp \
+	$(CORE)/stream/tube_basis.cpp \
+	$(CORE)/stream/stream_tube.cpp \
+	$(CORE)/stream/stream_flight.cpp
 
 # tick1 is the golden-state binary; vm_tests is the synthetic per-opcode
 # harness (the C++ twin of tests/Mdk.Game.Tests/ScriptVmTests.cs). Both link
@@ -97,6 +100,7 @@ COMMON_SOURCES := \
 # different game, so the shared list stays single-sourced here.
 SOURCES := \
 	tick1.cpp \
+	stream_dump.cpp \
 	$(COMMON_SOURCES)
 
 SOURCES_VM := \
