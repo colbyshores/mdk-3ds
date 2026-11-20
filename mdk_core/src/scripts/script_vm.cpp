@@ -1915,6 +1915,13 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                                           AnimatedTextures::modeOf(ival(op(ins, 1))),
                                           fval(op(ins, 2)), ScriptRuntime::kTick);
             break;
+        case 131:  // special_event (ScriptVm.cs:1044): the end of the level (<= 50), or a
+                   // cutscene arm (package 13, not ported: recorded as unimplemented). No
+                   // branch either way: the next instruction follows, as in the C#.
+            if (!runtime_.specialEvent(obj, ival(op(ins, 0)))) {
+                noteUnimplemented(ins.opcode);
+            }
+            break;
         case 189: {  // lob_to_kurt: throw itself so that it lands on Kurt (or at a height)
             const std::vector<ScriptValue>& args = listval(op(ins, 0));
             if (!args.empty() && ival(args[0]) <= 1) {

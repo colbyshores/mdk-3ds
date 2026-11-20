@@ -226,6 +226,12 @@ int main(int argc, char** argv) {
     // frontends. A walk also logs Kurt's arena on every change.
     bool hasWalk = false;
     mdk::WalkScript walk;
+    // --event=N: the C#'s test option (Program.cs:53, Viewer.RunTests at Viewer.cs:664-680):
+    // special_event N for the arena controller of Kurt's arena after 1 second of game time.
+    // 50 and below end the level (scripts/end_level.h); it is how a run reaches the end
+    // of a level without walking to its trigger.
+    bool hasEvent = false;
+    int32_t eventValue = 0;
 
     auto optionValue = [](const char* arg, const char* name) -> const char* {
         const size_t length = std::strlen(name);
@@ -297,6 +303,17 @@ int main(int argc, char** argv) {
                 return 1;
             }
             hasWalk = true;
+        } else if ((value = optionValue(argv[i], "--event")) != nullptr) {
+            // The opcode's operand is a byte (special_event's U8), so 0-255.
+            char* end = nullptr;
+            const bool digits = *value >= '0' && *value <= '9';
+            const long parsed = digits ? std::strtol(value, &end, 10) : -1;
+            if (!digits || end == value || *end != '\0' || parsed < 0 || parsed > 255) {
+                std::fprintf(stderr, "[main] --event must be a whole number 0-255: %s\n", value);
+                return 1;
+            }
+            hasEvent = true;
+            eventValue = (int32_t)parsed;
         } else if (std::strcmp(argv[i], "--enhanced") == 0) {
             enhancedLook = true;
         } else if (std::strcmp(argv[i], "--original") == 0) {
@@ -1022,6 +1039,22 @@ int main(int argc, char** argv) {
                                mdk::follow_camera::kDefaultPitch, mdk::follow_camera::kDefaultPivot,
                                kAspect, 0.0f);
     }
+    // THE END OF A LEVEL (package 1). The C#'s Viewer subscribes to the scripts'
+    // LevelEnded (Viewer.cs:240) and leaves EndDelay (0.5 s, :112) later through
+    // Game.cs's Event.LevelEnded (:442, AfterLevel). The runtime's levelEnded() is that
+    // event, latched; `endingDelay` is the C#'s _ending countdown, started on the frame
+    // it is first seen and spent by the same frame's elapsed (Viewer.cs:450-457), and
+    // `levelEndedExit` is its `_next` -- acted on after the frame is drawn.
+    const float kEndDelay = 0.5f;
+    float endingDelay = 0.0f;
+    bool endingStarted = false;
+    bool levelEndedExit = false;
+    bool endSeen = false;
+    bool tearRefusedLogged = false;
+    const char* exitReason = nullptr;
+    // C# Viewer._time and TestStart (Viewer.cs:109): the game time the --event fires at.
+    const float kTestStart = 1.0f;
+    float testTime = 0.0f;
     while (true) {
         const auto now = std::chrono::steady_clock::now();
         // A golden capture MUST NOT depend on how long the host took between
@@ -1075,6 +1108,15 @@ int main(int argc, char** argv) {
                 pending = kStep * 10.0f; // never spiral after a stall
             }
             while (pending >= kStep) {
+                // C# Viewer.RunTests (Viewer.cs:664-680), ahead of Kurt's step: the
+                // --event fires on the step whose game time first reaches TestStart.
+                testTime += kStep;
+                if (hasEvent && runtime && !(testTime < kTestStart || testTime - kStep >= kTestStart)) {
+                    std::printf("[main] --event: special_event %d at frame %u\n", (int)eventValue,
+                                frame);
+                    runtime->specialEvent(
+                        &runtime->getArenaState(runtime->currentArena()).controller, eventValue);
+                }
                 player.update(input, kStep);
                 // The C# Viewer order is Kurt, then the scripts, then the
                 // camera (Viewer.cs:505-535). ScriptRuntime keeps its own
@@ -1185,6 +1227,24 @@ int main(int argc, char** argv) {
                 mdk::buildFollowCamera(&camera, player.feet, player.facing(),
                                        mdk::follow_camera::kDefaultPitch,
                                        mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
+            }
+            // The end of a level: special_event <= 50 started it (the log says where),
+            // EndLevel finished it (levelEnded), and the frontend leaves EndDelay later.
+            if (runtime && runtime->endLevel() && !endSeen) {
+                endSeen = true;
+                std::printf("[main] level: special_event ended the level in %s at frame %u; "
+                            "the arena breaks up and Kurt rises\n",
+                            runtime->endLevel()->arena().c_str(), frame);
+            }
+            if (runtime && runtime->levelEnded() && !endingStarted) {
+                endingStarted = true;
+                endingDelay = kEndDelay;
+                std::printf("[main] level: ended (LevelEnded) at frame %u; leaving in %.1f s\n",
+                            frame, (double)kEndDelay);
+            }
+            if (endingStarted && !levelEndedExit) {
+                endingDelay -= elapsed;
+                levelEndedExit = endingDelay <= 0.0f;
             }
             mdk_render_set_camera(renderer, &camera);
             // The walk's route evidence: Kurt's arena (the scripts' current one,
@@ -1325,6 +1385,18 @@ int main(int argc, char** argv) {
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
         // the runtime's first tick has named one.
         if (arena && frameDrawn) {
+            // The end of a level's torn triangles leave the arena's mesh first (the C#'s
+            // LevelView.DrawEnd, Viewer.cs:703): its view swaps to a dynamic mesh and
+            // rewrites it in this frame. The flying pieces are drawn by the effects pass.
+            if (runtime && runtime->endLevel() &&
+                !arenaViews.tear(runtime->endLevel()->arena(), runtime->endLevel()->torn())) {
+                if (!tearRefusedLogged) {
+                    tearRefusedLogged = true;
+                    std::printf("[main] level: the torn arena's dynamic mesh was REFUSED (%s); "
+                                "it is drawn whole, the pieces still fly\n",
+                                runtime->endLevel()->arena().c_str());
+                }
+            }
             arenaViews.draw(*frameDrawn);
         }
         if (runtime) {
@@ -1473,6 +1545,14 @@ int main(int argc, char** argv) {
         if (maxFrames > 0 && (int)frame >= maxFrames) {
             break;
         }
+        // THE LEVEL-END HOOK (package 2 loads the next level here: Game.cs's
+        // Event.LevelEnded -> AfterLevel, game/game_flow.h's GameFlow::handle). This
+        // frontend shows only a level and does not load another one yet, so the run ends
+        // through the ordinary teardown, after the frame the end was drawn on.
+        if (levelEndedExit) {
+            exitReason = "level ended";
+            break;
+        }
     }
 
     int32_t draws = 0;
@@ -1480,6 +1560,9 @@ int main(int argc, char** argv) {
     mdk_render_stats(renderer, &draws, &tris);
     std::printf("[main] exiting after %u frames (last frame: %d draws, %d triangles)\n",
                 frame, draws, tris);
+    if (exitReason != nullptr) {
+        std::printf("[main] exit reason: %s\n", exitReason);
+    }
 
     // THE PICTURE THIS RUN WAS ASKED TO LEAVE BEHIND. `--capture` names a file, and
     // the run used to return 0 whether or not that file was ever written: the backend

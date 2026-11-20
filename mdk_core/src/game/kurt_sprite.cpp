@@ -209,9 +209,10 @@ bool KurtSprite::load(MdkRenderer renderer, const formats::Bni& sprites,
         }
     }
 
-    // The chute's sway, the muzzle flash and the beta back-up are separate
-    // files in the same archive.
-    const char* const extras[] = {kChuteSway, "K_MUZZF", "K_BCKUP"};
+    // The chute's sway, the muzzle flash, the beta back-up and the end of a
+    // level's two poses (EndLevel.Takeoff / Floating, shown through Kurt.Pose) are
+    // separate files in the same archive.
+    const char* const extras[] = {kChuteSway, "K_MUZZF", "K_BCKUP", "K_TAKEOF", "K_FLOATC"};
     for (size_t i = 0; i < sizeof(extras) / sizeof(extras[0]); i++) {
         formats::SpriteAnimation source;
         if (sprites.animation(extras[i], &source)) {
@@ -352,6 +353,20 @@ bool KurtSprite::pick(const Player& player, Pick* out) const {
     }
     out->animation = -1;
     out->frame = 0;
+
+    // C# KurtSprite.Pick (KurtSprite.cs:300-303): a ride's or the end's frame first
+    // (Kurt.Pose: K_TAKEOF, then K_FLOATC); past the last it loops. A pose whose
+    // animation has no frames falls through to the state's, as in the C#.
+    if (player.hasPose && player.poseName != nullptr) {
+        const int32_t pose = findAnimation(player.poseName);
+        const int32_t poseFrames =
+            pose >= 0 ? (int32_t)animations_[(size_t)pose].frames.size() : 0;
+        if (poseFrames > 0) {
+            out->animation = pose;
+            out->frame = Player::wrapAnimationFrame(player.poseFrame, poseFrames);
+            return true;
+        }
+    }
 
     // The chute's closing frame is shown once when it closes in the air.
     if (player.chuteClosing()) {

@@ -87,6 +87,7 @@ COMMON_SOURCES := \
 	$(CORE)/scripts/script_vm.cpp \
 	$(CORE)/scripts/script_runtime.cpp \
 	$(CORE)/scripts/items.cpp \
+	$(CORE)/scripts/end_level.cpp \
 	$(CORE)/scripts/debris.cpp
 
 # tick1 is the golden-state binary; vm_tests is the synthetic per-opcode

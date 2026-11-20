@@ -10,6 +10,7 @@
 // colour replacement records its call for them to read.
 
 #include <string>
+#include <vector>
 
 #include "render/render.h"
 
@@ -66,6 +67,23 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer, const mdk::Vertex*, int32_t) {
 
 void mdk_render_release_mesh(MdkRenderer, MdkMeshId) {
     mdk_test_meshesReleased++;
+}
+
+// The end of a level's torn arena (LevelView::tear): the dynamic mesh it swaps to
+// and the per-frame rewrites of it, with the last rewrite's corners kept so the
+// test can read what was uploaded.
+int mdk_test_dynamicMeshes = 0;
+int mdk_test_meshUpdates = 0;
+std::vector<mdk::Vertex> mdk_test_lastUpdate;
+
+MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer, int32_t) {
+    mdk_test_dynamicMeshes++;
+    return 100 + mdk_test_meshes++;
+}
+
+void mdk_render_update_mesh(MdkRenderer, MdkMeshId, const mdk::Vertex* vertices, int32_t count) {
+    mdk_test_meshUpdates++;
+    mdk_test_lastUpdate.assign(vertices, vertices + count);
 }
 
 void mdk_render_draw_mesh(MdkRenderer, const mdk::MeshDraw*) {

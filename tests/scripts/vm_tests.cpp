@@ -1171,6 +1171,65 @@ void testSetSkyModeWritesSharedLevelState(LevelData* levelData, const Cmi* cmi,
     CHECK(runtime.skyMode == 42);
 }
 
+// Opcode 131 (special_event, ScriptVm.cs:1044 -> ScriptRuntime.SpecialEvent :1009): 50 and
+// below end the level (EndTheLevel: LevelOver, the town flags, an EndLevel), once; the arms
+// above 50 are package 13 and are recorded as unimplemented, while a value the C#'s switch has
+// no case for is its own no-op. Either way the opcode has no branch: the next instruction runs.
+// The end sequence itself is pinned end to end by golden/L*_end_*.txt (tick1).
+void testSpecialEventEndsTheLevelAndKeepsSync(LevelData* levelData, const Cmi* cmi,
+                                              audio::SoundBank* bank) {
+    const int32_t kSpecialEvent = 131;
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+        scripts::MdkObject obj;
+        Code cutscene;
+        cutscene.u8(kSpecialEvent).u8(51);
+        cutscene.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+        cutscene.end();
+        runProgram(runtime, cutscene, &obj);
+        CHECK(sawUnimplemented(kSpecialEvent));  // package 13: reached, not ported
+        CHECK(!runtime.levelOver);
+        CHECK(runtime.endLevel() == nullptr);
+        CHECK(obj.variables[0] == 2.0f);
+
+        Code none;
+        none.u8(kSpecialEvent).u8(54);  // no C# arm: the oracle's own no-op
+        none.end();
+        runProgram(runtime, none, &obj);
+        CHECK(!sawUnimplemented(kSpecialEvent));
+        CHECK(!runtime.levelOver);
+    }
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+        runtime.globalFlags = 0x15;
+        scripts::MdkObject obj;
+        Code end;
+        end.u8(kSpecialEvent).u8(50);
+        end.u8(kSetVar).u8(kOwn).u8(0).f32(3.0f);
+        end.end();
+        runProgram(runtime, end, &obj);
+        CHECK(!sawUnimplemented(kSpecialEvent));
+        CHECK(runtime.levelOver);
+        CHECK(runtime.stats.townFlags == 0x15);
+        CHECK(runtime.endLevel() != nullptr);
+        CHECK(!runtime.levelEnded());
+        CHECK(obj.variables[0] == 3.0f);
+        CHECK(runtime.shake == scripts::EndLevel::kStartShake);
+        // A second end is LevelOver's no-op: the same EndLevel runs on.
+        const scripts::EndLevel* first = runtime.endLevel();
+        runtime.globalFlags = 0;
+        Code again;
+        again.u8(kSpecialEvent).u8(0);
+        again.end();
+        runProgram(runtime, again, &obj);
+        CHECK(runtime.endLevel() == first);
+        CHECK(runtime.stats.townFlags == 0x15);
+    }
+    // EndLevel.RiseSpeed: 0.025 a tick, three times that above 3.
+    CHECK(scripts::EndLevel::riseSpeed(0.0f, 1.0f) == 0.025f);
+    CHECK(scripts::EndLevel::riseSpeed(3.0f, 1.0f) == 3.025f + 0.05f);
+}
+
 // Opcode 220 (place_x_near_player) has no C# ScriptVmTests counterpart, so
 // this pins the oracle directly (ScriptVm.cs:1121-1123 and
 // ScriptRuntime.cs:1136-1186): the first RNG draw picks the branch, only the
@@ -8181,6 +8240,8 @@ int main() {
     printf("PASS HeadShotsAddOnlyWhenEnabled\n");
     testSetSkyModeWritesSharedLevelState(&levelData, &cmi, &bank);
     printf("PASS SetSkyModeWritesSharedLevelState\n");
+    testSpecialEventEndsTheLevelAndKeepsSync(&levelData, &cmi, &bank);
+    printf("PASS SpecialEventEndsTheLevelAndKeepsSync\n");
     testCameraTrackCalculatesPitchAndExpires(&levelData, &cmi, &bank);
     printf("PASS CameraTrackCalculatesPitchAndExpires\n");
     testPlaceNearKurtChoosesWrapsAndSpaces(&levelData, &cmi, &bank);

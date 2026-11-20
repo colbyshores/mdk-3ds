@@ -43,6 +43,7 @@ namespace mdk {
 class LevelData;
 
 namespace scripts {
+class EndLevel;
 class ScriptRuntime;
 } // namespace scripts
 
@@ -124,6 +125,20 @@ public:
     // Builds the frame: pieces first (batched by surface, in the order
     // their surfaces came), then one quad per sprite effect. `camera`
     // supplies the view-projection the billboards face.
+    //
+    // THE END OF A LEVEL'S PIECES (the C#'s LevelView.DrawPieces, Viewer.cs:703)
+    // are laid out first, in the same batches: each torn triangle of the arena
+    // (scripts::EndLevel::pieces), turned by its angle around its centre, through
+    // the arena's own surface drawn both faces, batched by surface in the order the
+    // pieces came. The C# draws them in their own pass right after the arena, before
+    // the objects; here they share the effects pass (one upload, one draw a batch --
+    // the 3DS's dynamic mesh is written once a frame, AGENTS.md P3), which is the same
+    // picture for every opaque surface.
+    //
+    // The C# draws the pieces only for an arena that has a view, and only for the
+    // triangles its view placed (Placements: not the clip/Disabled triangles, a drawn
+    // surface). The arena is every level's MTO arena here, so the view's test is the
+    // same as the triangle's own: a triangle whose surface does not resolve is skipped.
     void build(const scripts::ScriptRuntime& scripts, const Camera& camera, EffectsFrame* frame);
 
     // Drops the cached looks and sprite surfaces (a level change).
@@ -157,6 +172,7 @@ private:
     };
 
     const ObjectLook& lookOf(const std::string& arena);
+    void addEndPieces(const scripts::EndLevel& end);
     SpriteEntry& sprite(const std::string& arena, const std::string& texture);
     Batch& batchFor(const Surface& surface, const formats::Palette* palette);
 

@@ -47,6 +47,7 @@
 #include "formats/sprite_animation.h"
 #include "game/arena_space.h"
 #include "game/font_view.h"
+#include "game/follow_camera.h"
 #include "game/level_data.h"
 #include "game/messages.h"
 #include "game/object_view.h"
@@ -1923,6 +1924,183 @@ bool kurtCorridorDump(int level, int steps, const std::string& at, const std::st
     return true;
 }
 
+// The end of a level, end to end against the oracle probe (tests/scripts/end_probe): the
+// C++ Player, ScriptRuntime and FollowCamera stepped at 1/60 s in the C# Viewer's order
+// (Kurt, the scripts, the camera), under the probe's schedule -- the items schedule's
+// key holds plus `end:step:value`, which runs special_event `value` (opcode 131's
+// ScriptRuntime::specialEvent) for the arena controller of Kurt's arena before that step.
+// Its columns are the probe's, byte for byte: Kurt (state, feet, yaw, vertical speed,
+// Frozen, Rising, Pose, the camera tilt, the white flash, the gun), the runtime (LevelOver,
+// the town flags, LevelEnded, the shake, the objects), the camera (the eased arena pitch
+// and the air pitch, which Rising holds at 0), and once the end runs, EndLevel's own state
+// (the arena, the torn triangles and their sum, the pieces and their sums, the first piece,
+// the rise, the turn, the flash, the takeoff clock and the tilt), then the voices.
+bool levelEndDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                  const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    // `end:step:value` tokens are this dump's own; the rest is the items schedule.
+    std::vector<std::pair<int, int> > events;
+    std::string rest;
+    size_t at = 0;
+    while (at <= schedule.size()) {
+        size_t comma = schedule.find(',', at);
+        if (comma == std::string::npos) {
+            comma = schedule.size();
+        }
+        const std::string token = schedule.substr(at, comma - at);
+        at = comma + 1;
+        if (token.compare(0, 4, "end:") == 0) {
+            const size_t colon = token.find(':', 4);
+            if (colon == std::string::npos) {
+                *why = "the end token did not parse: " + token;
+                return false;
+            }
+            events.push_back(std::make_pair(atoi(token.substr(4, colon - 4).c_str()),
+                                            atoi(token.substr(colon + 1).c_str())));
+        } else if (!token.empty()) {
+            rest += (rest.empty() ? "" : ",") + token;
+        }
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<ItemsPush> pushes;
+    if (!parseItemsSchedule(rest, &holds, &gives, &pushes) || !gives.empty() || !pushes.empty()) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+    // Viewer.cs:237: the follow camera over the same space (no ClipView in either tree).
+    FollowCamera follow;
+    Camera camera;
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    char buffer[768];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < events.size(); i++) {
+            if (events[i].first == step) {
+                runtime.specialEvent(&runtime.getArenaState(runtime.currentArena()).controller,
+                                     events[i].second);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        // Viewer.RunSteps: Kurt, the scripts, then the camera (PitchGoal: camera_track,
+        // else the arena's rest pitch).
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        const float goal = runtime.cameraTrackTicks > 0
+                               ? runtime.cameraTrackPitch
+                               : levelData.arenaPitch(runtime.currentArena());
+        follow.update(&camera, &space, player, goal, 1.0f / 60.0f, 4.0f / 3.0f);
+
+        const Kurt& combat = player.combat();
+        char pose[64];
+        if (player.hasPose && player.poseName != nullptr) {
+            snprintf(pose, sizeof(pose), "%s:%d", player.poseName, (int)player.poseFrame);
+        } else {
+            snprintf(pose, sizeof(pose), "-");
+        }
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d state=%s feet64=%d,%d,%d yaw=%.4f vz=%.4f frozen=%d rising=%d pose=%s "
+                 "tilt=%.4f white=%.4f fire=%d hp=%d over=%d town=%d ended=%d cam=%.4f,%.4f "
+                 "shake=%.4f objs=%d",
+                 step, kurtStateName(player.state()), p64(player.feet.x), p64(player.feet.y),
+                 p64(player.feet.z), player.yaw, player.verticalSpeed, player.frozen ? 1 : 0,
+                 player.rising ? 1 : 0, pose, player.cameraTilt, combat.whiteFlash(),
+                 combat.firing() ? 1 : 0, player.health(), runtime.levelOver ? 1 : 0,
+                 (int)runtime.stats.townFlags, runtime.levelEnded() ? 1 : 0, follow.arenaPitch(),
+                 follow.airPitch(), runtime.shake, runtime.objectCount());
+        *out += buffer;
+        if (const scripts::EndLevel* end = runtime.endLevel()) {
+            long long tsum = 0;
+            for (size_t i = 0; i < end->torn().size(); i++) {
+                tsum += end->torn()[i];
+            }
+            long long sx = 0, sy = 0, sz = 0, sa = 0;
+            const std::vector<scripts::EndLevel::Piece>& pieces = end->pieces();
+            for (size_t i = 0; i < pieces.size(); i++) {
+                sx += p64(pieces[i].centre.x);
+                sy += p64(pieces[i].centre.y);
+                sz += p64(pieces[i].centre.z);
+                sa += p64(pieces[i].angle);
+            }
+            char first[160];
+            if (pieces.empty()) {
+                snprintf(first, sizeof(first), "-");
+            } else {
+                snprintf(first, sizeof(first), "%d@%d,%d,%d/a%.4f/r%.4f/s%.4f",
+                         (int)pieces[0].triangle, p64(pieces[0].centre.x),
+                         p64(pieces[0].centre.y), p64(pieces[0].centre.z), pieces[0].angle,
+                         pieces[0].riseSpeed, pieces[0].spin);
+            }
+            snprintf(buffer, sizeof(buffer),
+                     " end=%s torn=%d tsum=%lld last=%d pieces=%d psum=%lld,%lld,%lld asum=%lld "
+                     "first=%s rise=%.4f turn=%.4f flash=%.4f takeoff=%.4f pitch=%.4f",
+                     end->arena().c_str(), (int)end->torn().size(), tsum,
+                     end->torn().empty() ? -1 : (int)end->torn().back(), (int)pieces.size(), sx,
+                     sy, sz, sa, first, end->riseSpeedNow(), end->turn(), end->flash(),
+                     end->takeoff(), end->pitchOffset());
+            *out += buffer;
+        }
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& live = runtime.mixer().voices();
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) {
+                voices += ",";
+            }
+            voices += live[i].name;
+        }
+        *out += " voices=";
+        *out += voices.empty() ? "-" : voices;
+        *out += "\n";
+    }
+    return true;
+}
+
 // Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
 // the ScriptRuntime bound to the Player it drives. Shared by the golden and by
 // `tick1 dump hurt`, so a failing golden diffs the same text it compares.
@@ -3721,6 +3899,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "end") {
+            // `tick1 dump end <level> <steps> <schedule>`: levelEndDump's text, the C++
+            // side of the end-of-level probe.
+            std::string got;
+            std::string why;
+            if (!levelEndDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                              &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "fire" || what == "firerun") {
             std::string got;
             std::string why;
@@ -4617,6 +4808,64 @@ int main(int argc, char** argv) {
         } else {
             printf("FAIL L7_corridor_middle: %s\n", firstDifference(got, expected).c_str());
             failures++;
+        }
+    }
+
+    // The end of a level, end to end against the oracle probe (tests/scripts/end_probe; see
+    // levelEndDump for the columns): special_event <= 50 -> EndTheLevel -> EndLevel.cs, and
+    // LevelEnded's step. The schedules are the probe's arguments, byte for byte. Kurt does
+    // not WALK before the end in any of them: his walk turns his facing through the LUT
+    // (Player::facing, R6) and is a ULP off the oracle's, which the feet's 1/64 columns
+    // absorb but the pieces, which turn around his feet, do not. Turning and firing are
+    // exact, and the keys held after the end (forward, strafe, jump) are what Frozen must
+    // ignore.
+    {
+        struct EndCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const EndCase kEndCases[] = {
+            {"L3_end_level", "golden/L3_end_level.txt", 3, 480,
+             "fire:10-300,right:20-40,fwd:50-300,sleft:60-120,jump:70-80,end:45:0,end:60:7",
+             "HMO_1 torn highest first and lifted around Kurt, who stops firing, freezes, takes "
+             "off (K_TAKEOF, K_FLOATC), turns, rises, tilts the view and goes white; a second "
+             "special_event is LevelOver's no-op; LevelEnded at 444"},
+            {"L7_end_level", "golden/L7_end_level.txt", 7, 520,
+             "left:5-30,end:40:0,fwd:41-300,jump:50-60",
+             "DANT_1 (665 pieces) torn while Kurt lands from the spawn fall (K_LAND frozen), "
+             "the arena pitch still easing"},
+            {"L7_end_air", "golden/L7_end_air.txt", 7, 460,
+             "left:5-20,end:25:0,fwd:30-300,jump:50-60",
+             "the end mid-fall: Frozen stops the fall in the air and Rising drops the camera's "
+             "air pitch (3.0) to 0 and holds it there"},
+            {"L8_end_level", "golden/L8_end_level.txt", 8, 480,
+             "fire:5-100,right:20-40,end:30:50,fwd:31-200",
+             "GUNT_1 ended by special_event 50, the last end value, while the objects keep "
+             "running"},
+        };
+        for (size_t i = 0; i < sizeof(kEndCases) / sizeof(kEndCases[0]); i++) {
+            const EndCase& c = kEndCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!levelEndDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
         }
     }
 

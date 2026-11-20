@@ -49,6 +49,7 @@
 #include "scripts/animated_textures.h"
 #include "scripts/debris.h"
 #include "scripts/effects.h"
+#include "scripts/end_level.h"
 #include "scripts/fans.h"
 #include "scripts/game_stats.h"
 #include "scripts/object.h"
@@ -352,6 +353,32 @@ public:
     // during the current tick. The renderer-side camera consumer is a later
     // slice; this records the oracle's per-tick state.
     void raiseShake(float amount);
+
+    // ---- The end of a level (package 1: ScriptRuntime.cs SpecialEvent/EndTheLevel,
+    //      Scripts/EndLevel.cs) ----
+    // C# SpecialEvent (ScriptRuntime.cs:1009, opcode 131 special_event, 0x4456d2): 50 and
+    // below end the level (EndTheLevel); above 50 are the cutscenes, Gunter, the boss
+    // intros and the end of the game (0x477cf4), which are package 13 and NOT ported.
+    // Returns false for a value whose C# arm is one of those unported ones (51, 52, 53,
+    // 55, 61, 81, 91, 92, 93), so the VM can record opcode 131 as reached-but-unported;
+    // every other value is fully handled (the end, or the C#'s own no-op for a value its
+    // switch has no case for). Either way the VM's control flow is the C#'s: the opcode
+    // has no branch, and the next instruction follows.
+    bool specialEvent(MdkObject* obj, int32_t value);
+    // C# ScriptRuntime.LastEndEvent (ScriptRuntime.cs:59).
+    static constexpr int32_t kLastEndEvent = 50;
+    // C# ScriptRuntime.LevelOver (0x573b60): the level is over (EndTheLevel's guard).
+    bool levelOver = false;
+    // C# ScriptRuntime.EndLevel (ScriptRuntime.cs:186): the end running, or null before
+    // special_event <= 50. The frontends read it to tear the arena (torn()) and draw the
+    // pieces (pieces()) -- the C#'s LevelView.DrawEnd (Viewer.cs:703).
+    const EndLevel* endLevel() const { return endLevel_.get(); }
+    // C# ScriptRuntime.LevelEnded(GameOver.No) (ScriptRuntime.cs:245, raised by
+    // EndLevel.Finished at :1509): a LATCH, since section 10 forbids the event. It is set
+    // on the tick the white flash passes its end and stays set; the frontends poll it
+    // after their steps (the C#'s subscriber is Viewer.cs:240: the level ends 0.5 s
+    // later). GameOver.Yes (the town flattened) belongs to the town timer, package 15.
+    bool levelEnded() const { return levelEnded_; }
     // CameraTrack (ScriptRuntime.cs:1188-1216, opcode 203): calculate the
     // camera pitch requested for an object. The runtime keeps the pitch and
     // its two-tick lifetime; the follow-camera consumer and the save/load
@@ -1077,6 +1104,10 @@ private:
     std::vector<Twister> twisterScratch_;
     std::vector<Vec3> groupCentres_;    // blastGroups' scratch
     std::vector<std::string> loadedArenas_;  // C# _loadedArenas (UpdateArenas)
+    // C# EndTheLevel (ScriptRuntime.cs:1496): see specialEvent above.
+    void endTheLevel();
+    std::unique_ptr<EndLevel> endLevel_;  // C# ScriptRuntime.EndLevel
+    bool levelEnded_ = false;             // the C#'s LevelEnded(GameOver.No), latched
     int32_t tickCount_ = 0;
     float tickAccumulator_ = 0.0f;  // C# ScriptRuntime._time
 };

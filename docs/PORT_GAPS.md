@@ -2,7 +2,7 @@
 
 **What this is.** A read-only audit of the C# oracle in `src/` (Mdk.Game, Mdk.Engine, Mdk.Formats) against `mdk_core/src` and both frontends, done after the owner made gameplay porting the priority on 2026-11-20 ([docs/WORK_LEDGER.md](WORK_LEDGER.md)). Each package below is one agent's job of a few hours. They're ranked so the ones that stop a level being finished come first. Update the Status column as packages land.
 
-**The headline: no level can be finished in the C++ today.** Every retail level ends through opcode 131 (`special_event`, value ≤ 50 → `EndTheLevel` → `EndLevel.cs`), and 131 has no handler. Neither frontend can load a following level either.
+**The headline (before package 1 landed): no level could be finished in the C++.** Every retail level ends through opcode 131 (`special_event`, value ≤ 50 → `EndTheLevel` → `EndLevel.cs`), and 131 has no handler. Neither frontend can load a following level either.
 
 ## How the opcodes were counted
 
@@ -24,7 +24,7 @@ A scanner decoded every reachable script in LEVEL3–8 using the C++ decoder and
 
 | # | Package | C# covered | What the C++ lacks | Impact / levels | Depends on | Status |
 |---|---|---|---|---|---|---|
-| 1 | End of level | EndLevel.cs; ScriptRuntime EndTheLevel, SpecialEvent ≤ 50; Kurt Frozen/Rising; FollowCamera rising | 131 falls to `noteUnimplemented` (script_vm.cpp:2294); no Frozen; Rising not ported | No level can be finished (L3–L8) | – | wave 1 |
+| 1 | End of level | EndLevel.cs; ScriptRuntime EndTheLevel, SpecialEvent ≤ 50; Kurt Frozen/Rising; FollowCamera rising | 131 falls to `noteUnimplemented` (script_vm.cpp:2294); no Frozen; Rising not ported | No level can be finished (L3–L8) | – | **landed 2026-11-20**: 131's ≤ 50 arm, EndLevel.cs, Frozen/Rising/Pose, the camera's rising, the torn arena and its pieces on both frontends, `levelEnded()` (goldens `L*_end_*.txt`); the frontends exit "level ended" at the hook #2 replaces |
 | 2 | Next-level transition | Flow/Game.cs AfterLevel/Play/AfterStream; Viewer `_ending` | Both frontends exit on any screen other than Level; no teardown/reload | The game stops instead of loading the next level | 1 | after 1 |
 | 3 | Solid objects, platforms, lifts (+ Keeper) | Collision/Solids.cs; ArenaSpace.Move with solids; Kurt Nearby/FindPlatform/Platform/Contact/Carry; SolidsWithin; ClipView; Kurt.Keeper.cs | arena_space move has no solids; getKurtPlatform returns null; opcode 114 missing; the default-case GosubElse divergence (script_vm.cpp:2293 vs ScriptVm.cs:1799) | Kurt walks through doors and object walls and falls through lifts; lifts never move; floor triggers dead (L3, L4, L6, L7, L8) | – | wave 1 |
 | 4 | Combat and hazard opcodes | ScriptVm 158/159/167/172/178/184; TouchDamage; SpawnBox; UpdatePathSpeed | All fall to the default case; their dependencies already exist | No contact damage; objects that should explode keep running; no explosion damage; aliens ignore the bomb (all levels) | – | wave 1 |

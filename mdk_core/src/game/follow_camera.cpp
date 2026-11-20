@@ -164,9 +164,11 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
 }
 
 Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera) {
-    // C# calls Clear only when space != null && !Sniping && !Frozen &&
-    // !Dead; those states are not ported, so the guard is space != null here.
-    if (space == nullptr) {
+    // C# calls Clear only when space != null && !Sniping && !Frozen && !Dead
+    // (FollowCamera.cs:132). Frozen is ported (the end of a level: no clearance, so
+    // the camera does not shove a lifted Kurt); the sniper is not, and the Dead arm
+    // is still open (docs/OPEN_ITEMS.md), so the guard is space and Frozen here.
+    if (space == nullptr || player.frozen) {
         return camera;
     }
     const Vec head = vAdd(toVec(player.feet), Vec{0.0f, 0.0f, kHeadHeight});
@@ -296,9 +298,12 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     // applied per frame in mouseLook, which consumes the accumulated mouse.
     updateAirTime(player, delta);
     updateClimb(player.feet.z, delta);
-    // Rising (the end-of-level lift) is not ported, so the air pitch only decays
+    // C# FollowCamera.cs:113-117: the end of a level lifts Kurt (Kurt.Rising), and
+    // then there is no tilt in the air (end_level.gd); otherwise the air pitch decays
     // on the ground or grows in the air.
-    if (_airTime == 0.0f) {
+    if (player.rising) {
+        _airPitch = 0.0f;
+    } else if (_airTime == 0.0f) {
         _airPitch = mathMax(_airPitch - follow_camera::kAirPitchDecay * delta, 0.0f);
     } else {
         _airPitch = mathMax(_airPitch,

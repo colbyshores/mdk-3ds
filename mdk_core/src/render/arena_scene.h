@@ -82,6 +82,17 @@ bool buildArenaScene(const formats::Arena* arena,
                      const std::vector<const formats::TextureArchive*>& archives,
                      ArenaScene* out);
 
+// Whether buildArenaScene leaves a triangle out (the C# LevelView.Build's skip,
+// LevelView.cs:294: the clip flag's or the Disabled flag's triangles). The one rule
+// both functions here use.
+bool arenaSceneSkips(const formats::Arena* arena, int32_t triangle);
+
+// The first vertex in buildArenaScene's vertex list of every triangle, -1 for a
+// skipped one (the C# LevelView's Placements[t].First). Computed on demand -- only
+// the end of a level (LevelView::tear) needs it -- so a scene carries no per-triangle
+// table it never reads.
+bool arenaSceneTriangleFirsts(const formats::Arena* arena, std::vector<int32_t>* out);
+
 // Whether a batch is drawn right now: its group is not Hidden. This is the
 // draw-time check the C# LevelView makes per group (LevelView.cs:126) -- a
 // group the scripts hid with group_set_state disappears with no mesh rebuild,

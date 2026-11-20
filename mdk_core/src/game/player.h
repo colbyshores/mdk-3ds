@@ -45,6 +45,21 @@ public:
     // second copy of them.
     float cameraPivot = 4.5f;   // C# Kurt.DefaultPivot
     float cameraTilt = 0.0f;    // degrees, negative looks up
+    // C# Kurt.Frozen (Kurt.Combat.cs:89): cutscenes and the level's end -- he stands
+    // still (update() takes the C#'s Frozen branch, Kurt.cs:141-150) and the follow
+    // camera skips its clearance (FollowCamera.cs:132). The end of a level
+    // (scripts/end_level.h) is the writer this port has; the cutscenes are package 13.
+    bool frozen = false;
+    // C# Kurt.Rising (Kurt.Ride.cs:38): the end of a level is lifting him, so the
+    // follow camera holds no air tilt (FollowCamera.cs:113-117).
+    bool rising = false;
+    // C# Kurt.Pose (Kurt.Ride.cs:31): a frame shown instead of the state's (the end's
+    // K_TAKEOF / K_FLOATC; the board's K_SURF when the rides land). KurtSprite::pick
+    // shows it, wrapped into the animation, when the animation has frames. The name
+    // is a static string (EndLevel::kTakeoff / kFloating), never owned here.
+    bool hasPose = false;
+    const char* poseName = nullptr;
+    int32_t poseFrame = 0;
     float forwardSpeed = 0.0f;
     float strafeSpeed = 0.0f;
     float turnRate = 0.0f;     // degrees/s
@@ -55,8 +70,8 @@ public:
     // Health and death (C# Kurt.Combat). What is ported here is the health, the death
     // beat, the knock-down (K_BANG, K_BFLIP and the way back), the hurt and white flashes,
     // the invulnerability timer and the recent-damage counter that decides a knock-down.
-    // What is NOT is the rest of that class: weapons and difficulty scaling, the Frozen
-    // branch of the state machine, riding, and grabbing ledges. What this half needs is
+    // What is NOT is the rest of that class: weapons and difficulty scaling, riding, and
+    // grabbing ledges (the Frozen branch landed with the end of a level, `frozen` above). What this half needs is
     // narrow: a hard landing damages Kurt and a fall out of the arena kills him. health 0
     // on the floor is death (C# "health 0 --on the floor--> DEAD"); update() then runs the
     // C#'s UpdateDeath (the corpse falls on and the death frame advances) and stops once

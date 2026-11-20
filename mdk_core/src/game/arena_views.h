@@ -95,6 +95,13 @@ public:
     // Queue the drawn arenas' visible groups, in the list's order.
     void draw(const std::vector<std::string>& drawn);
 
+    // The end of a level: the torn triangles vanish from that arena's view
+    // (LevelView::tear; the C#'s LevelView.DrawEnd, Viewer.cs:703). Call it inside
+    // the frame, before draw(). False when the view's dynamic mesh was refused (the
+    // arena stays whole this frame); true otherwise, and when the arena has no view
+    // (the C# returns there too).
+    bool tear(const std::string& arena, const std::vector<int32_t>& torn);
+
     // An arena's view, or null.
     const LevelView* find(const std::string& name) const;
 

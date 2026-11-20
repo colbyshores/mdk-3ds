@@ -17,6 +17,11 @@ bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Aren
     level_ = level;
     arena_ = arena;
     surfaces_ = surfaces;
+    // A fresh scene is whole: an end of a level in progress tears it again from the
+    // first torn triangle on the next tear() (the C#'s view is never rebuilt mid-end).
+    tornShown_ = 0;
+    dynamic_ = false;
+    triangleFirsts_.clear();
 
     palette_ = &level->paletteOf(arena);
     const std::vector<const formats::TextureArchive*> archives = level->archivesOf(arena);
@@ -47,6 +52,47 @@ void LevelView::unload() {
     scene_ = ArenaScene();
     arena_ = nullptr;
     palette_ = nullptr;
+    tornShown_ = 0;
+    dynamic_ = false;
+    triangleFirsts_.clear();
+}
+
+bool LevelView::tear(const std::vector<int32_t>& torn) {
+    if (!renderer_ || !arena_ || mesh_ < 0 || (int32_t)torn.size() <= tornShown_) {
+        return true;
+    }
+    if (triangleFirsts_.empty()) {
+        arenaSceneTriangleFirsts(arena_, &triangleFirsts_);
+    }
+    // C# Tear: each newly torn triangle's corners 1 and 2 become its corner 0.
+    for (; tornShown_ < (int32_t)torn.size(); tornShown_++) {
+        const int32_t t = torn[(size_t)tornShown_];
+        if (t < 0 || (size_t)t >= triangleFirsts_.size()) {
+            continue;
+        }
+        const int32_t first = triangleFirsts_[(size_t)t];
+        if (first < 0 || (size_t)first + 2 >= scene_.vertices.size()) {
+            continue;
+        }
+        scene_.vertices[(size_t)first + 1] = scene_.vertices[(size_t)first];
+        scene_.vertices[(size_t)first + 2] = scene_.vertices[(size_t)first];
+    }
+    if (dynamic_) {
+        return true;
+    }
+    // The first tear: the static mesh cannot be rewritten (a frame in flight may read
+    // it), so a dynamic one of the same size takes its place and draw() fills it. The
+    // static one is released at the backend's completion boundary.
+    const MdkMeshId dynamicMesh =
+        mdk_render_create_dynamic_mesh(renderer_, (int32_t)scene_.vertices.size());
+    if (dynamicMesh < 0) {
+        tornShown_ = 0;  // nothing shown torn yet: the next call collapses them all again
+        return false;
+    }
+    mdk_render_release_mesh(renderer_, mesh_);
+    mesh_ = dynamicMesh;
+    dynamic_ = true;
+    return true;
 }
 
 bool LevelView::bounds(Vec3* outMin, Vec3* outMax) const {
@@ -75,6 +121,12 @@ bool LevelView::bounds(Vec3* outMin, Vec3* outMax) const {
 void LevelView::draw() {
     if (!renderer_ || mesh_ < 0 || surfaces_ == nullptr) {
         return;
+    }
+    // A torn arena (tear) draws from its dynamic mesh, which is written in every frame
+    // that draws it: a dynamic mesh's slot holds only what its own frame wrote.
+    if (dynamic_ && !scene_.vertices.empty()) {
+        mdk_render_update_mesh(renderer_, mesh_, scene_.vertices.data(),
+                               (int32_t)scene_.vertices.size());
     }
     for (size_t i = 0; i < scene_.batches.size(); i++) {
         const ArenaBatch& batch = scene_.batches[i];
@@ -133,6 +185,11 @@ bool LevelView::refresh() {
 
     scene_.vertices.swap(rebuilt.vertices);
     scene_.batches.swap(rebuilt.batches);
+    // The rebuilt scene is whole and its mesh static again: an end of a level in
+    // progress tears it again on the next tear().
+    tornShown_ = 0;
+    dynamic_ = false;
+    triangleFirsts_.clear();
 
     // The mesh is rebuilt. The C# creates a new mesh on Rebuild and lets the old
     // one live until the level ends; here the old GPU buffer is released first.

@@ -1501,6 +1501,18 @@ int main(int argc, char** argv) {
     int32_t objectPeakDraws = 0;
     const char* exitReason = "aptMainLoop returned false";
     u32 prevHeld = 0;  // last frame's held mask; the menu reads edges
+    // THE END OF A LEVEL (package 1). The C#'s Viewer subscribes to the scripts'
+    // LevelEnded (Viewer.cs:240) and leaves EndDelay (0.5 s, :112) later through
+    // Game.cs's Event.LevelEnded (:442, AfterLevel). The runtime's levelEnded() is
+    // that event, latched; `endingDelay` is the C#'s _ending countdown, started on the
+    // frame it is first seen and spent by the same frame's elapsed (Viewer.cs:450-457),
+    // and `levelEndedExit` is its `_next` -- acted on after the frame is drawn.
+    const float kEndDelay = 0.5f;
+    float endingDelay = 0.0f;
+    bool endingStarted = false;
+    bool levelEndedExit = false;
+    bool endSeen = false;
+    bool tearRefusedLogged = false;
 
     heapProbe("loop");
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
@@ -1747,6 +1759,24 @@ int main(int argc, char** argv) {
             spanSim0 = mdk::harnessProfileTick();
             spanSteps0 = steps;
             while (pending >= step) {
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_EVENT)
+                // `make AUTOQUIT=.. EVENT=N` (a harness aid): the C#'s Viewer.RunTests
+                // (Viewer.cs:664-680), ahead of Kurt's step -- special_event N for the
+                // controller of Kurt's arena on the step whose game time first reaches
+                // TestStart (1 s). 50 and below end the level.
+                {
+                    static float testTime = 0.0f;
+                    const float kTestStart = 1.0f;
+                    testTime += step;
+                    if (runtime && !(testTime < kTestStart || testTime - step >= kTestStart)) {
+                        mdk::log3dsPrintf("harness: special_event %d at frame %lu (EVENT)",
+                                          (int)(MDK_HW_EVENT), (unsigned long)frame);
+                        runtime->specialEvent(
+                            &runtime->getArenaState(runtime->currentArena()).controller,
+                            (int32_t)(MDK_HW_EVENT));
+                    }
+                }
+#endif
                 const uint64_t tp0 = mdk::harnessProfileTick();
                 player.update(input, step);
                 const uint64_t tp1 = mdk::harnessProfileTick();
@@ -1894,6 +1924,25 @@ int main(int argc, char** argv) {
                 mdk::buildFollowCamera(&camera, player.feet, player.facing(),
                                        mdk::follow_camera::kDefaultPitch,
                                        mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
+            }
+
+            // The end of a level: special_event <= 50 started it (the log says where),
+            // EndLevel finished it (levelEnded), and the frontend leaves EndDelay later.
+            if (runtime && runtime->endLevel() && !endSeen) {
+                endSeen = true;
+                mdk::log3dsPrintf("level: special_event ended the level in %s at frame %lu; "
+                                  "the arena breaks up and Kurt rises",
+                                  runtime->endLevel()->arena().c_str(), (unsigned long)frame);
+            }
+            if (runtime && runtime->levelEnded() && !endingStarted) {
+                endingStarted = true;
+                endingDelay = kEndDelay;
+                mdk::log3dsPrintf("level: ended (LevelEnded) at frame %lu; leaving in %.1f s",
+                                  (unsigned long)frame, (double)kEndDelay);
+            }
+            if (endingStarted && !levelEndedExit) {
+                endingDelay -= elapsed;
+                levelEndedExit = endingDelay <= 0.0f;
             }
         }
 
@@ -2209,6 +2258,19 @@ int main(int argc, char** argv) {
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
         // the runtime's first tick has named one.
         if (arena && frameDrawn) {
+            // The end of a level's torn triangles leave the arena's mesh first (the C#'s
+            // LevelView.DrawEnd, Viewer.cs:703): its view swaps to a dynamic mesh and
+            // rewrites it in this frame, which is the slot C3D_FrameBegin waited for
+            // (AGENTS.md P3). The flying pieces are drawn by the effects pass below.
+            if (runtime && runtime->endLevel() &&
+                !arenaViews.tear(runtime->endLevel()->arena(), runtime->endLevel()->torn())) {
+                if (!tearRefusedLogged) {
+                    tearRefusedLogged = true;
+                    mdk::log3dsPrintf("level: the torn arena's dynamic mesh was REFUSED (%s); "
+                                      "it is drawn whole, the pieces still fly",
+                                      runtime->endLevel()->arena().c_str());
+                }
+            }
             arenaViews.draw(*frameDrawn);
         }
         if (runtime) {
@@ -2596,6 +2658,21 @@ int main(int argc, char** argv) {
 
         if (g_frameBudget != 0 && frame >= g_frameBudget) {
             exitReason = "frame budget reached";
+            break;
+        }
+
+        // THE LEVEL-END HOOK (package 2 loads the next level here). The C#'s Game takes
+        // Event.LevelEnded to AfterLevel (Game.cs:442), which the flow ports: it says
+        // which screen follows (the stream, the statistics, the save prompt or the
+        // menu). This frontend has no screen but the level and does not load another
+        // one yet, so it logs the flow's answer and ends the run through the ordinary
+        // teardown, after the frame the end was drawn on.
+        if (levelEndedExit) {
+            const mdk::flow::Screen after = flow.handle(mdk::flow::Event::LevelEnded);
+            mdk::log3dsPrintf("level: ended; the flow's next screen is %d (not loaded: the "
+                              "next level is package 2)",
+                              (int)after);
+            exitReason = "level ended";
             break;
         }
     }

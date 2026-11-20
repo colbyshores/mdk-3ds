@@ -86,6 +86,17 @@ public:
     // because draw() reads the hidden state live.
     bool refresh();
 
+    // The end of a level (C# LevelView.Tear, LevelView.cs:157-191): the triangles
+    // torn off so far (scripts::EndLevel::torn, in order) vanish from the arena -- each
+    // newly torn one collapses to its first corner in the scene's vertices. On the first
+    // tear the static mesh is replaced by a DYNAMIC one of the same size (the C#'s
+    // CreateDynamicMesh), which draw() then rewrites every frame it draws, inside the
+    // frame (render.h: a dynamic mesh's slot is only safe while its frame records). Call
+    // it between mdk_render_begin_frame and draw(). Returns false when the dynamic mesh
+    // was refused: the arena then stays whole (the static mesh is kept and the next call
+    // tries again), which the frontend logs.
+    bool tear(const std::vector<int32_t>& torn);
+
     // The scene, for the tests and for the diagnostics.
     const ArenaScene& scene() const { return scene_; }
     int32_t batchCount() const { return (int32_t)scene_.batches.size(); }
@@ -109,6 +120,13 @@ private:
     Shading shading_ = Shading::Original;
 
     MdkMeshId mesh_ = -1;
+
+    // tear()'s state: how many of the end's torn triangles are collapsed already (the
+    // C#'s _tornShown), whether mesh_ is the dynamic copy, and the triangles' first
+    // vertices (made on the first tear; arenaSceneTriangleFirsts).
+    int32_t tornShown_ = 0;
+    bool dynamic_ = false;
+    std::vector<int32_t> triangleFirsts_;
 
     // The arena's palette, borrowed from LevelData (whose map keeps it stable).
     // It is not copied: the object pass draws the same arena's objects through

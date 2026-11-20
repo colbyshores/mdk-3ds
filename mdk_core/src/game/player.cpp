@@ -165,6 +165,18 @@ void Player::update(const Input& input, float delta) {
     // is unobservable dead code, not a behaviour change (review-9 R9-5; the scenario
     // that would have to distinguish them was built and matches byte for byte).
     _chuteClosing = false;
+    // C# Kurt.Update's Frozen branch (Kurt.cs:141-150), ahead of the Dead one:
+    // cutscenes and the level's end -- he stands still; the flashes still fade
+    // (0x478704), the chute's flap stops, and his three speeds go. The end of a level
+    // (scripts/end_level.cpp) moves his feet and yaw itself while he is frozen.
+    if (frozen) {
+        combat_.fadeFlashes(delta);
+        stopChuteSound();
+        forwardSpeed = 0.0f;
+        strafeSpeed = 0.0f;
+        verticalSpeed = 0.0f;
+        return;
+    }
     if (dead) {
         // The C# UpdateDeath advances the death beat. Fall keeps a corpse that
         // fell out of the arena at its death point (the post-move fall-out
@@ -175,8 +187,8 @@ void Player::update(const Input& input, float delta) {
         return;
     }
     // C# Kurt.Update fades both flashes here (Kurt.cs:159): after the Frozen return
-    // (Kurt.cs:144, which fades them too -- no Frozen in this port yet, and when it lands
-    // it must fade them on its own branch, above the Dead one) and after the Dead return,
+    // (Kurt.cs:144, which fades them too, on its own branch above the Dead one -- ported
+    // above with the end of a level) and after the Dead return,
     // so a corpse fades nothing at all: its hurtFlash_ is the skull, which rises below and
     // is the only thing UpdateDeath does to it. A white flash that was up when Kurt died
     // therefore stays up for the whole death beat, which is the oracle's behaviour and is
@@ -718,7 +730,10 @@ void Player::mouseLook(Input& input) {
     // offset (its pitch) is the FollowCamera's, applied in FollowCamera::mouseLook.
     // A dead Kurt does not turn (C# MouseLook returns no turn on State.Dead), but
     // the accumulated mouse is still drained so it cannot build up.
-    if (dead) {
+    // A frozen Kurt does not turn either: the C#'s Frozen step returns before
+    // UpdateTurning, so its _mouseTurn stays None and MouseLook turns nothing
+    // (Kurt.cs:137-150, :340-352).
+    if (dead || frozen) {
         input.takeMouseX();
         return;
     }

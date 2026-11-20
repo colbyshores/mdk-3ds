@@ -46,6 +46,9 @@ extern int mdk_test_meshesReleased;
 extern int mdk_test_meshDraws;
 extern int mdk_test_nullIndexTextures;
 extern int mdk_test_failMeshCreates;
+extern int mdk_test_dynamicMeshes;
+extern int mdk_test_meshUpdates;
+extern std::vector<mdk::Vertex> mdk_test_lastUpdate;
 
 namespace {
 
@@ -918,3 +921,79 @@ MDK_TEST(TheViewsFollowTheWalk) {
     MDK_CHECK_EQ(liveTextures(), 0);
     MDK_CHECK_EQ(mdk_test_palettes - palettes0, mdk_test_palettesReleased - palettesReleased0);
 }
+
+// THE END OF A LEVEL'S TORN ARENA (LevelView::tear, the C#'s LevelView.Tear): the first
+// tear swaps the static mesh for a dynamic one of the same size (the static one released),
+// every draw then rewrites it (a dynamic mesh's slot holds only what its own frame wrote),
+// a torn triangle's three corners are its first corner, the triangles not torn keep
+// theirs, and a tear with nothing new changes nothing.
+MDK_TEST(ATornArenaIsRewrittenEveryFrameWithItsTrianglesCollapsed) {
+    const MdkData game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    mdk::LevelData level;
+    MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
+    const std::string a = level.dti().arenas()[(size_t)level.dti().startArena()].name;
+    MDK_CHECK(level.stream().loadNow(a));
+    const MdkRenderer renderer = reinterpret_cast<MdkRenderer>(static_cast<uintptr_t>(1));
+    mdk::SurfaceCache surfaces(renderer);
+    mdk::ArenaViews views;
+    views.start(renderer, &level, &surfaces, mdk::Shading::Lit);
+    std::vector<std::string> drawn(1, a);
+    views.sync(a, std::string(), drawn);
+    const mdk::LevelView* view = views.find(a);
+    MDK_CHECK(view != nullptr);
+    if (view == nullptr) {
+        return;
+    }
+    std::vector<int32_t> firsts;
+    MDK_CHECK(mdk::arenaSceneTriangleFirsts(view->arena(), &firsts));
+    // Two triangles the scene placed.
+    std::vector<int32_t> torn;
+    for (size_t t = 0; t < firsts.size() && torn.size() < 2; t++) {
+        if (firsts[t] >= 0) {
+            torn.push_back((int32_t)t);
+        }
+    }
+    MDK_CHECK_EQ((int)torn.size(), 2);
+    const std::vector<mdk::Vertex> whole = view->scene().vertices;
+
+    const int dynamic0 = mdk_test_dynamicMeshes;
+    const int released0 = mdk_test_meshesReleased;
+    const int updates0 = mdk_test_meshUpdates;
+    views.draw(drawn);
+    MDK_CHECK_EQ(mdk_test_meshUpdates, updates0);  // whole: the static mesh, no rewrite
+    std::vector<int32_t> first(1, torn[0]);
+    MDK_CHECK(views.tear(a, first));
+    MDK_CHECK_EQ(mdk_test_dynamicMeshes, dynamic0 + 1);
+    MDK_CHECK_EQ(mdk_test_meshesReleased, released0 + 1);
+    views.draw(drawn);
+    views.draw(drawn);
+    MDK_CHECK_EQ(mdk_test_meshUpdates, updates0 + 2);  // every frame that draws it
+    MDK_CHECK_EQ(mdk_test_lastUpdate.size(), whole.size());
+    const size_t f0 = (size_t)firsts[(size_t)torn[0]];
+    const size_t f1 = (size_t)firsts[(size_t)torn[1]];
+    for (int k = 1; k < 3; k++) {
+        MDK_CHECK(mdk_test_lastUpdate[f0 + k].pos.x == whole[f0].pos.x &&
+                  mdk_test_lastUpdate[f0 + k].pos.y == whole[f0].pos.y &&
+                  mdk_test_lastUpdate[f0 + k].pos.z == whole[f0].pos.z);
+        MDK_CHECK(mdk_test_lastUpdate[f1 + k].pos.x == whole[f1 + k].pos.x &&
+                  mdk_test_lastUpdate[f1 + k].pos.y == whole[f1 + k].pos.y &&
+                  mdk_test_lastUpdate[f1 + k].pos.z == whole[f1 + k].pos.z);
+    }
+    // The second tear collapses only the new triangle, and makes no second mesh.
+    MDK_CHECK(views.tear(a, torn));
+    MDK_CHECK(views.tear(a, torn));
+    MDK_CHECK_EQ(mdk_test_dynamicMeshes, dynamic0 + 1);
+    views.draw(drawn);
+    for (int k = 1; k < 3; k++) {
+        MDK_CHECK(mdk_test_lastUpdate[f1 + k].pos.x == whole[f1].pos.x &&
+                  mdk_test_lastUpdate[f1 + k].pos.y == whole[f1].pos.y &&
+                  mdk_test_lastUpdate[f1 + k].pos.z == whole[f1].pos.z);
+    }
+    // An arena with no view is the C#'s early return.
+    MDK_CHECK(views.tear("NO_SUCH_ARENA", torn));
+    views.clear();
+}
+

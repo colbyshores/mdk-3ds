@@ -122,6 +122,15 @@ void ArenaViews::forgetFailed(const std::string& name) {
     }
 }
 
+bool ArenaViews::tear(const std::string& arena, const std::vector<int32_t>& torn) {
+    for (size_t i = 0; i < views_.size(); i++) {
+        if (views_[i].name == arena) {
+            return views_[i].view->tear(torn);
+        }
+    }
+    return true;
+}
+
 const LevelView* ArenaViews::find(const std::string& name) const {
     for (size_t i = 0; i < views_.size(); i++) {
         if (views_[i].name == name) {

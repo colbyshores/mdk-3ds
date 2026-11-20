@@ -718,6 +718,13 @@ void ScriptRuntime::runTick() {
     effects.update(1.0f);
     fans.update();
     debris_.update(1.0f);
+    // SniperRounds.Update(1f) and AirStrike.Update(1f) come next in the C# (packages 6
+    // and 14, not ported), then EndLevel?.Update(1f) (ScriptRuntime.cs:958): the end of
+    // the level tears, lifts and turns, before the objects run. Its Finished event is
+    // EndLevel.cs:1509's LevelEnded(GameOver.No), latched here.
+    if (endLevel_ && endLevel_->update(1.0f)) {
+        levelEnded_ = true;
+    }
 
     // Only Kurt's arena and the active second one update. On the first tick
     // nothing has spawned yet, so this loop is empty; the controller below is
@@ -3710,6 +3717,65 @@ void ScriptRuntime::hurtKurt(int32_t damage) {
 // camera's shake consumer is not ported yet, so this records the runtime half.
 void ScriptRuntime::raiseShake(float amount) {
     shake = mathMax(shake, amount);
+}
+
+// C# SpecialEvent (ScriptRuntime.cs:1007-1076, opcode 131 special_event, 0x4456d2): 50 and
+// below end the level; the arms above 50 are package 13 (cutscenes, Gunter, the boss
+// intros, the end of the game) and are NOT ported. Their values are named here so the VM
+// can record the opcode as reached-but-unported; a value the C#'s switch has no case for is
+// the C#'s own no-op, and handled.
+bool ScriptRuntime::specialEvent(MdkObject* obj, int32_t value) {
+    (void)obj;  // read only by the unported arms (51's strike, 81's end of the game)
+    if (value <= kLastEndEvent) {
+        endTheLevel();
+        return true;
+    }
+    switch (value) {
+        case 51:  // Kurt strikes (X_STRIKD), teleported to the object -- package 13
+        case 52:  // the dog's cutscene (XBN) -- package 13
+        case 53:  // EndCutscene -- package 13
+        case 55:  // CameraMode 2 -- package 13
+        case 61:  // Gunter's cutscene (XGUNTAM) -- package 13
+        case 81:  // the end of the game (MDKEND.FLC, GameFinished) -- package 13
+        case 91:  // a flagged cutscene, camera mode 12 -- package 13
+        case 92:  // EndCutscene -- package 13
+        case 93:  // the boss's cutscene -- package 13
+            return false;
+        default:
+            return true;
+    }
+}
+
+// C# EndTheLevel (ScriptRuntime.cs:1496-1511): once (LevelOver, 0x573b60), the town flags
+// are kept for the debriefing, Kurt stops firing, NUKE and TORNADO play, and the arena
+// breaks up around him as he rises (EndLevel.Start, then its StartShake).
+void ScriptRuntime::endTheLevel() {
+    if (levelOver) {
+        return;
+    }
+    levelOver = true;
+    stats.townFlags = globalFlags;
+    // Kurt.StopFiring. With no Player bound there is no gun, no voice and no muzzle to
+    // stop, so the combat half's flag is all there is.
+    if (player_ != nullptr) {
+        player_->stopFiring();
+    } else {
+        kurt().setFiring(false);
+        kurt().clearMuzzle();
+    }
+    mixer_.play("NUKE");
+    mixer_.play("TORNADO");
+    // _sprites.GetAnimation(EndLevel.Takeoff).FrameCount: K_TAKEOF's frames (the C#
+    // throws on an archive without it; here the pose is K_FLOATC from the first tick).
+    int32_t takeoffFrames = 0;
+    formats::SpriteAnimation takeoff;
+    if (sprites_ != nullptr && sprites_->has(EndLevel::kTakeoff) &&
+        sprites_->animation(EndLevel::kTakeoff, &takeoff)) {
+        takeoffFrames = takeoff.frameCount();
+    }
+    endLevel_.reset(new EndLevel(takeoffFrames));
+    endLevel_->start(level_, currentArena_, player_, &rng_);
+    raiseShake(EndLevel::kStartShake);
 }
 
 // CameraTrack (ScriptRuntime.cs:1188-1216, opcode 203): calculate the pitch

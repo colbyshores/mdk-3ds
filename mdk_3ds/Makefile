@@ -166,6 +166,16 @@ $(error WALK=$(WALK) needs AUTOQUIT: the scripted walk is a harness-build featur
 endif
 DEFINES += -DMDK_HW_WALK='"$(WALK)"'
 endif
+# `make AUTOQUIT=90 EVENT=1` runs special_event 1 after one second of game time, the
+# C#'s --event test option (Program.cs:53, Viewer.RunTests): 50 and below end the level
+# (the arena breaks up, Kurt rises, the screen goes white, the run ends "level ended").
+# Only main_3ds.cpp reads it: touch it after changing EVENT.
+ifneq ($(strip $(EVENT)),)
+ifndef AUTOQUIT
+$(error EVENT=$(EVENT) needs AUTOQUIT: the test event is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_EVENT=$(EVENT)
+endif
 # `make AUTOQUIT=90 TOGGLES='enableGlowBillboards=0;shadowMapSize=128'` applies
 # config.ini lines (';' between them, no spaces, no commas) over the console's own
 # config, for the per-toggle cost profiles: one console config per run without

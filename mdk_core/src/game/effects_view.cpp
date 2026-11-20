@@ -7,11 +7,14 @@
 #include <math.h>
 #include <string.h>
 
+#include "formats/arena.h"
 #include "game/level_data.h"
 #include "render/post_params.h"
 #include "scripts/debris.h"
 #include "scripts/effects.h"
+#include "scripts/end_level.h"
 #include "scripts/script_runtime.h"
+#include "util/math_lut.h"
 
 namespace mdk {
 
@@ -222,6 +225,68 @@ EffectsView::Batch& EffectsView::batchFor(const Surface& surface, const formats:
     return batch;
 }
 
+// C# LevelView.DrawPieces / AddPiece (LevelView.cs:194-249): each piece's triangle, its
+// corners about their middle turned by the piece's angle (Matrix4x4.CreateRotationZ) and
+// put at its centre, with the arena's UVs over its surface's texture size, both faces.
+// Presentation: the turn goes through the shared LUT (R6), as the camera's does.
+void EffectsView::addEndPieces(const scripts::EndLevel& end) {
+    const std::vector<scripts::EndLevel::Piece>& pieces = end.pieces();
+    if (pieces.empty()) {
+        return;
+    }
+    const formats::Arena* arena = level_->arenaNamed(end.arena());
+    if (arena == nullptr) {
+        return;
+    }
+    const ObjectLook& look = lookOf(end.arena());
+    const std::vector<formats::Vec3f>& positions = arena->vertices();
+    const std::vector<int32_t>& indices = arena->triangleIndices();
+    const std::vector<formats::Vec2f>& uvs = arena->triangleUvs();
+    const std::vector<uint32_t>& flags = arena->triangleFlags();
+    const std::vector<int32_t>& materials = arena->triangleMaterials();
+    const float third = 1.0f / 3.0f;
+    for (size_t p = 0; p < pieces.size(); p++) {
+        const scripts::EndLevel::Piece& piece = pieces[p];
+        const int32_t t = piece.triangle;
+        if (t < 0 || t >= arena->triangleCount() ||
+            (flags[(size_t)t] & (arena->clipFlag() | formats::Arena::kGroupDisabled)) != 0) {
+            continue;
+        }
+        // The view's material: the group's stored one, else the triangle's
+        // (LevelView.Build: group.Material ?? TriangleMaterials[t]).
+        int32_t material = materials[(size_t)t];
+        int32_t groupMaterial = 0;
+        if (arena->groupMaterial((int32_t)(flags[(size_t)t] >> 24), &groupMaterial)) {
+            material = groupMaterial;
+        }
+        Surface surface;
+        if (!resolver_->resolve(material, arena->materials(), *look.palette, look.archives,
+                                &surface, Pass::DoubleSided)) {
+            continue;
+        }
+        Batch& batch = batchFor(surface, look.palette);
+        const float uvScaleX = surface.texture ? 1.0f / (float)surface.texture->width() : 0.0f;
+        const float uvScaleY = surface.texture ? 1.0f / (float)surface.texture->height() : 0.0f;
+        Vec3 corners[3];
+        Vec3 middle{0.0f, 0.0f, 0.0f};
+        for (int32_t k = 0; k < 3; k++) {
+            const formats::Vec3f& v = positions[(size_t)indices[(size_t)t * 3 + (size_t)k]];
+            corners[k] = Vec3{v.x, v.y, v.z};
+            middle = add(middle, scaled(corners[k], third));
+        }
+        const float radians = piece.angle * 0.017453292f;
+        const float c = fastCos(radians);
+        const float s = fastSin(radians);
+        for (int32_t k = 0; k < 3; k++) {
+            const Vec3 d = sub(corners[k], middle);
+            const Vec3 world{piece.centre.x + d.x * c - d.y * s, piece.centre.y + d.x * s + d.y * c,
+                             piece.centre.z + d.z};
+            const formats::Vec2f& uv = uvs[(size_t)t * 3 + (size_t)k];
+            batch.vertices.push_back(Vertex{world, Vec2{uv.x * uvScaleX, uv.y * uvScaleY}, kVertexWhite});
+        }
+    }
+}
+
 void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& camera,
                         EffectsFrame* frame) {
     frame->reset();
@@ -237,7 +302,11 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
     Vec3 forward;
     effectsBillboardBasis(viewProjection, &right, &up, &forward);
 
-    // The pieces, batched by surface in the order their surfaces came.
+    // The end of a level's pieces (LevelView.DrawEnd), then the debris pieces,
+    // batched by surface in the order their surfaces came.
+    if (const scripts::EndLevel* end = scripts.endLevel()) {
+        addEndPieces(*end);
+    }
     const std::vector<scripts::Debris::Piece*>& pieces = scripts.debris().pieces();
     for (size_t p = 0; p < pieces.size(); p++) {
         const scripts::Debris::Piece& piece = *pieces[p];

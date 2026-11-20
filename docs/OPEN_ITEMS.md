@@ -1331,6 +1331,46 @@ Still open: **port the object pass** (`Solids.Walk`/`Platform`/`Touching`, `Soli
 through" as evidence the door was open. The corridor probe's `unlock:<step>` is how a probe
 reaches the corridor in the oracle.
 
+## The end of a level (2026-11-20, package 1): what landed, what is open
+
+Landed, operation for operation, pinned by `golden/L3_end_level.txt`, `L7_end_level.txt`,
+`L7_end_air.txt` and `L8_end_level.txt` (byte-identical to the C# probe
+`tests/scripts/end_probe/`, `tick1 dump end <level> <steps> <schedule>`, whose `end:step:value`
+runs special_event like the C#'s `--event`):
+
+- opcode 131's dispatch and `SpecialEvent`'s <= 50 arm, `EndTheLevel` (LevelOver, the town
+  flags, StopFiring, NUKE, TORNADO) -> `ScriptRuntime::specialEvent` / `endTheLevel`;
+- `EndLevel.cs` whole -> `scripts/end_level.{h,cpp}` (HighestFirst, TearOff, MovePieces with
+  .NET's `Matrix3x2.CreateRotation` + FUSED `Vector2.Transform`, the takeoff, turn, rise, tilt
+  and flash), updated where RunTick updates it; `Finished` -> `ScriptRuntime::levelEnded()`;
+- Kurt's `Frozen` (Player::update's branch, no mouse turn), `Rising`, `Pose` (KurtSprite shows
+  K_TAKEOF / K_FLOATC); FollowCamera's rising (no air pitch) and its Frozen clearance skip;
+- `LevelView.DrawEnd`: `LevelView::tear` (the torn triangles collapse; the arena's mesh
+  becomes a dynamic one rewritten in-frame) and the pieces in `EffectsView::build`, on both
+  frontends; the frontends log the end and leave 0.5 s (EndDelay) after LevelEnded with the
+  exit reason "level ended"; Linux `--event=N` and the 3DS harness `EVENT=N` are the C#'s
+  `--event`.
+
+Still open:
+- **Package 2**: the frontends' "LEVEL-END HOOK" blocks (`mdk_linux/src/main.cpp`,
+  `mdk_3ds/src/main_3ds.cpp`) end the run; loading what `GameFlow::handle(LevelEnded)` names
+  is package 2. The 3DS already calls the flow and logs its answer.
+- **Package 13**: special_event's arms above 50 (the cutscenes, the strike, Gunter, the end of
+  the game) still count 131 as unimplemented; `GameOver.Yes` (the town flattened) is package 15.
+- **Unpinned**: FollowCamera's clearance skip while Frozen. No reachable golden blocks the
+  camera's sight during the rise (searched: levels 3, 4, 6, 8, eight turns each), so removing
+  the skip does not fail a golden. The C#'s `!Dead` arm of the same guard is still not
+  ported (`followCameraClear`).
+- **Golden schedules cannot walk Kurt before the end**: his walk turns through the LUT
+  (`Player::facing`, R6) and lands a ULP off the oracle's feet, which the pieces' sums (they
+  turn around his feet) see. Turning and firing are exact.
+- **Draw order**: the C# draws the pieces in their own pass after the arena; here they share
+  the effects pass (after the objects) and carry no depth layer. Same picture for opaque
+  surfaces; a glass piece could blend in a different order.
+- **3DS**: K_TAKEOF / K_FLOATC are not in Kurt's start set, so their first frames stream (the
+  held frame shows meanwhile). Unmeasured on hardware: the torn arena's per-frame dynamic
+  upload (the whole arena's vertices, for the few seconds of the end).
+
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 
 Batch 40 removed the duplicated *health*; the same split still duplicated the *state*.

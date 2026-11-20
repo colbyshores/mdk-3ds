@@ -158,7 +158,7 @@ public:
     // second and stop at zero. Player::update calls it where Kurt.Update does
     // (Kurt.cs:159) — after the Frozen and Dead early returns, so a corpse fades
     // nothing (its hurtFlash_ is the skull, rising below) and a cutscene freeze fades
-    // through its own branch (Kurt.cs:144, unported: no Frozen yet). Both fields are
+    // through its own branch (Kurt.cs:144, Player::update's frozen branch). Both fields are
     // read by the HUD (HudView.DrawFlashes), so a flash that never fades is a red or
     // white screen for the rest of the level, not a cosmetic gap.
     void fadeFlashes(float delta);

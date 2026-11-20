@@ -355,12 +355,25 @@ one-line branch on `Rides.Ridden == obj`, and the runtime already carries that
 state as `ridesRidden_` (the ride slice is unported, so it is null and the branch
 is false for every object — the value the C# reads on foot). It never fires in
 levels 3–8; a synthetic `vm_tests` case pins the dispatch and the false branch.
-Remaining 11 (after the chain-gun batch below):
+Remaining 10 (after the chain-gun batch and the end of a level below):
 28,
 114,
-130, 131, 158, 159, 167,
+130, 158, 159, 167,
 172, 178, 184,
 224
+
+**End of a level (2026-11-20, package 1 of `docs/PORT_GAPS.md`):** 131
+(`special_event`) is dispatched: `ScriptRuntime::specialEvent` (ScriptRuntime.cs:1009).
+50 and below are `EndTheLevel` (LevelOver, the town flags, StopFiring, NUKE and TORNADO)
+and `scripts/end_level.{h,cpp}` (EndLevel.cs whole), pinned end to end by
+`golden/L3_end_level.txt`, `L7_end_level.txt`, `L7_end_air.txt` and `L8_end_level.txt`
+(byte-identical to the C# probe `tests/scripts/end_probe`); the dispatch and the control
+flow are pinned by `vm_tests` (`SpecialEventEndsTheLevelAndKeepsSync`). **The arms above
+50 (51, 52, 53, 55, 61, 81, 91, 92, 93: the strike, the cutscenes, Gunter, the end of the
+game) are package 13 and NOT ported**: they still count opcode 131 in the VM's
+unimplemented diagnostic, and the script carries on to the next instruction exactly as
+the C# does (the opcode has no branch). A value the C#'s switch has no case for is its own
+no-op and is not counted.
 
 **Chain-gun batch (2026-11-19):** 181 (`boss_bar`) and 209
 (`if_player_on_me_low`) ported with Kurt's firing (`Kurt::firing()`, written by
@@ -433,7 +446,8 @@ By blocking subsystem (carried grouping, corrected for this batch):
   Rides subsystem also writes that field (`Rides.cs:219,224`); Rides remains
   deferred with its own player/vehicle slice, so the riding vehicle's alarm
   source is not present yet.
-- **Camera/cutscene/debug (no camera/cutscene port):** 131
+- **Camera/cutscene/debug (no camera/cutscene port):** 131's arms above 50 (its end
+  of a level, 50 and below, is ported: see the 2026-11-20 entry above)
   (77 `debug_msg` is a reference no-op, now pinned by `vm_tests`; 13 `if_cheat_key` is an explicit false branch, so
   no camera/cheat subsystem is needed — ported with the harness twin. 243
   `if_point_sees_player` left the same way: it reads only `reference_point`,

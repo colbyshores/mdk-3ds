@@ -262,6 +262,30 @@ bool computeArenaDepthLayers(const std::vector<formats::Vec3f>& vertices,
     return true;
 }
 
+bool arenaSceneSkips(const formats::Arena* arena, int32_t triangle) {
+    return (arena->triangleFlags()[(size_t)triangle] &
+            (arena->clipFlag() | formats::Arena::kGroupDisabled)) != 0;
+}
+
+bool arenaSceneTriangleFirsts(const formats::Arena* arena, std::vector<int32_t>* out) {
+    if (arena == nullptr || out == nullptr) {
+        return false;
+    }
+    // buildArenaScene pushes three vertices for every triangle it does not skip, in
+    // triangle order, so a triangle's first vertex is three times the count of the
+    // kept triangles before it.
+    out->assign((size_t)arena->triangleCount(), -1);
+    int32_t next = 0;
+    for (int32_t t = 0; t < arena->triangleCount(); t++) {
+        if (arenaSceneSkips(arena, t)) {
+            continue;
+        }
+        (*out)[(size_t)t] = next;
+        next += 3;
+    }
+    return true;
+}
+
 bool buildArenaScene(const formats::Arena* arena,
                      const MaterialResolver& resolver,
                      const formats::Palette& palette,
@@ -325,7 +349,7 @@ bool buildArenaScene(const formats::Arena* arena,
         // The C# LevelView.Build skips a triangle the arena's clip flag marks
         // (the 1996 demo's not-drawn triangles) or the Disabled flag marks
         // (the retail arena activation's, LevelView.cs:294).
-        if ((flags[(size_t)t] & (arena->clipFlag() | formats::Arena::kGroupDisabled)) != 0) {
+        if (arenaSceneSkips(arena, t)) {
             continue;
         }
         const int32_t triangleGroup = (int32_t)(flags[(size_t)t] >> 24);
