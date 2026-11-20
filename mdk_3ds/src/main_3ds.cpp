@@ -971,6 +971,13 @@ int main(int argc, char** argv) {
                             menuSmall.load(renderer, *smallFont, palette, sysPalette.rgba())) {
                             menuReady = true;
                             mdk::log3dsPrintf("menu: pause menu ready (START or SELECT)");
+                            // The HUD's messages draw in the same pair (the C#
+                            // HudView's fonts are these: FONTBIG, FONTSML, SYS_PAL),
+                            // so they share the menu's atlases rather than upload
+                            // a second copy; the texts are copied out of the FTI
+                            // (a few KB) and the 160 KB file goes with this block.
+                            hud.setFonts(&menuBig, &menuSmall);
+                            hud.messages().setTexts(menuFti);
                         } else {
                             mdk::log3dsPrintf("menu: font atlases did not upload -- no menu");
                         }
@@ -1266,6 +1273,15 @@ int main(int argc, char** argv) {
         player = mdk::Player();
         player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
         player.yaw = level.dti().startAngle();
+        // Pickups show their names (Viewer.cs:249). A respawn is a fresh C# Viewer,
+        // so its HUD's messages start empty.
+        hud.messages().reset();
+        {
+            mdk::Kurt::PickupHook pickupHook;
+            pickupHook.context = &hud.messages();
+            pickupHook.pickedUp = mdk::Messages::pickedUp;
+            player.combat().setPickupHook(pickupHook);
+        }
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_AT)
         // THE HARNESS'S START OVERRIDE (`make AUTOQUIT=.. AT=x,y,z,yaw`): Kurt's
         // feet and yaw exactly as given, as the Linux build's --at sets them (no
@@ -1329,6 +1345,8 @@ int main(int argc, char** argv) {
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, seed, &bank, &player,
                                                           &sprites));
             runtime->option = kScriptOption;
+            // hud_message reaches the HUD (Viewer.cs:245, `_scripts.Messages`).
+            runtime->hudMessages = &hud.messages();
             // Kurt's sounds go through the runtime's mixer, because in the C# they
             // are the same mixer.
             player.setMixer(&runtime->mixer());
@@ -2385,6 +2403,9 @@ int main(int argc, char** argv) {
                     state.barHealth = bar.health;
                     state.barMax = bar.max;
                 }
+                // Viewer.DrawScene: the messages advance by the frame's elapsed time
+                // (paused frames too), then the HUD draws them last.
+                hud.messages().update(elapsed);
                 hud.draw(renderer, state);
             }
             if (menu.open()) {

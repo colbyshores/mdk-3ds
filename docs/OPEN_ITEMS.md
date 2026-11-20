@@ -1275,11 +1275,20 @@ unreachable. Landed, operation for operation, all pinned by the eleven
 - The HUD's inventory is fed in both frontends (`HudState::slots` is now a fixed array of 5,
   no per-frame allocation); Linux binds Tab/`]` and `[` (the C#'s item keys).
 
+CLOSED 2026-11-20 (the follow-up):
+- **The pickup message**: `Hud/Messages.cs` whole -> `game/messages.{h,cpp}` (fixed queue of
+  4, two lines of 35 bytes, no heap after load; the FTI's texts copied once), owned and drawn
+  last by `HudView` in the C# HudView's fonts (the 3DS shares its menu's atlases, Linux loads
+  the pair). `Inventory.PickedUp` is `Kurt::PickupHook` (bound to `Messages::pickedUp`, the
+  Viewer's 2 s zoomed push), `ScriptRuntime.Messages` is `ScriptRuntime::hudMessages`
+  (hud_message), and both frontends update it once per drawn frame (`Viewer.DrawScene`).
+  Goldens `L8_hud_queue`, `L7_hud_collect` (`Probe hud`).
+- **The twisters' ribbons**: `Ribbon.Triangles` -> `Ribbon::triangles` (fixed 24 corners),
+  drawn by `EffectsView` after the sprites (`AddRibbon`): one draw of WMIBTEX per ribbon
+  through the effects mesh. Golden `L8_ribbon_tornado` (`Probe ribbon`).
+
 Still open:
-- **The twisters are not drawn**: `Ribbon.Triangles` (WMIBTEX quads, 0x439690) has no
-  renderer; the ring it reads is kept.
-- **The pickup message** (`PickedUp` -> the HUD's message stream, 2 s, zoomed): the Messages
-  subsystem is unported; `Kurt::pickedUp()` holds the names for it.
+- **The town message** (`ScriptRuntime.FlattenTown`'s OOT_L* push) waits for FlattenTown.
 - **The slot keys 1-5** (`Key.Item1-5`) have no action in `input.h`; the mouse wheel's item
   keys are not bound on Linux; the 3DS bindings are the input owner's.
 - **The sniper's ammo selection** (`SelectAmmo`/`UseAmmo`/`NextAmmo`) waits for the sniper.

@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include <cmath>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -37,12 +38,17 @@
 #include "formats/cmi.h"
 #include "formats/dti.h"
 #include "formats/file_system.h"
+#include "formats/font.h"
+#include "formats/fti.h"
 #include "formats/mdk_data.h"
 #include "formats/model.h"
 #include "formats/model_animation.h"
+#include "formats/palette.h"
 #include "formats/sprite_animation.h"
 #include "game/arena_space.h"
+#include "game/font_view.h"
 #include "game/level_data.h"
+#include "game/messages.h"
 #include "game/object_view.h"
 #include "game/player.h"
 #include "render/arena_scene.h"
@@ -53,6 +59,23 @@
 
 using namespace mdk;
 using namespace mdk::formats;
+
+// The two seam functions the HUD's message stream reaches (FontView's atlas and its
+// glyph quads), faked as recorders: `tick1 dump hud` reads the canvas quads exactly
+// where the C# probe reads Renderer.DrawImage's. Texture ids count from 1 per dump.
+static std::vector<CanvasQuad>* g_canvasQuads = nullptr;
+static int32_t g_indexTextures = 0;
+
+MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t, int32_t, const uint8_t*,
+                                             const uint8_t*) {
+    return ++g_indexTextures;
+}
+
+void mdk_render_canvas_quad(MdkRenderer, const CanvasQuad* quad) {
+    if (g_canvasQuads != nullptr) {
+        g_canvasQuads->push_back(*quad);
+    }
+}
 
 namespace {
 
@@ -1293,8 +1316,16 @@ struct ItemsGive {
     Vec3 offset;
 };
 
+// `msg:step:NAME:flags:seconds`: Messages.Push before that step (the hud view only).
+struct ItemsPush {
+    int step;
+    std::string name;
+    int32_t flags;
+    float seconds;
+};
+
 bool parseItemsSchedule(const std::string& schedule, std::vector<ItemsHold>* holds,
-                        std::vector<ItemsGive>* gives) {
+                        std::vector<ItemsGive>* gives, std::vector<ItemsPush>* pushes) {
     static const struct {
         const char* name;
         Key key;
@@ -1319,6 +1350,17 @@ bool parseItemsSchedule(const std::string& schedule, std::vector<ItemsHold>* hol
         }
         const std::string head = token.substr(0, colon);
         const std::string rest = token.substr(colon + 1);
+        if (head == "msg") {
+            char name[32];
+            ItemsPush push;
+            if (sscanf(rest.c_str(), "%d:%31[^:]:%d:%f", &push.step, name, &push.flags,
+                       &push.seconds) != 4) {
+                return false;
+            }
+            push.name = name;
+            pushes->push_back(push);
+            continue;
+        }
         if (head == "give" || head == "drop") {
             std::vector<std::string> fields;
             size_t at = 0;
@@ -1367,15 +1409,107 @@ bool parseItemsSchedule(const std::string& schedule, std::vector<ItemsHold>* hol
     return true;
 }
 
+// The harness's subscriber to Inventory.PickedUp: the names, as the probe's list.
+void recordPickedUp(void* context, const std::string& name) {
+    static_cast<std::vector<std::string>*>(context)->push_back(name);
+}
+
+// A float's bits, the exact value (the probe's B).
+std::string hexBits(float v) {
+    uint32_t bits;
+    memcpy(&bits, &v, sizeof(bits));
+    char text[16];
+    snprintf(text, sizeof(text), "%08X", bits);
+    return text;
+}
+
+// FNV-1a over an int's four little-endian bytes (the probe's Fnv).
+uint32_t fnvInt(uint32_t hash, uint32_t value) {
+    for (int32_t i = 0; i < 4; i++) {
+        hash = (hash ^ ((value >> (8 * i)) & 0xFFu)) * 16777619u;
+    }
+    return hash;
+}
+
+uint32_t fnvFloat(uint32_t hash, float v) {
+    uint32_t bits;
+    memcpy(&bits, &v, sizeof(bits));
+    return fnvInt(hash, bits);
+}
+
+// A message as the probe prints it: flags:line/line#time, printable ASCII as is.
+std::string messageText(const Messages::Message& m) {
+    std::string text = std::to_string(m.flags) + ":";
+    for (int32_t line = 0; line < m.lineCount; line++) {
+        if (line) {
+            text += "/";
+        }
+        for (int32_t i = 0; i < m.length[line]; i++) {
+            const uint8_t b = m.text[line][i];
+            if (b >= 32 && b <= 126) {
+                text += (char)b;
+            } else {
+                char escape[8];
+                snprintf(escape, sizeof(escape), "\\x%02X", b);
+                text += escape;
+            }
+        }
+    }
+    char time[32];
+    snprintf(time, sizeof(time), "#%.4f", m.time);
+    return text + time;
+}
+
+// The fonts and texts of the HUD's messages, as HudView makes them (MDKFONT.FTI's
+// FONTBIG and FONTSML, spaces 6 and 4, through SYS_PAL), on the recording seam:
+// FONTBIG is texture 1 and FONTSML 2, as the probe numbers them.
+struct HudFonts {
+    FontView big;
+    FontView small;
+};
+
+bool loadHudFonts(const MdkData& data, HudFonts* fonts, Messages* messages, std::string* why) {
+    std::vector<uint8_t> ftiBytes;
+    Fti fti;
+    std::vector<uint8_t> bigBytes;
+    std::vector<uint8_t> smallBytes;
+    std::vector<uint8_t> sysPal;
+    Font bigFont;
+    Font smallFont;
+    if (!data.read("MISC/MDKFONT.FTI", &ftiBytes) ||
+        !Fti::parse(&fti, ftiBytes.data(), (int32_t)ftiBytes.size()) ||
+        !fti.getBytes("FONTBIG", &bigBytes) || !fti.getBytes("FONTSML", &smallBytes) ||
+        !fti.getBytes("SYS_PAL", &sysPal) ||
+        !Font::parse(bigBytes.data(), (int32_t)bigBytes.size(), 6, &bigFont) ||
+        !Font::parse(smallBytes.data(), (int32_t)smallBytes.size(), 4, &smallFont)) {
+        *why = "MDKFONT.FTI's fonts did not load";
+        return false;
+    }
+    const Palette system = Palette::fromRgb(sysPal.data(), (int32_t)sysPal.size());
+    g_indexTextures = 0;
+    if (!fonts->big.load(nullptr, bigFont, 0, system.rgba()) ||
+        !fonts->small.load(nullptr, smallFont, 0, system.rgba())) {
+        *why = "the font atlases did not build";
+        return false;
+    }
+    messages->setTexts(fti);
+    return true;
+}
+
+// `view` is "" (the items columns, kurtItemsDump's own), "hud" (the message stream:
+// Messages, as the probe's HudLine prints it) or "ribbon" (the twisters' ribbons, the
+// probe's RibbonLine). The run is the same in all three.
 bool kurtItemsDump(int level, int steps, const std::string& schedule, const MdkData& data,
-                   const Bni* sprites, std::string* out, std::string* why) {
+                   const Bni* sprites, std::string* out, std::string* why,
+                   const std::string& view = std::string()) {
     if (!sprites) {
         *why = "no TRAVSPRT.BNI to take the frame counts from";
         return false;
     }
     std::vector<ItemsHold> holds;
     std::vector<ItemsGive> gives;
-    if (!parseItemsSchedule(schedule, &holds, &gives)) {
+    std::vector<ItemsPush> pushes;
+    if (!parseItemsSchedule(schedule, &holds, &gives, &pushes)) {
         *why = "the schedule did not parse: " + schedule;
         return false;
     }
@@ -1416,8 +1550,29 @@ bool kurtItemsDump(int level, int steps, const std::string& schedule, const MdkD
     runtime.option = 1;
     player.setMixer(&runtime.mixer());
 
-    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
-           " seed=1 schedule=" + schedule + "\n";
+    // The pickups' names: recorded (the items columns' picked=), or the HUD's message
+    // stream bound as Viewer binds it (the hud view), the scripts' hud_message with it.
+    std::vector<std::string> pickedUp;
+    std::unique_ptr<HudFonts> fonts;
+    Messages messages;
+    std::vector<CanvasQuad> quads;
+    Kurt::PickupHook hook;
+    if (view == "hud") {
+        fonts.reset(new HudFonts());
+        if (!loadHudFonts(data, fonts.get(), &messages, why)) {
+            return false;
+        }
+        hook.context = &messages;
+        hook.pickedUp = Messages::pickedUp;
+        runtime.hudMessages = &messages;
+    } else {
+        hook.context = &pickedUp;
+        hook.pickedUp = recordPickedUp;
+    }
+    player.combat().setPickupHook(hook);
+
+    *out = (view.empty() ? std::string() : view + " ") + "level=" + std::to_string(level) +
+           " steps=" + std::to_string(steps) + " seed=1 schedule=" + schedule + "\n";
     const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
     char buffer[512];
     for (int step = 1; step <= steps; step++) {
@@ -1442,6 +1597,13 @@ bool kurtItemsDump(int level, int steps, const std::string& schedule, const MdkD
                 }
             }
         }
+        for (size_t i = 0; i < pushes.size(); i++) {
+            if (pushes[i].step == step && fonts) {
+                // Through the runtime's hud_message seam (ScriptVm.cs:1186's
+                // `runtime.Messages?.Push`), so its binding is what the golden pins.
+                runtime.pushMessage(pushes[i].name, pushes[i].flags, pushes[i].seconds);
+            }
+        }
         Input input;
         for (size_t i = 0; i < holds.size(); i++) {
             if (step >= holds[i].from && step < holds[i].to) {
@@ -1451,6 +1613,71 @@ bool kurtItemsDump(int level, int steps, const std::string& schedule, const MdkD
         player.update(input, 1.0f / 60.0f);
         runtime.update(1.0f / 60.0f);
 
+        if (view == "hud") {
+            // Viewer.DrawScene: Update(elapsed), then the HUD's Draw on a 600-wide canvas.
+            messages.update(1.0f / 60.0f);
+            quads.clear();
+            g_canvasQuads = &quads;
+            messages.draw(nullptr, fonts->big, fonts->small, 600.0f);
+            g_canvasQuads = nullptr;
+            std::string queue;
+            for (int32_t i = 0; i < messages.queued(); i++) {
+                queue += (i ? "|" : "") + messageText(messages.queuedAt(i));
+            }
+            uint32_t hash = 2166136261u;
+            std::string list;
+            for (size_t i = 0; i < quads.size(); i++) {
+                const CanvasQuad& q = quads[i];
+                hash = fnvInt(hash, (uint32_t)q.texture);
+                hash = fnvFloat(fnvFloat(fnvFloat(fnvFloat(hash, q.x0), q.y0), q.x2), q.y2);
+                list += (i ? ";T" : "T") + std::to_string(q.texture) + ":" + hexBits(q.x0) +
+                        "," + hexBits(q.y0) + "," + hexBits(q.x2) + "," + hexBits(q.y2);
+            }
+            snprintf(buffer, sizeof(buffer), "s=%d cur=%s t=%.4f z=%.4f q=%s draw=%d:%08X", step,
+                     messages.current() ? messageText(*messages.current()).c_str() : "-",
+                     messages.time(), messages.zoom(), queue.empty() ? "-" : queue.c_str(),
+                     (int)quads.size(), hash);
+            *out += buffer;
+            if (step % 10 == 0 && !quads.empty()) {
+                *out += " quads=" + list;
+            }
+            *out += "\n";
+            continue;
+        }
+        if (view == "ribbon") {
+            const std::vector<scripts::Twister>& ribbons = runtime.twisters();
+            *out += "s=" + std::to_string(step) + " tw=" + std::to_string(ribbons.size());
+            std::string hashes;
+            for (size_t i = 0; i < ribbons.size(); i++) {
+                Vec3 positions[scripts::Ribbon::kMaxCorners];
+                Vec2 uvs[scripts::Ribbon::kMaxCorners];
+                const int32_t count = ribbons[i].ribbon().triangles(positions, uvs);
+                uint32_t hash = 2166136261u;
+                for (int32_t c = 0; c < count; c++) {
+                    hash = fnvFloat(fnvFloat(fnvFloat(hash, positions[c].x), positions[c].y),
+                                    positions[c].z);
+                    hash = fnvFloat(fnvFloat(hash, uvs[c].x), uvs[c].y);
+                }
+                snprintf(buffer, sizeof(buffer), "%s%d:%08X", i ? "," : "", (int)count, hash);
+                hashes += buffer;
+                if (i == 0) {
+                    *out += " r0=" + std::to_string(count) + ":";
+                    for (int32_t c = 0; c < count; c++) {
+                        snprintf(buffer, sizeof(buffer), "%s%s,%s,%s/%.1f,%.1f", c ? ";" : "",
+                                 hexBits(positions[c].x).c_str(),
+                                 hexBits(positions[c].y).c_str(),
+                                 hexBits(positions[c].z).c_str(), uvs[c].x, uvs[c].y);
+                        *out += buffer;
+                    }
+                    if (count == 0) {
+                        *out += "-";
+                    }
+                }
+            }
+            *out += " h=" + (hashes.empty() ? std::string("-") : hashes) + "\n";
+            continue;
+        }
+
         const Kurt& combat = player.combat();
         std::string slots;
         for (int32_t i = 0; i < combat.slotCount(); i++) {
@@ -1459,10 +1686,10 @@ bool kurtItemsDump(int level, int steps, const std::string& schedule, const MdkD
             slots += buffer;
         }
         std::string picked;
-        for (size_t i = 0; i < combat.pickedUp().size(); i++) {
-            picked += (i ? "|" : "") + combat.pickedUp()[i];
+        for (size_t i = 0; i < pickedUp.size(); i++) {
+            picked += (i ? "|" : "") + pickedUp[i];
         }
-        player.combat().clearPickedUp();
+        pickedUp.clear();
         int32_t ohp = 0;
         std::string thrown;
         std::string collected;
@@ -1595,7 +1822,8 @@ bool kurtCorridorDump(int level, int steps, const std::string& at, const std::st
     }
     std::vector<ItemsHold> holds;
     std::vector<ItemsGive> gives;
-    if (!parseItemsSchedule(keys, &holds, &gives) || !gives.empty()) {
+    std::vector<ItemsPush> pushes;
+    if (!parseItemsSchedule(keys, &holds, &gives, &pushes) || !gives.empty() || !pushes.empty()) {
         *why = "the schedule did not parse: " + schedule;
         return false;
     }
@@ -3467,13 +3695,13 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
-        if (what == "items") {
-            // `tick1 dump items <level> <steps> <schedule>`: kurtItemsDump's text, the
-            // C++ side of the items probe.
+        if (what == "items" || what == "hud" || what == "ribbon") {
+            // `tick1 dump items|hud|ribbon <level> <steps> <schedule>`: kurtItemsDump's
+            // text, the C++ side of the items probe (`Probe [hud|ribbon] ...`).
             std::string got;
             std::string why;
             if (!kurtItemsDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
-                               &why)) {
+                               &why, what == "items" ? std::string() : what)) {
                 printf("%s\n", why.c_str());
                 return 1;
             }
@@ -4280,44 +4508,62 @@ int main(int argc, char** argv) {
             int steps;
             const char* schedule;
             const char* pass;
+            const char* view;   // "" the items columns; "hud" or "ribbon" (Probe hud|ribbon)
         };
         static const ItemsCase kItemsCases[] = {
+            // The HUD's message stream (Hud/Messages.cs) and the twisters' ribbons
+            // (Scripts/Ribbon.cs Triangles), the same runs seen through the probe's views.
+            {"L8_hud_queue", "golden/L8_hud_queue.txt", 8, 700,
+             "give:5:SW_HBOMB,give:6:SW_INTER,give:7:SW_H01,give:8:SW_KEY,give:9:SW_H50,"
+             "give:10:SW_TWIST,give:11:SW_DUMMY,msg:400:DGW_REAL:2:1.5,msg:401:NOPE:1:2,"
+             "msg:402:SW_GATT:0:1",
+             "the pickups' names queued (4 deep, the fifth dropped, SW_H01 silent), grown, timed "
+             "twice as fast while others wait, shrunk; two-line texts; a front-queued too-wide "
+             "line in the small font; a missing name; an unzoomed message; every glyph's quad",
+             "hud"},
+            {"L7_hud_collect", "golden/L7_hud_collect.txt", 7, 320,
+             "left:10-88,fwd:110-200,turbo:110-200",
+             "the hamster run down through CollectPickups shows \"I Feel Top!!!\"", "hud"},
+            {"L8_ribbon_tornado", "golden/L8_ribbon_tornado.txt", 8, 260,
+             "give:5:SW_TWIST,use:30-32",
+             "the twisters' ribbons: 1-5 positions, the narrowing scales, the WMIBTEX rows, "
+             "through the spiral and the split", "ribbon"},
             {"L7_items_collect", "golden/L7_items_collect.txt", 7, 520,
              "left:10-88,fwd:110-200,turbo:110-200,give:210:SW_TWIST,give:211:SW_HBOMB,"
              "prev:220-222,use:230-232",
              "Kurt runs the hamster down (CollectPickups, SW_H150 to 150 health, APPLE, the "
-             "pickup's shrink and removal), then a tornado among walls"},
+             "pickup's shrink and removal), then a tornado among walls", ""},
             {"L8_items_grenade", "golden/L8_items_grenade.txt", 8, 400,
              "give:5:SW_HBOMB,give:6:SW_TWIST,give:7:SW_DUMMY,next:20-22,prev:30-32,next:40-42,"
              "next:44-46,prev:48-50,use:60-62,use:200-202",
              "the item keys' wrap both ways, THROW and frame 8, two grenades (75 u/s) and their "
-             "blasts"},
+             "blasts", ""},
             {"L8_items_air", "golden/L8_items_air.txt", 8, 300,
-             "give:5:SW_HBOMB,jump:30-40,use:40-42", "a grenade used at once in the air"},
+             "give:5:SW_HBOMB,jump:30-40,use:40-42", "a grenade used at once in the air", ""},
             {"L8_items_tornado", "golden/L8_items_tornado.txt", 8, 600,
              "give:5:SW_TWIST,use:30-32",
-             "the tornado's spin and twisters: the spiral, the split, the chase, the hurt"},
+             "the tornado's spin and twisters: the spiral, the split, the chase, the hurt", ""},
             {"L8_items_mortar", "golden/L8_items_mortar.txt", 8, 400,
              "give:5:SW_THUMP,use:30-32",
-             "the mortar's thumps (damage, lift, shake) and Kurt knocked down from the fourth"},
+             "the mortar's thumps (damage, lift, shake) and Kurt knocked down from the fourth", ""},
             {"L8_items_bomb", "golden/L8_items_bomb.txt", 8, 400,
              "give:5:SW_HBOMB,give:6:SW_INTER,use:30-32,use:150-152",
              "the World's Most Interesting Bomb spun, set off by use (CanUse, TriggerBomb), its "
-             "blast on Kurt"},
+             "blast on Kurt", ""},
             {"L8_items_decoy", "golden/L8_items_decoy.txt", 8, 500,
-             "give:5:SW_DUMMY,use:30-32", "the decoy walks and the aliens aim at it"},
+             "give:5:SW_DUMMY,use:30-32", "the decoy walks and the aliens aim at it", ""},
             {"L8_items_nuke", "golden/L8_items_nuke.txt", 8, 600, "give:5:SW_KEY,use:30-32",
-             "the key becomes the nuke: its white, its shake, its doors, its blast"},
+             "the key becomes the nuke: its white, its shake, its doors, its blast", ""},
             {"L8_items_gatt", "golden/L8_items_gatt.txt", 8, 600,
              "give:5:SW_GATT,give:7:SW_DUMMY,fire:20-580,use:30-32",
-             "the super chain gun's time runs out: GATTFIRE to MULTIFIRE, its slot goes"},
+             "the super chain gun's time runs out: GATTFIRE to MULTIFIRE, its slot goes", ""},
             {"L5_items_seal", "golden/L5_items_seal.txt", 5, 800,
              "give:5:SW_SEAL,give:6:SW_SBONE,use:30-32,prev:60-62,use:70-72,fwd:400-640",
-             "the seal and the bone out together, landing (XMT_LAND), and taken back"},
+             "the seal and the bone out together, landing (XMT_LAND), and taken back", ""},
             {"L8_items_cow", "golden/L8_items_cow.txt", 8, 300,
              "drop:5:SW_H01>SW_EWJ:0:20:3,fwd:20-120",
              "a pickup named SW_EWJ run through: COLLECT, then DropCow (COW, CowTarget) and the "
-             "holy cow's fall, drift and fuse (UpdateCow, CowHits)"},
+             "holy cow's fall, drift and fuse (UpdateCow, CowHits)", ""},
         };
         for (size_t i = 0; i < sizeof(kItemsCases) / sizeof(kItemsCases[0]); i++) {
             const ItemsCase& c = kItemsCases[i];
@@ -4329,7 +4575,8 @@ int main(int argc, char** argv) {
             }
             std::string got;
             std::string why;
-            if (!kurtItemsDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+            if (!kurtItemsDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why,
+                               c.view ? c.view : "")) {
                 printf("FAIL %s: %s\n", c.name, why.c_str());
                 failures++;
             } else if (got == expected) {

@@ -93,6 +93,20 @@ void effectsQuadVertices(const Vec3& center, const Vec3& right, const Vec3& up, 
     }
 }
 
+int32_t effectsRibbonVertices(const scripts::Ribbon& ribbon, int32_t width, int32_t height,
+                              Vertex out[scripts::Ribbon::kMaxCorners]) {
+    Vec3 positions[scripts::Ribbon::kMaxCorners];
+    Vec2 uvs[scripts::Ribbon::kMaxCorners];
+    const int32_t count = ribbon.triangles(positions, uvs);
+    // AddRibbon: `uv * new Vector2(1f / Width, 1f / Height)`.
+    const float scaleU = 1.0f / (float)width;
+    const float scaleV = 1.0f / (float)height;
+    for (int32_t i = 0; i < count; i++) {
+        out[i] = Vertex{positions[i], Vec2{uvs[i].x * scaleU, uvs[i].y * scaleV}, kVertexWhite};
+    }
+    return count;
+}
+
 void effectsGlowOf(const uint8_t* indices, int32_t texelCount, const uint8_t* paletteRgba,
                    float* glow, float colour[3]) {
     *glow = 0.0f;
@@ -342,6 +356,36 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
             frame->glows.push_back(glow);
             lastGlowing_++;
         }
+    }
+
+    // The twisters' ribbons (AddRibbon): one draw of WMIBTEX each, its corners in
+    // order. The oracle's check order: nothing to draw, no room, no texture.
+    const std::vector<scripts::Twister>& twisters = scripts.twisters();
+    for (size_t i = 0; i < twisters.size(); i++) {
+        const scripts::Twister& twister = twisters[i];
+        if (twister.ribbon().count() < 2) {
+            continue;
+        }
+        const int32_t corners = (twister.ribbon().count() - 1) * 6;
+        if ((int32_t)frame->vertices.size() + corners > kMaxVertices) {
+            continue;
+        }
+        SpriteEntry& entry = sprite(twister.arena(), scripts::Ribbon::kTexture);
+        if (!entry.present) {
+            continue;
+        }
+        Vertex ribbon[scripts::Ribbon::kMaxCorners];
+        const int32_t count =
+            effectsRibbonVertices(twister.ribbon(), entry.surface.texture->width(),
+                                  entry.surface.texture->height(), ribbon);
+        EffectsDrawItem queued;
+        queued.first = (int32_t)frame->vertices.size();
+        queued.count = count;
+        queued.surface = entry.surface;
+        queued.palette = entry.palette;
+        queued.frame = 0;
+        frame->draws.push_back(queued);
+        frame->vertices.insert(frame->vertices.end(), ribbon, ribbon + count);
     }
 }
 

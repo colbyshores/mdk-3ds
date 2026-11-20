@@ -53,6 +53,9 @@ COMMON_SOURCES := \
 	$(CORE)/formats/sprite_animation.cpp \
 	$(CORE)/formats/bni.cpp \
 	$(CORE)/formats/fti.cpp \
+	$(CORE)/formats/font.cpp \
+	$(CORE)/game/font_view.cpp \
+	$(CORE)/game/messages.cpp \
 	$(CORE)/game/level_data.cpp \
 	$(CORE)/game/arena_stream.cpp \
 	$(CORE)/game/level_flow.cpp \

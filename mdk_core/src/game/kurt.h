@@ -231,12 +231,18 @@ public:
     void selectNext(int32_t step);
     // Inventory.Consume: one of the selected item is used up; an empty slot goes.
     void consume();
-    // Inventory.PickedUp, the C#'s event (§10 forbids the delegate): the names of the
-    // pickups taken since the consumer last took them. The C#'s subscriber is the
-    // viewer's (Viewer.cs:249: the HUD's message stream, 2 s, zoomed), which is not
-    // ported; the harness reads it to pin which pickups raise a message.
-    const std::vector<std::string>& pickedUp() const { return pickedUp_; }
-    void clearPickedUp() { pickedUp_.clear(); }
+    // Inventory.PickedUp, the C#'s event (§10 forbids the delegate): a plain function
+    // pointer called with the pickup's name as it is taken, synchronously, where the C#
+    // invokes the event. Null is the event with no subscriber. The frontends bind the
+    // viewer's subscriber (Viewer.cs:249: the HUD's message stream, 2 s, zoomed;
+    // Messages::pickedUp in game/messages.h), the harness one that records the
+    // names. Nothing is kept here, so a long level grows no list.
+    struct PickupHook {
+        void* context = nullptr;
+        void (*pickedUp)(void* context, const std::string& name) = nullptr;
+    };
+    void setPickupHook(const PickupHook& hook) { pickupHook_ = hook; }
+    const PickupHook& pickupHook() const { return pickupHook_; }
     // The C# if_inventory's count: the total Count of every slot of this Item.
     int32_t countItem(Item item) const;
 
@@ -313,7 +319,7 @@ private:
     int32_t ammo_[kAmmoTypes]{};
     int32_t selectedAmmo_ = 0;
     int32_t superChainGun_ = 0;
-    std::vector<std::string> pickedUp_;
+    PickupHook pickupHook_;
     bool firing_ = false;
     bool hasMuzzle_ = false;
     MuzzleFlash muzzle_{0, 0, 0};

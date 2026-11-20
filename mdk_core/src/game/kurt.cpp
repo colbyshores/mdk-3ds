@@ -214,8 +214,8 @@ const char* Kurt::collect(const std::string& pickup) {
     const int32_t index = indexOf(kInstantPickups, kInstantPickupCount, pickup);
     if (index >= 0) {
         // SW_H01 and BONEFLC show no message.
-        if (index != kHealth01 && index != kBoneFlc) {
-            pickedUp_.push_back(pickup);
+        if (index != kHealth01 && index != kBoneFlc && pickupHook_.pickedUp != nullptr) {
+            pickupHook_.pickedUp(pickupHook_.context, pickup);
         }
         return useInstant(index);
     }
@@ -226,8 +226,8 @@ const char* Kurt::collect(const std::string& pickup) {
     }
 
     const char* sound = collectItem((Item)item);
-    if (sound[0] != '\0') {
-        pickedUp_.push_back(pickup);
+    if (sound[0] != '\0' && pickupHook_.pickedUp != nullptr) {
+        pickupHook_.pickedUp(pickupHook_.context, pickup);
     }
     return sound;
 }

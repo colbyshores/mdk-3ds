@@ -32,11 +32,16 @@ public:
 
     // Width of a text in pixels, at scale 1.
     int32_t width(const char* text) const { return font_.width(std::string(text)); }
+    // The same for `length` bytes of `text` (the HUD's messages: no string made).
+    int32_t width(const uint8_t* text, int32_t length) const { return font_.width(text, length); }
 
     // Draw a text from `x` along the baseline `y`, scaled about the
     // baseline, in `tint`. Returns the x after it.
     float draw(MdkRenderer renderer, const char* text, float x, float y, float scale,
                const Colour& tint) const;
+    // The same for `length` bytes of `text`.
+    float draw(MdkRenderer renderer, const uint8_t* text, int32_t length, float x, float y,
+               float scale, const Colour& tint) const;
 
 private:
     formats::Font font_;

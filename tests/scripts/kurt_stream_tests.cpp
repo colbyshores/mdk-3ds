@@ -99,6 +99,10 @@ void mdk_render_update_mesh(MdkRenderer, MdkMeshId, const mdk::Vertex* vertices,
 
 void mdk_render_draw_mesh(MdkRenderer, const mdk::MeshDraw*) {}
 
+// The HUD's message stream links the font view (game/messages.cpp, through the
+// scripts runtime's hud_message); no test here draws on the canvas.
+void mdk_render_canvas_quad(MdkRenderer, const mdk::CanvasQuad*) {}
+
 MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t w, int32_t h, const uint8_t*,
                                              const uint8_t*) {
     FakeTexture texture;

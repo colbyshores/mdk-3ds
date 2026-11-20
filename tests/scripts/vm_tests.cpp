@@ -49,6 +49,7 @@
 #include "game/follow_camera.h"
 #include "game/effects_view.h"
 #include "game/level_data.h"
+#include "game/messages.h"
 #include "game/mod_models.h"
 #include "game/object_view.h"
 #include "game/player.h"
@@ -3574,6 +3575,66 @@ void testEffectsViewGeometry() {
     CHECK(effectsSparkColourIndex(10, 100, a, a, a, Vec3{0.0f, 0.0f, 1.0f}) == 10);
     CHECK(effectsSparkColourIndex(200, 100, a, b, c, Vec3{0.0f, 0.0f, 1.0f}) == 255);
     CHECK(effectsSparkColourIndex(-5, 0, a, b, c, Vec3{0.0f, 0.0f, 1.0f}) == 0);
+}
+
+// The ribbon's draw half (EffectsView.AddRibbon over Ribbon.Triangles): nothing for
+// one position, four segments of six corners for five, the oldest edges shrunk to a
+// point, and the UVs in WMIBTEX's texels scaled to 0-1. The run-level corners are
+// pinned against the oracle by tick1's L8_ribbon_tornado; this pins the vertex pass.
+void testEffectsRibbonVertices() {
+    scripts::Ribbon ribbon;
+    Vertex out[scripts::Ribbon::kMaxCorners];
+    ribbon.push(Vec3{0.0f, 0.0f, 10.0f});
+    CHECK(effectsRibbonVertices(ribbon, 16, 48, out) == 0);
+    for (int32_t i = 1; i < 6; i++) {
+        ribbon.push(Vec3{(float)i, 0.0f, 10.0f});
+    }
+    CHECK(ribbon.count() == 5);
+    CHECK(effectsRibbonVertices(ribbon, 16, 48, out) == 24);
+    // The first segment (edges 0 and 1, the oldest kept being x 1, both scale 0): its
+    // bottoms and tops are the centres.
+    CHECK(out[0].pos.x == 1.0f && out[0].pos.z == 10.0f && out[1].pos.z == 10.0f);
+    // The last segment (edges 3 and 4, both full): 2 high around the centre.
+    CHECK(out[18].pos.x == 4.0f && out[18].pos.z == 9.0f);
+    CHECK(out[19].pos.x == 4.0f && out[19].pos.z == 11.0f);
+    CHECK(out[20].pos.x == 5.0f && out[20].pos.z == 11.0f);
+    // UVs: columns 0.5 and 15.5 of 16, the first segment rows 0.5-16 of 48, the last 32-47.5.
+    CHECK(out[0].uv.x == 0.5f * (1.0f / 16.0f) && out[0].uv.y == 0.5f * (1.0f / 48.0f));
+    CHECK(out[2].uv.x == 15.5f * (1.0f / 16.0f) && out[2].uv.y == 16.0f * (1.0f / 48.0f));
+    CHECK(out[20].uv.y == 47.5f * (1.0f / 48.0f) && out[22].uv.x == 0.5f * (1.0f / 16.0f));
+    CHECK(out[0].colour == kVertexWhite);
+}
+
+// The message queue without an FTI (Messages.PushText): two lines split at the
+// "\n" escape and cut at 35 bytes, four deep, a fifth at the back dropped, a front
+// one pushing the last out; the first update takes the front message.
+void testMessagesQueue() {
+    Messages messages;
+    const char* two = "AB\\nCDEFGHIJKLMNOPQRSTUVWXYZ0123456789XYZ";
+    CHECK(messages.pushText((const uint8_t*)two, (int32_t)strlen(two), Messages::kFlagZoom, 2.0f));
+    CHECK(messages.queued() == 1);
+    CHECK(messages.queuedAt(0).lineCount == 2 && messages.queuedAt(0).length[0] == 2 &&
+          messages.queuedAt(0).length[1] == 35);
+    CHECK(!messages.pushText((const uint8_t*)"", 0, 0, 1.0f));
+    CHECK(!messages.push("NO_SUCH", 0, 1.0f));
+    const uint8_t b = 'B';
+    const uint8_t c = 'C';
+    const uint8_t d = 'D';
+    const uint8_t e = 'E';
+    const uint8_t f = 'F';
+    messages.pushText(&b, 1, 0, 1.0f);
+    messages.pushText(&c, 1, 0, 1.0f);
+    messages.pushText(&d, 1, 0, 1.0f);
+    messages.pushText(&e, 1, 0, 1.0f);   // the fifth at the back: dropped
+    CHECK(messages.queued() == 4 && messages.queuedAt(3).text[0][0] == 'D');
+    messages.pushText(&f, 1, Messages::kFlagFront, 1.0f);   // first; D goes
+    CHECK(messages.queued() == 4 && messages.queuedAt(0).text[0][0] == 'F' &&
+          messages.queuedAt(3).text[0][0] == 'C');
+    messages.update(1.0f / 60.0f);
+    CHECK(messages.current() != nullptr && messages.current()->text[0][0] == 'F');
+    CHECK(messages.queued() == 3 && messages.time() == 1.0f);
+    messages.reset();
+    CHECK(messages.current() == nullptr && messages.queued() == 0);
 }
 
 // Opcode 77's C# case intentionally ignores its debug message (ScriptVm.cs:1713).
@@ -8178,6 +8239,8 @@ int main() {
     printf("PASS PickWaypoint8\n");
     testEffectsLifecycle(runtime);
     testEffectsViewGeometry();
+    testEffectsRibbonVertices();
+    testMessagesQueue();
     printf("PASS EffectsLifecycle\n");
     testDebugMessageIsNoOp(runtime);
     printf("PASS DebugMessageIsNoOp\n");

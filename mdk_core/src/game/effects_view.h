@@ -12,10 +12,13 @@
 // one queued draw per batch/quad; EffectsDraw (game/effects_draw.h)
 // uploads and draws it, as ObjectDraw does for ObjectView's stream.
 //
-// NOT HERE, because their pools are not ported yet: the spawn_box
-// billboards (opcode 159) and the twisters' ribbons (Items). The oracle
-// draws them among the sprites, so they join this build when those
-// subsystems land.
+// After the sprites come the tornado's twisters' ribbons (Ribbon.Triangles,
+// WMIBTEX): one queued draw per ribbon, at most 24 corners each, so a
+// ribbon is ONE draw call on either backend.
+//
+// NOT HERE, because its pool is not ported yet: the spawn_box billboards
+// (opcode 159). The oracle draws them between the sprites and the
+// ribbons, so they join this build when that subsystem lands.
 //
 // The oracle's mesh holds 1<<16 vertices and a frame draws at most
 // that many; the cap is kept exactly (quads that do not fit are
@@ -32,6 +35,7 @@
 #include "game/object_view.h"
 #include "render/material_resolver.h"
 #include "render/render_types.h"
+#include "scripts/twister.h"
 #include "util/matrix.h"
 
 namespace mdk {
@@ -58,6 +62,13 @@ int32_t effectsSparkColourIndex(int32_t base, int32_t range, const Vec3& a, cons
 // (0,0) top-left to (1,1) bottom-right.
 void effectsQuadVertices(const Vec3& center, const Vec3& right, const Vec3& up, int32_t width,
                          int32_t height, Vertex out[6]);
+
+// A twister's ribbon as vertices (EffectsView.AddRibbon): Ribbon.Triangles'
+// corners, their UVs from WMIBTEX's texels to 0-1 (times 1/width, 1/height,
+// the texture being width x height). Returns the corner count, 0 while the
+// ribbon has fewer than two positions.
+int32_t effectsRibbonVertices(const scripts::Ribbon& ribbon, int32_t width, int32_t height,
+                              Vertex out[scripts::Ribbon::kMaxCorners]);
 
 // THE GLOW OF A SPRITE TEXTURE, for the 3DS's glow billboards (GlowQuad): of
 // the opaque texels (index != 0) of `indices` through `paletteRgba`, the share

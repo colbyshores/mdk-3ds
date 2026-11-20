@@ -10,6 +10,7 @@
 #include "formats/palette.h"
 #include "formats/sprite_animation.h"
 #include "formats/texture.h"
+#include "game/font_view.h"
 #include "game/mod_images.h"
 
 namespace mdk {
@@ -183,6 +184,11 @@ void HudView::draw(MdkRenderer renderer, const HudState& state) {
 
     drawInventory(state);
     drawBar(state.barHealth, state.barMax);
+
+    // The messages, over the rest (the C# Draw's last call).
+    if (big_ != nullptr && small_ != nullptr && big_->ready() && small_->ready()) {
+        messages_.draw(renderer_, *big_, *small_, canvasWidth);
+    }
 }
 
 void HudView::drawImage(const Image& image, float x, float y, const Colour& tint) {

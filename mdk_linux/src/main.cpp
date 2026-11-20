@@ -40,6 +40,7 @@
 #include "game/mod_models.h"
 #include "game/level_view.h"
 #include "game/follow_camera.h"
+#include "game/font_view.h"
 #include "game/hud_view.h"
 #include "game/kurt_sprite.h"
 #include "game/effects_draw.h"
@@ -54,6 +55,9 @@
 #include "formats/mdk_data.h"
 #include "formats/bni.h"
 #include "formats/file_system.h"
+#include "formats/font.h"
+#include "formats/fti.h"
+#include "formats/palette.h"
 #include "platform/filesystem_posix.h"
 #include "platform/window_sdl.h"
 #include "render/material_resolver.h"
@@ -623,6 +627,10 @@ int main(int argc, char** argv) {
     const std::vector<std::string>* frameDrawn = nullptr;   // this frame's drawn list
     int32_t lastDemandLoads = 0;
     mdk::HudView hud;
+    // The HUD messages' fonts (the C# HudView's pair: MDKFONT.FTI's FONTBIG and
+    // FONTSML through SYS_PAL). On the heap: each carries a whole Font.
+    std::unique_ptr<mdk::FontView> hudBig(new mdk::FontView());
+    std::unique_ptr<mdk::FontView> hudSmall(new mdk::FontView());
     mdk::KurtSprite kurtSprite;
     mdk::formats::Cmi cmi;
     mdk::audio::SoundBank bank;
@@ -720,6 +728,42 @@ int main(int argc, char** argv) {
                             std::printf("[main] hud: loaded\n");
                         } else {
                             std::printf("[main] hud: FAILED\n");
+                        }
+                        // The messages' fonts and texts (HudView's constructor).
+                        // Without them the messages are kept but not drawn.
+                        {
+                            std::vector<uint8_t> ftiBytes;
+                            mdk::formats::Fti fti;
+                            std::vector<uint8_t> bigBytes;
+                            std::vector<uint8_t> smallBytes;
+                            std::vector<uint8_t> sysPal;
+                            std::unique_ptr<mdk::formats::Font> bigFont(new mdk::formats::Font());
+                            std::unique_ptr<mdk::formats::Font> smallFont(new mdk::formats::Font());
+                            if (data.read("MISC/MDKFONT.FTI", &ftiBytes) &&
+                                mdk::formats::Fti::parse(&fti, std::move(ftiBytes)) &&
+                                fti.getBytes("FONTBIG", &bigBytes) &&
+                                fti.getBytes("FONTSML", &smallBytes) &&
+                                fti.getBytes("SYS_PAL", &sysPal) &&
+                                mdk::formats::Font::parse(bigBytes.data(), (int32_t)bigBytes.size(),
+                                                          6, bigFont.get()) &&
+                                mdk::formats::Font::parse(smallBytes.data(),
+                                                          (int32_t)smallBytes.size(), 4,
+                                                          smallFont.get())) {
+                                const mdk::formats::Palette system = mdk::formats::Palette::fromRgb(
+                                    sysPal.data(), (int32_t)sysPal.size());
+                                const int32_t palette =
+                                    mdk_render_create_palette(renderer, system.rgba());
+                                if (palette >= 0 &&
+                                    hudBig->load(renderer, *bigFont, palette, system.rgba()) &&
+                                    hudSmall->load(renderer, *smallFont, palette, system.rgba())) {
+                                    hud.setFonts(hudBig.get(), hudSmall.get());
+                                    std::printf("[main] hud: message fonts loaded\n");
+                                }
+                                hud.messages().setTexts(fti);
+                            } else {
+                                std::printf("[main] hud: MDKFONT.FTI fonts did not load -- no "
+                                            "messages\n");
+                            }
                         }
                         kurtSprite.setShading(enhancedLook ? mdk::Shading::Sprite
                                                             : mdk::Shading::Original);
@@ -858,6 +902,15 @@ int main(int argc, char** argv) {
         if (kurtSpriteReady) {
             player.setFrameCounts(kurtSprite.frameCounts());
         }
+        // Pickups show their names (Viewer.cs:249). A respawn is a fresh C# Viewer,
+        // so its HUD's messages start empty.
+        hud.messages().reset();
+        {
+            mdk::Kurt::PickupHook pickupHook;
+            pickupHook.context = &hud.messages();
+            pickupHook.pickedUp = mdk::Messages::pickedUp;
+            player.combat().setPickupHook(pickupHook);
+        }
         follow = mdk::FollowCamera();
         // Pin Kurt's arena to the one around the spawn (the C# SetSolid of the
         // scripts' drawn arenas). The step loop refreshes it from the runtime's drawn
@@ -914,6 +967,8 @@ int main(int argc, char** argv) {
             // uses the same value. Review-6 F2: this used to be 0 under a comment calling
             // that "the oracle's Option", which is the opposite of the oracle's default.
             runtime->option = 1;
+            // hud_message reaches the HUD (Viewer.cs:245, `_scripts.Messages`).
+            runtime->hudMessages = &hud.messages();
             // Kurt's own sounds (footsteps, the chute, the guns) go through his
             // mixer, which is the runtime's: C# Kurt gets the SoundMixer as a
             // constructor argument (Kurt.cs, the `SoundMixer` field) and the
@@ -1402,6 +1457,9 @@ int main(int argc, char** argv) {
                 state.barHealth = bar.health;
                 state.barMax = bar.max;
             }
+            // Viewer.DrawScene: the messages advance by the frame's elapsed time, then
+            // the HUD draws them last.
+            hud.messages().update(elapsed);
             mdk_render_canvas_begin(renderer);
             hud.draw(renderer, state);
             mdk_render_canvas_end(renderer);

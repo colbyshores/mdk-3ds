@@ -12,8 +12,10 @@
 //
 // THE SPRITES come from TRAVERSE/TRAVSPRT.BNI (the same Bni the Kurt sprite
 // and the scripts use) and are indexed through the level's palette, exactly as
-// the C# HudView does. The sniper overlay, the bomber sight and the message
-// stream are separate subsystems and are not part of this port yet.
+// the C# HudView does. The message stream (Messages, game/messages.h) is the
+// C#'s too: HudView owns it and draws it last, over the rest. The sniper
+// overlay and the bomber sight are separate subsystems, not part of this port
+// yet.
 // ============================================================================
 
 #include <stdint.h>
@@ -21,11 +23,13 @@
 #include <utility>
 #include <vector>
 
+#include "game/messages.h"
 #include "render/render.h"
 #include "render/render_types.h"
 
 namespace mdk {
 
+class FontView;
 class ModImages;
 
 namespace formats {
@@ -66,8 +70,21 @@ public:
     // Advances the blink once a tick (the C# Tick).
     void tick();
 
-    // Draws the HUD between mdk_render_canvas_begin/end.
+    // Draws the HUD between mdk_render_canvas_begin/end; the messages last.
     void draw(MdkRenderer renderer, const HudState& state);
+
+    // The on-screen messages (the C# HudView.Messages): the frontends push the
+    // pickups' names into it, the scripts their hud_message texts, and update it
+    // once per drawn frame (Viewer.DrawScene).
+    Messages& messages() { return messages_; }
+
+    // The fonts the messages draw in (FONTBIG, FONTSML of MDKFONT.FTI in SYS_PAL,
+    // the C# HudView's pair), BORROWED: the 3DS shares its menu's. Without them
+    // (or before they are ready) the messages are kept but not drawn.
+    void setFonts(const FontView* big, const FontView* small) {
+        big_ = big;
+        small_ = small;
+    }
 
 private:
     struct Image {
@@ -104,6 +121,9 @@ private:
     Colour barFill_ = {0.0f, 0.0f, 0.0f, 1.0f};
     Colour barFrame_ = {0.0f, 0.0f, 0.0f, 1.0f};
     int32_t blink_ = 0;
+    Messages messages_;
+    const FontView* big_ = nullptr;
+    const FontView* small_ = nullptr;
 };
 
 } // namespace mdk

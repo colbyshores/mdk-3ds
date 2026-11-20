@@ -134,6 +134,7 @@ set(SOURCES
     ${CORE}/src/game/arena_stream.cpp
     ${CORE}/src/game/arena_views.cpp
     ${CORE}/src/game/level_flow.cpp
+    ${CORE}/src/game/messages.cpp
     ${CORE}/src/game/enhanced_config.cpp
     ${CORE}/src/game/enhanced_menu.cpp
     ${CORE}/src/game/font_view.cpp

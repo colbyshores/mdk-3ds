@@ -1081,8 +1081,60 @@ const formats::ModelAnimation* ScriptRuntime::findArenaAnimation(const std::stri
 }
 
 // ---------------------------------------------------------------------------
-// Twister.cs and Ribbon.cs's state
+// Twister.cs and Ribbon.cs
 // ---------------------------------------------------------------------------
+
+const char* const Ribbon::kTexture = "WMIBTEX";
+
+namespace {
+
+// The edge's half height (its profile points (0, 0, +-1)).
+const float kRibbonHalfHeight = 1.0f;
+// The texel columns across the edge and rows of each segment (0x491d7c...0x491dd8).
+const float kRibbonLeft = 0.5f;
+const float kRibbonRight = 15.5f;
+const float kRibbonRows[3][2] = {{0.5f, 16.0f}, {16.0f, 32.0f}, {32.0f, 47.5f}};
+
+} // namespace
+
+float Ribbon::scaleOf(int32_t index, int32_t count) {
+    // C# ScaleOf: integer division (by the constant 4), then the int to float.
+    return index < count - 2 ? (float)((index + 1 + kLength - count) / (kLength - 1)) : 1.0f;
+}
+
+int32_t Ribbon::triangles(Vec3 positions[kMaxCorners], Vec2 uvs[kMaxCorners]) const {
+    // C# Ribbon.Triangles(corners), operation for operation.
+    const int32_t count = count_;
+    if (count < 2) {
+        return 0;
+    }
+
+    Vec3 bottoms[kLength];
+    Vec3 tops[kLength];
+    for (int32_t i = 0; i < count; i++) {
+        // c -/+ UnitZ * HalfHeight * ScaleOf(i, count): x and y take a zero.
+        const Vec3& c = centre(i);
+        const float dz = kRibbonHalfHeight * scaleOf(i, count);
+        bottoms[i] = Vec3{c.x - 0.0f, c.y - 0.0f, c.z - dz};
+        tops[i] = Vec3{c.x + 0.0f, c.y + 0.0f, c.z + dz};
+    }
+
+    int32_t corners = 0;
+    for (int32_t k = 1; k < count; k++) {
+        const float* row = k == 1 ? kRibbonRows[0] : k == count - 1 ? kRibbonRows[2] : kRibbonRows[1];
+        const Vec2 uv0{kRibbonLeft, row[0]};
+        const Vec2 uv1{kRibbonRight, row[0]};
+        const Vec2 uv2{kRibbonRight, row[1]};
+        const Vec2 uv3{kRibbonLeft, row[1]};
+        positions[corners] = bottoms[k - 1]; uvs[corners++] = uv0;
+        positions[corners] = tops[k - 1];    uvs[corners++] = uv1;
+        positions[corners] = tops[k];        uvs[corners++] = uv2;
+        positions[corners] = bottoms[k - 1]; uvs[corners++] = uv0;
+        positions[corners] = bottoms[k];     uvs[corners++] = uv3;
+        positions[corners] = tops[k];        uvs[corners++] = uv2;
+    }
+    return corners;
+}
 
 void Ribbon::push(const Vec3& centre) {
     // C# Ribbon.Push: a queue of at most kLength; the oldest goes first.

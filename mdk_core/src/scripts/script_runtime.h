@@ -44,6 +44,7 @@
 #include "game/arena_space.h"
 #include "game/kurt.h"
 #include "game/level_data.h"
+#include "game/messages.h"
 #include "render/render_types.h"
 #include "scripts/animated_textures.h"
 #include "scripts/debris.h"
@@ -628,9 +629,14 @@ public:
     // later slice; the pool and its motion are the runtime state.
     Effects effects;
 
-    // One queued HUD message (opcode 247, hud_message). The Messages
-    // drawing consumer (fonts, timing, the HUD queue display) is a later
-    // slice; the queue itself is the runtime state the VM writes.
+    // C# ScriptRuntime.Messages (ScriptRuntime.cs:188): the HUD's message stream,
+    // which hud_message (opcode 247, ScriptVm.cs:1186) pushes into. BORROWED; the
+    // frontends bind their HudView's (Viewer.cs:245) when they build the runtime.
+    Messages* hudMessages = nullptr;
+
+    // One hud_message call, as the VM made it. With no stream bound (the C#'s null
+    // Messages: nothing is shown) the runtime keeps the calls here instead, for the
+    // VM tests to read; with one bound nothing is kept, so a level grows no list.
     struct ScriptMessage {
         std::string text;
         int32_t flags = 0;
@@ -638,6 +644,10 @@ public:
     };
     const std::vector<ScriptMessage>& messages() const { return messages_; }
     void pushMessage(const std::string& text, int32_t flags, float seconds) {
+        if (hudMessages != nullptr) {
+            hudMessages->push(text.c_str(), flags, seconds);
+            return;
+        }
         ScriptMessage message;
         message.text = text;
         message.flags = flags;

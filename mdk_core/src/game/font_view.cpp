@@ -90,8 +90,13 @@ bool FontView::load(MdkRenderer renderer, const formats::Font& font, int32_t pal
 
 float FontView::draw(MdkRenderer renderer, const char* text, float x, float y, float scale,
                      const Colour& tint) const {
+    return draw(renderer, (const uint8_t*)text, (int32_t)strlen(text), x, y, scale, tint);
+}
+
+float FontView::draw(MdkRenderer renderer, const uint8_t* text, int32_t length, float x, float y,
+                     float scale, const Colour& tint) const {
     float pen = x;
-    for (const uint8_t* p = (const uint8_t*)text; *p; ++p) {
+    for (const uint8_t* p = text; p != text + length; ++p) {
         const formats::Font::Glyph* glyph = font_.glyph(*p);
         if (!glyph) {
             pen += (float)font_.spaceWidth() * scale;
