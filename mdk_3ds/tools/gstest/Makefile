@@ -17,8 +17,15 @@ gstest.elf: main.o shbin.o
 main.o: main.c FORCE
 	$(PREFIX)gcc $(CFLAGS) -c $< -o $@
 
-test.shbin: pass.g.pica ../../shaders/mdk_c3d.v.pica ../../shaders/mdk_c3d.g.pica ../../shaders/mdk_shadow.g.pica ../../shaders/mdk_caster.v.pica
-	$(DEVKITPRO)/tools/bin/picasso -o $@ ../../shaders/mdk_c3d.v.pica ../../shaders/mdk_c3d.g.pica ../../shaders/mdk_shadow.g.pica ../../shaders/mdk_caster.v.pica pass.g.pica
+# The game's own DVLB, in the game's DVLE order (mdk_3ds/Makefile): 0 the vertex
+# shader, 1 the lit GS, 2 the shadowed lit GS, 3 the caster VS, 4 the
+# pass-through GS, 5 the baked light's VS (lightmap uv), 6 its pass-through GS.
+GAME_SHADERS := ../../shaders/mdk_c3d.v.pica ../../shaders/mdk_c3d.g.pica \
+                ../../shaders/mdk_litshadow.g.pica ../../shaders/mdk_caster.v.pica \
+                ../../shaders/mdk_pass.g.pica ../../shaders/mdk_lightmap.v.pica \
+                ../../shaders/mdk_passlm.g.pica
+test.shbin: $(GAME_SHADERS)
+	$(DEVKITPRO)/tools/bin/picasso -o $@ $(GAME_SHADERS)
 
 shbin.o: shbin.s test.shbin
 	$(PREFIX)gcc $(ARCH) -c $< -o $@

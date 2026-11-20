@@ -136,6 +136,40 @@ else
     echo "stage_romfs:   (skip) kurt -- no compressed set; Kurt is expanded"
 fi
 
+# THE BAKED LIGHT (EnhancedToggles::lightBaked): every level's static light (the
+# sides' vertex colours, in level<N>.sbk with the charts, keys and the objects'
+# depth map) and its static shadow (an L4 multiplier map, level<N>.t3x), made from the same data by the host baker and tex3ds
+# (sun_bake.sh; mdk_3ds/tools/sun_bake/) into $SUN_BAKE_DIR (default
+# <repo>/build-sun-bake, kept across `make clean`) -- incremental, ~0 s when
+# nothing changed, ~25 s for every level -- and hard-linked here as sunbake/. Not
+# fatal: a level without one lights the static world in real time, as with the
+# toggle off.
+SUN_BAKE_DIR="${SUN_BAKE_DIR:-$REPO/build-sun-bake}"
+if [ "${MDK_SUN_BAKE:-1}" != "0" ]; then
+    if MDK_DATA_DIR="$SRC" "$HERE/sun_bake.sh" "$SUN_BAKE_DIR" >&2; then
+        :
+    else
+        echo "stage_romfs:   (warning) sun_bake.sh failed; the static world is lit in real time" >&2
+    fi
+fi
+baked=0
+for bake in "$SUN_BAKE_DIR"/level*.sbk; do
+    [ -f "$bake" ] || continue
+    atlas="${bake%.sbk}.t3x"
+    [ -f "$atlas" ] || continue
+    mkdir -p "$OUT/sunbake"
+    for f in "$bake" "$atlas"; do
+        ln "$f" "$OUT/sunbake/$(basename "$f")" 2>/dev/null ||
+            cp "$f" "$OUT/sunbake/$(basename "$f")"
+    done
+    baked=$((baked + 1))
+done
+if [ "$baked" -gt 0 ]; then
+    echo "stage_romfs:   sunbake ($baked levels, $(du -cb "$OUT"/sunbake/* | tail -1 | cut -f1) bytes)"
+else
+    echo "stage_romfs:   (skip) sunbake -- no bakes; the static world is lit in real time"
+fi
+
 # A manifest, so the build can verify the staging WITHOUT depending on the
 # bytes (which are not in the repository).
 {

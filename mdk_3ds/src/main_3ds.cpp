@@ -102,6 +102,7 @@
 #include "render/material_resolver.h"
 #include "render/render.h"
 #include "render/render_c3d_stats.h"
+#include "render/c3d_sun_bake.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
@@ -238,6 +239,15 @@ const char kHdPackRoot[] = "sdmc:/3ds/mdk/hd";
 // derived from the game data the RomFS already carries, so it ships in every
 // .3dsx and .cia and the hardware loop needs no separate SD copy).
 const char kKurtPackPath[] = "romfs:/kurt/kurt.pak";
+
+// THE LEVEL'S BAKED LIGHT (EnhancedToggles::lightBaked): made on the host at
+// build time by mdk_3ds/tools/sun_bake/ and tex3ds (from the same game data the
+// RomFS carries) and staged by stage_romfs.sh as romfs:/sunbake/level<N>.sbk and
+// level<N>.t3x. Loaded at level load, before the first arena mesh
+// (render/c3d_sun_bake.h); a level with no bake, or the toggle off, keeps the
+// real-time light and shadow map.
+const char kSunBakePathFormat[] = "romfs:/sunbake/level%d.sbk";
+const char kSunBakeAtlasFormat[] = "romfs:/sunbake/level%d.t3x";
 
 // The sound bank's decoded store, bounded (see where it is set).
 const size_t kDecodedSoundBudgetBytes = (size_t)6 << 20;
@@ -624,7 +634,7 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("main: resolved config shadows=%d lights=%d haze=%d mirrors=%d glow=%d "
                               "filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
                               "smoothing2x2=%d glowBloom=%d flip=%d shadowMapSize=%d shadowMapRefresh=%d "
-                              "texture16=%d kurtCompressed=%d",
+                              "texture16=%d kurtCompressed=%d lightBaked=%d",
                               (int)enhancedToggles.enableSkyShadows,
                               (int)enhancedToggles.enableFragmentLights,
                               (int)enhancedToggles.enableHaze, (int)enhancedToggles.enableMirrors,
@@ -640,7 +650,8 @@ int main(int argc, char** argv) {
                               (int)enhancedToggles.shadowMapSize,
                               (int)enhancedToggles.shadowMapRefresh,
                               (int)enhancedToggles.texture16,
-                              (int)enhancedToggles.kurtCompressed);
+                              (int)enhancedToggles.kurtCompressed,
+                              (int)enhancedToggles.lightBaked);
             mdk::log3dsPrintf("main: resolved config cap30=%d hazeDensity=%d glowStrength=%d "
                               "shadowDarkness=%d exposure=%d tintSaturation=%d",
                               (int)enhancedToggles.cap30Fps, (int)enhancedToggles.hazeDensity,
@@ -1081,6 +1092,19 @@ int main(int argc, char** argv) {
                 // batch under Lit, which can reorder same-depth parts -- measured, 7
                 // pixels of level 3 frame 300 (docs/evidence/2026-11-17-3ds-haze.txt).
                 startArenaName = arena->name();
+                // THE BAKED LIGHT, before the first arena mesh is made: each mesh
+                // takes its lightmap uvs as it is made (render/c3d_sun_bake.h).
+                // Cold (P5): two files, read whole; off with the toggle (the A/B).
+                MdkSunBakeReport sunBake;
+                if (enhancedToggles.lightBaked) {
+                    char sunBakePath[64];
+                    char sunBakeAtlas[64];
+                    snprintf(sunBakePath, sizeof(sunBakePath), kSunBakePathFormat,
+                             (int)flow.state().level);
+                    snprintf(sunBakeAtlas, sizeof(sunBakeAtlas), kSunBakeAtlasFormat,
+                             (int)flow.state().level);
+                    mdk_c3d_load_sun_bake(renderer, sunBakePath, sunBakeAtlas, &sunBake);
+                }
                 arenaViews.start(renderer, &level, &surfaces, mdk::Shading::Lit);
                 // The level's start is a SHOW of Kurt's arena (the original's
                 // BSPShow at 0x41ba68): its textures are read in whole, now, and
@@ -1092,6 +1116,34 @@ int main(int argc, char** argv) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
                                       (int)startView->batchCount(), (int)startView->vertexCount(),
                                       (int)arena->triangleCount());
+                    // ONE LINE for the bake: found and used, the atlas, its bytes and
+                    // the load's ms, and what the start arena's mesh took from it.
+                    if (!enhancedToggles.lightBaked) {
+                        mdk::log3dsPrintf("light: lightBaked=0: the real-time light and shadow map");
+                    } else {
+                        mdk_c3d_sun_bake_report(renderer, &sunBake);
+                        if (sunBake.loaded) {
+                            mdk::log3dsPrintf(
+                                "light: baked level %d: atlas %dx%d %s at %.2f units/texel, "
+                                "%u texel bytes (linear) + %u resident (%d charts of which %d "
+                                "colour blocks, %d keys, depth %dx%d), loaded in %d ms; start "
+                                "arena: %d mesh(es), %d sides of %d triangles keyed, %u uv "
+                                "bytes, %d ms",
+                                (int)flow.state().level, (int)sunBake.atlasWidth,
+                                (int)sunBake.atlasHeight, sunBake.format,
+                                (double)sunBake.texelSize, (unsigned)sunBake.texelBytes,
+                                (unsigned)sunBake.residentBytes, (int)sunBake.charts,
+                                (int)sunBake.blocks, (int)sunBake.keys, (int)sunBake.depthWidth,
+                                (int)sunBake.depthHeight, (int)sunBake.loadMs,
+                                (int)sunBake.meshes, (int)sunBake.keyed, (int)sunBake.triangles,
+                                (unsigned)sunBake.uvBytes, (int)sunBake.uvMs);
+                        } else {
+                            mdk::log3dsPrintf("light: no bake for level %d (%s, %d ms): the "
+                                              "real-time light and shadow map",
+                                              (int)flow.state().level, sunBake.why,
+                                              (int)sunBake.loadMs);
+                        }
+                    }
                     mdk::log3dsPrintf("stream: start arena %s, %d bytes read (%d arenas hold "
                                       "pixels, %d bytes)",
                                       startArenaName.c_str(),

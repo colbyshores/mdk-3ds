@@ -316,6 +316,24 @@ MDK_TEST(EnhancedConfigRoundTrips) {
         MDK_CHECK(mdk::parseEnhancedConfig("texture16=0\nkurtCompressed=0\n", &harness) &&
                   !harness.kurtCompressed && !harness.texture16);
     }
+    // The 3DS's baked static light: ON by default, written, and read back when it
+    // is off (the owner's console A/B: lightBaked=0 is today's real-time path).
+    MDK_CHECK(toggles.lightBaked && back.lightBaked);
+    MDK_CHECK(text.find("lightBaked=1\n") != std::string::npos);
+    {
+        mdk::EnhancedToggles live;
+        live.lightBaked = false;
+        mdk::EnhancedToggles liveBack;
+        MDK_CHECK(mdk::parseEnhancedConfig(mdk::writeEnhancedConfig(live).c_str(), &liveBack));
+        MDK_CHECK(!liveBack.lightBaked && liveBack.enableSkyShadows);
+        MDK_CHECK(mdk::writeEnhancedConfig(live).find("lightBaked=0\n") != std::string::npos);
+        mdk::EnhancedToggles harness;
+        MDK_CHECK(mdk::parseEnhancedConfig("lightBaked=0\n", &harness) && !harness.lightBaked &&
+                  harness.enableSkyShadows && harness.shadowMapRefresh == 0);
+        mdk::EnhancedToggles untouched;
+        MDK_CHECK(mdk::parseEnhancedConfig("enableSkyShadows=0\n", &untouched) &&
+                  untouched.lightBaked && !untouched.enableSkyShadows);
+    }
     // How often the 3DS redraws the shadow map (not a toggle): 0 = automatic by
     // default, written, read back; only 1-4 are taken, anything else is 0.
     MDK_CHECK(toggles.shadowMapRefresh == 0 && back.shadowMapRefresh == 0);

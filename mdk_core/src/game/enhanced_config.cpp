@@ -170,6 +170,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->cap30Fps = value;
     } else if (keyIs(begin, keyEnd, "movieHalfRate")) {
         toggles->movieHalfRate = value;
+    } else if (keyIs(begin, keyEnd, "lightBaked")) {
+        toggles->lightBaked = value;
     }
 }
 
@@ -216,6 +218,8 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "texture16", toggles.texture16);
     // 3DS: Kurt's frames from the ETC1A4 set, from the next level load (render_types.h).
     appendToggle(&out, "kurtCompressed", toggles.kurtCompressed);
+    // 3DS: the baked static light, from the next level load (render_types.h).
+    appendToggle(&out, "lightBaked", toggles.lightBaked);
     // A diagnostic, not a look (render_types.h): written so it can be found.
     appendToggle(&out, "shadowMapFlipBytes", toggles.shadowMapFlipBytes);
     // 0 = automatic (render_types.h).

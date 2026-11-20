@@ -5,13 +5,13 @@
 // Written 2026-11-18 after the Old 3DS appliance and the owner's New 3DS both
 // hung on the first frame drawn with enableLighting (GDB: the main thread in
 // C3D_FrameBegin's queue wait; the GX queue stuck on the frame's command list).
-// It embeds MDK's OWN shader binary (mdk_3ds/build/mdk_c3d.shbin, all four
-// DVLEs) and draws a triangle through it in stages, each logged and flushed to
+// It embeds MDK's OWN shaders (assembled here in the game's DVLE order, all
+// seven DVLEs: Makefile) and draws a triangle through them in stages, each logged and flushed to
 // sdmc:/3ds/gstest.log BEFORE it starts, so the last line names the first
 // stage that hangs. A small .3dsx pushes in seconds; MDK's takes minutes.
 //
-// Not part of the game build. Build: make -C mdk_3ds/tools/gstest
-// (needs mdk_3ds/build/mdk_c3d.shbin, i.e. a built mdk_3ds).
+// Not part of the game build. Build: make -C mdk_3ds/tools/gstest STAGES=30,31,32
+// (the baked sun shadow's program switches; STAGES picks any of the stages).
 // ============================================================================
 
 #include <3ds.h>
@@ -79,6 +79,18 @@ static int g_mvp, g_uv, g_tint, g_haze, g_world;
 static int g_sun, g_sunCol, g_sky, g_ground, g_camera, g_params;
 static void* g_vbo;
 
+// THE BAKED LIGHT'S PROGRAMS (2026-11-19, EnhancedToggles::lightBaked): the
+// static world drawn with the baked light's vertex shader ALONE (DVLE 5: four
+// attributes, the lightmap uv as GPU_SHORT x2 and the light as GPU_UNSIGNED_BYTE
+// x4 from a SECOND buffer, texcoord1 out) or, once the list is in geometry mode, with the pass-through DVLE 6
+// (stride 12), interleaved with the moving objects' shadowed lit program (DVLE 0
+// + 2) -- a vertex shader, output map and attribute layout change the lit /
+// pass-through measurements never covered. Stages 30-32.
+static shaderProgram_s g_shadow, g_baked, g_bakedPass;
+static int g_shadowGs[8];   // sunDir..params, lutMap, sunMtx
+static void* g_lmvbo;
+static int g_threeAttribs;
+
 static void plainUniforms(void) {
     C3D_Mtx id;
     Mtx_Identity(&id);
@@ -99,13 +111,72 @@ static void litUniforms(void) {
     C3D_FVUnifSet(GPU_GEOMETRY_SHADER, g_params, 1.327f, 0.0f, 0.0f, 0.0f);
 }
 
+// The attribute layout and buffer table of a draw: the baked program's four
+// attributes and two buffers, or everyone else's two and one (switched only on a
+// change, as the game does).
+static void layout(int three) {
+    if (three == g_threeAttribs) {
+        return;
+    }
+    C3D_AttrInfo* attr = C3D_GetAttrInfo();
+    AttrInfo_Init(attr);
+    AttrInfo_AddLoader(attr, 0, GPU_FLOAT, 3);
+    AttrInfo_AddLoader(attr, 1, GPU_FLOAT, 2);
+    C3D_BufInfo* buf = C3D_GetBufInfo();
+    BufInfo_Init(buf);
+    BufInfo_Add(buf, g_vbo, sizeof(Vertex), 2, 0x10);
+    if (three) {
+        AttrInfo_AddLoader(attr, 2, GPU_SHORT, 2);
+        AttrInfo_AddLoader(attr, 3, GPU_UNSIGNED_BYTE, 4);
+        BufInfo_Add(buf, g_lmvbo, 8, 2, 0x32);
+    }
+    g_threeAttribs = three;
+}
+
+static void shadowGsUniforms(const int* at) {
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, at[0], -0.329f, 0.4698f, -0.8192f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, at[1], 0.5f, 0.5f, 0.5f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, at[2], 1.293f, 0.9268f, 0.8635f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, at[3], 0.9048f, 0.6488f, 0.6045f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, at[4], 0.0f, -4.0f, 4.5f, 1.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, at[5], 1.327f, 4.0f, 0.0005f, 0.0f);
+    C3D_FVUnifSet(GPU_GEOMETRY_SHADER, at[6], 0.99f, 0.004f, 0.875f, 0.0625f);
+    C3D_Mtx id;
+    Mtx_Identity(&id);
+    C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, at[7], &id);
+}
+
+static void drawShadow(void) {
+    layout(0);
+    C3D_BindProgram(&g_shadow);
+    plainUniforms();
+    shadowGsUniforms(g_shadowGs);
+    C3D_DrawArrays(GPU_GEOMETRY_PRIM, 0, 3);
+}
+
+static void drawBaked(void) {
+    layout(1);
+    C3D_BindProgram(&g_baked);
+    plainUniforms();
+    C3D_DrawArrays(GPU_TRIANGLES, 0, 3);
+}
+
+static void drawBakedPass(void) {
+    layout(1);
+    C3D_BindProgram(&g_bakedPass);
+    plainUniforms();
+    C3D_DrawArrays(GPU_GEOMETRY_PRIM, 0, 3);
+}
+
 static void drawPlain(void) {
+    layout(0);
     C3D_BindProgram(&g_plain);
     plainUniforms();
     C3D_DrawArrays(GPU_TRIANGLES, 0, 3);
 }
 
 static void drawLit(void) {
+    layout(0);
     C3D_BindProgram(&g_lit);
     plainUniforms();
     litUniforms();
@@ -115,6 +186,7 @@ static void drawLit(void) {
 // The plain-looking draw through the pass-through GS (DVLE[4], gstest only):
 // a frame that has used the GS never leaves geometry mode.
 static void drawPass(void) {
+    layout(0);
     C3D_BindProgram(&g_pass);
     plainUniforms();
     C3D_DrawArrays(GPU_GEOMETRY_PRIM, 0, 3);
@@ -199,6 +271,19 @@ static void frame(C3D_RenderTarget* target, int stage) {
     case 7: drawPass(); drawLit(); drawPass(); drawLit(); drawPass(); break;
     // Plain BEFORE any GS in the frame, then GS to the end (the frame begins plain).
     case 8: drawPlain(); drawLit(); drawPass(); break;
+    // The baked light: its program alone (no GS); then, in geometry mode, its
+    // pass-through program interleaved with the objects' shadowed program, as a
+    // frame's DoubleSided bucket does; then the frame's whole mix, back to the
+    // GS-less program through a split.
+    case 30: drawBaked(); drawPlain(); drawBaked(); break;
+    case 31:
+        drawShadow(); drawBakedPass(); drawShadow(); drawBakedPass(); drawPass(); drawShadow();
+        break;
+    case 32:
+        drawBaked(); drawBaked(); drawLit(); drawBakedPass(); drawShadow(); drawBakedPass();
+        C3D_FrameSplit(0);
+        drawBaked(); drawPlain();
+        break;
     case 20: case 21: case 22: case 23: case 24: case 25: case 26: case 27:
         drawPlain();
         C3D_FrameSplit(0);
@@ -234,6 +319,28 @@ int main(void) {
     shaderProgramSetVsh(&g_pass, &dvlb->DVLE[0]);
     Result pgsh = shaderProgramSetGsh(&g_pass, &dvlb->DVLE[4], 12);
     logf_("gstest: pass gsh result %s%d", "", (int)pgsh);
+    {
+        static const char* const kGsNames[8] = {"sunDir", "sunColour", "skyColour",
+                                                "groundColour", "camera", "params",
+                                                "lutMap", "sunMtx"};
+        shaderProgramInit(&g_shadow);
+        shaderProgramSetVsh(&g_shadow, &dvlb->DVLE[0]);
+        Result sgsh = shaderProgramSetGsh(&g_shadow, &dvlb->DVLE[2], 12);
+        shaderProgramInit(&g_baked);
+        Result bvsh = dvlb->numDVLE >= 7 ? shaderProgramSetVsh(&g_baked, &dvlb->DVLE[5]) : -1;
+        shaderProgramInit(&g_bakedPass);
+        Result pvsh = dvlb->numDVLE >= 7 ? shaderProgramSetVsh(&g_bakedPass, &dvlb->DVLE[5]) : -1;
+        Result pgs = dvlb->numDVLE >= 7 ? shaderProgramSetGsh(&g_bakedPass, &dvlb->DVLE[6], 12) : -1;
+        int ok = 1;
+        for (int i = 0; i < 8; i++) {
+            g_shadowGs[i] = shaderInstanceGetUniformLocation(g_shadow.geometryShader, kGsNames[i]);
+            ok = ok && g_shadowGs[i] >= 0;
+        }
+        logf_("gstest: shadow gsh result %s%d", "", (int)sgsh);
+        logf_("gstest: baked vsh result %s%d", "", (int)bvsh);
+        logf_("gstest: baked pass vsh+gsh result %s%d", "", (int)(R_SUCCEEDED(pvsh) ? pgs : pvsh));
+        logf_("gstest: shadow GS locations ok=%s%d", "", ok);
+    }
     logf_("gstest: lit gsh result %s%d", "", (int)gsh);
     g_mvp = shaderInstanceGetUniformLocation(g_plain.vertexShader, "mvp");
     g_uv = shaderInstanceGetUniformLocation(g_plain.vertexShader, "uvtransform");
@@ -261,15 +368,18 @@ int main(void) {
     g_vbo = linearAlloc(sizeof(kTri));
     memcpy(g_vbo, kTri, sizeof(kTri));
     GSPGPU_FlushDataCache(g_vbo, sizeof(kTri));
+    // The baked side data of the triangle's corners, the game's layout: the
+    // lightmap uv (uv * 32768) as two shorts, then the light as four bytes.
+    static const s16 kLm[12] = {0, 0, (s16)0x8080, (s16)0xFF80,
+                                16384, 0, (s16)0x8080, (s16)0xFF80,
+                                8192, 16384, (s16)0x8080, (s16)0xFF80};
+    g_lmvbo = linearAlloc(sizeof(kLm));
+    memcpy(g_lmvbo, kLm, sizeof(kLm));
+    GSPGPU_FlushDataCache(g_lmvbo, sizeof(kLm));
 
     C3D_BindProgram(&g_plain);
-    C3D_AttrInfo* attr = C3D_GetAttrInfo();
-    AttrInfo_Init(attr);
-    AttrInfo_AddLoader(attr, 0, GPU_FLOAT, 3);
-    AttrInfo_AddLoader(attr, 1, GPU_FLOAT, 2);
-    C3D_BufInfo* buf = C3D_GetBufInfo();
-    BufInfo_Init(buf);
-    BufInfo_Add(buf, g_vbo, sizeof(Vertex), 2, 0x10);
+    g_threeAttribs = -1;
+    layout(0);
     C3D_TexEnv* env = C3D_GetTexEnv(0);
     C3D_TexEnvInit(env);
     C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
@@ -291,7 +401,11 @@ int main(void) {
                                          "T24 tiled->linear 2x2 then linear->tiled",
                                          "T25 tile-row texture copy into the glow texture",
                                          "T26 the replacement chain (T24 + T25)",
-                                         "T27 bit5 + OUT_TILED, 2x2"};
+                                         "T27 bit5 + OUT_TILED, 2x2",
+                                         "", "",
+                                         "B30 baked (no GS, 4 attributes, 2 buffers) / plain",
+                                         "B31 shadow / baked-pass interleaved in one GS list",
+                                         "B32 baked, lit, baked-pass, shadow, split, baked, plain"};
 #ifndef GSTEST_STAGES
 #define GSTEST_STAGES 1, 2, 3
 #endif
@@ -309,6 +423,10 @@ int main(void) {
         fclose(g_log);
     }
     linearFree(g_vbo);
+    linearFree(g_lmvbo);
+    shaderProgramFree(&g_bakedPass);
+    shaderProgramFree(&g_baked);
+    shaderProgramFree(&g_shadow);
     shaderProgramFree(&g_pass);
     shaderProgramFree(&g_lit);
     shaderProgramFree(&g_plain);

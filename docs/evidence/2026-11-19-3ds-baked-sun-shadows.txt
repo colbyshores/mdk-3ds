@@ -1,0 +1,186 @@
+2026-11-19  E11: the 3DS static world's light and shadow BAKED (config lightBaked)
+==================================================================================
+
+HOST ONLY SO FAR. Branch experiment/3ds-baked-sun-shadows (on a4bbf3a). Built,
+host-tested and gated; NOT run on the console or the emulator. The console A/B
+is the owner's (below). No frame-time claim is made here.
+
+THE IDEA (owner's, widened twice by the owner on 2026-11-19). The sun is one
+constant for the whole game (game/level_light.cpp sunDirection(): pitch -55, yaw
+35), the arena geometry does not move, and the rig (sky, ground, sun colour,
+exposure) is fixed per arena (enhancedLighting). So everything the lit geometry
+shader computes for a STATIC triangle -- its flat light F and the static world's
+shadow on it -- is fixed per level. Earlier tries that kept the geometry shader
+lost (A: a CPU bake with the GS picking the facing, +1.1 ms; D: light in the
+vertex shader, +7.4 ms); the win needs the GS GONE for the static world. So:
+
+  THE LIGHT -> a VERTEX COLOUR. Each triangle side's F_lit / 2 (exactly what
+    mdk_c3d.g.pica emits: min(to_srgb(exposure * (mix(ground, sky, n.z/2+1/2) +
+    sun * facing)) / 2, 1)), baked on the host, the same value on the side's
+    three corners (the meshes are non-indexed triangle lists).
+  THE SHADOW -> a single-channel GREY MAP (L4): per texel m = 1 - A * (1 - r),
+    A the supersampled fraction of the sun blocked, r the side's F_shadow /
+    F_lit (the MEAN of the three channels' ratios; the real-time path mixes per
+    channel, the error is measured below).
+  THE DRAW: the ordinary vertex shader (no GS), combiner
+    stage 0  surface * m                (with the sky shadows on; else surface)
+    stage 1  * vertex colour * 2        (the lit program's own light stage)
+    stage 2  the haze                   (setHaze, unchanged)
+  A static lit pixel is 2 fetches (surface + grey map), 1 with the sky shadows
+  off; no GS, no shadow map, no caster pass, no tint lookup.
+
+THE BAKER (mdk_3ds/tools/sun_bake/: sun_bake_level + sun_baker, host C++ on
+mdk_core's own parsers and arena build; run by stage_romfs.sh via sun_bake.sh;
+deterministic -- six levels re-baked twice give identical files -- and
+incremental by a stamp):
+  geometry   every arena built by buildArenaScene with the Lit resolver
+             (LevelView's call): the triangles, corner order and position bits
+             mdk_render_create_mesh receives on the 3DS.
+  receivers  pica::castsSunShadow (Lit, Solid/DoubleSided triangles). A Solid
+             one has its front side baked; a DoubleSided one BOTH sides (the
+             shader turns the normal to the camera), each with its own key (the
+             back side's: corners p0, p2, p1), colour and chart.
+  casters    receivers drawn at level start (arenaBatchVisible) whose texture has
+             no holes (pica::textureSourceHasHoles) -- castShadows' set. A Solid
+             caster blocks only with its FRONT (-cross(p1-p0, p2-p0)) to the sun;
+             a DoubleSided one either way. Every arena casts on every other.
+  rig        per arena: enhancedLighting(dti, arena), the rig main_3ds.cpp sets
+             when Kurt is in that arena. A covered arena's has no sun: no rays.
+  charts     grown from the largest side across shared corner positions while
+             the normal stays within 8 degrees (cos 0.99) of the seed's and the
+             rig is the seed's; projected on the mean plane, turned to the
+             least-area edge direction, a one-texel gutter, on 4-texel bounds.
+  probe      one ray a texel at the aimed density, stopping at the first
+             disagreement: a chart the sun reaches everywhere (or cannot reach)
+             samples the WHITE block (m = 1); one it reaches nowhere a 4x4 grey
+             block of its ratio, shared by every side of that shade; only charts
+             a shadow edge crosses get texels.
+  rays       2x2 sub-points a texel, each ON its triangle, pushed 0.5 units along
+             its normal, any-hit against a BVH of the casters that can block this
+             sun; texel m = mean of 1 (lit) / r (blocked); unlanded texels dilated.
+  density    aimed at 2.0 units a texel (the real-time map at 256 is 2.34);
+             coarsened 12% a step to fit 512 x 1024 texels; a level that would
+             end past twice the aim gets 1024 x 1024; a chart wider than 256
+             texels coarsens on its own.
+  encoding   tex3ds -f l4 (it owns the PICA's tiling and nibble order), the grey
+             rounded to L4's 16 levels first (tex3ds truncates: 15/255 -> 8/255).
+  objects    a 16-bit depth map of the casters seen from the sun (8+ units a
+             cell, <= 256 a side) for the moving objects' one lookup a frame.
+
+THE BAKES (GOG data; build ~25-50 s for all six from scratch, 0.1 s when up to
+date):
+            atlas      density  GPU L4   (L8)       .t3x on SD  .sbk (heap)  charts/blocks  keys
+  level 3   512x1024   2.00 u   256 KiB  (512 KiB)  12.7 KB     258,416 B    209 / 55       8,627
+  level 4   1024x1024  4.42 u   512 KiB  (1 MiB)    29.6 KB     624,992 B    986 / 81       33,927
+  level 5   256x512    2.00 u   64 KiB   (128 KiB)  3.0 KB      223,168 B    50 / 11        6,428
+  level 6   512x1024   2.24 u   256 KiB  (512 KiB)  9.0 KB      237,488 B    71 / 20        13,088
+  level 7   512x1024   2.00 u   256 KiB  (512 KiB)  15.8 KB     327,920 B    333 / 52       13,718
+  level 8   512x1024   2.00 u   256 KiB  (512 KiB)  17.3 KB     299,088 B    236 / 53       12,500
+  (the .sbk is the keys with their colours and charts, ~10-18 B a side, plus the
+  objects' depth map, 51-131 KB.) Per level resident: the grey map (linear) + the
+  .sbk (main heap) + 8 B a vertex a side of every arena mesh made (below). The
+  real-time map (256x256x4 VRAM), its 16-bit depth and the 512 KB ramp are not made.
+
+THE VERTEX FORMAT. mdk::Vertex and every non-baked mesh are UNCHANGED (five
+floats, BufInfo (..., 2, 0x10)); the Linux build is untouched. A static mesh the
+bake knows gets a SECOND vertex buffer, 8 bytes a vertex (sun_bake.h
+kSunBakeSideStride): the grey map's uv as 2 x GPU_SHORT (uv * 32768) and the
+light as 4 x GPU_UNSIGNED_BYTE (F/2 * 255; the PICA does not normalise integer
+attributes, so mdk_lightmap.v.pica scales by 1/255), BufInfo_Add(..., 8, 2,
+0x32), attributes 2 and 3. A mesh with DoubleSided sides gets a second such
+buffer for the inward side. The haze's kept fraction stays where it lives today:
+the primary colour's alpha (tint.a * ex2(haze * depth)); the vertex colour's own
+alpha is not read. Memory: +8 B a vertex (16 for a DoubleSided-carrying mesh),
+linear heap, per arena mesh made (~24 B a triangle; a 4,000-triangle arena ~96
+KB). Keys are found by each triangle's positions' bits (FNV-1a 64), so they
+survive the arena stream's order and LevelView::refresh.
+
+THE RUNTIME (EnhancedToggles::lightBaked, default ON; TOGGLES='lightBaked=0' is
+today's real-time path; the bake is loaded at level load only when on):
+  programs   DVLE 5 mdk_lightmap.v.pica ALONE (no GS); DVLE 5 + DVLE 6
+             mdk_passlm.g.pica (pass-through, stride 12) when the command list is
+             already in geometry mode -- no split (THE GEOMETRY-STAGE RULE). The
+             baked VS's uniforms are checked equal to the main VS's at create.
+  draw       drawRecorded: a Lit triangle draw of a mesh with side data, identity
+             world -> the baked path (surface on unit 0, the grey map on unit 1
+             with the shadow, 4 attributes / 2 buffers, stage 0 surface * map,
+             stage 1 the light stage, stage 2 the haze). A DoubleSided batch is
+             drawn twice: culled kSolidCull with the outward side's data, then
+             GPU_CULL_BACK_CCW with the inward side's.
+  objects    moving meshes keep the GS lit path; under the frame's sun shadow
+             they go through the shadowed program with ONE shadow value each
+             (stage 0's constant) from the bake's depth map at their origin.
+  toggles    enableLighting off: the original look, as today. enableSkyShadows
+             off: the baked vertex colours alone (today's lit-without-shadow
+             look), the map not sampled -- no second bake, no memory. The map is
+             sampled when the frame has the sun's shadow (the toggle, the current
+             arena open), the real-time path's own condition.
+  log        one line at level load ("light: baked level N: atlas ... L4 ...
+             loaded in N ms; start arena: N mesh(es), N sides of N triangles
+             keyed, N side-data bytes, N ms"); the periodic "light (baked)" line
+             adds the static draws, the inward draws, the object draws and the
+             frame's geometry SPLIT COUNT.
+  shaders    264 of 512 instructions (was 219).
+
+FIDELITY (the baker's check: every baked side's centroid looked up as the runtime
+does it, colour * m, against the shader's formula with a ray at the centroid; in
+F/2 bytes 0..255, the pixel's factor F is twice it; before the L4 encoding):
+  unshadowed sides on a block: max |d| 0.50-0.75 on levels 3, 5, 6 -- the vertex
+    colour IS the shader's light to the byte. Exceptions: 4 (L7), 16 (L8), 66
+    (L4) sides of ~10,000-19,000 the probe classed lit whose centroid ray is
+    blocked (shadows thinner than the probe's 2-unit grid).
+  fully shadowed sides: the mean ratio's worst per-channel error 0.6-4.3 bytes
+    (L8 4.0: up to ~8/255 of the pixel's factor), 5.9-8.9 at L4's steps (L8 8.7),
+    1.4-4.3 at L8's. Uniform within a shadow (an offset, not a band).
+  sides on a chart with a shadow edge: mean |d| 0.7-2.6, larger at the edge.
+  L4 encoding against the baked m: mean 0.5-0.9, max 8 (rounding).
+  host test (tests/scripts/sun_bake_tests.cpp): the baker's formula equals an
+    independent rewrite of mdk_c3d.g.pica over 64 normals to < 0.05 byte; the
+    floor of a box scene reads F_lit (and F_lit * r under the box) through the
+    runtime's own lookup to 1.5 bytes.
+  Shadow edges: the grey map's texel (2.0-2.24 units on levels 3, 5-8, 4.42 on
+  level 4) with 2x2 rays and bilinear filtering: a soft edge ~2-4 units wide,
+  comparable to the real-time 2.34-unit 2x2-filtered map; level 4's is softer.
+
+WHAT CHANGES VISUALLY (look for these in the console A/B):
+  - MOVING objects cast nothing (platforms, doors, enemies, debris).
+  - Moving objects receive ONE shadow value each (origin, 4 units towards the
+    sun, 2x2 over an 8-63-unit depth map): a large object half in shadow is all
+    lit, all dark or between.
+  - Shadows reach the horizon: the real-time map (and the PC's) ends 300 units
+    from the camera with an edge fade; the bake has no reach (no GS, no fade).
+  - Each arena's static light uses ITS OWN rig; the real-time path lights every
+    drawn arena with the rig of Kurt's arena (a visible neighbour arena can
+    differ in tint/exposure; no pop when Kurt crosses).
+  - A group hidden at level start casts nothing; one hidden later still casts.
+  - A shadowed area's tint: the mean ratio instead of the per-channel mix (above).
+  - A static triangle the bake does not know (a group a script retextures from a
+    non-Lit surface into a Lit one) is drawn with the neutral colour: unlit.
+
+RISKS FOR THE CONSOLE (two independent read-only reviews, 2026-11-19: no blocker):
+  1. PROGRAM / ATTRIBUTE SWITCHES. The baked draws switch the vertex shader
+     (DVLE 0 <-> 5), the attribute layout (2 <-> 4) and the buffer count (1 <->
+     2) between the objects' GS draws, in and out of geometry mode. The GS rule's
+     hardware measurements covered lit <-> pass-through only. A hang of this class
+     is permanent and the emulator does not model it. FIRST run gstest:
+         make -C mdk_3ds/tools/gstest STAGES=30,31,32
+     B30 the baked program alone (no GS), B31 the baked pass-through interleaved
+     with the shadowed program in one GS list, B32 the frame's mix through a
+     split; the last line of sdmc:/3ds/gstest.log names the first stage that
+     hangs. If one hangs: TOGGLES='lightBaked=0'.
+  2. The vertex colour attribute (GPU_UNSIGNED_BYTE x4, scaled 1/255 in the VS)
+     and the L4 map's orientation (t = 1 at tex3ds' top row) are inferred, not
+     seen on this GPU: wrong, the static world is mis-lit (colour) or its
+     shadows land in the wrong places (orientation).
+  3. A refused side-data buffer leaves that mesh lit in real time by the GS with
+     no shadow (logged); the real-time map is not made in a baked frame.
+  4. Splits: the baked draws avoid them in geometry mode (the pass-through GS);
+     the periodic line logs the frame's count (kMaxGeometrySplits = 6).
+  5. Mesh side data is computed when a mesh is made, also mid-play (an arena
+     streaming in, LevelView::refresh): a hash and a binary search a triangle.
+
+TO MEASURE ON THE CONSOLE (owner): level 8, stereo, 90 s,
+  make -C mdk_3ds AUTOQUIT=90 PROFILE=1 LEVEL=8                                     (baked)
+  make clean; make -C mdk_3ds AUTOQUIT=90 PROFILE=1 LEVEL=8 TOGGLES='lightBaked=0'  (real-time)
+the steady mean and the vblank spread, and CAPTURE=600 pairs for the look.
+L8 instead of L4: SUN_BAKE_ARGS=--l8 make -C mdk_3ds ... (twice the map's bytes).

@@ -62,6 +62,7 @@
 #include "util/math_minmax.h"
 #include "layer_tests.h"
 #include "sky_dome_tests.h"
+#include "sun_bake_tests.h"
 #include "mve_audio_tests.h"
 #include "pica_matrix_tests.h"
 #include "scripts/debris.h"
@@ -8274,6 +8275,14 @@ int main(int argc, char** argv) {
     failures += skyFailures;
     if (skyFailures == 0) {
         printf("PASS SkyDome\n");
+    }
+
+    // The 3DS's baked sun shadow (sun_bake_tests.h): the build-time baker on
+    // hand-built scenes, read back through the runtime's reader. Data-independent.
+    const int sunBakeFailures = mdk::test::runSunBakeTests();
+    failures += sunBakeFailures;
+    if (sunBakeFailures == 0) {
+        printf("PASS SunBake\n");
     }
 
     const int inputFailures = mdk::test::runInput3dsTests();

@@ -433,6 +433,52 @@ static void bindVertexBuffer(RendererC3D* r, const void* data) {
     r->dedupeWritten[kDedupeBufInfo]++;
 }
 
+// THE BAKED LIGHT'S VERTEX DATA (EnhancedToggles::lightBaked): the mesh's five
+// floats in buffer 0 (attributes 0-1, as bindVertexBuffer) and its SIDE DATA in
+// buffer 1 (sun_bake.h kSunBakeSideStride: attribute 2 the lightmap uv as two
+// GPU_SHORTs, attribute 3 the light as four GPU_UNSIGNED_BYTEs: permutation
+// 0x32), compared with the context's table the same way. Both buffers are indexed
+// by the same vertex, so a draw's first_vertex addresses both.
+static void bindLightmapBuffers(RendererC3D* r, const void* data, const void* lightmap) {
+    if (data != r->vbufLmFor[0] || lightmap != r->vbufLmFor[1]) {
+        BufInfo_Init(&r->vbufInfoLm);
+        BufInfo_Add(&r->vbufInfoLm, data, 5 * sizeof(float), 2, 0x10);
+        BufInfo_Add(&r->vbufInfoLm, lightmap, mdk::kSunBakeSideStride, 2, 0x32);
+        r->vbufLmFor[0] = data;
+        r->vbufLmFor[1] = lightmap;
+    }
+    if (kDrawDedupe && r->liveBufInfo &&
+        memcmp(r->liveBufInfo, &r->vbufInfoLm, sizeof(C3D_BufInfo)) == 0) {
+        r->dedupeSkipped[kDedupeBufInfo]++;
+        return;
+    }
+    C3D_SetBufInfo(&r->vbufInfoLm);
+    r->dedupeWritten[kDedupeBufInfo]++;
+}
+
+// THE ATTRIBUTE LAYOUT, with or without the baked side data as attributes 2-3
+// (mdk_lightmap.v.pica's v2, v3). Only a baked draw has four attributes; every
+// other draw's buffers carry two, and a loader for an attribute no buffer provides is
+// the invisible-geometry failure installEye's comment describes. So it is
+// switched only at the baked draws' edges, cached on lightmapAttribs: installEye
+// and the caster pass write the two-attribute layout whole and clear the cache,
+// and leaveShadowLitStages (the only way out of the shadowed layout, where every
+// baked draw is) puts two back.
+static void setLightmapAttribs(RendererC3D* r, bool on) {
+    if (on == r->lightmapAttribs) {
+        return;
+    }
+    C3D_AttrInfo* attrInfo = C3D_GetAttrInfo();
+    AttrInfo_Init(attrInfo);
+    AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
+    AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord
+    if (on) {
+        AttrInfo_AddLoader(attrInfo, 2, GPU_SHORT, 2);           // lightmap uv * 32768
+        AttrInfo_AddLoader(attrInfo, 3, GPU_UNSIGNED_BYTE, 4);   // light F / 2 * 255
+    }
+    r->lightmapAttribs = on;
+}
+
 // ============================================================================
 // THE GEOMETRY-STAGE RULE (HARDWARE; measured 2026-11-18 on the Old 3DS
 // appliance with mdk_3ds/tools/gstest, which draws through this DVLB).
@@ -569,6 +615,7 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // geometry vanishes with no error at all.
     AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
     AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord
+    r->lightmapAttribs = false;   // (setLightmapAttribs' cache: two attributes)
 
     // The combiner. The original look is an unlit, untextured surface for
     // now; the textured path replaces this when the palette expansion
@@ -917,6 +964,7 @@ static void testNativeShadowWrites(RendererC3D* r) {
         AttrInfo_Init(attrInfo);
         AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);
         AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);
+        r->lightmapAttribs = false;   // (setLightmapAttribs' cache: two attributes)
         C3D_BufInfo* bufInfo = C3D_GetBufInfo();
         BufInfo_Init(bufInfo);
         BufInfo_Add(bufInfo, quad, 5 * sizeof(float), 2, 0x10);
@@ -1134,8 +1182,10 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     if (!r->ready) return;
     // The native shadow-write test, once, before the first frame that may cast
     // a sun shadow (testNativeShadowWrites): outside the frame, like the rebuild.
+    // (Not while the level's BAKED light stands in for the map: no map is made.)
     if (!r->shadowNativeTested && r->toggles.enableSkyShadows && r->casterProgramReady &&
-        r->shadowProgramReady) {
+        r->shadowProgramReady &&
+        !(r->toggles.lightBaked && r->bakeTexReady && !r->bakeSunWarned)) {
         testNativeShadowWrites(r);
     }
 
@@ -1536,6 +1586,21 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
                               (int)r->shadowHoleCastersLast, (int)r->shadowReceivers,
                               (int)r->shadowReuses);
             r->shadowReuses = 0;
+        }
+        if (eye == 0 && r->bakeActive && mdk::log3dsPeriodic() &&
+            (r->frame == 30 || (r->frame % 600) == 0)) {
+            mdk::log3dsPrintf("light (baked%s): frame %lu: %d static draws lit by their vertex "
+                              "colours "
+                              "(%d of them a DoubleSided inward side), %d object draws took one "
+                              "light each (%d lookups), this eye; %d geometry splits so far this "
+                              "frame; no map, no caster pass; %d mesh(es) took uvs so far (%d of "
+                              "%d sides keyed, %d ms in all)",
+                              r->bakeShadowLive ? ", the shadow map sampled" : ", no shadow",
+                              (unsigned long)r->frame, (int)r->bakedDraws, (int)r->bakedBackDraws,
+                              (int)r->objectShadowDraws, (int)r->objectLookups,
+                              (int)r->geometrySplits, (int)r->bakeReport.meshes,
+                              (int)r->bakeReport.keyed, (int)r->bakeReport.triangles,
+                              (int)r->bakeReport.uvMs);
         }
         // The census is read after the FIRST eye's replay: the second eye draws
         // the same records and would double every count.
@@ -2048,6 +2113,73 @@ static void prepareShadows(RendererC3D* r) {
     r->shadowHoleCasters = 0;
     r->shadowReceivers = 0;
     r->shadowLitLive = false;
+    r->bakeActive = false;
+    r->objectLightCount = 0;
+    r->bakedDraws = 0;
+    r->bakedBackDraws = 0;
+    r->objectShadowDraws = 0;
+    r->objectLookups = 0;
+    // THE BAKED LIGHT FIRST (EnhancedToggles::lightBaked): the static world's
+    // light comes from its vertex colours and its shadow from the level's grey
+    // map (06_draw.inc, the baked draw: no geometry shader), so there is NO MAP
+    // and NO CASTER PASS (shadowLive stays false: castShadows, the native check
+    // and the map's dump all skip). The map is sampled only when the frame has
+    // the sun's shadow (the toggle, the arena open: the real-time path's own
+    // conditions); without it the vertex colours alone are today's light without
+    // a shadow. The bake must be for this sun (one constant for the game: a stale
+    // bake is refused).
+    r->bakeShadowLive = false;
+    if (r->toggles.lightBaked && r->bakeTexReady && r->bake.valid() && r->bakedProgramReady &&
+        r->bakedPassReady && r->unitIdleReady && r->litLive) {
+        const mdk::Lighting& l = r->lighting;
+        const float* baked = r->bake.header().sunDirection;
+        const float same = l.sun_direction.x * baked[0] + l.sun_direction.y * baked[1] +
+                           l.sun_direction.z * baked[2];
+        if (same > 0.9999f) {
+            r->bakeActive = true;
+            r->shadowLive = false;
+            // A map kept from an earlier real-time frame would not match the
+            // matrix below: if the real-time path comes back (the toggle flipped
+            // live), it casts again before it is sampled.
+            r->shadowMapFresh = true;
+            r->bakeShadowLive = r->toggles.enableSkyShadows && l.shadows &&
+                                l.shadow_distance > 0.0f;
+            // THE MOVING OBJECTS keep the geometry shader's light; under the
+            // frame's sun shadow they take ONE shadow value each from the bake
+            // (06_draw.inc objectLightOf) through the shadowed program, whose
+            // edge fade still needs the sun's matrix around the camera: a few
+            // dozen multiplies a frame, no cast. Its normal offset and bias are
+            // the automatic 256 map's; only the fade reads them.
+            if (r->bakeShadowLive && r->shadowProgramReady && ensureShadowTint(r)) {
+                const int32_t kFadeMapSize = 256;
+                float sun[16];
+                const mdk::Vec3 centre = {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2]};
+                mdk::sunShadowMatrix(l.sun_direction, centre, l.shadow_distance,
+                                     (uint32_t)kFadeMapSize, sun);
+                float map[16];
+                mdk::pica::sunMapMatrix(sun, map);
+                mdk::pica::registers(map, r->shadowSunMtx);
+                const float values[6][4] = {
+                    {l.sun_direction.x, l.sun_direction.y, l.sun_direction.z, 0.0f},
+                    {l.sun.r, l.sun.g, l.sun.b, 0.0f},
+                    {l.sky.r, l.sky.g, l.sky.b, 0.0f},
+                    {l.ground.r, l.ground.g, l.ground.b, 0.0f},
+                    {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2], 1.0f},
+                    {l.exposure, mdk::pica::sunShadowNormalOffset(kFadeMapSize),
+                     mdk::pica::sunShadowDepthBias(kFadeMapSize), 0.0f},
+                };
+                memcpy(r->shadowUniforms, values, sizeof(values));
+                r->shadowLitLive = true;
+            }
+            return;
+        }
+        if (!r->bakeSunWarned) {
+            mdk::log3dsPrintf("light: the bake is for another sun (%.4f %.4f %.4f); the "
+                              "real-time light and map stand in", (double)baked[0],
+                              (double)baked[1], (double)baked[2]);
+            r->bakeSunWarned = true;
+        }
+    }
     // The tint first: without it no lit draw can take the shadow, and a map
     // cast for no receiver is a pass for nothing (review, 2026-11-19).
     r->shadowLive = r->litLive && r->shadowProgramReady && r->casterProgramReady &&
@@ -2145,6 +2277,7 @@ static void installShadowUniforms(RendererC3D* r) {
     C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, r->shadowSunMtxLocation, &sunMtx);
 }
 
+
 // THE CASTER PASS (Enhanced Mode enableSkyShadows): the frame's opaque Lit
 // triangles -- the PC's casters, 11_shadow_post.inc drawShadowMap -- drawn from
 // the sun into the shadow map, once per frame, before the eyes.
@@ -2198,6 +2331,7 @@ static void castShadows(RendererC3D* r) {
     AttrInfo_Init(attrInfo);
     AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
     AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord (not read)
+    r->lightmapAttribs = false;   // (setLightmapAttribs' cache: two attributes)
     // NATIVE (testNativeShadowWrites measured that the writes land): the PICA
     // writes each fragment's depth itself and keeps the nearer, so no ramp and
     // no depth test; the combiner's output is black because its GREEN is the
