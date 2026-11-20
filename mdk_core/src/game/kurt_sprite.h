@@ -300,6 +300,11 @@ public:
     bool draw(MdkRenderer renderer, const Player& player, const Vec3& feet, const Vec3& eye,
               const Vec3& forward, const Vec3& up, float fieldOfView, ArenaSpace* space);
 
+    // Frames whose texture this sprite has asked the backend to make, over its
+    // life (a frame the residency dropped and made again counts again): the
+    // first-use counter the profile lines read.
+    int32_t framesMade() const { return framesMade_; }
+
     // The C# KurtSprite's pull constants.
     static constexpr float kFloorMargin = 0.02f;
     static constexpr float kMinFloorShare = 0.1f;
@@ -402,6 +407,7 @@ private:
     int32_t muzzleFlash_ = -1;
     // What is on the GPU, and how much of it there is. See SpriteResidency.
     SpriteResidency residency_;
+    int32_t framesMade_ = 0;
 };
 
 } // namespace mdk

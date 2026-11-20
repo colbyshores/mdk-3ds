@@ -47,6 +47,7 @@
 #include "game/object_draw.h"
 #include "game/object_view.h"
 #include "game/player.h"
+#include "game/prewarm.h"
 #include "game/input.h"
 #include "game/arena_space.h"
 #include "game/arena_views.h"
@@ -57,6 +58,7 @@
 #include "platform/window_sdl.h"
 #include "render/material_resolver.h"
 #include "render/surface_cache.h"
+#include "scripts/pose_cache.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 
@@ -921,11 +923,95 @@ int main(int argc, char** argv) {
                         "runtime without it is a different random stream, not the oracle's\n");
         }
     };
+    // THE PREWARM, the 3DS experiment's host twin (game/prewarm.h; main_3ds.cpp
+    // kPrewarm): MDK_PREWARM=1 makes at the load what the first frames would
+    // make on first use, and runs the per-frame step before the draws.
+    // MDK_FIRST_USE_LOG=1 prints, per frame, what the draw build CREATED (the
+    // counters the 3DS profile reads). Both off by default: the shipped Linux
+    // frame is unchanged, and this exists to measure the 3DS change on the host.
+    const bool prewarmOn = std::getenv("MDK_PREWARM") && std::getenv("MDK_PREWARM")[0] == '1';
+    const bool firstUseLog =
+        std::getenv("MDK_FIRST_USE_LOG") && std::getenv("MDK_FIRST_USE_LOG")[0] == '1';
+    struct PrewarmContext {
+        decltype(objectLook)* look;
+        mdk::LevelData* level;
+        mdk::ArenaViews* views;
+        std::unique_ptr<mdk::scripts::ScriptRuntime>* runtime;
+    };
+    PrewarmContext prewarmContext{&objectLook, &level, &arenaViews, &runtime};
+    const mdk::PrewarmLook prewarmLook = [](void* user,
+                                            const std::string& name) -> const mdk::ObjectLook* {
+        PrewarmContext* c = static_cast<PrewarmContext*>(user);
+        if (!name.empty() && c->level->arenaNamed(name) && !c->views->find(name)) {
+            return nullptr;
+        }
+        return &(*c->look)(name);
+    };
+    const mdk::PrewarmRemoved prewarmRemoved = [](void* user, const mdk::scripts::MdkObject* obj) {
+        PrewarmContext* c = static_cast<PrewarmContext*>(user);
+        return *c->runtime && (*c->runtime)->isRemoved(obj);
+    };
+    mdk::ObjectPrewarm objectPrewarm;
+    auto prewarmLevel = [&]() {
+        if (!prewarmOn || !arena) {
+            return;
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        mdk::PrewarmBudget budget;
+        const std::vector<std::string> firstDrawn(1, startArenaName);
+        (void)arenaViews.prewarm(firstDrawn, &budget);
+        const int32_t arenaMade = budget.made;
+        const int posesBefore = mdk::scripts::poseCacheBuilds();
+        objectPrewarm.reset();
+        if (runtime) {
+            objectPrewarm.step(&objectView, runtime->objects(), prewarmLook, prewarmRemoved,
+                               &prewarmContext, &surfaces, &budget,
+                               (int32_t)runtime->objects().size(), true);
+            objectPrewarm.reset();
+        }
+        const int32_t objectsMade = budget.made - arenaMade;
+        if (const mdk::formats::Arena* startArena = level.arenaNamed(startArenaName)) {
+            const mdk::ObjectLook& look = objectLook(startArenaName);
+            for (int32_t m = 0; m < startArena->modelCount(); m++) {
+                (void)mdk::prewarmModel(&objectView, startArena->model(startArena->modelName(m)),
+                                        look, &surfaces, &budget);
+            }
+        }
+        const int32_t modelsMade = budget.made - arenaMade - objectsMade;
+        // Not Kurt: the 3DS twin leaves him to his own start-set preload
+        // (KurtSprite::preloadStartSet), so this walk leaves him too.
+        std::printf("[main] prewarm: load made %d textures in %.1f ms: arena %d, objects %d, "
+                    "models %d; %d poses, %d layouts\n",
+                    (int)budget.made,
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                        .count(),
+                    (int)arenaMade, (int)objectsMade, (int)modelsMade,
+                    mdk::scripts::poseCacheBuilds() - posesBefore,
+                    (int)objectView.layoutsBuilt());
+    };
     if (arena) {
         spawnPlayer();
         playerReady = true;
+        prewarmLevel();
         mdk::windowCaptureMouse(&window, true);
     }
+    struct FirstUseCounters {
+        mdk::CreationStats gpu;
+        int32_t surfaces = 0;
+        int32_t kurt = 0;
+        int32_t layouts = 0;
+        int32_t poses = 0;
+    };
+    auto takeFirstUse = [&](FirstUseCounters* c) {
+        mdk_render_creation_stats(renderer, &c->gpu);
+        c->surfaces = surfaces.texturesMade();
+        c->kurt = kurtSprite.framesMade();
+        c->layouts = objectView.layoutsBuilt();
+        c->poses = mdk::scripts::poseCacheBuilds();
+    };
+    int32_t firstUseFrames = 0;
+    FirstUseCounters firstUseTotal0;
+    takeFirstUse(&firstUseTotal0);
 
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
     const float kHudStep = 1.0f / 30.0f; // the C# HUD blink's 30 Hz boundary
@@ -1096,6 +1182,7 @@ int main(int argc, char** argv) {
             // it stays deferred with the menu and the save system.
             if (player.died()) {
                 spawnPlayer();
+                prewarmLevel();
                 // A fresh Player's CameraRoll is level again (the C# respawns with a
                 // new Kurt), so the respawn seed carries no roll either.
                 mdk::buildFollowCamera(&camera, player.feet, player.facing(),
@@ -1182,6 +1269,16 @@ int main(int argc, char** argv) {
                 std::printf("[main] stream: read FAILED for %s (%d failures)\n",
                             stream.resident().c_str(), (int)after.readFailures);
             }
+            if (prewarmOn) {
+                mdk::PrewarmBudget budget;
+                budget.makes = 1;
+                (void)arenaViews.prewarm(*frameDrawn, &budget);
+                if (runtime && !budget.spent()) {
+                    objectPrewarm.step(&objectView, runtime->objects(), prewarmLook,
+                                       prewarmRemoved, &prewarmContext, &surfaces, &budget, 8,
+                                       true);
+                }
+            }
             if (builtViews > 0 || arenaViews.stats().released != releasedBefore) {
                 std::printf("[main] views: %d built (last %s), %d released, %d kept\n",
                             (int)builtViews, arenaViews.lastBuilt().c_str(),
@@ -1212,6 +1309,10 @@ int main(int argc, char** argv) {
         }
 
         mdk_render_begin_frame(renderer, &params);
+        FirstUseCounters firstUse0;
+        if (firstUseLog) {
+            takeFirstUse(&firstUse0);
+        }
         // The arenas the scripts say are drawn: Kurt's and the active second
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
         // the runtime's first tick has named one.
@@ -1331,6 +1432,22 @@ int main(int argc, char** argv) {
             hud.draw(renderer, state);
             mdk_render_canvas_end(renderer);
         }
+        if (firstUseLog) {
+            FirstUseCounters c;
+            takeFirstUse(&c);
+            const int32_t tex = c.gpu.textures_made - firstUse0.gpu.textures_made;
+            const int32_t meshes = c.gpu.meshes_made - firstUse0.gpu.meshes_made;
+            const int32_t surf = c.surfaces - firstUse0.surfaces;
+            const int32_t kurt = c.kurt - firstUse0.kurt;
+            const int32_t layouts = c.layouts - firstUse0.layouts;
+            const int32_t poses = c.poses - firstUse0.poses;
+            if (tex || meshes || layouts || poses) {
+                firstUseFrames++;
+                std::fprintf(stderr, "first-use: frame %u tex=%d surf=%d kurt=%d layouts=%d "
+                             "poses=%d meshes=%d\n", (unsigned)frame, (int)tex, (int)surf,
+                             (int)kurt, (int)layouts, (int)poses, (int)meshes);
+            }
+        }
         mdk_render_end_frame(renderer);
 
         frame++;
@@ -1342,6 +1459,16 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (firstUseLog) {
+        FirstUseCounters c;
+        takeFirstUse(&c);
+        std::fprintf(stderr, "first-use: %d frames made something in their draw; since the "
+                     "load: tex=%d surf=%d kurt=%d layouts=%d poses=%d meshes=%d\n",
+                     (int)firstUseFrames, (int)(c.gpu.textures_made - firstUseTotal0.gpu.textures_made),
+                     (int)(c.surfaces - firstUseTotal0.surfaces), (int)(c.kurt - firstUseTotal0.kurt),
+                     (int)(c.layouts - firstUseTotal0.layouts), (int)(c.poses - firstUseTotal0.poses),
+                     (int)(c.gpu.meshes_made - firstUseTotal0.gpu.meshes_made));
+    }
     int32_t draws = 0;
     int32_t tris = 0;
     mdk_render_stats(renderer, &draws, &tris);

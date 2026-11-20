@@ -204,6 +204,7 @@ MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba) {
     }
     // The 3DS keeps the palette only to expand the textures through it.
     renderer->palettes.push_back(std::vector<uint8_t>(rgba, rgba + 256 * 4));
+    renderer->creation.palettes_made++;
     return (MdkPaletteId)(renderer->palettes.size() - 1);
 }
 
@@ -387,6 +388,8 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* v, int32_t n)
         return -1;
     }
     mesh.valid = true;
+    renderer->creation.meshes_made++;
+    renderer->creation.mesh_bytes += (int64_t)n * 5 * (int64_t)sizeof(float);
     // THE MESH IS PUSHED BEFORE IT IS FILLED.
     //
     // The update takes the mesh's ID and looks the mesh up by it, so a mesh
@@ -430,6 +433,8 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer r, int32_t cap) {
     }
     renderer->meshAllocFailureLogged = false;
     mesh.valid = true;
+    renderer->creation.meshes_made++;
+    renderer->creation.mesh_bytes += (int64_t)cap * 5 * (int64_t)sizeof(float);
     renderer->meshes.push_back(mesh);
     return (MdkMeshId)(renderer->meshes.size() - 1);
 }

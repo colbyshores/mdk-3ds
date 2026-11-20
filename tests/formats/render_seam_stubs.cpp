@@ -72,6 +72,12 @@ void mdk_render_draw_mesh(MdkRenderer, const mdk::MeshDraw*) {
     mdk_test_meshDraws++;
 }
 
+// The prewarm's cost question (render/surface_cache.h): the 3DS's arithmetic
+// is not this binary's business, only that a texture costs something.
+int32_t mdk_render_index_texture_bytes(MdkRenderer, int32_t width, int32_t height) {
+    return width > 0 && height > 0 ? width * height * 4 : 0;
+}
+
 MdkTextureId mdk_render_create_rgba_texture(MdkRenderer, int32_t, int32_t, const uint8_t*) {
     return 3;
 }

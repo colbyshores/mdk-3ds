@@ -39,5 +39,12 @@ namespace scripts {
 // animation frame.
 void forgetPoseCaches();
 
+// How many rest poses and animation bakes the caches have made, over the
+// process (a drop does not reset it). First-use work: the C# bakes at the
+// level's load (ScriptRuntime.PreparePoses), the port on the first pose_parts()
+// that asks -- which can be the object pass, inside the frame's draw build.
+// The frontends' profile lines read it.
+int poseCacheBuilds();
+
 } // namespace scripts
 } // namespace mdk

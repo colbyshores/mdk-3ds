@@ -95,6 +95,14 @@ public:
     // Queue the drawn arenas' visible groups, in the list's order.
     void draw(const std::vector<std::string>& drawn);
 
+    // Make the kept views' textures ahead of their first draw (LevelView::
+    // prewarm), within `budget`: the drawn arenas first, in the list's order,
+    // then the rest of the kept views (the second arena of the loaded pair,
+    // whose door can open on any frame). Call it after sync() and before the
+    // frame's draws. Returns true when every view is warm. A view that is
+    // released takes its place in the walk with it.
+    bool prewarm(const std::vector<std::string>& drawn, PrewarmBudget* budget);
+
     // An arena's view, or null.
     const LevelView* find(const std::string& name) const;
 

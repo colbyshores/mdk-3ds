@@ -26,6 +26,7 @@ SOURCES := \
 	path_tests.cpp \
 	format_tests.cpp \
 	stream_tests.cpp \
+	prewarm_tests.cpp \
 	colour_tests.cpp \
 	lighting_tests.cpp \
 	math_lut_tests.cpp \
@@ -73,7 +74,9 @@ SOURCES := \
 	$(CORE)/render/surface_cache.cpp \
 	$(CORE)/render/arena_scene.cpp \
 	$(CORE)/game/level_view.cpp \
-	$(CORE)/game/arena_views.cpp
+	$(CORE)/game/arena_views.cpp \
+	$(CORE)/game/object_view.cpp \
+	$(CORE)/game/prewarm.cpp
 
 # scripts/pose_cache.cpp is here because game/level_data.cpp calls
 # scripts::forgetPoseCaches(), and a target links whatever a call resolves to.

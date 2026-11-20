@@ -84,9 +84,24 @@ static int32_t acquireTextureSlot(RendererC3D* renderer) {
 // RGBA in memory, the hardware reads `[A, B, G, R]`, and writing the palette's
 // order straight through is what pinned the console's red channel to 255 on
 // every painted pixel. See `pica::texelBytes`.
+// Ticks to microseconds without a divide (the ARM11 has none, AGENTS.md R11):
+// 1e6 / SYSCLOCK_ARM11 (268,111,856 Hz) is 4004.9 / 2^30, so a 64-bit multiply
+// and a shift, within 0.003 %. Deltas only (a texture's parts, well under 2^32).
+static uint64_t ticksToUs(uint64_t ticks) {
+    return (ticks * 4005u) >> 30;
+}
+
+// Where an expansion's time went (makeTexture's first-use accounting): the
+// tick at which each part ended. Written by expandIndices/expandRgba.
+struct ExpandTicks {
+    uint64_t expanded = 0;   // the texels written into their tiles
+    uint64_t prepared = 0;   // pica::prepareForFiltering done
+    uint64_t mipped = 0;     // pica::buildMipChain done
+};
+
 static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t height,
                               const uint8_t* paletteRgba, int32_t paddedWidth,
-                              int32_t paddedHeight, int32_t mipLevels) {
+                              int32_t paddedHeight, int32_t mipLevels, ExpandTicks* ticks) {
     // Level 0 and, under Enhanced Mode enableMipmaps, the chain after it in the
     // same buffer (pica::buildMipChain, levels consecutive).
     const size_t texels = mdk::pica::mipChainTexels(paddedWidth, paddedHeight, mipLevels);
@@ -121,12 +136,15 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
                                   paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);
         }
     }
+    ticks->expanded = svcGetSystemTick();
     // Ready for Enhanced Mode filtering whichever way its toggle stands now: the
     // toggle is live, the texture is made once (pica::prepareForFiltering; a
     // nearest sample of any texel it touches is unchanged in colour or
     // discarded as before, except at an exact padded edge, which now clamps).
     mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
+    ticks->prepared = svcGetSystemTick();
     mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, width, height, mipLevels);
+    ticks->mipped = svcGetSystemTick();
     return pixels;
 }
 
@@ -141,7 +159,8 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
 // to be rotated on the way in. Row-wise memcpy was the first version and it is
 // what painted every flat-coloured surface with its own alpha as red.
 static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
-                           int32_t paddedWidth, int32_t paddedHeight, int32_t mipLevels) {
+                           int32_t paddedWidth, int32_t paddedHeight, int32_t mipLevels,
+                           ExpandTicks* ticks) {
     const size_t texels = mdk::pica::mipChainTexels(paddedWidth, paddedHeight, mipLevels);
     uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));
     if (!pixels) {
@@ -158,8 +177,11 @@ static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
                                   row[(size_t)x * 4 + 3]);
         }
     }
+    ticks->expanded = svcGetSystemTick();
     mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
+    ticks->prepared = svcGetSystemTick();
     mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, width, height, mipLevels);
+    ticks->mipped = svcGetSystemTick();
     return pixels;
 }
 
@@ -317,6 +339,21 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture) {
     return true;
 }
 
+// THE FIRST-USE ACCOUNTING's common half (RendererC3D::creation): one GPU copy
+// made -- expanded or imported -- its bytes as stored, and its whole time. A
+// texture made before is a REMAKE (an eviction coming back).
+static void countMake(RendererC3D* renderer, C3dTexture& texture, size_t bytes, uint64_t made0,
+                      uint64_t made1) {
+    mdk::CreationStats& c = renderer->creation;
+    c.textures_made++;
+    if (texture.madeOnce) {
+        c.textures_remade++;
+    }
+    texture.madeOnce = true;
+    c.texture_bytes += (int64_t)bytes;
+    c.texture_us += ticksToUs(made1 - made0);
+}
+
 // Makes the GPU copy of a texture from the source the backend kept, and
 // fills it.
 //
@@ -336,8 +373,22 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     // texture had: no unit's bind may be skipped on the strength of the old
     // contents (03_frame.inc, THE DEDUPE).
     forgetTextureBinds(renderer);
+    // The first-use accounting's clock: the whole make, and its parts below.
+    const uint64_t made0 = svcGetSystemTick();
     if (texture.compressed) {
-        return importCompressed(renderer, texture);
+        // A COMPRESSED IMPORT IS A MAKE, with its own time (import_us): the LZ
+        // decompress and the copy into the linear heap, the eviction it took
+        // included. Nothing is expanded, so the expand/prepare/mips/pack/upload
+        // split stays the expanded textures' alone.
+        if (!importCompressed(renderer, texture)) {
+            return false;
+        }
+        const uint64_t imported1 = svcGetSystemTick();
+        countMake(renderer, texture, texture.gpuBytes, made0, imported1);
+        mdk::CreationStats& c = renderer->creation;
+        c.textures_imported++;
+        c.import_us += ticksToUs(imported1 - made0);
+        return true;
     }
     // THE MIP CHAIN (SPEC.md 7.9 enableMipmaps): made with the texture when the
     // toggle is on at that moment, so turning it on costs its memory -- a third
@@ -368,13 +419,15 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     // memory, and the arena's textures stopped allocating one after
     // another.
     uint8_t* pixels = nullptr;
+    const uint64_t expand0 = svcGetSystemTick();
+    ExpandTicks split;
     if (texture.indexed) {
         pixels = expandIndices(texture.source.data(), texture.realWidth, texture.realHeight,
                                texture.palette.data(), texture.paddedWidth, texture.paddedHeight,
-                               levels);
+                               levels, &split);
     } else {
         pixels = expandRgba(texture.source.data(), texture.realWidth, texture.realHeight,
-                            texture.paddedWidth, texture.paddedHeight, levels);
+                            texture.paddedWidth, texture.paddedHeight, levels, &split);
     }
     if (!pixels) {
         return false;
@@ -388,6 +441,7 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
         renderer->toggles.texture16, texture.keepRgba8, texture.paddedWidth,
         texture.paddedHeight, pixels,
         (size_t)texture.paddedWidth * (size_t)texture.paddedHeight);
+    const uint64_t chosen = svcGetSystemTick();
     size_t gpuBytes = mdk::pica::textureBytes(format, texture.paddedWidth, texture.paddedHeight,
                                               levels);
     bool allocated = false;
@@ -494,10 +548,12 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     // nothing for RGBA8. After the expansion (which builds the chain in RGBA8:
     // the filter's colour bleed and the mip averaging stay one implementation),
     // before the first upload.
+    const uint64_t pack0 = svcGetSystemTick();
     mdk::pica::packTexels16(pixels,
                             mdk::pica::mipChainTexels(texture.paddedWidth, texture.paddedHeight,
                                                       levels),
                             format);
+    const uint64_t packed = svcGetSystemTick();
     C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);
     // The chain, already in the same buffer after level 0 (the expansion built
     // it: pica::buildMipChain). Each level is handed to the sink from its offset:
@@ -561,6 +617,23 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
         mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,
                                 texture.paddedHeight, levels) -
         gpuBytes;
+    // THE ACCOUNTING (first use), in the order makeTexture runs: the expansion
+    // (expand, prepare, mips -- before the allocation, since texture16 chooses
+    // the store from the expanded alpha), the 16-bit work (the store's alpha
+    // scan, then the pack after the allocation), and the upload, which is
+    // everything else: the source check before the expansion, the allocation
+    // with any eviction it took, the copy into the texture and the flush. The
+    // parts sum to the whole make.
+    {
+        const uint64_t made1 = svcGetSystemTick();
+        countMake(renderer, texture, gpuBytes, made0, made1);
+        mdk::CreationStats& c = renderer->creation;
+        c.expand_us += ticksToUs(split.expanded - expand0);
+        c.prepare_us += ticksToUs(split.prepared - split.expanded);
+        c.mips_us += ticksToUs(split.mipped - split.prepared);
+        c.pack_us += ticksToUs((chosen - split.mipped) + (packed - pack0));
+        c.upload_us += ticksToUs((expand0 - made0) + (pack0 - chosen) + (made1 - packed));
+    }
     return true;
 }
 

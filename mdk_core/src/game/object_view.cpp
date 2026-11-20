@@ -271,6 +271,7 @@ ObjectLayout* ObjectView::layoutOf(const formats::Model* model, const ObjectLook
         return found->second.get();
     }
     std::unique_ptr<ObjectLayout> made(new ObjectLayout());
+    layoutsBuilt_++;
     {
         const ModelSwap* swap = swaps_ ? swaps_->of(*model) : nullptr;
         made->swap = swap;

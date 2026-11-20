@@ -86,6 +86,16 @@ public:
     // because draw() reads the hidden state live.
     bool refresh();
 
+    // Make the textures this view's draw() would make on its first call, ahead
+    // of it (SurfaceCache's THE PREWARM), within `budget`. Every batch, hidden
+    // groups included (a group the scripts show later draws the same surface).
+    // Resumable: a pass that stops (budget, room, pixels still streaming) picks
+    // up at the same batch next time, so a view that is not warm yet costs one
+    // cache lookup a call and a warm one costs nothing. Returns true when every
+    // batch's texture is made. refresh() starts the walk over (new surfaces).
+    bool prewarm(PrewarmBudget* budget);
+    bool warm() const { return mesh_ >= 0 && warmCursor_ >= (int32_t)scene_.batches.size(); }
+
     // The scene, for the tests and for the diagnostics.
     const ArenaScene& scene() const { return scene_; }
     int32_t batchCount() const { return (int32_t)scene_.batches.size(); }
@@ -109,6 +119,9 @@ private:
     Shading shading_ = Shading::Original;
 
     MdkMeshId mesh_ = -1;
+
+    // The prewarm's place in scene_.batches (see prewarm()).
+    int32_t warmCursor_ = 0;
 
     // The arena's palette, borrowed from LevelData (whose map keeps it stable).
     // It is not copied: the object pass draws the same arena's objects through

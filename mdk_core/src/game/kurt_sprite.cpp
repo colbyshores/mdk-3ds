@@ -495,6 +495,10 @@ int32_t KurtSprite::makeFrameTexture(int32_t animationIndex, int32_t frameIndex)
         texture = mdk_render_create_index_texture(renderer_, frame.width, frame.height,
                                                   frame.indices.data(), paletteRgba_.data());
     }
+    // The first-use counter (framesMade): one frame asked of the backend, the
+    // compressed import and the index fallback alike, made or not -- the
+    // level-load preload's makes included (they land before play's counters).
+    framesMade_++;
     if (texture < 0) {
         return -1;
     }
