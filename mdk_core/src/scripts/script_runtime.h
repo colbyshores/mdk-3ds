@@ -273,6 +273,28 @@ public:
     // face's plane; the arena and group as Raycast's. False when nothing stops it.
     bool sweep(const Vec3& from, const Vec3& to, const Vec3& half, DebrisRayHit* out);
 
+    // ---- Bullet holes (package #16: Scripts/BulletHoles.cs; scripts/bullet_holes.cpp) ----
+    // C# StampBulletHole (ScriptRuntime.cs:1297, special_130 0x45d140, opcode 130): the
+    // hole sprite (BHOLE, BHOLE2 without gore) copied onto the texture of the face of
+    // shot_part nearest shot_point -- the texture every object using it shares. The
+    // texture is recorded for the drawing (stampedTextures) and kept in memory from then
+    // on (formats::Texture::pinPixels: the arena stream would otherwise read the hole away).
+    void stampBulletHole(MdkObject* obj);
+    // C# TextureStamped (:1327), as a list the frontend takes once a step instead of an
+    // event: the textures a hole changed since clearStampedTextures(), each once. The
+    // frontend re-uploads them (SurfaceCache::refresh, the C#'s MaterialResolver.Refresh
+    // subscribed at Viewer.cs:263). Nothing in the simulation reads it.
+    const std::vector<const formats::Texture*>& stampedTextures() const { return stamped_; }
+    void clearStampedTextures() { stamped_.clear(); }
+    // The C# event itself, raised synchronously after EACH stamp (two in one step are
+    // two calls, where the list above holds the texture once): the golden harness's
+    // view (tick1 dump holes). Null by default.
+    typedef void (*TextureStampedHook)(void* user, const formats::Texture* texture);
+    void setTextureStampedHook(TextureStampedHook hook, void* user) {
+        textureStampedHook_ = hook;
+        textureStampedUser_ = user;
+    }
+
     // ---- Contact damage and spawned boxes (hazards.cpp) ----
     // C# TouchDamage (ScriptRuntime.cs:2758, touch_damage 0x45cf60, opcode 158):
     // `targets` 1 hurts Kurt once per visible part touching him, 2 hurts the other
@@ -1003,6 +1025,14 @@ private:
     bool fireSniper(int32_t type);
     static bool fireSniperTrampoline(void* ctx, int32_t type);
     friend class SniperRounds;
+    // C# ArenaTexture (ScriptRuntime.cs:1330): a texture as an arena's objects find it --
+    // the first of the arena's archives (LevelData::archivesOf) that has it, or the
+    // level's when the arena is not the level's. Writable: special_130 stamps it.
+    formats::Texture* arenaTexture(const std::string& arena, const std::string& name);
+    // The textures stampBulletHole changed and the frontend has not taken (package #16).
+    std::vector<const formats::Texture*> stamped_;
+    TextureStampedHook textureStampedHook_ = nullptr;
+    void* textureStampedUser_ = nullptr;
     // C# AimScore (:2029, 0x41ab2c): a box is a target when it is within its size + 140
     // of the origin, inside a cone around Kurt's yaw that is wider for big and close boxes,
     // and visible. Its score (squared distance, height counting double; lower is better),

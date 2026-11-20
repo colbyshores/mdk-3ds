@@ -1765,6 +1765,41 @@ Still open:
 - **newlib's `cosf`/`sinf`/`powf`** on the 3DS are unmeasured against the oracle (the same
   libm-leaf gap as the follow camera's `powf`).
 
+## The bullet holes (2026-11-20, gap package #16): what landed, what is open
+
+special_130 fell to the VM's default case. Landed, operation for operation, pinned by
+`golden/L8_holes_guntam.txt` and `golden/L6_holes_xb2.txt` (byte-identical to the C# probe
+`tests/scripts/holes_probe/`, `tick1 dump holes`), plus `holes_pinned` in the tick1 suite:
+
+- `Scripts/BulletHoles.cs` whole -> `scripts/bullet_holes.{h,cpp}` (Nearest, Weights, Stamp),
+  with the C#'s nearest-face APPROXIMATION kept as the oracle has it (the original keeps the
+  face its round's test found). `ScriptRuntime.StampBulletHole`/`ArenaTexture` -> runtime
+  members in `bullet_holes.cpp`; opcode 130 -> `script_vm.cpp`.
+- The C#'s `TextureStamped` event is the runtime's `stampedTextures()` list (taken once a step
+  by both frontends, `SurfaceCache::refresh` -> `mdk_render_update_texture`) and a synchronous
+  hook (`setTextureStampedHook`, the golden harness's).
+- A stamped texture is PINNED (`formats::Texture::pinPixels`): the arena stream neither drops
+  its pixels nor reads them back from the MTO, so a hole survives Kurt leaving the arena, as
+  in the C# (which keeps every texture for the level). It costs that texture's bytes staying
+  resident (e.g. XGU_BODY 87 KB) and can make `ArenaStream::Stats::maxResidentArenas` count
+  its arena.
+- 3DS: `mdk_render_update_texture` takes the new indices into the backend's system-memory
+  source at once and re-expands the GPU copy (palette, Morton tiling, mips, in the texture's
+  current 16-bit/RGBA8 store) at the frame boundary, ONE restamped texture a frame; an evicted
+  texture comes back with the hole. A world texture's HD-pack copy is unlinked, as the PC drops
+  a changed texture's replacement (the C#'s `Renderer.Changed`).
+
+Still open:
+- **No emulator or console capture of a hole yet**: the parent's Mandarine run (L8 GUNT_10,
+  see the WORK_LEDGER entry) is the first look. The re-expansion's cost on the Old 3DS is
+  unmeasured (one 256x512-padded texture's expansion, once per hit).
+- **L5's sites (MUSE_2 / MUSE_5) have no golden of their own**: MUSE_2's object is an XGUNTAM
+  as L8's, and the code path is the same.
+- **Not pinned by a golden:** the world-to-model turn's fused multiply-add (writing it unfused
+  leaves both goldens green, measured: the texel rounds the same), and a NaN out of a
+  degenerate face's weights (no retail model gives one).
+- **Exactness rests on a level-or-up pitch**, as #6's goldens: Kurt aims up at both targets.
+
 ## The sniper rounds (2026-11-20, gap package #6): what landed, what is open
 
 A sniper shot spent ammo and hit nothing. Landed, operation for operation, pinned by
@@ -1793,8 +1828,9 @@ Still open:
   C#'s Viewer): their state (model, place, basis) is ported and pinned (`vis=` in the goldens);
   drawing them, and the round cameras (`SniperRounds.Camera`, the scope's inset views), are
   #7's frontends.
-- **Bullet holes on walls** (opcode 130, package #16): `SniperRounds::moveStraight` is where
-  a round stops on the arena; the object half (`shot_part`/`shot_point`) is written.
+- **Bullet holes** (opcode 130, package #16): landed 2026-11-20, see "The bullet holes"
+  below. A WALL gets none: the C#'s `MoveStraight` stamps nothing where a round stops on the
+  arena, so neither does the port.
 - **Not pinned by a golden:** the kill's explosion facing (`Kill(obj, yaw + 180)`: the killed
   XG of `L8_rounds_kill` has a death script, so no explosion faces anything; breaking the
   facing leaves every golden green, measured), the mortar's still-settle (`life = 15`), and a

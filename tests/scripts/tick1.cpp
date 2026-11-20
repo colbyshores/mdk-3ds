@@ -2298,6 +2298,306 @@ bool kurtRoundsDump(int level, int steps, const std::string& schedule, const Mdk
     return true;
 }
 
+// THE BULLET HOLES (golden/L*_holes_*.txt; PORT_GAPS package #16). The sniper rounds dump's
+// stepping (Kurt then the scripts at 1/60 s, the rounds probe's schedule) with special_130 in
+// view: every texture of the level is copied when the level loads, and on each stamp (the
+// runtime's TextureStamped hook, raised after EACH stamp as the C# event is) the texture is
+// compared with its copy and the change printed -- the FNV-1a of its indices before and after,
+// the changed texels' bounds and count -- then the copy is brought up to date. The oracle is
+// tests/scripts/holes_probe (`Probe <level> <steps> <schedule>`); its schedule adds
+// `opt:step:N` (the runtime's option: 0 stamps BHOLE2) and `stampall:step:ID` (stampBulletHole
+// on object ID once per part, shot_part that part + 1, shot_point its partCenter). A step is
+// printed only when its shots or hits changed, a stamp happened, or an object's hit state did.
+struct HolesStamps {
+    std::map<const formats::Texture*, std::vector<uint8_t> > copies;
+    std::vector<std::string> lines;
+};
+
+uint32_t holesFnv(const uint8_t* bytes, size_t count) {
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < count; i++) {
+        hash = (hash ^ bytes[i]) * 16777619u;
+    }
+    return hash;
+}
+
+void holesStamped(void* user, const formats::Texture* texture) {
+    HolesStamps* stamps = static_cast<HolesStamps*>(user);
+    std::vector<uint8_t>& before = stamps->copies[texture];
+    const uint8_t* after = texture->indices();
+    const size_t count = (size_t)texture->indexCount();
+    int x0 = 0x7FFFFFFF;
+    int y0 = 0x7FFFFFFF;
+    int x1 = -1;
+    int y1 = -1;
+    int changed = 0;
+    for (size_t i = 0; i < count && i < before.size(); i++) {
+        if (after[i] == before[i]) {
+            continue;
+        }
+        changed++;
+        const int x = (int)(i % (size_t)texture->width());
+        const int y = (int)(i / (size_t)texture->width());
+        x0 = std::min(x0, x);
+        y0 = std::min(y0, y);
+        x1 = std::max(x1, x);
+        y1 = std::max(y1, y);
+    }
+    char rect[64];
+    if (changed == 0) {
+        snprintf(rect, sizeof(rect), "-");
+    } else {
+        snprintf(rect, sizeof(rect), "%d,%d,%d,%d", x0, y0, x1, y1);
+    }
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), "  stamp tex=%s %dx%dx%d before=%08X after=%08X rect=%s n=%d",
+             texture->name().c_str(), (int)texture->width(), (int)texture->height(),
+             (int)texture->frameCount(), holesFnv(before.data(), before.size()),
+             holesFnv(after, count), rect, changed);
+    stamps->lines.push_back(buffer);
+    before.assign(after, after + count);
+}
+
+bool bulletHolesDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                     const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    // The holes' own tokens out first; the rest is the rounds probe's.
+    std::vector<std::pair<int, int> > options;
+    std::vector<std::pair<int, int> > stampAlls;
+    std::string rest;
+    {
+        size_t start = 0;
+        while (start < schedule.size()) {
+            size_t end = schedule.find(',', start);
+            if (end == std::string::npos) {
+                end = schedule.size();
+            }
+            const std::string token = schedule.substr(start, end - start);
+            start = end + 1;
+            if (token.compare(0, 4, "opt:") == 0 || token.compare(0, 9, "stampall:") == 0) {
+                const size_t first = token.find(':');
+                const size_t second = token.find(':', first + 1);
+                if (second == std::string::npos) {
+                    *why = "the schedule did not parse: " + token;
+                    return false;
+                }
+                const std::pair<int, int> entry(atoi(token.substr(first + 1).c_str()),
+                                                atoi(token.substr(second + 1).c_str()));
+                (token[0] == 'o' ? options : stampAlls).push_back(entry);
+            } else if (!token.empty()) {
+                rest += (rest.empty() ? "" : ",") + token;
+            }
+        }
+    }
+    std::vector<RoundsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<RoundsAim> aims;
+    std::vector<RoundsTeleport> teleports;
+    std::vector<RoundsHealth> healths;
+    if (!parseRoundsSchedule(rest, &holds, &gives, &aims, &teleports, &healths)) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    // Every texture of the level as it loaded: the level's archive, then each arena's.
+    HolesStamps stamps;
+    {
+        std::vector<const formats::TextureArchive*> archives;
+        archives.push_back(&levelData.levelTextures());
+        for (size_t i = 0; i < arenas.size(); i++) {
+            archives.push_back(&arenas[i]->textures());
+        }
+        for (size_t a = 0; a < archives.size(); a++) {
+            const std::vector<std::pair<std::string, formats::Texture> >& textures =
+                archives[a]->textures();
+            for (size_t t = 0; t < textures.size(); t++) {
+                const formats::Texture* texture = &textures[t].second;
+                if (stamps.copies.find(texture) == stamps.copies.end()) {
+                    const uint8_t* indices = texture->indices();
+                    stamps.copies[texture].assign(indices, indices + texture->indexCount());
+                }
+            }
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = 0.0f;
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+    runtime.setTextureStampedHook(holesStamped, &stamps);
+
+    std::map<const scripts::MdkObject*, int> ids;
+    const auto id = [&ids](const scripts::MdkObject* obj) {
+        if (obj == nullptr) {
+            return -1;
+        }
+        std::map<const scripts::MdkObject*, int>::iterator found = ids.find(obj);
+        if (found != ids.end()) {
+            return found->second;
+        }
+        const int next = (int)ids.size();
+        ids[obj] = next;
+        return next;
+    };
+    const auto objectNumbered = [&ids, &runtime](int wanted) -> scripts::MdkObject* {
+        std::deque<scripts::MdkObject>& list = runtime.objects();
+        for (size_t o = 0; o < list.size(); o++) {
+            std::map<const scripts::MdkObject*, int>::iterator found = ids.find(&list[o]);
+            if (found != ids.end() && found->second == wanted) {
+                return &list[o];
+            }
+        }
+        return nullptr;
+    };
+    const auto vec = [](const Vec3& v) {
+        return hexBits(v.x) + "," + hexBits(v.y) + "," + hexBits(v.z);
+    };
+    std::map<const scripts::MdkObject*, std::string> seen;
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    int lastShots = -1;
+    int lastHits = -1;
+    char buffer[512];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < gives.size(); i++) {
+            if (gives[i].step == step) {
+                player.collect(gives[i].model);
+            }
+        }
+        for (size_t i = 0; i < healths.size(); i++) {
+            if (healths[i].step == step) {
+                scripts::MdkObject* obj = objectNumbered(healths[i].id);
+                if (obj) {
+                    obj->health = healths[i].health;
+                }
+            }
+        }
+        for (size_t i = 0; i < teleports.size(); i++) {
+            if (teleports[i].step == step) {
+                runtime.teleportKurt(teleports[i].arena, teleports[i].at, 0.0f);
+            }
+        }
+        for (size_t i = 0; i < aims.size(); i++) {
+            if (aims[i].step == step) {
+                player.yaw = aims[i].yaw;
+                player.scope().pitch = aims[i].pitch;
+            }
+        }
+        for (size_t i = 0; i < options.size(); i++) {
+            if (options[i].first == step) {
+                runtime.option = options[i].second;
+            }
+        }
+        for (size_t i = 0; i < stampAlls.size(); i++) {
+            if (stampAlls[i].first != step) {
+                continue;
+            }
+            scripts::MdkObject* obj = objectNumbered(stampAlls[i].second);
+            const int parts = obj && obj->model ? (int)obj->model->partList.size() : 0;
+            for (int part = 0; part < parts; part++) {
+                obj->shot_part = part + 1;
+                obj->shot_point = obj->partCenter(part);
+                snprintf(buffer, sizeof(buffer), "  direct #%d %s part=%d pt=%s",
+                         stampAlls[i].second, obj->type_name.c_str(), part,
+                         vec(obj->shot_point).c_str());
+                stamps.lines.push_back(buffer);
+                runtime.stampBulletHole(obj);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+
+        // Number every object the step made, in list order (the probe's Id pass).
+        const std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            if (!objects[i].dead) {
+                id(&objects[i]);
+            }
+        }
+        std::vector<std::string> changes;
+        for (size_t i = 0; i < objects.size(); i++) {
+            const scripts::MdkObject& o = objects[i];
+            if (o.dead) {
+                continue;
+            }
+            snprintf(buffer, sizeof(buffer), "hp=%d ht=%d sp=%d pt=%s", (int)o.health,
+                     (int)o.hit_type, (int)o.shot_part, vec(o.shot_point).c_str());
+            const std::string hitText = buffer;
+            std::map<const scripts::MdkObject*, std::string>::iterator before = seen.find(&o);
+            if (before == seen.end()) {
+                seen[&o] = hitText;
+                continue;
+            }
+            if (before->second != hitText) {
+                before->second = hitText;
+                snprintf(buffer, sizeof(buffer), "  #%d %s %s pos=%s yaw=%s", id(&o),
+                         o.type_name.c_str(), hitText.c_str(), vec(o.position).c_str(),
+                         hexBits(o.yaw).c_str());
+                changes.push_back(buffer);
+            }
+        }
+        const int shots = runtime.stats.sniperShots;
+        const int hits = runtime.stats.sniperHits;
+        if (shots != lastShots || hits != lastHits || !stamps.lines.empty() || !changes.empty()) {
+            snprintf(buffer, sizeof(buffer), "s=%d arena=%s snipe=%d shots=%d hits=%d objs=%d\n",
+                     step, runtime.currentArena().c_str(), player.sniping() ? 1 : 0, shots, hits,
+                     runtime.objectCount());
+            *out += buffer;
+            lastShots = shots;
+            lastHits = hits;
+            for (size_t i = 0; i < stamps.lines.size(); i++) {
+                *out += stamps.lines[i] + "\n";
+            }
+            for (size_t i = 0; i < changes.size(); i++) {
+                *out += changes[i] + "\n";
+            }
+            stamps.lines.clear();
+        }
+        // The frontends' list: taken every step, as main.cpp / main_3ds.cpp do.
+        runtime.clearStampedTextures();
+    }
+    return true;
+}
+
 // KURT THROUGH A DOORWAY AND DOWN A CORRIDOR (golden/L7_corridor_*.txt). Kurt and the
 // scripts runtime stepped together at 1/60 s from a placed start (the frontends' --at), as
 // Viewer.RunSteps does: Kurt, then the scripts, then ArenaSpace::setSolid(solidArenas()) --
@@ -5270,6 +5570,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "holes") {
+            // `tick1 dump holes <level> <steps> <schedule>`: bulletHolesDump's text, the
+            // C++ side of the bullet holes probe.
+            std::string got;
+            std::string why;
+            if (!bulletHolesDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                                 &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "corridor") {
             // `tick1 dump corridor <level> <steps> <x,y,z,yaw> <schedule>`:
             // kurtCorridorDump's text, the C++ side of the corridor probe.
@@ -6286,6 +6599,96 @@ int main(int argc, char** argv) {
                 printf("PASS %s: %s\n", c.name, c.pass);
             } else {
                 printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The bullet holes (special_130, package #16), end to end against the oracle probe
+    // (tests/scripts/holes_probe; see bulletHolesDump for the lines). The schedules are the
+    // probe's arguments, byte for byte: each golden's first line repeats its schedule.
+    {
+        struct HolesCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const HolesCase kHolesCases[] = {
+            {"L8_holes_guntam", "golden/L8_holes_guntam.txt", 8, 360,
+             "tp:5:GUNT_10:20:3360:-360,snipe:150-152,aim:155:42F79A70:C1D14455,fire:190-200,"
+             "aim:240:42F60000:C1C80000,fire:260-270,opt:280:0,aim:280:42F90000:C1DC0000,"
+             "fire:300-310,stampall:340:12",
+             "two rounds on GUNT_10's XGUNTAM (yaw 270) run its special_130: BHOLE on XGU_BODY, "
+             "a miss, then BHOLE2 (option 0) on every part's nearest face, wrapping both ways"},
+            {"L6_holes_xb2", "golden/L6_holes_xb2.txt", 6, 360,
+             "tp:5:OLYM_10:3400:2440:-2320,snipe:150-152,aim:155:3E66F000:C1195B8E,"
+             "fire:190-200,fire:240-250,fire:290-300,fire:340-350,stampall:355:5",
+             "OLYM_10's XB2 (yaw 180) behind its glass: two misses, two rounds' holes on "
+             "XB2_BODY, then BHOLE on all 20 parts (XB2_BACK, _NOSE, _BHID)"},
+        };
+        for (size_t i = 0; i < sizeof(kHolesCases) / sizeof(kHolesCases[0]); i++) {
+            const HolesCase& c = kHolesCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!bulletHolesDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // A STAMPED TEXTURE OUTLIVES ITS ARENA'S STREAM (formats::Texture::pinPixels). The C#
+    // keeps every texture's pixels for the level, so a hole stays; the port's arena stream
+    // drops an arena's pixels when Kurt leaves it and reads them back from the MTO -- the
+    // file's, hole-less pixels -- so a stamped texture is pinned. Driven through the stream
+    // itself: GUNT_10 resident, a texel changed and pinned, GUNT_1 made resident (GUNT_10
+    // trimmed: an unpinned sibling goes), then GUNT_10 again (adopted back from the file).
+    {
+        LevelData pinned;
+        const char* name = "holes_pinned";
+        bool ok = LevelData::load(&pinned, &data, 8);
+        formats::Arena* arena = ok ? pinned.arenaNamedMutable("GUNT_10") : nullptr;
+        std::vector<std::pair<std::string, formats::Texture> >* textures =
+            arena ? &const_cast<formats::TextureArchive&>(arena->textures()).mutableTextures()
+                  : nullptr;
+        if (!textures || textures->size() < 2) {
+            printf("FAIL %s: level 8's GUNT_10 and two of its textures did not load\n", name);
+            failures++;
+        } else {
+            pinned.stream().update("GUNT_10", std::string(), false);
+            formats::Texture& stamped = (*textures)[0].second;
+            formats::Texture& sibling = (*textures)[1].second;
+            const uint8_t was = stamped.indices()[0];
+            const uint8_t mark = (uint8_t)(was + 1);
+            stamped.mutableIndices()[0] = mark;
+            stamped.pinPixels();
+            pinned.stream().update("GUNT_1", std::string(), false);
+            const bool kept = !stamped.pixelsAway() && stamped.indices()[0] == mark;
+            const bool trimmed = sibling.pixelsAway();
+            pinned.stream().update("GUNT_10", std::string(), false);
+            const bool back = !stamped.pixelsAway() && stamped.indices()[0] == mark &&
+                              !sibling.pixelsAway();
+            if (kept && trimmed && back) {
+                printf("PASS %s: a pinned texture keeps its stamped texel through its arena's "
+                       "trim and re-read; its unpinned sibling is dropped and read back\n",
+                       name);
+            } else {
+                printf("FAIL %s: kept=%d trimmed=%d back=%d\n", name, kept ? 1 : 0,
+                       trimmed ? 1 : 0, back ? 1 : 0);
                 failures++;
             }
         }

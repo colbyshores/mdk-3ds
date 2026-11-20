@@ -95,6 +95,7 @@ static void settleDeferredTextures(RendererC3D* renderer) {
         }
         texture.releasePending = false;
         texture.stale = false;
+        texture.restamped = false;
         // swap, not clear(): clear keeps the capacity, and an arena-sized release
         // (game/arena_views.h) must hand the heap back for the next arena's stream.
         std::vector<uint8_t>().swap(texture.source);
@@ -114,6 +115,26 @@ static void settleDeferredTextures(RendererC3D* renderer) {
             // The replacement is protected until it is first drawn.
             texture.lastUsed = ++renderer->drawCounter;
         }
+    }
+    // THE BULLET HOLES' BUDGET (mdk_render_update_texture): one restamped texture is
+    // made again per frame boundary, the first in id order. One that is not on the
+    // GPU any more (evicted, or made again above from the same new source) only
+    // loses its flag: its next making takes the source with the hole.
+    for (size_t i = 0; i < renderer->textures.size(); i++) {
+        C3dTexture& texture = renderer->textures[i];
+        if (!texture.restamped) {
+            continue;
+        }
+        texture.restamped = false;
+        if (!texture.valid || texture.source.empty()) {
+            continue;
+        }
+        C3D_TexDelete(&texture.tex);
+        texture.valid = false;
+        if (makeTexture(renderer, texture, false)) {
+            texture.lastUsed = ++renderer->drawCounter;
+        }
+        break;
     }
 }
 

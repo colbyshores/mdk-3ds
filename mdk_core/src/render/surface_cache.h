@@ -82,6 +82,13 @@ public:
     // vertically, so the height the backend gets already includes them.
     MdkTextureId textureId(const formats::Texture* texture, const formats::Palette* palette);
 
+    // A texture's pixels changed (a bullet hole, scripts/bullet_holes.h): every GPU
+    // texture made from it, through any palette, gets its pixels again (the C#'s
+    // MaterialResolver.Refresh, subscribed to ScriptRuntime.TextureStamped at
+    // Viewer.cs:263). A texture not on the GPU yet needs nothing: it is made from the
+    // changed pixels when first drawn. Returns how many were updated.
+    int32_t refresh(const formats::Texture* texture);
+
     // The GPU texture for a flat colour: a ONE-PIXEL texture of that colour.
     // The PICA200's combiner has no constant-colour source for a vertex
     // shader's output, so a flat colour has to come from a texture.

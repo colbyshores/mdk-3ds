@@ -2375,6 +2375,11 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             // ScriptVm.cs:1130-1132 (package #6): LEVEL7 DANT_6's groups 10-13 run it.
             runtime_.sniperRounds().guideLastMortar(ival(op(ins, 0)));
             break;
+        case 130:  // special_130: a bullet hole on the texture where a sniper round hit
+            // ScriptVm.cs:1133-1135 (package #16): L5 MUSE_2/MUSE_5, L6 OLYM_10 and L8
+            // GUNT_10's arena-script objects gosub it on if_hit_part ANY.
+            runtime_.stampBulletHole(obj);
+            break;
         case 229:  // turn_and_jump_to_dest: turn, then enter movement command 229
             runtime_.turnAndJump(obj, fval(op(ins, 0)));
             return branch(obj, ins, obj->move_command == 229);

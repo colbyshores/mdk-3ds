@@ -66,6 +66,30 @@ MdkTextureId SurfaceCache::textureId(const formats::Texture* texture,
     return id;
 }
 
+int32_t SurfaceCache::refresh(const formats::Texture* texture) {
+    if (!renderer_ || texture == nullptr) {
+        return 0;
+    }
+    const int32_t texels = texture->width() * texture->height() * texture->frameCount();
+    const uint8_t* indices = texture->indices();
+    if (indices == nullptr || texels <= 0 || texture->indexCount() < texels) {
+        return 0;
+    }
+    int32_t updated = 0;
+    typedef std::map<std::pair<const formats::Texture*, const formats::Palette*>, MdkTextureId>
+        TextureMap;
+    for (TextureMap::const_iterator it = textures_.begin(); it != textures_.end(); ++it) {
+        if (it->first.first != texture || it->second < 0) {
+            continue;
+        }
+        // The same stacked-frame size the texture was made with (textureId above).
+        mdk_render_update_texture(renderer_, it->second, texture->width(),
+                                  texture->height() * texture->frameCount(), indices);
+        updated++;
+    }
+    return updated;
+}
+
 int32_t SurfaceCache::releasePalette(const formats::Palette* palette) {
     if (!renderer_ || palette == nullptr) {
         return 0;

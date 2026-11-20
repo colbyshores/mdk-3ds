@@ -245,32 +245,40 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     if (w != texture.realWidth || h != texture.realHeight) {
         return;  // the contract is same-size updates only
     }
-    // A bullet hole's texture changes. The 3DS's texture is EXPANDED, so
-    // the update has to go through the palette again -- and the palette the
-    // texture was expanded through is kept with the texture, so it can.
+    // A bullet hole's texture changes (scripts/bullet_holes.h). The 3DS's texture
+    // is EXPANDED, so the update has to go through the palette again -- and the
+    // palette the texture was expanded through is kept with the texture, so it can.
+    //
+    // THE SOURCE IS TAKEN NOW: it is the system-memory copy an eviction is undone
+    // from, so a texture evicted before its turn below comes back WITH the hole.
     const size_t bytes = (size_t)w * (size_t)h * (texture.indexed ? 1u : 4u);
     texture.source.assign(px, px + bytes);
     texture.hasHoles = mdk::pica::textureSourceHasHoles(texture.source.data(),
                                                         texture.source.size(), texture.indexed);
 
-    // If the old GPU copy may still be in flight, keep it and replace it at
-    // the next frame boundary. Otherwise the replacement can be made now.
-    const bool inFlight = renderer->gpuPending ||
-                          (renderer->inFrame && texture.lastUsed >= renderer->frameStartUse);
+    // THE HD COPY GOES (a world texture's; a canvas picture keeps its own): the HD
+    // pack's image is the texture WITHOUT the hole, and the PC drops a changed
+    // texture's replacement the same way (the C#'s Renderer.Changed: "an HD texture
+    // no longer shows the texture: expanded again from now on"). Unlinked only: the
+    // copies table owns it and its budget frees it (mdk_render_release_texture's rule).
+    if (!texture.hdCanvas && texture.hdCopy >= 0 &&
+        (size_t)texture.hdCopy < renderer->hdCopies.size()) {
+        HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
+        if (--copy.links == 0) {
+            copy.unlinkedSince = renderer->frame;
+        }
+        texture.hdCopy = -1;
+    }
+
     if (!texture.valid) {
-        return;  // the next draw makes the new source
+        return;  // the next draw makes it from the new source
     }
-    if (inFlight) {
-        texture.stale = true;
-        return;
-    }
-    texture.stale = false;
-    C3D_TexDelete(&texture.tex);
-    texture.valid = false;
-    if (!makeTexture(renderer, texture, false)) {
-        return;
-    }
-    texture.lastUsed = ++renderer->drawCounter;
+    // NEVER MADE HERE. The expansion is the expensive half (a whole texture through
+    // the palette, Morton-tiled, its mip chain), and two rounds can stamp in one
+    // step: the frame boundary makes ONE restamped texture a frame, after
+    // C3D_FrameBegin's wait, so the old copy is not freed under the GPU either
+    // (AGENTS.md P3). The old copy draws until then.
+    texture.restamped = true;
 }
 
 // Links a texture to the HD copy of `path` (RendererC3D::hdCopies, one per
@@ -415,6 +423,7 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     std::vector<uint8_t>().swap(texture.source);
     std::vector<uint8_t>().swap(texture.palette);
     texture.stale = false;
+    texture.restamped = false;
 }
 
 void mdk_render_release_palette(MdkRenderer r, MdkPaletteId p) {

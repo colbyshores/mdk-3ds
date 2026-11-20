@@ -1400,6 +1400,17 @@ int main(int argc, char** argv) {
                 if (runtime) {
                     runtime->update(kStep);
                 }
+                if (runtime) {
+                    // The bullet holes the step stamped (special_130, package #16): the C#'s
+                    // TextureStamped -> MaterialResolver.Refresh (Viewer.cs:263), each changed
+                    // texture's GPU copies given its pixels again.
+                    const std::vector<const mdk::formats::Texture*>& stamped =
+                        runtime->stampedTextures();
+                    for (size_t i = 0; i < stamped.size(); i++) {
+                        surfaces.refresh(stamped[i]);
+                    }
+                    runtime->clearStampedTextures();
+                }
                 // The pitch the camera eases to (Viewer.cs:746-747): a live
                 // camera_track request wins; otherwise it is the scripts'
                 // current arena's rest pitch. Without the runtime, retain the

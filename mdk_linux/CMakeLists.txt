@@ -184,6 +184,7 @@ set(SOURCES
     ${CORE}/src/scripts/pose_cache.cpp
     ${CORE}/src/scripts/script_runtime.cpp
     ${CORE}/src/scripts/sniper_rounds.cpp
+    ${CORE}/src/scripts/bullet_holes.cpp
     ${CORE}/src/scripts/items.cpp
     ${CORE}/src/scripts/end_level.cpp
     ${CORE}/src/scripts/hazards.cpp

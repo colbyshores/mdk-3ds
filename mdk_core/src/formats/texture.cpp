@@ -132,6 +132,9 @@ void Texture::dropPixels() {
     if (indices_.empty()) {
         return;   // nothing to drop: an empty texture is not an evicted one
     }
+    if (pinned_) {
+        return;   // a bullet hole is in them: a fresh read would not have it
+    }
     // swap, not clear(): clear keeps the capacity, and the capacity is the point.
     std::vector<uint8_t>().swap(indices_);
     away_ = true;
@@ -141,6 +144,9 @@ bool Texture::adoptPixels(Texture* fresh) {
     if (!fresh || fresh->indices_.empty() || fresh->width_ != width_ || fresh->height_ != height_ ||
         fresh->frameCount_ != frameCount_) {
         return false;
+    }
+    if (pinned_ && !away_) {
+        return true;   // kept as they are (pinPixels): the read's are the hole-less ones
     }
     indices_.swap(fresh->indices_);
     away_ = false;

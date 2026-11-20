@@ -53,6 +53,9 @@ void mdk_render_release_texture(MdkRenderer, MdkTextureId) {
     mdk_test_texturesReleased++;
 }
 
+// SurfaceCache::refresh's call (a bullet hole changed a texture's pixels).
+void mdk_render_update_texture(MdkRenderer, MdkTextureId, int32_t, int32_t, const uint8_t*) {}
+
 void mdk_render_release_palette(MdkRenderer, MdkPaletteId) {
     mdk_test_palettesReleased++;
 }

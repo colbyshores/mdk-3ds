@@ -2,6 +2,13 @@
 
 Method and reachability evidence in the final Phase 2 report. Summary:
 
+- **Bullet holes (2026-11-20, PORT_GAPS package 16):** 130 (`special_130`) ported:
+  `ScriptRuntime::stampBulletHole` (scripts/bullet_holes.cpp, BulletHoles.cs whole), pinned
+  end to end by `golden/L8_holes_guntam.txt` and `golden/L6_holes_xb2.txt` (sniper rounds hit
+  L8 GUNT_10's XGUNTAM and L6 OLYM_10's XB2, whose arena-script loops gosub special_130 on
+  `if_hit_part ANY`; the retail sites are L5 MUSE_2/MUSE_5, L6 OLYM_10 x2, L8 GUNT_10 x2).
+  Recount (numeric `case` labels of both VMs, set difference), after package 8's 224:
+  C# **238**, C++ **238**, remaining **0** -- every C# VM case is dispatched.
 - **Sniper rounds (2026-11-20, PORT_GAPS package 6):** 28 (`bomb_follow_path`) ported:
   `SniperRounds::guideLastMortar` (scripts/sniper_rounds.cpp), pinned end to end by
   `golden/L7_rounds_mortar.txt` (LEVEL7 DANT_6's group 12 hit script guides a mortar round
@@ -378,9 +385,9 @@ one-line branch on `Rides.Ridden == obj`, and the runtime already carries that
 state as `ridesRidden_` (the ride slice is unported, so it is null and the branch
 is false for every object — the value the C# reads on foot). It never fires in
 levels 3–8; a synthetic `vm_tests` case pins the dispatch and the false branch.
-Remaining 1 (after the chain-gun batch, the end of a level, the combat and
-hazard batch, package #3 (114), the sniper rounds (28) and the updraft/wind batch (224) below):
-130
+Remaining 0 (after the chain-gun batch, the end of a level, the combat and
+hazard batch, package #3 (114), the sniper rounds (28), the updraft/wind batch (224) and the
+bullet holes (130) below): none.
 
 **Updrafts, slide and wind (2026-11-20, docs/PORT_GAPS.md package 8):** 224
 (`wind_zone`, ScriptVm.cs:1166 -> `ScriptRuntime::windZone`, ScriptRuntime.cs:2302, in
@@ -500,7 +507,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   `enterArena` makes an unreachable arena answer the arena RULE and not yet
   the collision) and `Kurt.Keeper`, whose `_keeper = null` the port cannot do.)
 - **Arena/world (needs arena texture/sky/fan/wind state, spawn helpers):**
-  130, 133, 142, 143, 190 (28 landed with the sniper rounds, package 6: `SniperRounds::guideLastMortar`; 224 landed with the updraft/wind batch, package 8; 159 landed with the combat and hazard batch; 156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
+  133, 142, 143, 190 (130 landed with the bullet holes, package 16: `ScriptRuntime::stampBulletHole`; 28 landed with the sniper rounds, package 6: `SniperRounds::guideLastMortar`; 224 landed with the updraft/wind batch, package 8; 159 landed with the combat and hazard batch; 156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 128, 132,
   136 (158, 167, 172 and 184 landed with the combat and hazard batch; 121 landed with the floor-below batch over

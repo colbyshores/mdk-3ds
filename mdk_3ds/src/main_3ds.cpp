@@ -2001,6 +2001,19 @@ int main(int argc, char** argv) {
                 if (runtime) {
                     runtime->update(step);
                 }
+                if (runtime) {
+                    // The bullet holes the step stamped (special_130, package #16): the C#'s
+                    // TextureStamped -> MaterialResolver.Refresh (Viewer.cs:263), each changed
+                    // texture's GPU copies given its pixels again. The backend takes the
+                    // pixels at once and expands the texture again at a frame boundary,
+                    // one a frame (05_resources.inc, mdk_render_update_texture).
+                    const std::vector<const mdk::formats::Texture*>& stamped =
+                        runtime->stampedTextures();
+                    for (size_t i = 0; i < stamped.size(); i++) {
+                        surfaces.refresh(stamped[i]);
+                    }
+                    runtime->clearStampedTextures();
+                }
                 const uint64_t tp2 = mdk::harnessProfileTick();
                 // The pitch the camera eases to (Viewer.cs:746-747). The oracle's
                 // sources are a live camera_track request first and the scripts'

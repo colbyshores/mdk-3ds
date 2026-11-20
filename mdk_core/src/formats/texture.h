@@ -101,6 +101,13 @@ public:
     void dropPixels();
     bool adoptPixels(Texture* fresh);
     void setPixelSource(const TexturePixelSource* source) { source_ = source; }
+    // KEEP THE PIXELS for good (a bullet hole, scripts/bullet_holes.h): from now on
+    // dropPixels leaves them and adoptPixels keeps them -- they are no longer what a
+    // fresh parse of the file gives, so they must never be read again. The C# has no
+    // stream and keeps every texture's pixels for the level; a pinned texture is the
+    // same, at the cost of its bytes staying resident when its arena's go.
+    void pinPixels() { pinned_ = true; }
+    bool pixelsPinned() const { return pinned_; }
     // The bytes the pixels hold right now (0 while away): the stream's accounts.
     int32_t residentBytes() const { return (int32_t)indices_.size(); }
 
@@ -135,6 +142,8 @@ private:
     // The pixels were dropped (not: the texture is empty). Set only by
     // dropPixels, cleared by adoptPixels and setIndices.
     bool away_ = false;
+    // pinPixels: never dropped, never replaced by a fresh read.
+    bool pinned_ = false;
     const TexturePixelSource* source_ = nullptr;
 
     // Ask the source for pixels that are away. Const because every reader is:

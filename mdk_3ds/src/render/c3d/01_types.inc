@@ -220,6 +220,13 @@ struct C3dTexture {
     // replacement waits for the next frame boundary (AGENTS.md P3).
     bool stale = false;
 
+    // A BULLET HOLE changed the source (mdk_render_update_texture, package #16).
+    // The GPU copy is made again at a frame boundary, ONE such texture a frame
+    // (settleDeferredTextures): an expansion is a whole texture's palette lookup
+    // and Morton tiling, and the owner's rule is no main-thread stalls. Until its
+    // turn the old copy draws -- the hole appears a frame or two late.
+    bool restamped = false;
+
     // The caller released this texture while its GPU copy may still be in
     // flight. The copy waits for the next frame boundary; the id is already
     // invalid to the caller.
