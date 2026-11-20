@@ -171,7 +171,11 @@ int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t hei
 // bytes are copied: the backend makes the GPU copy by importing them -- no
 // palette expansion, no ARM11 work but a decompress and a copy -- and makes it
 // again from them after an eviction. Drawn like an index texture's id
-// (material.texture), through the image's rectangle.
+// (material.texture), through the image's rectangle: a draw's uv 0..1 spans the
+// width x height IMAGE, whatever size the quad is. So `width`/`height` are the
+// image's size inside the texture, which for a Kurt frame fitted to 256x256 (the
+// chute's; formats/kurt_pack.h's image size) is smaller than the frame the
+// caller's quad still spans -- the frame keeps its size on screen.
 //
 // Returns -1 when the backend has no compressed textures -- the Linux backend
 // keeps the palette indices and answers -1, so its callers draw the index

@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "game/input.h"
+#include "platform/controls_3ds.h"
 
 // ============================================================================
 // input_3ds.h — libctru's HID, translated into the game's `Input`.
@@ -16,21 +17,26 @@
 // reason: the part that can be pinned is separated from the part that needs the
 // console.
 //
-// THE CONTROL SCHEME, and why it is not the gamepad's.
+// THE CONTROL SCHEME (the owner's defaults of 2026-11-19, in
+// sdmc:/3ds/mdk/controls.ini; controls_3ds.h has the table and the file).
 //
 //   Circle Pad   look (yaw and pitch), as relative mouse counts
-//   D-pad        forward / back / strafe left / strafe right
-//   A / B        jump / turbo
-//   X / Y        use item / next item
+//   X / B        forward / back
+//   Y / A        strafe left / strafe right
+//   L            jump
 //   R, ZR        fire
-//   L, ZL        previous item
-//   Start        escape -> flow::Event::Quit. The menu that Escape opens in the
-//                C# is cut, so the flow answers with Screen::None and the run
-//                ends (main_3ds.cpp); it is not a temporary stand-in.
-//   Select       nothing in the game — the frontend's Video/Graphics
-//                settings menu (SPEC.md 7.9) opens and closes on it; it
-//                stays a second way out only when the menu's fonts did
-//                not load and there is no menu to open
+//   D-pad L / R  previous item / next item
+//   D-pad up     sniper (bound; nothing reads it -- the sniper view is cut)
+//   D-pad down   use item
+//   ZL           turbo (New 3DS only; unassigned by the owner)
+//   Start        the frontend's PAUSE menu (main_3ds.cpp, game/enhanced_menu.h:
+//                Resume, the Video/Graphics settings of SPEC.md 7.9, Quit).
+//                QUIT is a menu row confirmed with A -> flow::Event::Quit;
+//                one press of Start no longer ends the run (owner,
+//                2026-11-19). The mask still sets kKeyEscape, which nothing
+//                on this target reads.
+//   Select       opens the same menu; only when the menu's fonts did not
+//                load (no menu) is Start+Select held together the way out
 //
 // The C# `GamepadMap` is the oracle for a controller, and it puts WALK on the
 // left stick and LOOK on the right one. The original 3DS has ONE analog stick,
@@ -38,10 +44,9 @@
 // look: MDK aims by turning Kurt's view, the walk is four binary axes
 // (`Input::axis` returns -1/0/+1 from two `down[]` bits), and a digital look
 // is unplayable where a digital walk is what the keyboard already does. The
-// same call was made on the same hardware in `../forsaken/input_3ds.c` (circle
-// pad to pitch/yaw, D-pad to the digital axes), which is why the D-pad walks
-// here instead of doing the C# pad's d-pad items/zoom: with the walk on it, the
-// item keys move to Y and L.
+// walk was first on the D-pad (`../forsaken/input_3ds.c`'s call); the owner
+// moved it to the face buttons (X/B/Y/A) and gave the D-pad the C# pad's
+// items and sniper, which is what that pad's d-pad does.
 //
 // THE ORACLE for what is here. The 3DS has no C# counterpart — the C# reads SDL
 // — so the NUMBERS cannot be measured against it. What is taken from the C#
@@ -113,17 +118,18 @@ constexpr float kLookDegreesPerCount = 0.15f;
 // not buy an enormous turn.
 constexpr float kMaxLookStep = 0.1f;
 
-// Fill `input` from one frame's controls: every `down[]` action is written (the
-// whole digital state comes from this one frame), and the circle pad ADDS to the
-// accumulated mouse, which the game drains with takeMouseX/TakeMouseY.
-// `seconds` is the time since the previous frame; it is clamped to kMaxLookStep
-// and a zero, negative or NaN gap looks nowhere.
-void input3dsApply(const HidFrame& frame, float seconds, Input* input);
+// Fill `input` from one frame's controls through `bindings`: every `down[]`
+// action is written (the whole digital state comes from this one frame), and the
+// circle pad ADDS to the accumulated mouse, which the game drains with
+// takeMouseX/TakeMouseY. `seconds` is the time since the previous frame; it is
+// clamped to kMaxLookStep and a zero, negative or NaN gap looks nowhere.
+void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& bindings,
+                   Input* input);
 
 // The libctru service: ONE hidScanInput, the reads, and input3dsApply. Returns
 // the frame's held mask so the caller can act on it without scanning HID a
 // second time (see the trap above). `input` must be the frame's own — the mouse
 // it accumulates belongs to this frame.
-uint32_t input3dsPoll(Input* input, float seconds);
+uint32_t input3dsPoll(Input* input, float seconds, const ControlBindings& bindings);
 
 } // namespace mdk

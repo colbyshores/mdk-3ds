@@ -10,12 +10,21 @@
 # from a set without re-encoding. Standard library only.
 #
 # THE FORMAT is mdk_core/src/formats/kurt_pack.h's (the reader, and the layout's
-# documentation): a 32-byte header ("KPAK", version 1), a 40-byte index entry per
+# documentation): a 32-byte header ("KPAK", version 2), a 44-byte index entry per
 # file, then each .t3x at a 16-byte-aligned offset. Little-endian.
 #
+# VERSION 2 adds each frame's IMAGE size (the size of the picture inside its
+# texture) beside the frame's own size: kurt_etc1_convert.py stores a frame whose
+# padded texture would pass 256x256 (the chute's) DOWNSCALED to fit 256x256, and
+# the runtime draws it at the frame's original size through that image's
+# rectangle. The manifest's `max` column says which: "orig" (the image is the
+# frame, texel for texel) or the cap the image was fitted to (fit_size).
+#
 # THE ORDER IS THE POINT. The start set (KurtSprite's kStartSet: K_STILL,
-# K_FALL, K_LAND, K_IDLE, in that order) comes first and contiguous, so a level
-# load reads the index and the start set in ONE read; then the other animations
+# K_FALL, K_LAND, K_IDLE, the chute's K_CHUTE and K_CHUTEC, then the jump's
+# K_JUMP and K_RJMP, in that order)
+# comes first and contiguous, so a level load reads the index and the start set
+# in ONE read and makes all of it then; then the other animations
 # by name, each animation's frames in frame order with a level's own copy after
 # the every-level one, so one animation is one contiguous range for any level
 # (the stream's one read per animation).
@@ -29,14 +38,39 @@ import struct
 import sys
 
 MAGIC = b"KPAK"
-VERSION = 1
+VERSION = 2
 HEADER_BYTES = 32
-ENTRY_BYTES = 40
+ENTRY_BYTES = 44
 NAME_BYTES = 24
 ALIGN = 16
 FLAG_START_SET = 1
 # KurtSprite::kStartSet (mdk_core/src/game/kurt_sprite.cpp), in its order.
-START_SET = ("K_STILL", "K_FALL", "K_LAND", "K_IDLE")
+START_SET = ("K_STILL", "K_FALL", "K_LAND", "K_IDLE", "K_CHUTE", "K_CHUTEC", "K_JUMP", "K_RJMP")
+# The largest padded texture a frame is stored in (kurt_etc1_convert.py): a frame
+# whose power-of-two pad would pass it is downscaled to fit it (fit_size).
+FIT_CAP = 256
+
+
+def fit_size(w, h, cap=FIT_CAP):
+    """The size a w x h frame's IMAGE is stored at: the frame itself while both
+    sides are within `cap` (its power-of-two pad then is too), else scaled to fit
+    cap x cap with its aspect kept -- the long side exactly `cap`, the short one
+    rounded to the nearest texel (never 0). Integer arithmetic only, so the
+    converter and the pack agree on every frame."""
+    if w <= 0 or h <= 0:
+        raise ValueError("frame %dx%d has no size" % (w, h))
+    m = max(w, h)
+    if m <= cap:
+        return w, h
+    return max(1, (w * cap + m // 2) // m), max(1, (h * cap + m // 2) // m)
+
+
+def image_size(w, h, cap_column):
+    """The image size a manifest row names: its `max` column is "orig" (the frame
+    texel for texel) or the cap fit_size fitted it to."""
+    if cap_column == "orig":
+        return w, h
+    return fit_size(w, h, int(cap_column))
 
 
 def _align(n):
@@ -53,16 +87,18 @@ def split_name(name):
 
 
 def read_set(set_dir):
-    """The set's frames from its manifest: (name, level, width, height, bytes)."""
+    """The set's frames from its manifest: (name, level, width, height, image
+    width, image height, bytes)."""
     frames = []
     with open(os.path.join(set_dir, "manifest.txt")) as f:
         for line in f:
             if line.startswith("#") or not line.strip():
                 continue
             cols = line.rstrip("\n").split("\t")
-            if len(cols) < 7:
+            if len(cols) < 9:
                 raise ValueError("manifest row has %d columns: %r" % (len(cols), line))
             rel, w, h, size = cols[0], int(cols[2]), int(cols[3]), int(cols[6])
+            iw, ih = image_size(w, h, cols[8])
             parts = rel.split("/")
             level = 0
             if len(parts) == 3 and parts[1].startswith("LEVEL"):
@@ -73,7 +109,7 @@ def read_set(set_dir):
                 data = t.read()
             if len(data) != size:
                 raise ValueError("%s.t3x is %d bytes, the manifest says %d" % (rel, len(data), size))
-            frames.append((parts[-1], level, w, h, data))
+            frames.append((parts[-1], level, w, h, iw, ih, data))
     return frames
 
 
@@ -85,16 +121,18 @@ def order_key(frame):
 
 
 def build_pack(frames):
-    """The pack's bytes for (name, level, width, height, bytes) rows."""
+    """The pack's bytes for (name, level, width, height, image width, image
+    height, bytes) rows."""
     frames = sorted(frames, key=order_key)
     seen = set()
-    for name, level, w, h, data in frames:
+    for name, level, w, h, iw, ih, data in frames:
         raw = name.encode("ascii")
         if not raw or len(raw) >= NAME_BYTES:
             raise ValueError("frame name %r does not fit %d bytes" % (name, NAME_BYTES))
-        if not (0 <= level <= 255) or not (0 < w <= 1024) or not (0 < h <= 1024) or not data:
-            raise ValueError("frame %s (level %d) %dx%d %d bytes is out of range" %
-                             (name, level, w, h, len(data)))
+        if not (0 <= level <= 255) or not (0 < w <= 1024) or not (0 < h <= 1024) or not data \
+                or not (0 < iw <= w) or not (0 < ih <= h):
+            raise ValueError("frame %s (level %d) %dx%d (image %dx%d) %d bytes is out of range" %
+                             (name, level, w, h, iw, ih, len(data)))
         if (name, level) in seen:
             raise ValueError("frame %s (level %d) twice" % (name, level))
         seen.add((name, level))
@@ -103,20 +141,20 @@ def build_pack(frames):
     offsets = []
     at = data_offset
     start_end = data_offset
-    for name, level, w, h, data in frames:
+    for name, level, w, h, iw, ih, data in frames:
         offsets.append(at)
         at = _align(at + len(data))
         if split_name(name)[0] in START_SET:
             start_end = offsets[-1] + len(data)
-    file_bytes = offsets[-1] + len(frames[-1][4]) if frames else data_offset
+    file_bytes = offsets[-1] + len(frames[-1][6]) if frames else data_offset
 
     out = bytearray(struct.pack("<4sHHIIIIII", MAGIC, VERSION, HEADER_BYTES, len(frames),
                                 ENTRY_BYTES, data_offset, start_end, file_bytes, ALIGN))
-    for (name, level, w, h, data), offset in zip(frames, offsets):
+    for (name, level, w, h, iw, ih, data), offset in zip(frames, offsets):
         flags = FLAG_START_SET if split_name(name)[0] in START_SET else 0
-        out += struct.pack("<24sBBHHHII", name.encode("ascii"), level, flags, 0, w, h,
-                           offset, len(data))
-    for (name, level, w, h, data), offset in zip(frames, offsets):
+        out += struct.pack("<24sBBHHHIIHH", name.encode("ascii"), level, flags, 0, w, h,
+                           offset, len(data), iw, ih)
+    for (name, level, w, h, iw, ih, data), offset in zip(frames, offsets):
         out += b"\0" * (offset - len(out))
         out += data
     assert len(out) == file_bytes

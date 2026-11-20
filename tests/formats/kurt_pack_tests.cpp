@@ -109,20 +109,30 @@ struct SetFrame {
     int width;
     int height;
     size_t size;
+    // The manifest's `max` column ("orig", or the cap the converter fitted the
+    // image to) and the image size the pack must then carry -- worked out here
+    // by hand from kurt_pack.fit_size's rule (the long side 256, the short one
+    // rounded), not by calling it.
+    const char* cap;
+    int imageWidth;
+    int imageHeight;
 };
 
 // A set in kurt_etc1_convert.py's layout, deliberately listed out of the pack's
 // order: a start-set animation after another, frames out of order, a level copy.
+// K_CHUTEC_0 (347x295: 256 x 295*256/347 = 217.6 -> 218) and K_LOOKD_0 (287x343:
+// 287*256/343 = 214.2 -> 214 x 256) are FITTED, as the converter stores them.
 const SetFrame kSet[] = {
-    {"textures/K_RUN_1", 60, 150, 37},
-    {"textures/K_FALL_0", 70, 120, 101},
-    {"textures/K_RUN_0", 61, 151, 48},
-    {"textures/K_STILL_0", 52, 146, 77},
-    {"textures/K_RUN_10", 62, 152, 19},
-    {"textures/K_LOOKD_0", 287, 343, 55},
-    {"textures/LEVEL3/K_LOOKD_0", 287, 343, 56},
-    {"textures/K_RUN_2", 63, 153, 64},
-    {"textures/K_BANG_0", 58, 144, 33},
+    {"textures/K_RUN_1", 60, 150, 37, "orig", 60, 150},
+    {"textures/K_FALL_0", 70, 120, 101, "orig", 70, 120},
+    {"textures/K_RUN_0", 61, 151, 48, "orig", 61, 151},
+    {"textures/K_STILL_0", 52, 146, 77, "orig", 52, 146},
+    {"textures/K_RUN_10", 62, 152, 19, "orig", 62, 152},
+    {"textures/K_LOOKD_0", 287, 343, 55, "256", 214, 256},
+    {"textures/LEVEL3/K_LOOKD_0", 287, 343, 56, "256", 214, 256},
+    {"textures/K_RUN_2", 63, 153, 64, "orig", 63, 153},
+    {"textures/K_BANG_0", 58, 144, 33, "orig", 58, 144},
+    {"textures/K_CHUTEC_0", 347, 295, 91, "256", 256, 218},
 };
 
 bool writeSet(const std::string& dir) {
@@ -137,8 +147,8 @@ bool writeSet(const std::string& dir) {
             return false;
         }
         char line[256];
-        snprintf(line, sizeof(line), "%s\tetc1a4\t%d\t%d\t64\t256\t%u\t0123456789abcdef\torig\tv1\n",
-                 frame.rel, frame.width, frame.height, (unsigned)frame.size);
+        snprintf(line, sizeof(line), "%s\tetc1a4\t%d\t%d\t64\t256\t%u\t0123456789abcdef\t%s\tv1\n",
+                 frame.rel, frame.width, frame.height, (unsigned)frame.size, frame.cap);
         manifest += line;
     }
     return writeFile(dir + "/manifest.txt",
@@ -215,6 +225,8 @@ std::vector<uint8_t> buildPack() {
         putU16(&out, e + 30, 140);
         putU32(&out, e + 32, offsets[i]);
         putU32(&out, e + 36, entries[i].size);
+        putU16(&out, e + 40, 50);
+        putU16(&out, e + 42, 140);
         for (uint32_t b = 0; b < entries[i].size; b++) {
             out[offsets[i] + b] = (uint8_t)(i + 1);
         }
@@ -276,13 +288,13 @@ MDK_TEST(KurtPackWriterRoundTripsThroughTheReader) {
     // THE ORDER: the start set first, in KurtSprite's order (K_STILL, K_FALL);
     // then the other animations by name, frames in NUMERIC order (10 after 2), a
     // level's copy after the every-level one.
-    const char* const order[] = {"K_STILL_0", "K_FALL_0", "K_BANG_0", "K_LOOKD_0", "K_LOOKD_0",
+    const char* const order[] = {"K_STILL_0", "K_FALL_0", "K_CHUTEC_0", "K_BANG_0", "K_LOOKD_0", "K_LOOKD_0",
                                  "K_RUN_0",   "K_RUN_1",  "K_RUN_2",  "K_RUN_10"};
     for (size_t i = 0; i < count; i++) {
         MDK_CHECK_STR_EQ(pack.entries()[i].name, order[i]);
     }
-    MDK_CHECK_EQ(pack.entries()[3].level, 0);
-    MDK_CHECK_EQ(pack.entries()[4].level, 3);
+    MDK_CHECK_EQ(pack.entries()[4].level, 0);
+    MDK_CHECK_EQ(pack.entries()[5].level, 3);
 
     uint32_t previousEnd = header.dataOffset;
     for (size_t i = 0; i < count; i++) {
@@ -295,6 +307,9 @@ MDK_TEST(KurtPackWriterRoundTripsThroughTheReader) {
         }
         MDK_CHECK_EQ(entry.width, source->width);
         MDK_CHECK_EQ(entry.height, source->height);
+        // The image size: the frame's own, or the fitted one for a "256" row.
+        MDK_CHECK_EQ(entry.imageWidth, source->imageWidth);
+        MDK_CHECK_EQ(entry.imageHeight, source->imageHeight);
         MDK_CHECK_EQ(entry.size, source->size);
         MDK_CHECK_EQ(entry.offset % KurtPack::kAlign, 0);
         // Laid out in index order, with no overlap and no gap past the alignment.
@@ -305,7 +320,9 @@ MDK_TEST(KurtPackWriterRoundTripsThroughTheReader) {
         MDK_CHECK(entry.offset + entry.size <= a.size() &&
                   memcmp(a.data() + entry.offset, want.data(), want.size()) == 0);
         // The start set is the front of the data, exactly.
-        const bool start = entry.name.rfind("K_STILL_", 0) == 0 || entry.name.rfind("K_FALL_", 0) == 0;
+        const bool start = entry.name.rfind("K_STILL_", 0) == 0 ||
+                           entry.name.rfind("K_FALL_", 0) == 0 ||
+                           entry.name.rfind("K_CHUTEC_", 0) == 0;
         MDK_CHECK_EQ((entry.flags & KurtPack::kFlagStartSet) != 0, start);
         if (start) {
             MDK_CHECK(entry.offset + entry.size <= header.startEnd);
@@ -313,14 +330,14 @@ MDK_TEST(KurtPackWriterRoundTripsThroughTheReader) {
             MDK_CHECK(entry.offset >= header.startEnd);
         }
     }
-    MDK_CHECK_EQ(header.startEnd, pack.entries()[1].offset + pack.entries()[1].size);
+    MDK_CHECK_EQ(header.startEnd, pack.entries()[2].offset + pack.entries()[2].size);
     MDK_CHECK_EQ(previousEnd, a.size());
 
     // A level's own copy for its level, the every-level copy for the others.
-    MDK_CHECK_EQ(pack.find("K_LOOKD_0", 3), 4);
-    MDK_CHECK_EQ(pack.find("K_LOOKD_0", 4), 3);
-    MDK_CHECK_EQ(pack.find("K_LOOKD_0", 0), 3);
-    MDK_CHECK_EQ(pack.find("K_RUN_1", 8), 6);
+    MDK_CHECK_EQ(pack.find("K_LOOKD_0", 3), 5);
+    MDK_CHECK_EQ(pack.find("K_LOOKD_0", 4), 4);
+    MDK_CHECK_EQ(pack.find("K_LOOKD_0", 0), 4);
+    MDK_CHECK_EQ(pack.find("K_RUN_1", 8), 7);
     MDK_CHECK_EQ(pack.find("K_RUN_3", 3), -1);
     removeTree(dir);
 }
@@ -459,6 +476,23 @@ MDK_TEST(KurtPackReaderRefusesAnEntryOutOfRange) {
     MDK_CHECK(KurtPack::parse(bytes.data(), bytes.size(), &pack) == KurtPack::Status::Ok &&
               !pack.entries()[1].valid);
     MDK_CHECK_STR_EQ(pack.firstBadReason(), "size");
+    // An image LARGER than its frame (a fit never enlarges), or of no size.
+    bytes = good;
+    putU16(&bytes, entryAt(1) + 40, 51);
+    MDK_CHECK(KurtPack::parse(bytes.data(), bytes.size(), &pack) == KurtPack::Status::Ok &&
+              !pack.entries()[1].valid);
+    MDK_CHECK_STR_EQ(pack.firstBadReason(), "size");
+    bytes = good;
+    putU16(&bytes, entryAt(1) + 42, 0);
+    MDK_CHECK(KurtPack::parse(bytes.data(), bytes.size(), &pack) == KurtPack::Status::Ok &&
+              !pack.entries()[1].valid);
+    // A smaller image is a fitted frame: valid.
+    bytes = good;
+    putU16(&bytes, entryAt(1) + 40, 25);
+    putU16(&bytes, entryAt(1) + 42, 70);
+    MDK_CHECK(KurtPack::parse(bytes.data(), bytes.size(), &pack) == KurtPack::Status::Ok &&
+              pack.entries()[1].valid && pack.entries()[1].imageWidth == 25 &&
+              pack.entries()[1].imageHeight == 70);
 
     // Flagged as the start set but outside its bytes.
     bytes = good;

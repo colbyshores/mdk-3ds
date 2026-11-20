@@ -19,6 +19,7 @@
 
 #include "formats/kurt_pack.h"
 #include "game/kurt_sprite.h"
+#include "game/mod_images.h"
 #include "render/render.h"
 
 namespace {
@@ -37,6 +38,8 @@ struct FakeTexture {
     bool compressed = false;
     uint8_t firstByte = 0;   // a compressed texture's first .t3x byte
     int32_t size = 0;
+    int32_t width = 0;       // the image size the texture was made for
+    int32_t height = 0;
     bool released = false;
 };
 
@@ -57,6 +60,8 @@ struct FakeBackend {
     uint8_t* landedBytes = nullptr;
     uint32_t landedSize = 0;
     bool landedOk = false;
+    // The last mesh KurtSprite wrote (drawFrame's vertices).
+    std::vector<mdk::Vertex> mesh;
 };
 
 FakeBackend g_backend;
@@ -76,7 +81,7 @@ int32_t addTexture(const FakeTexture& texture) {
 mdk::MdkCapabilities mdk_render_capabilities(MdkRenderer) {
     mdk::MdkCapabilities caps;
     caps.sprite_residency_bytes = 1024 * 1024;
-    caps.sprite_preload_bytes = 3 * 1024 * 1024;
+    caps.sprite_preload_bytes = 5 * 1024 * 1024;
     return caps;
 }
 
@@ -88,7 +93,9 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer, int32_t) {
     return 1;
 }
 
-void mdk_render_update_mesh(MdkRenderer, MdkMeshId, const mdk::Vertex*, int32_t) {}
+void mdk_render_update_mesh(MdkRenderer, MdkMeshId, const mdk::Vertex* vertices, int32_t count) {
+    g_backend.mesh.assign(vertices, vertices + (count > 0 ? count : 0));
+}
 
 void mdk_render_draw_mesh(MdkRenderer, const mdk::MeshDraw*) {}
 
@@ -96,16 +103,20 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t w, int32_t h, 
                                              const uint8_t*) {
     FakeTexture texture;
     texture.size = w * h * 2;
+    texture.width = w;
+    texture.height = h;
     return addTexture(texture);
 }
 
-MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t, int32_t,
+MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t w, int32_t h,
                                                   const uint8_t* t3x, int32_t size) {
     if (g_backend.refuseCompressed || !t3x || size <= 0) {
         return -1;
     }
     FakeTexture texture;
     texture.compressed = true;
+    texture.width = w;
+    texture.height = h;
     texture.firstByte = t3x[0];
     texture.size = size;
     return addTexture(texture);
@@ -185,8 +196,36 @@ struct KurtSpriteTestAccess {
         }
         sprite->animations_.push_back(std::move(animation));
     }
+    // The frame has its texture now (Ready).
     static bool ensure(KurtSprite* sprite, int32_t animation, int32_t frame) {
-        return sprite->ensureTexture(animation, frame);
+        return sprite->ensureTexture(animation, frame) == KurtSprite::Ensure::Ready;
+    }
+    // Its bytes are being read: no texture made (Waiting).
+    static bool waiting(KurtSprite* sprite, int32_t animation, int32_t frame) {
+        return sprite->ensureTexture(animation, frame) == KurtSprite::Ensure::Waiting;
+    }
+    // THE HOLD: the frame draw() would draw for (animation, frame).
+    static bool choose(KurtSprite* sprite, int32_t animation, int32_t frame, int32_t* drawnA,
+                       int32_t* drawnF) {
+        KurtSprite::Pick wanted;
+        wanted.animation = animation;
+        wanted.frame = frame;
+        KurtSprite::Pick drawn;
+        const bool ok = sprite->chooseFrame(wanted, &drawn);
+        *drawnA = ok ? drawn.animation : -1;
+        *drawnF = ok ? drawn.frame : -1;
+        return ok;
+    }
+    // drawFrame with one sprite pixel = one world unit on x/y, the eye far
+    // behind on z and no pull: the mesh is the frame's quad as laid out.
+    static bool drawFlat(KurtSprite* sprite, int32_t animation, int32_t frame) {
+        KurtSprite::Quad at;
+        at.feet = mdk::Vec3{0.0f, 0.0f, 0.0f};
+        at.right = mdk::Vec3{1.0f, 0.0f, 0.0f};
+        at.up = mdk::Vec3{0.0f, 1.0f, 0.0f};
+        KurtSprite::Pull pull;
+        return sprite->drawFrame(kRenderer, sprite->mesh_, animation, frame, mdk::Vec3{0.0f, 0.0f, -1000.0f}, at,
+                                 0, 0, pull);
     }
     static const KurtSprite::Frame& frame(const KurtSprite& sprite, int32_t a, int32_t f) {
         return sprite.animations_[(size_t)a].frames[(size_t)f];
@@ -217,6 +256,9 @@ struct PackFrame {
     uint32_t size;
     uint16_t width;
     uint16_t height;
+    // The image's size in the texture; 0: the frame's own (not fitted).
+    uint16_t imageWidth;
+    uint16_t imageHeight;
 };
 
 void putU16(std::vector<uint8_t>* out, size_t at, uint16_t v) {
@@ -265,6 +307,8 @@ std::vector<uint8_t> buildPack(const PackFrame* frames, uint32_t count, uint32_t
         putU16(&out, e + 30, frames[i].height);
         putU32(&out, e + 32, offsets[i]);
         putU32(&out, e + 36, frames[i].size);
+        putU16(&out, e + 40, frames[i].imageWidth ? frames[i].imageWidth : frames[i].width);
+        putU16(&out, e + 42, frames[i].imageHeight ? frames[i].imageHeight : frames[i].height);
         memset(out.data() + offsets[i], (int)(i + 1), frames[i].size);
     }
     return out;
@@ -308,17 +352,17 @@ enum { kStill = 0, kRun = 1, kBang = 2, kLook = 3, kFall = 4 };
 
 const PackFrame kFrames[] = {
     // The start set (K_STILL, then K_FALL), at the front.
-    {"K_STILL_0", 0, 40, 50, 140},
-    {"K_STILL_1", 0, 41, 50, 140},
-    {"K_FALL_0", 0, 42, 60, 120},
+    {"K_STILL_0", 0, 40, 50, 140, 0, 0},
+    {"K_STILL_1", 0, 41, 50, 140, 0, 0},
+    {"K_FALL_0", 0, 42, 60, 120, 0, 0},
     // The rest, an animation's frames together.
-    {"K_BANG_0", 0, 30, 58, 144},
-    {"K_BANG_1", 0, 31, 58, 144},
-    {"K_LOOKD_0", 0, 50, 287, 343},
-    {"K_LOOKD_0", 7, 51, 287, 343},   // level 7's own copy
-    {"K_RUN_0", 0, 20, 61, 151},
-    {"K_RUN_1", 0, 21, 61, 151},
-    {"K_RUN_2", 0, 22, 99, 151},      // made from other data: the size disagrees
+    {"K_BANG_0", 0, 30, 58, 144, 0, 0},
+    {"K_BANG_1", 0, 31, 58, 144, 0, 0},
+    {"K_LOOKD_0", 0, 50, 287, 343, 0, 0},
+    {"K_LOOKD_0", 7, 51, 287, 343, 0, 0},   // level 7's own copy
+    {"K_RUN_0", 0, 20, 61, 151, 0, 0},
+    {"K_RUN_1", 0, 21, 61, 151, 0, 0},
+    {"K_RUN_2", 0, 22, 99, 151, 0, 0},      // made from other data: the size disagrees
 };
 const uint32_t kFrameCount = sizeof(kFrames) / sizeof(kFrames[0]);
 
@@ -368,8 +412,20 @@ void testTheLevelLoad() {
     STREAM_CHECK(g_backend.requests.empty());
 }
 
-// THE STREAM: stand-in, one range read for the animation, one in flight, the
-// upgrade when it lands, the frame made from memory after that.
+// How many textures the fake backend has made that are NOT compressed (index
+// textures: the ARM11 expansions the hold exists to keep out of the frame).
+int32_t indexTexturesMade() {
+    int32_t n = 0;
+    for (size_t i = 0; i < g_backend.textures.size(); i++) {
+        n += g_backend.textures[i].compressed ? 0 : 1;
+    }
+    return n;
+}
+
+// THE STREAM AND THE HOLD: a frame whose bytes are not in memory asks for its
+// animation's range (one read in flight) and is NOT made -- the frame drawn
+// last is drawn instead, at no cost -- and is made from memory on the first
+// draw after the bytes land. No 16-bit stand-in is ever made for it.
 void testTheStream() {
     resetBackend();
     const std::vector<uint8_t> bytes = buildPack(kFrames, kFrameCount, 3);
@@ -380,24 +436,46 @@ void testTheStream() {
     KurtSprite::CompressedReport report;
     sprite.useCompressedPack(&pack, 3, "romfs:/kurt/kurt.pak", &report);
 
-    // K_RUN_0 drawn: its animation's range is asked for, the index texture
-    // stands in.
-    STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kRun, 0));
+    // Nothing drawn yet this level, and K_RUN_0's bytes are not here: its read
+    // is asked for, nothing is made, and there is nothing to hold.
+    int32_t a = -1;
+    int32_t f = -1;
+    STREAM_CHECK(!KurtSpriteTestAccess::choose(&sprite, kRun, 0, &a, &f));
+    STREAM_CHECK(sprite.streamStats().holdMisses == 1);
     STREAM_CHECK(g_backend.requests.size() == 1);
     const KurtPack::Entry& run0 = pack.entries()[7];
     const KurtPack::Entry& run1 = pack.entries()[8];
     STREAM_CHECK(g_backend.requests[0].offset == run0.offset);
     STREAM_CHECK(g_backend.requests[0].size == run1.offset + run1.size - run0.offset);
-    STREAM_CHECK(KurtSpriteTestAccess::frame(sprite, kRun, 0).standIn);
-    STREAM_CHECK(!textureOf(sprite, kRun, 0).compressed);
+    STREAM_CHECK(KurtSpriteTestAccess::frame(sprite, kRun, 0).texture < 0);
+    STREAM_CHECK(g_backend.textures.empty());
     STREAM_CHECK(KurtSpriteTestAccess::state(sprite, kRun) == KurtSprite::StreamState::Pending);
-    // K_BANG drawn while K_RUN's read is in flight: no second read; it stands in.
-    STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kBang, 0));
+
+    // The start set preloaded; Kurt stands (K_STILL_1 drawn): that is the frame
+    // held from now on.
+    const KurtPack::Header& header = pack.header();
+    sprite.preloadStartSet(bytes.data() + header.dataOffset, header.dataOffset,
+                           header.startEnd - header.dataOffset, &report);
+    STREAM_CHECK(KurtSpriteTestAccess::choose(&sprite, kStill, 1, &a, &f));
+    STREAM_CHECK(a == kStill && f == 1);
+    const size_t made = g_backend.textures.size();
+
+    // He runs while K_RUN's read is in flight: K_STILL_1 is HELD -- no texture
+    // is made, no second read is asked for.
+    STREAM_CHECK(KurtSpriteTestAccess::choose(&sprite, kRun, 0, &a, &f));
+    STREAM_CHECK(a == kStill && f == 1);
+    STREAM_CHECK(sprite.streamStats().holds == 1);
+    STREAM_CHECK(g_backend.textures.size() == made);
+    STREAM_CHECK(g_backend.requests.size() == 1);
+    // K_BANG wanted too, while K_RUN's is in flight: held, it stays Idle.
+    STREAM_CHECK(KurtSpriteTestAccess::choose(&sprite, kBang, 0, &a, &f));
+    STREAM_CHECK(a == kStill && f == 1);
     STREAM_CHECK(g_backend.requests.size() == 1);
     STREAM_CHECK(KurtSpriteTestAccess::state(sprite, kBang) == KurtSprite::StreamState::Idle);
-    // Drawn again before it lands: still one read.
-    STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kRun, 0));
-    STREAM_CHECK(g_backend.requests.size() == 1);
+    STREAM_CHECK(KurtSpriteTestAccess::waiting(&sprite, kRun, 0));
+    STREAM_CHECK(sprite.streamStats().holds == 2);
+    STREAM_CHECK(g_backend.textures.size() == made);
+    STREAM_CHECK(indexTexturesMade() == 0);
 
     // It lands; the pump stages it.
     land(bytes, Landing::Whole);
@@ -407,30 +485,32 @@ void testTheStream() {
     STREAM_CHECK(sprite.streamStats().staged == g_backend.requests[0].size);
     STREAM_CHECK(sprite.takeStreamFailure() == nullptr);
 
-    // The next draw replaces the stand-in with the compressed copy (frame 8's
-    // bytes), and releases the stand-in.
-    const int32_t standIn = KurtSpriteTestAccess::frame(sprite, kRun, 0).texture;
-    STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kRun, 0));
-    STREAM_CHECK(!KurtSpriteTestAccess::frame(sprite, kRun, 0).standIn);
+    // The next draw makes K_RUN_0 from memory (frame 8's bytes) and draws it.
+    STREAM_CHECK(KurtSpriteTestAccess::choose(&sprite, kRun, 0, &a, &f));
+    STREAM_CHECK(a == kRun && f == 0);
     STREAM_CHECK(textureOf(sprite, kRun, 0).compressed && textureOf(sprite, kRun, 0).firstByte == 8);
-    STREAM_CHECK(standIn >= 0 && g_backend.textures[(size_t)standIn].released);
-    STREAM_CHECK(sprite.streamStats().upgrades == 1);
     // K_RUN_1 is made from memory at once, no read.
     STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kRun, 1));
     STREAM_CHECK(textureOf(sprite, kRun, 1).compressed && textureOf(sprite, kRun, 1).firstByte == 9);
     STREAM_CHECK(g_backend.requests.size() == 1);
-    // K_RUN_2 (the bad entry) is the index texture, and not a stand-in.
-    STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kRun, 2));
+    // Not one index texture so far: the waits were holds.
+    STREAM_CHECK(indexTexturesMade() == 0);
+    // K_RUN_2 (the bad entry) has no compressed copy: the index texture is its
+    // permanent store, made now and drawn -- never held.
+    STREAM_CHECK(KurtSpriteTestAccess::choose(&sprite, kRun, 2, &a, &f));
+    STREAM_CHECK(a == kRun && f == 2);
     STREAM_CHECK(!textureOf(sprite, kRun, 2).compressed);
-    STREAM_CHECK(!KurtSpriteTestAccess::frame(sprite, kRun, 2).standIn);
+    STREAM_CHECK(indexTexturesMade() == 1);
+    STREAM_CHECK(sprite.streamStats().holds == 2);
 
-    // Now K_BANG's turn: the next draw asks.
-    STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kBang, 0));
+    // Now K_BANG's turn: the next draw asks, and holds K_RUN_2 meanwhile.
+    STREAM_CHECK(KurtSpriteTestAccess::choose(&sprite, kBang, 0, &a, &f));
+    STREAM_CHECK(a == kRun && f == 2);
     STREAM_CHECK(g_backend.requests.size() == 2);
     STREAM_CHECK(g_backend.requests[1].offset == pack.entries()[3].offset);
 
     // A RE-LOAD while it is in flight: the read is stale when it lands, dropped,
-    // and the new level's stream starts Idle.
+    // and the new level's stream starts Idle -- with nothing held.
     sprite.useCompressedPack(&pack, 3, "romfs:/kurt/kurt.pak", &report);
     land(bytes, Landing::Whole);
     sprite.pumpStream();
@@ -439,8 +519,95 @@ void testTheStream() {
     STREAM_CHECK(sprite.streamStats().reads == 1);
     STREAM_CHECK(sprite.takeStreamFailure() == nullptr);
     // And it can be asked for again.
-    STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kBang, 1));
+    STREAM_CHECK(!KurtSpriteTestAccess::choose(&sprite, kBang, 1, &a, &f));
     STREAM_CHECK(g_backend.requests.size() == 3);
+}
+
+// THE FITTED FRAME: a frame past 256x256 (K_CHUTEC_0, 347x295) is stored as a
+// 256x218 image. Its texture is made for the IMAGE's size, the frame keeps its
+// own, and the quad drawn is the frame's: 347 x 295 sprite pixels, uv 0..1 --
+// which the backend maps onto the image's rectangle (pica::compressedFrameRect,
+// pinned in pica_matrix_tests) -- so the chute is exactly as large on screen as
+// before. And the chute is in the start set: made at level load, never read.
+void testTheFittedFrame() {
+    resetBackend();
+    const PackFrame frames[] = {
+        {"K_STILL_0", 0, 40, 50, 140, 0, 0},
+        {"K_CHUTEC_0", 0, 60, 347, 295, 256, 218},
+        {"K_CHUTEC_1", 0, 61, 347, 295, 256, 218},
+        {"K_RUN_0", 0, 20, 61, 151, 0, 0},
+    };
+    const std::vector<uint8_t> bytes = buildPack(frames, 4, 3);
+    KurtPack pack;
+    STREAM_CHECK(KurtPack::parse(bytes.data(), bytes.size(), &pack) == KurtPack::Status::Ok);
+    KurtSprite sprite;
+    KurtSpriteTestAccess::setUp(&sprite);
+    KurtSpriteTestAccess::addAnimation(&sprite, "K_STILL", 1, 50, 140);
+    KurtSpriteTestAccess::addAnimation(&sprite, "K_CHUTEC", 2, 347, 295);
+    KurtSpriteTestAccess::addAnimation(&sprite, "K_RUN", 1, 61, 151);
+    // The HD pack is attached (the enhanced look's sprites): a frame made from
+    // its compressed copy must NOT ask it for a replacement.
+    mdk::ModImages mods;
+    sprite.setShading(mdk::Shading::Sprite);
+    sprite.setMods(&mods);
+    KurtSprite::CompressedReport report;
+    sprite.useCompressedPack(&pack, 7, "romfs:/kurt/kurt.pak", &report);
+    STREAM_CHECK(report.compressed == 4 && report.badFrames == 0);
+    const KurtSprite::Frame& chute = KurtSpriteTestAccess::frame(sprite, 1, 0);
+    STREAM_CHECK(chute.width == 347 && chute.height == 295);
+    STREAM_CHECK(chute.packWidth == 256 && chute.packHeight == 218);
+    STREAM_CHECK(KurtSpriteTestAccess::frame(sprite, 0, 0).packWidth == 50);
+
+    const KurtPack::Header& header = pack.header();
+    sprite.preloadStartSet(bytes.data() + header.dataOffset, header.dataOffset,
+                           header.startEnd - header.dataOffset, &report);
+    STREAM_CHECK(report.startFrames == 3 && report.preloaded == 3);
+    STREAM_CHECK(g_backend.requests.empty());
+    STREAM_CHECK(sprite.streamStats().hdSkipped == 3);
+    // Made for the image's size, not the frame's.
+    STREAM_CHECK(textureOf(sprite, 1, 0).compressed);
+    STREAM_CHECK(textureOf(sprite, 1, 0).width == 256 && textureOf(sprite, 1, 0).height == 218);
+    STREAM_CHECK(textureOf(sprite, 1, 1).width == 256 && textureOf(sprite, 1, 1).height == 218);
+    STREAM_CHECK(textureOf(sprite, 0, 0).width == 50 && textureOf(sprite, 0, 0).height == 140);
+    // The sway drawn: no read, no texture made, nothing held.
+    const size_t made = g_backend.textures.size();
+    int32_t a = -1;
+    int32_t f = -1;
+    for (int i = 0; i < 6; i++) {
+        STREAM_CHECK(KurtSpriteTestAccess::choose(&sprite, 1, i & 1, &a, &f));
+        STREAM_CHECK(a == 1 && f == (i & 1));
+    }
+    STREAM_CHECK(g_backend.textures.size() == made && g_backend.requests.empty());
+    STREAM_CHECK(sprite.streamStats().holds == 0);
+    // K_RUN_0 streamed in and made from memory: skipped too. An index texture
+    // (a refused import) is the one case the HD pack is still asked.
+    STREAM_CHECK(!KurtSpriteTestAccess::choose(&sprite, 2, 0, &a, &f) ||
+                 (a == 1 && f == 1));
+    land(bytes, Landing::Whole);
+    sprite.pumpStream();
+    STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, 2, 0));
+    STREAM_CHECK(textureOf(sprite, 2, 0).compressed);
+    STREAM_CHECK(sprite.streamStats().hdSkipped == 4);
+
+    // The quad: the frame's 347 x 295, uv spanning 0..1.
+    STREAM_CHECK(KurtSpriteTestAccess::drawFlat(&sprite, 1, 0));
+    STREAM_CHECK(!g_backend.mesh.empty());
+    float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f;
+    float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f;
+    for (size_t i = 0; i < g_backend.mesh.size(); i++) {
+        const mdk::Vertex& v = g_backend.mesh[i];
+        minX = v.pos.x < minX ? v.pos.x : minX;
+        maxX = v.pos.x > maxX ? v.pos.x : maxX;
+        minY = v.pos.y < minY ? v.pos.y : minY;
+        maxY = v.pos.y > maxY ? v.pos.y : maxY;
+        minU = v.uv.x < minU ? v.uv.x : minU;
+        maxU = v.uv.x > maxU ? v.uv.x : maxU;
+        minV = v.uv.y < minV ? v.uv.y : minV;
+        maxV = v.uv.y > maxV ? v.uv.y : maxV;
+    }
+    STREAM_CHECK(maxX - minX > 346.99f && maxX - minX < 347.01f);
+    STREAM_CHECK(maxY - minY > 294.99f && maxY - minY < 295.01f);
+    STREAM_CHECK(minU == 0.0f && maxU == 1.0f && minV == 0.0f && maxV == 1.0f);
 }
 
 // A FAILED OR SHORT READ: logged once, never asked again, the frames 16-bit.
@@ -455,7 +622,7 @@ void testTheFailures() {
         KurtSprite::CompressedReport report;
         sprite.useCompressedPack(&pack, 3, "romfs:/kurt/kurt.pak", &report);
 
-        STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kBang, 0));
+        STREAM_CHECK(KurtSpriteTestAccess::waiting(&sprite, kBang, 0));
         STREAM_CHECK(g_backend.requests.size() == 1);
         land(bytes, short_ ? Landing::Short : Landing::Failed);
         sprite.pumpStream();
@@ -465,16 +632,17 @@ void testTheFailures() {
         const char* note = sprite.takeStreamFailure();
         STREAM_CHECK(note != nullptr && strstr(note, "K_BANG") != nullptr);
         STREAM_CHECK(sprite.takeStreamFailure() == nullptr);   // once
-        // Drawn again, and again: no read, the index texture, not a stand-in.
+        // Drawn again, and again: no read, no hold -- the index texture, its
+        // permanent store (the 16-bit path is kept for exactly this).
         for (int i = 0; i < 3; i++) {
             STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kBang, 0));
             STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kBang, 1));
         }
         STREAM_CHECK(g_backend.requests.size() == 1);
-        STREAM_CHECK(!KurtSpriteTestAccess::frame(sprite, kBang, 0).standIn);
+        STREAM_CHECK(!textureOf(sprite, kBang, 0).compressed);
         STREAM_CHECK(!textureOf(sprite, kBang, 1).compressed);
-        // The others still stream.
-        STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kRun, 0));
+        // The others still stream (and wait, not stand in).
+        STREAM_CHECK(KurtSpriteTestAccess::waiting(&sprite, kRun, 0));
         STREAM_CHECK(g_backend.requests.size() == 2);
     }
 
@@ -488,7 +656,7 @@ void testTheFailures() {
     setUpSprite(&sprite);
     KurtSprite::CompressedReport report;
     sprite.useCompressedPack(&pack, 3, "romfs:/kurt/kurt.pak", &report);
-    STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kRun, 0));
+    STREAM_CHECK(KurtSpriteTestAccess::waiting(&sprite, kRun, 0));
     land(bytes, Landing::Whole);
     sprite.pumpStream();
     g_backend.refuseCompressed = true;
@@ -504,10 +672,10 @@ void testTheCacheBound() {
     resetBackend();
     const uint32_t big = 120 * 1024;
     const PackFrame frames[] = {
-        {"K_STILL_0", 0, 16, 50, 140},
-        {"K_BANG_0", 0, big, 58, 144},
-        {"K_LOOKD_0", 0, big, 287, 343},
-        {"K_RUN_0", 0, big, 61, 151},
+        {"K_STILL_0", 0, 16, 50, 140, 0, 0},
+        {"K_BANG_0", 0, big, 58, 144, 0, 0},
+        {"K_LOOKD_0", 0, big, 287, 343, 0, 0},
+        {"K_RUN_0", 0, big, 61, 151, 0, 0},
     };
     const std::vector<uint8_t> bytes = buildPack(frames, 4, 1);
     KurtPack pack;
@@ -523,7 +691,7 @@ void testTheCacheBound() {
 
     const int32_t order[] = {kBang, kRun, kLook};
     for (int i = 0; i < 3; i++) {
-        STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, order[i], 0));
+        STREAM_CHECK(KurtSpriteTestAccess::waiting(&sprite, order[i], 0));
         land(bytes, Landing::Whole);
         sprite.pumpStream();
     }
@@ -572,7 +740,7 @@ void testThePrefetch() {
     // Kurt runs: made from memory at once, no stand-in.
     STREAM_CHECK(KurtSpriteTestAccess::ensure(&sprite, kRun, 0));
     STREAM_CHECK(textureOf(sprite, kRun, 0).compressed);
-    STREAM_CHECK(sprite.streamStats().standIns == 0);
+    STREAM_CHECK(sprite.streamStats().holds == 0);
     land(bytes, Landing::Whole);
     sprite.pumpStream();
     // K_LOOKD is no state of the machine: never prefetched.
@@ -585,10 +753,10 @@ void testThePrefetch() {
     resetBackend();
     const uint32_t big = 120 * 1024;
     const PackFrame frames[] = {
-        {"K_STILL_0", 0, 16, 50, 140},
-        {"K_BANG_0", 0, big, 58, 144},
-        {"K_RUN_0", 0, big, 61, 151},
-        {"K_SIDE_0", 0, big, 62, 152},
+        {"K_STILL_0", 0, 16, 50, 140, 0, 0},
+        {"K_BANG_0", 0, big, 58, 144, 0, 0},
+        {"K_RUN_0", 0, big, 61, 151, 0, 0},
+        {"K_SIDE_0", 0, big, 62, 152, 0, 0},
     };
     const std::vector<uint8_t> large = buildPack(frames, 4, 1);
     KurtPack largePack;
@@ -626,6 +794,7 @@ int runKurtStreamTests() {
     failures = 0;
     testTheLevelLoad();
     testTheStream();
+    testTheFittedFrame();
     testTheFailures();
     testTheCacheBound();
     testThePrefetch();

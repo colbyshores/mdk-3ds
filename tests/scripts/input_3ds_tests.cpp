@@ -3,11 +3,10 @@
 //
 // WHAT IS PINNED HERE, and where each number came from:
 //
-//   1. THE DIGITAL MAP. One row per button. TRANSLITERATED from the C#
-//      `GamepadMap.Game` for the buttons a 3DS has an equivalent of, and from
-//      the scheme documented in `input_3ds.h` for the two places the hardware
-//      forces a difference (the D-pad walks, because there is no left stick;
-//      ZL joins L, because the sniper the C# trigger binds is not in this port).
+//   1. THE DIGITAL MAP. One row per button: the OWNER'S DEFAULTS of 2026-11-19
+//      (controls_3ds.h), and the controls.ini format they are written in and
+//      read back from -- the defaults, a round trip, bad and unknown lines,
+//      multi-button bindings, and every action false with its buttons up.
 //   2. THE LOOK'S EXACT BITS. Hand-derived float arithmetic, one operation at a
 //      time, with the rounding written out for the rows a reader is asked to
 //      believe. Each pinned pattern was then produced a second time by an
@@ -31,7 +30,10 @@
 
 #include <limits>
 
+#include "platform/controls_3ds.h"
 #include "platform/input_3ds.h"
+
+#include <string>
 
 using namespace mdk;
 
@@ -65,7 +67,7 @@ const float kStep = 1.0f / 60.0f;
 
 Input applied(const HidFrame& frame, float seconds) {
     Input input;
-    input3dsApply(frame, seconds, &input);
+    input3dsApply(frame, seconds, defaultControlBindings(), &input);
     return input;
 }
 
@@ -93,20 +95,20 @@ void testDigitalMap() {
         const char* what;
     };
     const Row rows[] = {
-        {kHidDUp, kKeyForward, "D-pad up walks forward"},
-        {kHidDDown, kKeyBack, "D-pad down walks back"},
-        {kHidDLeft, kKeyStrafeLeft, "D-pad left strafes left"},
-        {kHidDRight, kKeyStrafeRight, "D-pad right strafes right"},
-        {kHidA, kKeyJump, "A jumps (the C# pad's South)"},
-        {kHidB, kKeyTurbo, "B is turbo (the C# pad's East)"},
-        {kHidX, kKeyUseItem, "X uses the item (the C# pad's West)"},
-        {kHidY, kKeyItemNext, "Y is the next item (the C# pad's North)"},
-        {kHidR, kKeyFire, "R fires (the C# pad's right trigger)"},
-        {kHidZR, kKeyFire, "ZR fires too"},
-        {kHidL, kKeyItemPrevious, "L is the previous item (the C# pad's LB)"},
-        {kHidZL, kKeyItemPrevious, "ZL takes the shoulder's action; the sniper is not ported"},
-        {kHidStart, kKeyEscape, "Start is escape (the C# pad's Start)"},
-        {kHidSelect, -1, "Select binds nothing yet"},
+        {kHidX, kKeyForward, "X walks forward"},
+        {kHidB, kKeyBack, "B walks back"},
+        {kHidY, kKeyStrafeLeft, "Y strafes left"},
+        {kHidA, kKeyStrafeRight, "A strafes right"},
+        {kHidL, kKeyJump, "L jumps"},
+        {kHidR, kKeyFire, "R fires"},
+        {kHidZR, kKeyFire, "ZR fires too (New 3DS)"},
+        {kHidDLeft, kKeyItemPrevious, "D-pad left is the previous item"},
+        {kHidDRight, kKeyItemNext, "D-pad right is the next item"},
+        {kHidDUp, kKeySniper, "D-pad up is the sniper (bound, not implemented)"},
+        {kHidDDown, kKeyUseItem, "D-pad down uses the item"},
+        {kHidZL, kKeyTurbo, "ZL is turbo (New 3DS; unassigned by the owner)"},
+        {kHidStart, -1, "Start is the frontend's pause menu, no game action"},
+        {kHidSelect, -1, "Select is the frontend's effects menu, no game action"},
     };
 
     for (const Row& row : rows) {
@@ -129,6 +131,7 @@ void testDigitalMap() {
                               kStep);
     expect("every button at once still leaves the turn axes alone", (int)all.down[kKeyTurnLeft], 0);
     expect("and the right turn axis", (int)all.down[kKeyTurnRight], 0);
+    expect("and Escape is no button's on this target", (int)all.down[kKeyEscape], 0);
     expect("forward and back can both be held, as on a keyboard",
            (int)(all.down[kKeyForward] && all.down[kKeyBack]), 1);
     expect("and the axis is then zero, as the C#'s Kurt.Axis", (int)(all.axis(kKeyForward, kKeyBack) == 0.0f), 1);
@@ -268,17 +271,163 @@ void testLookProperties() {
 // ---------------------------------------------------------------------------
 void testTheMouseIsDrainedByTheGame() {
     Input input;
-    input3dsApply(stick(155, 0), kStep, &input);
+    input3dsApply(stick(155, 0), kStep, defaultControlBindings(), &input);
     const float first = input.mouseX;
     expect("one frame accumulates", first > 0.0f, 1);
 
-    input3dsApply(stick(155, 0), kStep, &input);
+    input3dsApply(stick(155, 0), kStep, defaultControlBindings(), &input);
     expectBits("two frames accumulate", input.mouseX, bitsOf(first + first));
 
     expectBits("and taking it hands over exactly what was there", input.takeMouseX(),
                bitsOf(first + first));
     expectBits("leaving nothing for the next frame", input.takeMouseX(), 0x00000000);
     expectBits("the pitch is taken separately", input.takeMouseY(), 0x00000000);
+}
+
+// ---------------------------------------------------------------------------
+// 5. The controls file (sdmc:/3ds/mdk/controls.ini; controls_3ds.h).
+// ---------------------------------------------------------------------------
+void expectText(const char* what, const std::string& got, const char* want) {
+    if (got != want) {
+        printf("  FAIL: %s was \"%s\", expected \"%s\"\n", what, got.c_str(), want);
+        failures++;
+    }
+}
+
+// The owner's list, row by row, independently of defaultControlBindings' body.
+void testTheDefaults() {
+    const ControlBindings d = defaultControlBindings();
+    expect("forward = X", d.buttons[kKeyForward], kHidX);
+    expect("back = B", d.buttons[kKeyBack], kHidB);
+    expect("strafe left = Y", d.buttons[kKeyStrafeLeft], kHidY);
+    expect("strafe right = A", d.buttons[kKeyStrafeRight], kHidA);
+    expect("jump = L", d.buttons[kKeyJump], kHidL);
+    expect("fire = R + ZR", d.buttons[kKeyFire], kHidR | kHidZR);
+    expect("item previous = D-pad left", d.buttons[kKeyItemPrevious], kHidDLeft);
+    expect("item next = D-pad right", d.buttons[kKeyItemNext], kHidDRight);
+    expect("sniper = D-pad up", d.buttons[kKeySniper], kHidDUp);
+    expect("use item = D-pad down", d.buttons[kKeyUseItem], kHidDDown);
+    expect("turbo = ZL", d.buttons[kKeyTurbo], kHidZL);
+    expect("the turn axes have no buttons", d.buttons[kKeyTurnLeft] | d.buttons[kKeyTurnRight], 0);
+    expect("escape has none (START is the pause menu)", d.buttons[kKeyEscape], 0);
+    // No default uses START or SELECT: those are the frontend's menus.
+    uint32_t all = 0;
+    for (int key = 0; key < kKeyCount; key++) {
+        all |= d.buttons[key];
+    }
+    expect("no default binds START or SELECT", all & (kHidStart | kHidSelect), 0);
+    expectText("the boot log's line", describeControls(d),
+               "forward=X back=B strafe_left=Y strafe_right=A jump=L fire=R+ZR "
+               "item_previous=DLEFT item_next=DRIGHT sniper=DUP use_item=DDOWN turbo=ZL");
+}
+
+// The default file, written and read back, is the defaults; a file of only
+// comments is the defaults; an edited table survives its own round trip.
+void testTheRoundTrip() {
+    const ControlBindings d = defaultControlBindings();
+    const std::string text = writeControls(d);
+    ControlBindings parsed;   // all unbound: every bit must come from the text
+    ControlsReport report;
+    parseControls(text.data(), text.size(), &parsed, &report);
+    for (int key = 0; key < kKeyCount; key++) {
+        if (parsed.buttons[key] != d.buttons[key]) {
+            printf("  FAIL: round trip of action %d: %08X, wrote %08X\n", key,
+                   (unsigned)parsed.buttons[key], (unsigned)d.buttons[key]);
+            failures++;
+        }
+    }
+    expect("eleven action lines taken", report.applied, 11);
+    expect("none bad", report.bad, 0);
+    expect("none unknown", report.unknown, 0);
+    expect("every line a line: the text ends with a newline", text.empty() ? 0 : text.back(), '\n');
+
+    ControlBindings edited = d;
+    edited.buttons[kKeyJump] = kHidL | kHidA | kHidStart;
+    edited.buttons[kKeySniper] = 0;
+    const std::string editedText = writeControls(edited);
+    ControlBindings back = defaultControlBindings();
+    parseControls(editedText.data(), editedText.size(), &back, nullptr);
+    expect("a three-button jump survives", back.buttons[kKeyJump], kHidL | kHidA | kHidStart);
+    expect("an unbound sniper survives as none", back.buttons[kKeySniper], 0);
+    expect("and the file spells it none", editedText.find("sniper=none\n") != std::string::npos, 1);
+    expect("and the jump in the fixed order", editedText.find("jump=A+L+START\n") != std::string::npos, 1);
+}
+
+// A bad value keeps that action's default; an unknown key is ignored; both are
+// counted and the first is named; any case and spaces are accepted.
+void testBadAndUnknownLines() {
+    const char text[] =
+        "# a comment\n"
+        "; another\n"
+        "\n"
+        "  Fire = r + zr  \r\n"
+        "jump=Q\n"
+        "forward=\n"
+        "back=B+\n"
+        "strafe_left=Y+DUP\n"
+        "crouch=A\n"
+        "no equals sign here\n"
+        "use_item=none";
+    ControlBindings b = defaultControlBindings();
+    b.buttons[kKeyFire] = 0;   // so the line has to set it
+    ControlsReport report;
+    parseControls(text, sizeof(text) - 1, &b, &report);
+    expect("fire parsed in any case, with spaces and a CR", b.buttons[kKeyFire], kHidR | kHidZR);
+    expect("a button that does not exist keeps jump's default", b.buttons[kKeyJump], kHidL);
+    expect("an empty value keeps forward's default", b.buttons[kKeyForward], kHidX);
+    expect("a dangling + keeps back's default", b.buttons[kKeyBack], kHidB);
+    expect("a two-button strafe", b.buttons[kKeyStrafeLeft], kHidY | kHidDUp);
+    expect("none unbinds, on the last line with no newline", b.buttons[kKeyUseItem], 0);
+    expect("three lines taken", report.applied, 3);
+    expect("three bad", report.bad, 3);
+    expect("two unknown (crouch, and a line with no '=')", report.unknown, 2);
+    expectText("the first problem is named", report.firstProblem, "line 5: jump=Q");
+    expect("an untouched action keeps its default", b.buttons[kKeyTurbo], kHidZL);
+    // The button names one by one.
+    expect("ZL", controlButtonBit("zl", 2), kHidZL);
+    expect("DRIGHT", controlButtonBit("DRight", 6), kHidDRight);
+    expect("SELECT", controlButtonBit("SELECT", 6), kHidSelect);
+    expect("not a button", controlButtonBit("ZZ", 2), 0);
+    expectText("none for an empty mask", formatControlButtons(0), "none");
+}
+
+// Through the mapping: a multi-button action is held by ANY of its buttons, and
+// with its buttons up every action reads false -- for every action, under the
+// defaults and under a table that binds every button somewhere.
+void testTheBindingsThroughTheMapping() {
+    ControlBindings b = defaultControlBindings();
+    b.buttons[kKeyJump] = kHidL | kHidA;
+    Input input;
+    input3dsApply(buttons(kHidA), kStep, b, &input);
+    expect("A alone holds the two-button jump", (int)input.down[kKeyJump], 1);
+    expect("and the strafe A also binds", (int)input.down[kKeyStrafeRight], 1);
+    input3dsApply(buttons(kHidL), kStep, b, &input);
+    expect("L alone holds it too", (int)input.down[kKeyJump], 1);
+    expect("and A's strafe is released", (int)input.down[kKeyStrafeRight], 0);
+
+    const uint32_t everyButton = kHidA | kHidB | kHidX | kHidY | kHidL | kHidR | kHidZL | kHidZR |
+                                 kHidStart | kHidSelect | kHidDUp | kHidDDown | kHidDLeft |
+                                 kHidDRight;
+    const ControlBindings tables[2] = {defaultControlBindings(), b};
+    for (int t = 0; t < 2; t++) {
+        for (int key = 0; key < kKeyCount; key++) {
+            // Every button EXCEPT this action's own held: it must read false.
+            Input held;
+            input3dsApply(buttons(everyButton & ~tables[t].buttons[key]), kStep, tables[t], &held);
+            if (held.down[key]) {
+                printf("  FAIL: table %d action %d reads held with its buttons up\n", t, key);
+                failures++;
+            }
+            // And with nothing held at all.
+            Input none;
+            none.down[key] = true;   // a stale latch must be cleared
+            input3dsApply(buttons(0), kStep, tables[t], &none);
+            if (none.down[key]) {
+                printf("  FAIL: table %d action %d survives an empty mask\n", t, key);
+                failures++;
+            }
+        }
+    }
 }
 
 } // namespace
@@ -289,6 +438,10 @@ namespace test {
 int runInput3dsTests() {
     failures = 0;
     testDigitalMap();
+    testTheDefaults();
+    testTheRoundTrip();
+    testBadAndUnknownLines();
+    testTheBindingsThroughTheMapping();
     testLookBits();
     testLookProperties();
     testTheMouseIsDrainedByTheGame();

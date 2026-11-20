@@ -24,7 +24,7 @@
 // so a bumped console or a stray pad cannot steer the walk.
 //
 // The action names (lower case): forward, back, strafeleft, straferight,
-// turnleft, turnright, jump, turbo, fire, useitem, itemnext, itemprevious.
+// turnleft, turnright, jump, turbo, fire, useitem, itemnext, itemprevious, sniper (bound, read by nothing yet).
 // Escape is not walkable: the frontends read the quit chord elsewhere.
 //
 // Cold code: parsed once at boot. walkKeysAt is a per-frame scan of at most

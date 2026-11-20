@@ -1391,6 +1391,27 @@ void testTheCompressedKurtFrame() {
     const mdk::pica::CompressedRect none = mdk::pica::compressedFrameRect(0, 10, 64, 256);
     PICA_CHECK(none.right == 1.0f && none.bottom == 0.0f);
 
+    // A FITTED FRAME (the chute's: kurt_etc1_convert.py fits a frame past 256x256
+    // into 256x256). K_CHUTEC_11 is 347x295; its image is 256 x 218 (the long
+    // side 256, 295*256/347 = 217.6 rounded) in a 256x256 texture. The rectangle
+    // is the IMAGE's -- and the quad KurtSprite draws is still the frame's 347 x
+    // 295 sprite pixels with uv 0..1 (kurt_stream_tests' fitted frame), so the
+    // uv transform uv' = uv * (right - left, bottom - top) + (left, top) takes the
+    // frame's corners onto the image's: Kurt and the chute are exactly as large
+    // on screen as before, sampled from fewer texels.
+    const mdk::pica::CompressedRect fitted = mdk::pica::compressedFrameRect(256, 218, 256, 256);
+    PICA_CHECK(fitted.left == 0.0f && fitted.top == 1.0f && fitted.right == 1.0f);
+    PICA_CHECK(fitted.bottom == 1.0f - 218.0f / 256.0f);
+    // The frame's bottom-right corner (uv 1,1) lands on the image's bottom-right
+    // texel edge: s = 256/256, t = 1 - 218/256; its top-left (0,0) on s 0, t 1.
+    const float s1 = 1.0f * (fitted.right - fitted.left) + fitted.left;
+    const float t1 = 1.0f * (fitted.bottom - fitted.top) + fitted.top;
+    PICA_CHECK(s1 == 1.0f);
+    PICA_CHECK(t1 > 1.0f - 218.0f / 256.0f - 1e-6f && t1 < 1.0f - 218.0f / 256.0f + 1e-6f);
+    // ... and it costs a quarter of the 512x512 pad it replaces.
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 256, 218, 0) == 65536u);
+    PICA_CHECK(mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 347, 295, 0) == 262144u);
+
     // ONE FRAME, PER STORE. K_IDLE_0 (52x146 -> 64x256): RGBA8 64 KiB (texture16=0),
     // RGBA5551 32 KiB (texture16=1), ETC1A4 16 KiB (kurtCompressed=1, no chain:
     // the converter's default) -- one byte a texel, a quarter of the expansion.

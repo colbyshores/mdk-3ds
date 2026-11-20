@@ -16,9 +16,10 @@ namespace {
 const char* const kKeyNames[kKeyCount] = {
     "forward",  "back",  "strafeleft", "straferight", "turnleft",  "turnright",
     "jump",     "turbo", "fire",       "useitem",     "itemnext",  "itemprevious",
-    nullptr,
+    nullptr,    "sniper",
 };
-static_assert(kKeyEscape == kKeyCount - 1, "kKeyNames ends with Escape's null slot");
+static_assert(kKeyEscape == kKeyItemPrevious + 1, "kKeyNames has Escape's null slot after itemprevious");
+static_assert(kKeySniper == kKeyCount - 1, "kKeyNames ends with sniper");
 
 void say(char* error, size_t errorSize, const char* format, int32_t segment, const char* text,
          size_t length, const char* detail) {

@@ -71,6 +71,7 @@
 #include "game/arena_views.h"
 #include "game/enhanced_config.h"
 #include "game/enhanced_menu.h"
+#include "platform/controls_3ds.h"
 #include "game/font_view.h"
 #include "game/follow_camera.h"
 #include "game/game_flow.h"
@@ -504,6 +505,46 @@ int main(int argc, char** argv) {
             }
         }
     }
+    // THE CONTROLS (owner, 2026-11-19): sdmc:/3ds/mdk/controls.ini, one line
+    // per action (platform/controls_3ds.h has the format and the defaults).
+    // Cold, once, here: a missing file is the defaults and is written out once
+    // so the owner can edit it; a bad line keeps that action's default and an
+    // unknown key is ignored, both logged; the resolved table is one line.
+    static mdk::ControlBindings controls = mdk::defaultControlBindings();
+    {
+        static char controlsText[4096];
+        size_t got = 0;
+        bool read = false;
+        if (FILE* file = fopen("sdmc:/3ds/mdk/controls.ini", "rb")) {
+            got = fread(controlsText, 1, sizeof(controlsText) - 1, file);
+            controlsText[got] = '\0';
+            fclose(file);
+            read = true;
+        }
+        if (read) {
+            mdk::ControlsReport report;
+            mdk::parseControls(controlsText, got, &controls, &report);
+            mdk::log3dsPrintf("controls: sdmc:/3ds/mdk/controls.ini loaded: %d actions set, %d "
+                              "bad (default kept), %d unknown (ignored)%s%s",
+                              (int)report.applied, (int)report.bad, (int)report.unknown,
+                              report.firstProblem[0] ? "; first: " : "", report.firstProblem);
+        } else {
+            const std::string text = mdk::writeControls(controls);
+            bool written = false;
+            if (FILE* file = fopen("sdmc:/3ds/mdk/controls.ini", "wb")) {
+                written = fwrite(text.c_str(), 1, text.size(), file) == text.size();
+                written = fclose(file) == 0 && written;
+            }
+            mdk::log3dsPrintf(written ? "controls: wrote default sdmc:/3ds/mdk/controls.ini"
+                                      : "controls: could not write sdmc:/3ds/mdk/controls.ini; "
+                                        "defaults in use");
+        }
+        mdk::log3dsPrintf("controls: %s", mdk::describeControls(controls).c_str());
+        if (controls.buttons[mdk::kKeySniper] != 0) {
+            mdk::log3dsPrintf("controls: sniper is bound but not implemented (the sniper view "
+                              "is cut); its button does nothing yet");
+        }
+    }
 
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_TOGGLES)
     // THE HARNESS'S CONFIG OVERRIDE (`make AUTOQUIT=.. TOGGLES='k=v;k=v'`), applied
@@ -929,7 +970,7 @@ int main(int argc, char** argv) {
                         if (palette >= 0 && menuBig.load(renderer, *bigFont, palette, sysPalette.rgba()) &&
                             menuSmall.load(renderer, *smallFont, palette, sysPalette.rgba())) {
                             menuReady = true;
-                            mdk::log3dsPrintf("menu: video/graphics ready (SELECT)");
+                            mdk::log3dsPrintf("menu: pause menu ready (START or SELECT)");
                         } else {
                             mdk::log3dsPrintf("menu: font atlases did not upload -- no menu");
                         }
@@ -1442,6 +1483,17 @@ int main(int argc, char** argv) {
     const bool walkReady = mdk::harnessWalkInit();
 #endif
     mdk::log3dsPrintf("loop: entering main loop");
+    // THE PAUSE MENU'S FALLBACK. Without the menu's fonts there is no menu to
+    // open, and so no Quit row: holding START and SELECT together is then the
+    // way out (one press of either alone does nothing), and the log says so.
+    if (!menuReady) {
+        mdk::log3dsPrintf("menu: no pause menu (its fonts did not load); hold START+SELECT "
+                          "together to quit");
+    }
+    // The hint, for the first seconds of the level: the owner did not know the
+    // effects menu existed. Drawn with the menu's own small font on the canvas,
+    // only while the menu is ready and closed.
+    const double hintUntil = nowSeconds() + 5.0;
     while (aptMainLoop()) {
         // The harness deadline (harness builds only; a no-op question in
         // any other build): quit through the ordinary teardown so the
@@ -1547,7 +1599,7 @@ int main(int argc, char** argv) {
         // on frames that fit a step -- so nothing accumulates across a frame that
         // runs zero steps.
         mdk::Input input;
-        const u32 held = mdk::input3dsPoll(&input, elapsed);
+        const u32 held = mdk::input3dsPoll(&input, elapsed, controls);
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
         // The scripted walk owns the actions, after the poll and before the game
         // reads them (harness_3ds.h). A refused script stops the run at once.
@@ -1562,17 +1614,21 @@ int main(int argc, char** argv) {
         const u32 pressed = held & ~prevHeld;
         prevHeld = held;
 
-        // The Video/Graphics settings menu (SPEC.md 7.9). SELECT is
-        // unbound in the game, so it opens and closes the menu; while
-        // the menu is open the simulation below is paused and the
-        // frame's edges drive the menu instead. A flip applies at once
-        // (mdk_render_set_enhanced_toggles) and is written back to
-        // config.ini in the same frame, so a hardware A/B is one
-        // button press. START remains the way out of the build.
+        // THE PAUSE MENU (owner, 2026-11-19; SPEC.md 7.9's Video/Graphics
+        // settings are its rows). START opens it -- it used to quit the game
+        // on one press -- and SELECT opens the same menu. It opens on RESUME;
+        // while it is open the simulation below is paused and the frame's
+        // edges drive the menu instead: the D-pad moves (and wraps), A flips a
+        // toggle or takes RESUME / QUIT, and START, B or SELECT close it. A
+        // flip applies at once (mdk_render_set_enhanced_toggles) and is written
+        // back to config.ini in the same frame, so a hardware A/B is one press.
+        // QUIT is a row, confirmed with A: never a single press.
+        bool menuQuit = false;
         if (menuReady) {
-            if (!menu.open() && (pressed & KEY_SELECT)) {
+            if (!menu.open() && (pressed & (KEY_START | KEY_SELECT))) {
                 menu.setOpen(true);
-                mdk::log3dsPrintf("menu: video/graphics opened");
+                mdk::log3dsPrintf("menu: paused (%s)",
+                                  (pressed & KEY_START) ? "START" : "SELECT");
             } else if (menu.open()) {
                 mdk::EnhancedMenu::Input edges;
                 edges.up = (pressed & KEY_DUP) != 0;
@@ -1580,8 +1636,9 @@ int main(int argc, char** argv) {
                 edges.left = (pressed & KEY_DLEFT) != 0;
                 edges.right = (pressed & KEY_DRIGHT) != 0;
                 edges.confirm = (pressed & KEY_A) != 0;
-                edges.close = (pressed & KEY_SELECT) != 0;
-                if (menu.handle(edges, &enhancedToggles)) {
+                edges.close = (pressed & (KEY_START | KEY_B | KEY_SELECT)) != 0;
+                const mdk::EnhancedMenu::Action action = menu.handle(edges, &enhancedToggles);
+                if (action == mdk::EnhancedMenu::Action::Toggled) {
                     mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
                     const bool saved = saveEnhancedConfig(enhancedToggles);
                     mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
@@ -1597,9 +1654,12 @@ int main(int argc, char** argv) {
                                       (int)enhancedToggles.enableHdTextures,
                                       (int)enhancedToggles.enableLighting,
                                       (int)enhancedToggles.enableEdgeSmoothing, (int)saved);
+                } else if (action == mdk::EnhancedMenu::Action::Quit) {
+                    menuQuit = true;
+                    mdk::log3dsPrintf("menu: QUIT chosen");
                 }
                 if (!menu.open()) {
-                    mdk::log3dsPrintf("menu: closed");
+                    mdk::log3dsPrintf("menu: closed (resumed)");
                 }
             }
             if (menu.open()) {
@@ -1610,21 +1670,24 @@ int main(int argc, char** argv) {
             }
         }
 
-        // The flow's events. START is the C# pad's Escape, and Escape opens
-        // the (cut) main menu in the C#: the honest answer here is to stop,
-        // and the flow says so (Quit -> Screen::None) rather than the
-        // frontend deciding on its own. SELECT was the second quit chord
-        // while there was no menu; with the settings menu ready it opens
-        // that instead (above), and this chord only remains when the
-        // menu's fonts did not load.
+        // The flow's events. QUIT is the C# pad's Escape answer here: the
+        // menu that Escape opens in the C# is cut, so the honest end is to
+        // stop, and the flow says so (Quit -> Screen::None) rather than the
+        // frontend deciding on its own. It comes from the pause menu's QUIT
+        // row -- or, only when the menu's fonts did not load, from START and
+        // SELECT held together.
         mdk::flow::Event next = mdk::flow::Event::None;
-        if ((held & KEY_START) || (!menuReady && (held & KEY_SELECT))) {
+        const char* quitReason = "menu Quit";
+        if (menuQuit) {
             next = mdk::flow::Event::Quit;
+        } else if (!menuReady && (held & KEY_START) && (held & KEY_SELECT)) {
+            next = mdk::flow::Event::Quit;
+            quitReason = "START+SELECT held (no pause menu)";
         }
         if (next != mdk::flow::Event::None) {
             screen = flow.handle(next);
             if (screen == mdk::flow::Screen::None) {
-                exitReason = (held & KEY_SELECT) ? "SELECT pressed" : "START pressed";
+                exitReason = quitReason;
                 break;
             }
             mdk::log3dsPrintf("flow: screen=%d", (int)screen);
@@ -2286,7 +2349,8 @@ int main(int argc, char** argv) {
             // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it).
             runtime->eye = camera.position;
         }
-        if (hudReady || menu.open()) {
+        const bool showHint = menuReady && !menu.open() && now < hintUntil;
+        if (hudReady || menu.open() || showHint) {
             // The HUD is the last thing drawn before the frame ends, which is the
             // C#'s order (Viewer.DrawScene: the canvas is the Overlay pass, and
             // the queue draws Overlay after every other pass). The canvas seams
@@ -2316,6 +2380,13 @@ int main(int argc, char** argv) {
             if (menu.open()) {
                 menu.draw(renderer, menuBig, menuSmall, mdk_render_canvas_width(renderer),
                           enhancedToggles);
+            }
+            if (showHint) {
+                const char* hint = "START: PAUSE / EFFECTS";
+                const float hintX = (mdk_render_canvas_width(renderer) -
+                                     (float)menuSmall.width(hint) * 1.5f) * 0.5f;
+                menuSmall.draw(renderer, hint, hintX, 24.0f, 1.5f,
+                               mdk::Colour{1.0f, 0.85f, 0.4f, 1.0f});
             }
             mdk_render_canvas_end(renderer);
         }
@@ -2369,11 +2440,15 @@ int main(int argc, char** argv) {
             // 20.000002f (0x41A00001) and 20.0f both print 20.0000, and a 1-ULP
             // VFP-vs-SSE divergence would hide behind that (review-7 F2).
             mdk::HidFrame probe;
-            probe.held = mdk::kHidDUp | mdk::kHidR;
+            // Forward and fire through the RESOLVED bindings (controls.ini may
+            // have moved them): their first buttons, held together.
+            probe.held = (controls.buttons[mdk::kKeyForward] &
+                          (0u - controls.buttons[mdk::kKeyForward])) |
+                         (controls.buttons[mdk::kKeyFire] & (0u - controls.buttons[mdk::kKeyFire]));
             probe.padX = 155;
             probe.padY = 0;
             mdk::Input selftest;
-            mdk::input3dsApply(probe, 1.0f / 60.0f, &selftest);
+            mdk::input3dsApply(probe, 1.0f / 60.0f, controls, &selftest);
             uint32_t lookBits = 0;
             memcpy(&lookBits, &selftest.mouseX, sizeof(lookBits));
             uint32_t pitchBits = 0;
@@ -2484,11 +2559,16 @@ int main(int argc, char** argv) {
     if (kurtSpriteReady) {
         // The pack stream's record for the run, once, at exit (never inside play).
         const mdk::KurtSprite::StreamStats& stream = kurtSprite.streamStats();
-        mdk::log3dsPrintf("sprites: stream: %d animations read (%d bytes), %d failed; %d frames "
-                          "stood in 16-bit, %d upgraded, %d refused; %u bytes staged, peak %u "
-                          "of %u, %d dropped",
+        // `held`: draws that showed Kurt's previous frame while the wanted one's
+        // bytes were in flight (never a 16-bit stand-in made inside the frame);
+        // `unheld`: draws with nothing to hold, Kurt not drawn; `HD lookups
+        // skipped`: compressed frames the HD pack was not asked for.
+        mdk::log3dsPrintf("sprites: stream: %d animations read (%d bytes), %d failed; %d draws "
+                          "held, %d unheld, %d refused, %d HD lookups skipped; %u bytes staged, "
+                          "peak %u of %u, %d dropped",
                           (int)stream.reads, (int)stream.bytesRead, (int)stream.failures,
-                          (int)stream.standIns, (int)stream.upgrades, (int)stream.importFailures,
+                          (int)stream.holds, (int)stream.holdMisses, (int)stream.importFailures,
+                          (int)stream.hdSkipped,
                           (unsigned)stream.staged, (unsigned)stream.stagedPeak,
                           (unsigned)mdk::KurtSprite::kStagedCacheBytes, (int)stream.dropped);
     }

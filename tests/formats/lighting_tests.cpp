@@ -425,69 +425,120 @@ MDK_TEST(FontParseMatchesTheOracle) {
 }
 
 MDK_TEST(EnhancedMenuTogglesInPlace) {
+    using Action = mdk::EnhancedMenu::Action;
     mdk::EnhancedMenu menu;
     mdk::EnhancedToggles toggles;
     mdk::EnhancedMenu::Input none;
     // Closed: edges do nothing.
     mdk::EnhancedMenu::Input down;
     down.down = true;
-    MDK_CHECK(!menu.handle(down, &toggles));
+    MDK_CHECK(menu.handle(down, &toggles) == Action::None);
     MDK_CHECK(!menu.open());
+    // It opens on RESUME (row 0); the toggles are rows 1..10, QUIT row 11.
     menu.setOpen(true);
-    // Navigation clamps at both ends.
-    MDK_CHECK(!menu.handle(down, &toggles));
+    MDK_CHECK_EQ(menu.selected(), mdk::EnhancedMenu::kResumeRow);
+    MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(0), "RESUME");
+    MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(1), "SKY SHADOWS");
+    MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(10), "EDGE SMOOTHING");
+    MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kQuitRow), "QUIT");
+    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 12);
+    // Left/right on RESUME flip nothing.
+    mdk::EnhancedMenu::Input left;
+    left.left = true;
+    MDK_CHECK(menu.handle(left, &toggles) == Action::None);
+    MDK_CHECK(menu.handle(down, &toggles) == Action::None);
     MDK_CHECK_EQ(menu.selected(), 1);
     mdk::EnhancedMenu::Input up;
     up.up = true;
     menu.handle(up, &toggles);
-    menu.handle(up, &toggles);
     MDK_CHECK_EQ(menu.selected(), 0);
+    // Up from RESUME wraps to QUIT, and down from QUIT back to RESUME.
+    menu.handle(up, &toggles);
+    MDK_CHECK_EQ(menu.selected(), mdk::EnhancedMenu::kQuitRow);
+    menu.handle(down, &toggles);
+    MDK_CHECK_EQ(menu.selected(), 0);
+    menu.handle(down, &toggles);
     // Confirm flips the selected toggle only, and reports the change.
     mdk::EnhancedMenu::Input confirm;
     confirm.confirm = true;
-    MDK_CHECK(menu.handle(confirm, &toggles));
+    MDK_CHECK(menu.handle(confirm, &toggles) == Action::Toggled);
     MDK_CHECK(!toggles.enableSkyShadows);
     MDK_CHECK(toggles.enableFragmentLights && toggles.enableHaze && toggles.enableMirrors &&
               toggles.enableGlowBillboards);
-    // Left/right flip too; the last row is EDGE SMOOTHING, then LIGHTING, HD
-    // TEXTURES, MIPMAPS, FILTERING, GLOW.
-    for (int32_t i = 0; i < 12; i++) {
+    MDK_CHECK(menu.open());
+    // Left/right flip too; the last toggle is EDGE SMOOTHING (row 10), then
+    // LIGHTING, HD TEXTURES, MIPMAPS, FILTERING, GLOW.
+    for (int32_t i = 0; i < 9; i++) {
         menu.handle(down, &toggles);
     }
-    MDK_CHECK_EQ(menu.selected(), 9);
-    mdk::EnhancedMenu::Input left;
-    left.left = true;
-    MDK_CHECK(menu.handle(left, &toggles));
+    MDK_CHECK_EQ(menu.selected(), 10);
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
     MDK_CHECK(!toggles.enableEdgeSmoothing);
     MDK_CHECK(toggles.enableLighting);
     menu.handle(up, &toggles);
-    MDK_CHECK_EQ(menu.selected(), 8);
-    MDK_CHECK(menu.handle(left, &toggles));
+    MDK_CHECK_EQ(menu.selected(), 9);
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
     MDK_CHECK(!toggles.enableLighting);
     MDK_CHECK(toggles.enableHdTextures);
     menu.handle(up, &toggles);
-    MDK_CHECK_EQ(menu.selected(), 7);
-    MDK_CHECK(menu.handle(left, &toggles));
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
     MDK_CHECK(!toggles.enableHdTextures);
     MDK_CHECK(toggles.enableMipmaps);
     menu.handle(up, &toggles);
-    MDK_CHECK_EQ(menu.selected(), 6);
-    MDK_CHECK(menu.handle(left, &toggles));
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
     MDK_CHECK(!toggles.enableMipmaps);
     MDK_CHECK(toggles.enableFiltering);
     menu.handle(up, &toggles);
-    MDK_CHECK_EQ(menu.selected(), 5);
-    MDK_CHECK(menu.handle(left, &toggles));
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
     MDK_CHECK(!toggles.enableFiltering);
     MDK_CHECK(toggles.enableGlowBillboards);
     menu.handle(up, &toggles);
-    MDK_CHECK_EQ(menu.selected(), 4);
-    MDK_CHECK(menu.handle(left, &toggles));
+    MDK_CHECK_EQ(menu.selected(), 5);
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
     MDK_CHECK(!toggles.enableGlowBillboards);
-    // Close leaves the toggles alone.
+    // Close (START, B or SELECT) leaves the toggles alone and resumes.
     mdk::EnhancedMenu::Input close;
     close.close = true;
-    MDK_CHECK(!menu.handle(close, &toggles));
+    MDK_CHECK(menu.handle(close, &toggles) == Action::Closed);
     MDK_CHECK(!menu.open());
-    MDK_CHECK(!menu.handle(none, &toggles));
+    MDK_CHECK(menu.handle(none, &toggles) == Action::None);
+    // Reopened, it is back on RESUME: A there resumes, it does not quit.
+    menu.setOpen(true);
+    MDK_CHECK_EQ(menu.selected(), 0);
+    MDK_CHECK(menu.handle(confirm, &toggles) == Action::Closed);
+    MDK_CHECK(!menu.open());
+}
+
+// QUIT is a row confirmed with A, never a single press: opening the menu and
+// pressing A resumes; only up (wrapping to QUIT) and then A quits.
+MDK_TEST(PauseMenuQuitNeedsTheRowAndA) {
+    using Action = mdk::EnhancedMenu::Action;
+    mdk::EnhancedMenu menu;
+    mdk::EnhancedToggles toggles;
+    const mdk::EnhancedToggles before = toggles;
+    mdk::EnhancedMenu::Input confirm;
+    confirm.confirm = true;
+    mdk::EnhancedMenu::Input up;
+    up.up = true;
+    // A closed menu never quits.
+    MDK_CHECK(menu.handle(confirm, &toggles) == Action::None);
+    menu.setOpen(true);
+    MDK_CHECK(menu.handle(up, &toggles) == Action::None);
+    MDK_CHECK_EQ(menu.selected(), mdk::EnhancedMenu::kQuitRow);
+    // Left/right on QUIT do nothing.
+    mdk::EnhancedMenu::Input right;
+    right.right = true;
+    MDK_CHECK(menu.handle(right, &toggles) == Action::None);
+    MDK_CHECK(menu.handle(confirm, &toggles) == Action::Quit);
+    // The caller is leaving: the menu stays drawn, and no toggle moved.
+    MDK_CHECK(menu.open());
+    MDK_CHECK(toggles.enableSkyShadows == before.enableSkyShadows &&
+              toggles.enableEdgeSmoothing == before.enableEdgeSmoothing &&
+              toggles.enableHaze == before.enableHaze);
+    // A close edge in the same frame as A wins: it resumes.
+    mdk::EnhancedMenu::Input both;
+    both.confirm = true;
+    both.close = true;
+    MDK_CHECK(menu.handle(both, &toggles) == Action::Closed);
+    MDK_CHECK(!menu.open());
 }

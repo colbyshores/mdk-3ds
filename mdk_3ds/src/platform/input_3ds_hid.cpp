@@ -49,7 +49,7 @@ static_assert(mdk::kHidZR == (uint32_t)KEY_ZR, "kHidZR drifted from libctru's KE
 
 namespace mdk {
 
-uint32_t input3dsPoll(Input* input, float seconds) {
+uint32_t input3dsPoll(Input* input, float seconds, const ControlBindings& bindings) {
     hidScanInput();
 
     // The order matters: the reads return what the scan latched, so the pad is
@@ -62,7 +62,7 @@ uint32_t input3dsPoll(Input* input, float seconds) {
     frame.padX = pad.dx;
     frame.padY = pad.dy;
 
-    input3dsApply(frame, seconds, input);
+    input3dsApply(frame, seconds, bindings, input);
     return frame.held;
 }
 

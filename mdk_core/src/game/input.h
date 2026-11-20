@@ -33,6 +33,11 @@ enum Key {
     kKeyItemNext,
     kKeyItemPrevious,
     kKeyEscape,
+    // The sniper view (the C# pad's trigger). The overlay is cut from this port
+    // (docs/OWNER_DIRECTIVE_2026-11-05.md), so NOTHING reads this action yet: it
+    // exists so the 3DS controls file (mdk_3ds/src/platform/controls_3ds.h) and
+    // a future mapping screen can bind it.
+    kKeySniper,
     kKeyCount
 };
 

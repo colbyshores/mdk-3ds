@@ -22,18 +22,20 @@
 //
 //   header (kHeaderBytes = 32)
 //     0  char[4] magic "KPAK"
-//     4  u16     version (kVersion)
+//     4  u16     version (kVersion: 2 since the entry carries the image size)
 //     6  u16     header bytes (32)
 //     8  u32     entry count
-//     12 u32     entry bytes (40)
+//     12 u32     entry bytes (44)
 //     16 u32     data offset: the first frame's bytes (index end, aligned)
 //     20 u32     start end: the end of the start set's bytes. The start set
-//                (KurtSprite's K_STILL, K_FALL, K_LAND, K_IDLE) is
-//                [data offset, start end); == data offset when there is none
+//                (KurtSprite's K_STILL, K_FALL, K_LAND, K_IDLE, the chute's
+//                K_CHUTE and K_CHUTEC, the jump's K_JUMP and K_RJMP: what
+//                level load makes and keeps)
+//                is [data offset, start end); == data offset when there is none
 //     24 u32     file bytes: the whole file's size (a truncation is caught
 //                against the file's real size before anything is read past it)
 //     28 u32     alignment of every frame's offset (kAlign)
-//   index (entry count x kEntryBytes = 40), sorted start set first, then by
+//   index (entry count x kEntryBytes = 44), sorted start set first, then by
 //   animation, frame and level, so an animation's frames are contiguous:
 //     0  char[24] frame name, NUL-padded ("K_RUN_12", the HD pack's key)
 //     24 u8       level: 0 every level, else the one level whose palette shows
@@ -44,6 +46,13 @@
 //                 the power-of-two pad of it)
 //     32 u32      offset of the .t3x bytes (from the start of the file)
 //     36 u32      size of the .t3x bytes
+//     40 u16      image width, 42 u16 image height: the size of the picture
+//                 INSIDE the texture, at its top-left. The frame's own size
+//                 unless the converter fitted it to 256x256 (a frame whose pad
+//                 would pass that: the chute's), then smaller, never larger. The
+//                 runtime still draws the frame at width x height, through the
+//                 image's rectangle (pica::compressedFrameRect), so its size on
+//                 screen does not change
 //   zero padding to the data offset, then each frame's .t3x at its offset,
 //   zero-padded to the next kAlign boundary.
 //
@@ -63,9 +72,9 @@ namespace formats {
 
 class KurtPack {
 public:
-    static constexpr uint16_t kVersion = 1;
+    static constexpr uint16_t kVersion = 2;
     static constexpr uint32_t kHeaderBytes = 32;
-    static constexpr uint32_t kEntryBytes = 40;
+    static constexpr uint32_t kEntryBytes = 44;
     static constexpr uint32_t kNameBytes = 24;
     static constexpr uint32_t kAlign = 16;
     // Bounds no honest pack comes near (408 frames; the largest is 6 KB): what
@@ -103,6 +112,10 @@ public:
         uint16_t height = 0;
         uint32_t offset = 0;
         uint32_t size = 0;
+        // The image's size inside the texture (0 < imageWidth <= width, the same
+        // for the height): the frame's own size unless it was fitted to 256x256.
+        uint16_t imageWidth = 0;
+        uint16_t imageHeight = 0;
         // False when the entry failed validation: its frame is drawn from the
         // index texture. The entry is still listed, so a level's own copy that
         // is bad is not replaced by the every-level one (its colours differ).

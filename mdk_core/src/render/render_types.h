@@ -435,7 +435,8 @@ struct MdkCapabilities {
     int32_t sprite_residency_bytes = 0;
 
     // The GPU bytes Kurt's START SET (K_STILL, K_FALL, K_LAND, K_IDLE: the
-    // frames every level opens on) may take when it is made at LEVEL LOAD from
+    // frames every level opens on; the chute's K_CHUTE, K_CHUTEC; the jump's
+    // K_JUMP, K_RJMP) may take when it is made at LEVEL LOAD from
     // compressed frames (EnhancedToggles::kurtCompressed) and kept for the level,
     // outside sprite_residency_bytes' rotation. Only compressed frames are
     // preloaded: an import is a copy, an expansion is the ARM11 work the

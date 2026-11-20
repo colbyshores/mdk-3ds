@@ -114,6 +114,7 @@ SOURCES_VM := \
 	$(3DS)/render/pica_matrix.cpp \
 	$(CORE)/render/sun_shadow.cpp \
 	$(3DS)/platform/input_3ds.cpp \
+	$(3DS)/platform/controls_3ds.cpp \
 	$(3DS)/platform/heap_split_policy.cpp \
 	$(CORE)/game/kurt_sprite.cpp \
 	$(CORE)/formats/kurt_pack.cpp \

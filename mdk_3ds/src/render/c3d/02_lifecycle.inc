@@ -615,15 +615,35 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     // are 105 frames, 2,662,400 bytes (measured over the GOG TRAVSPRT.BNI, no mip
     // chain: kurt_etc1_convert.py's default). As RGBA5551 the same frames are
     // 5,324,800 and as RGBA8 10,649,600, so only the compressed set is ever
-    // preloaded. Three megabytes holds it with room for a frame-size change, and
-    // holds a --mips set (a third more) only in part: the rest is made on first
-    // draw as before. Kept for the level, outside the megabyte above, which then
+    // preloaded. Kept for the level, outside the megabyte above, which then
     // rotates only the other animations: at one byte a texel every one of them
-    // but the chute's sway fits whole (the largest, K_BANG, is 999,424 bytes), so
-    // their cycles stop re-making frames. K_CHUTEC does not (12 frames of 512x512,
-    // 262,144 bytes each as ETC1A4, a megabyte each as RGBA8): it still rotates,
-    // four frames at a time, each an import of bytes in memory, not an expansion.
-    caps.sprite_preload_bytes = 3 * 1024 * 1024;
+    // fits whole (the largest, K_BANG, is 999,424 bytes), so their cycles stop
+    // re-making frames.
+    //
+    // AND THE CHUTE (2026-11-19, the owner's level-7 hitches). K_CHUTE and
+    // K_CHUTEC were 512x512 textures (3,751,936 bytes for the two as ETC1A4) that
+    // could never fit the rotation: the sway churned them through it every frame
+    // and stood them in as 16-bit expansions while their bytes streamed. Fitted
+    // to 256x256 by the converter they are 20 frames, 1,130,496 bytes, and are
+    // now part of the preload: 2,662,400 + 1,130,496 = 3,792,896 bytes.
+    //
+    // AND THE JUMP (the owner's next hardware report: hitches on every jump, the
+    // same stream-and-stand-in cause). K_JUMP (442,368) and K_RJMP (606,208) are
+    // the take-offs of Kurt's most routine button, and a jump leads only into
+    // K_FALL and K_LAND (already preloaded) or K_CRASHL after a long fall:
+    // 3,792,896 + 1,048,576 = 4,841,472 bytes. FIVE megabytes holds that with
+    // 401,408 to spare (a --mips set, a third more, only in part: the rest is
+    // made on first draw). WHY THAT IS SAFE on the Old 3DS: these are
+    // linear-heap allocations, and the Old-3DS appliance showed ~15.7 MB of
+    // linear heap free in the loop with the old 3 MiB bound; the pinned set
+    // grows by at most 2,179,072 bytes, while the rotation (1 MiB above) is
+    // unchanged and no longer holds 256 KB chute frames or 512 KB 16-bit
+    // stand-ins of them, so the peak rises by about two megabytes against
+    // ~15 MB of headroom. K_RUN, K_SIDE, K_SHOT and K_RUNFIR are NOT here (2.1
+    // MB more): they are prefetched from the pack in the background after level
+    // load, and a frame whose bytes are still in flight holds the previous one
+    // (KurtSprite::chooseFrame) rather than stalling.
+    caps.sprite_preload_bytes = 5 * 1024 * 1024;
     return caps;
 }
 

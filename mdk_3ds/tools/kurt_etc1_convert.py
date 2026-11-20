@@ -37,6 +37,21 @@
 #      image at the TOP-LEFT and the bleed carried into the padding. The original
 #      resolution is kept texel for texel: the runtime maps the frame's rectangle
 #      (pica::compressedFrameRect) instead of the whole texture.
+#      EXCEPT A FRAME PAST 256 (kurt_pack.fit_size): one whose pad would pass
+#      256x256 -- the chute's K_CHUTEC (339..347 x 288..295) and K_CHUTE_4/5, and
+#      K_LOOKD_0 (287x343) -- would be a 512x512 texture, 262,144 bytes as ETC1A4,
+#      four times a 256x256 one; the twelve K_CHUTEC frames alone were 3 MB, and
+#      the chute's open/sway cycle churned them through the residency every frame
+#      (the owner's level-7 hitches, 2026-11-19). Such a frame is DOWNSCALED to fit
+#      256x256 (aspect kept, the long side 256): the colour LANCZOS-resampled from
+#      the bled frame (so no transparent texel pulls an edge dark), the alpha
+#      area-resampled and RE-THRESHOLDED at half (so it is still a colour key, 0
+#      or 255, never between), then padded and bled as any frame. The manifest's
+#      `max` column says "256" for it; the pack carries the image's size beside the
+#      frame's, and the runtime draws the frame at its ORIGINAL size through the
+#      image's rectangle -- Kurt and the chute are exactly as large on screen as
+#      before, at about three quarters of the texel density (on the 3DS's 240
+#      lines a sprite pixel is two thirds of a screen pixel anyway).
 #   4. ENCODE: `tex3ds -f etc1a4 -q high` (+ `-m gaussian` under --mips; off by
 #      default: owner 2026-11-19, conserve memory -- a chain is a third more, and
 #      a sprite pixel is 1/360 of the view's height, so on the 3DS's 240 lines
@@ -69,7 +84,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hd_pack_convert import bleed  # noqa: E402  (the HD pack's own flood)
-from kurt_pack import write_pack  # noqa: E402  (the one file the RomFS carries)
+from kurt_pack import FIT_CAP, fit_size, write_pack  # noqa: E402  (the one file the RomFS carries)
 
 TEX3DS = os.environ.get("TEX3DS", "/opt/devkitpro/tools/bin/tex3ds")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
@@ -85,6 +100,23 @@ def pot(n):
     while p < n:
         p <<= 1
     return p
+
+
+def downscale(rgba, iw, ih):
+    """A colour-keyed frame resampled to iw x ih: the colour by LANCZOS from the
+    BLED frame (its alpha-0 texels carry their opaque neighbours' colours, so the
+    filter's taps across the key do not pull the edge toward black), the alpha by
+    area (BOX: the share of the texel the frame covered) RE-THRESHOLDED at half,
+    so the result is a colour key again -- 0 or 255 exactly, nothing between."""
+    bled = bleed(rgba)
+    rgb = np.asarray(Image.fromarray(np.ascontiguousarray(bled[..., :3]), "RGB")
+                     .resize((iw, ih), Image.LANCZOS), np.uint8)
+    cover = np.asarray(Image.fromarray(np.ascontiguousarray(rgba[..., 3]), "L")
+                       .resize((iw, ih), Image.BOX), np.uint8)
+    out = np.zeros((ih, iw, 4), np.uint8)
+    out[..., :3] = rgb
+    out[..., 3] = np.where(cover >= 128, 255, 0).astype(np.uint8)
+    return out
 
 
 def pad_bled(rgba, tw, th):
@@ -128,9 +160,12 @@ def convert(job):
     if len(data) != w * h * 4:
         return (src, None, "size %d is not %dx%dx4" % (len(data), w, h))
     rgba = np.frombuffer(data, np.uint8).reshape(h, w, 4)
-    tw, th = pot(w), pot(h)
-    if tw > 1024 or th > 1024:
+    if w > 1024 or h > 1024:
         return (src, None, "%dx%d is over the PICA's 1024" % (w, h))
+    iw, ih = fit_size(w, h)
+    if (iw, ih) != (w, h):
+        rgba = downscale(rgba, iw, ih)
+    tw, th = pot(iw), pot(ih)
     img = Image.fromarray(pad_bled(rgba, tw, th), "RGBA")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -152,13 +187,14 @@ def convert(job):
                 return (src, None, "tex3ds -r failed")
             alpha = alpha_plane_etc1a4(open(rawf, "rb").read(), tw, th)
             want = np.zeros((th, tw), np.uint8)
-            want[:h, :w] = np.where(rgba[..., 3] > 0, 15, 0)
+            want[:ih, :iw] = np.where(rgba[..., 3] > 0, 15, 0)
             if not np.array_equal(alpha, want):
                 os.remove(out)
                 return (src, None, "CHECK: the encoded alpha is not the colour key "
                                    "(%d texels differ)" % int((alpha != want).sum()))
         os.replace(out, dst)
-    return (src, (tw, th, os.path.getsize(dst)), None)
+    return (src, (tw, th, os.path.getsize(dst), "orig" if (iw, ih) == (w, h) else str(FIT_CAP)),
+            None)
 
 
 def build_exporter(build_dir):
@@ -246,8 +282,9 @@ def main():
         digests[rel] = digest
         dst = os.path.join(out, rel + ".t3x")
         prev = old.get(rel)
-        if prev and prev[7] == digest and prev[9] == setting and os.path.exists(dst) \
-                and not a.check:
+        cap = "orig" if fit_size(w, h) == (w, h) else str(FIT_CAP)
+        if prev and prev[7] == digest and prev[8] == cap and prev[9] == setting \
+                and os.path.exists(dst) and not a.check:
             kept[rel] = prev
         else:
             jobs.append((src, dst, w, h, a.mips, a.check))
@@ -261,10 +298,10 @@ def main():
                 failed += 1
                 print("kurt_etc1_convert: %s: %s" % (rel, err), file=sys.stderr)
                 continue
-            tw, th, size = info
+            tw, th, size, cap = info
             w, h = job[2], job[3]
             lines[rel] = [rel, "etc1a4", str(w), str(h), str(tw), str(th), str(size),
-                          digests[rel], "orig", setting]
+                          digests[rel], cap, setting]
 
     # Files no longer named by the set (a re-export with other data) go.
     wanted = set(os.path.join(out, rel + ".t3x") for rel in lines)
@@ -289,6 +326,21 @@ def main():
            "" if rewritten else " (unchanged)"))
     files = sum(int(v[6]) for v in lines.values())
     gpu = sum(int(v[4]) * int(v[5]) for v in lines.values())
+    # Per animation, every-level copies only (a level's own copy replaces one):
+    # the GPU bytes each animation costs whole, and how many frames were fitted.
+    per = {}
+    for rel, v in lines.items():
+        if rel.count("/") != 1:
+            continue
+        anim = rel.split("/")[-1].rpartition("_")[0]
+        row = per.setdefault(anim, [0, 0, 0])
+        row[0] += 1
+        row[1] += int(v[4]) * int(v[5])
+        row[2] += v[8] != "orig"
+    for anim in sorted(per):
+        n, gpu_bytes, fitted = per[anim]
+        print("kurt_etc1_convert: %-9s %3d frames, %8d GPU bytes%s" %
+              (anim, n, gpu_bytes, (" (%d fitted to %d)" % (fitted, FIT_CAP)) if fitted else ""))
     print("kurt_etc1_convert: %d frames, %d encoded now, %d kept, %d failed%s; %.2f MB of "
           ".t3x, %.2f MB as ETC1A4 level 0 on the GPU" %
           (len(lines), len(jobs) - failed, len(kept), failed, " (checked)" if a.check else "",

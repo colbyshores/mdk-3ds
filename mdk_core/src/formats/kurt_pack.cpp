@@ -85,11 +85,15 @@ KurtPack::Status KurtPack::parseIndex(const Header& header, const uint8_t* index
         entry.height = u16At(p + 30);
         entry.offset = u32At(p + 32);
         entry.size = u32At(p + 36);
+        entry.imageWidth = u16At(p + 40);
+        entry.imageHeight = u16At(p + 42);
         const char* why = nullptr;
         if (length == 0 || length >= kNameBytes) {
             why = "name";   // empty, or not NUL-terminated inside its field
         } else if (entry.width == 0 || entry.height == 0 || entry.width > 1024 ||
-                   entry.height > 1024) {
+                   entry.height > 1024 || entry.imageWidth == 0 || entry.imageHeight == 0 ||
+                   entry.imageWidth > entry.width || entry.imageHeight > entry.height) {
+            // (A fitted image is smaller than its frame, never larger.)
             why = "size";
         } else if (entry.size == 0 || entry.size > kMaxFrameBytes ||
                    entry.offset < header.dataOffset || entry.offset > header.fileBytes ||

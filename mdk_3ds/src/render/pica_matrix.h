@@ -840,7 +840,11 @@ size_t textureBytes(TexelFormat format, int32_t paddedWidth, int32_t paddedHeigh
 // (EnhancedToggles::kurtCompressed; mdk_3ds/tools/kurt_etc1_convert.py). The
 // converter pads the ORIGINAL frame, unscaled, to a power of two with the image
 // at the TOP-LEFT, so the frame is realWidth x realHeight of the
-// textureWidth x textureHeight texture. In tex3ds' own subtexture convention --
+// textureWidth x textureHeight texture. (A frame past 256x256 -- the chute's --
+// is first FITTED to 256x256; then realWidth x realHeight is that image's size,
+// smaller than the frame, and the caller's quad, still the frame's size, maps
+// its uv 0..1 onto it: the frame is drawn as large as before.) In tex3ds' own
+// subtexture convention --
 // the one the HD copies are drawn through (06_draw.inc: uv' = uv * (right - left,
 // bottom - top) + (left, top)) -- that is left 0, top 1, right w/W, bottom 1 - h/H:
 // exactly what tex3ds itself writes for an image it pads (measured on a 52x146

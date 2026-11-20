@@ -144,7 +144,7 @@ int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t hei
 // kurtCompressed): imported now -- a decompress and a copy, no expansion -- and
 // kept as bytes so an eviction is undone by importing again (makeTexture). The
 // image is width x height at the texture's top-left (kurt_etc1_convert.py pads,
-// never scales), drawn through pica::compressedFrameRect.
+// fitting a frame past 256x256 into 256x256 first), drawn through pica::compressedFrameRect.
 MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t w, int32_t h,
                                                   const uint8_t* t3x, int32_t size) {
     RendererC3D* renderer = asC3d(r);

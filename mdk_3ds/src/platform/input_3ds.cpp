@@ -18,36 +18,28 @@
 
 #include <math.h>
 
+#include "platform/controls_3ds.h"
+
 namespace mdk {
 
-void input3dsApply(const HidFrame& frame, float seconds, Input* input) {
+void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& bindings,
+                   Input* input) {
     if (input == nullptr) {
         return;
     }
 
     // ---- the digital controls ------------------------------------------------
-    // Every action is written: the frame's mask IS the state, so a key released
-    // since the last frame has to go false here or the player walks forever.
+    // THE BINDINGS (controls_3ds.h: the owner's defaults, or controls.ini): an
+    // action is held when any of its buttons is. Every action is written: the
+    // frame's mask IS the state, so a key released since the last frame has to
+    // go false here or the player walks forever. The turn axes and Escape have
+    // no buttons on this target (the circle pad turns, below; START is the
+    // frontend's pause menu), so their masks are 0 and they read false -- which
+    // also means a caller that reused an Input cannot keep a stale turn.
     const uint32_t held = frame.held;
-    input->down[kKeyForward] = (held & kHidDUp) != 0;
-    input->down[kKeyBack] = (held & kHidDDown) != 0;
-    input->down[kKeyStrafeLeft] = (held & kHidDLeft) != 0;
-    input->down[kKeyStrafeRight] = (held & kHidDRight) != 0;
-    // The turn axes are the keyboard's; on this target the view turns with the
-    // circle pad, through the mouse counts below. They are written false rather
-    // than left alone so a caller that reused an Input cannot keep a stale turn.
-    input->down[kKeyTurnLeft] = false;
-    input->down[kKeyTurnRight] = false;
-    input->down[kKeyJump] = (held & kHidA) != 0;
-    input->down[kKeyTurbo] = (held & kHidB) != 0;
-    input->down[kKeyFire] = (held & (kHidR | kHidZR)) != 0;
-    input->down[kKeyUseItem] = (held & kHidX) != 0;
-    input->down[kKeyItemNext] = (held & kHidY) != 0;
-    // ZL is the New 3DS's trigger, and the C# pad's trigger is the sniper, which
-    // is not in this port's input vocabulary at all (the sniper overlay is cut).
-    // So the trigger takes the shoulder's action rather than nothing.
-    input->down[kKeyItemPrevious] = (held & (kHidL | kHidZL)) != 0;
-    input->down[kKeyEscape] = (held & kHidStart) != 0;
+    for (int key = 0; key < kKeyCount; key++) {
+        input->down[key] = (held & bindings.buttons[key]) != 0;
+    }
 
     // ---- the circle pad: a look in degrees, then the mouse's counts ----------
     // Gamepads.Update clamps its frame gap the same way, and a NaN has to land
@@ -86,8 +78,11 @@ void input3dsApply(const HidFrame& frame, float seconds, Input* input) {
     // direction is what must be unit, not the clamped magnitude.
     const float dirX = nx / length;
     const float dirY = ny / length;
-    input->mouseX += ((dirX * strength) * kLookRateX * step) / kLookDegreesPerCount;
-    input->mouseY += ((dirY * strength) * kLookRateY * step) / kLookDegreesPerCount;
+    // A float divide (R7, not R11): the constant lives in input_3ds.h, out of
+    // the R11 screen's sight, so it is named here as the float it is.
+    const float degreesPerCount = kLookDegreesPerCount;
+    input->mouseX += ((dirX * strength) * kLookRateX * step) / degreesPerCount;
+    input->mouseY += ((dirY * strength) * kLookRateY * step) / degreesPerCount;
 }
 
 } // namespace mdk

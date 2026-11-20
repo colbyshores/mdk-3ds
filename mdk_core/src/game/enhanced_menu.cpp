@@ -7,14 +7,15 @@
 namespace mdk {
 namespace {
 
-// The rows, in the config file's order (SPEC.md 7.9's flag order).
-const char* const kLabels[EnhancedMenu::kRowCount] = {
+// The toggle rows, in the config file's order (SPEC.md 7.9's flag order).
+const char* const kLabels[EnhancedMenu::kToggleCount] = {
     "SKY SHADOWS", "FRAGMENT LIGHTS", "HAZE", "MIRRORS", "GLOW", "FILTERING",
     "MIPMAPS", "HD TEXTURES", "LIGHTING", "EDGE SMOOTHING",
 };
 
-bool valueOf(const EnhancedToggles& toggles, int32_t row) {
-    switch (row) {
+// `toggle` is the toggle's index (row - 1).
+bool valueOf(const EnhancedToggles& toggles, int32_t toggle) {
+    switch (toggle) {
         case 0: return toggles.enableSkyShadows;
         case 1: return toggles.enableFragmentLights;
         case 2: return toggles.enableHaze;
@@ -28,8 +29,8 @@ bool valueOf(const EnhancedToggles& toggles, int32_t row) {
     }
 }
 
-void flip(EnhancedToggles* toggles, int32_t row) {
-    switch (row) {
+void flip(EnhancedToggles* toggles, int32_t toggle) {
+    switch (toggle) {
         case 0: toggles->enableSkyShadows = !toggles->enableSkyShadows; break;
         case 1: toggles->enableFragmentLights = !toggles->enableFragmentLights; break;
         case 2: toggles->enableHaze = !toggles->enableHaze; break;
@@ -41,6 +42,10 @@ void flip(EnhancedToggles* toggles, int32_t row) {
         case 8: toggles->enableLighting = !toggles->enableLighting; break;
         default: toggles->enableEdgeSmoothing = !toggles->enableEdgeSmoothing; break;
     }
+}
+
+bool isToggleRow(int32_t row) {
+    return row > EnhancedMenu::kResumeRow && row < EnhancedMenu::kQuitRow;
 }
 
 // A flat canvas rectangle (the HudView::fillRect shape).
@@ -62,25 +67,44 @@ void fillRect(MdkRenderer renderer, float x, float y, float w, float h, const Co
 
 } // namespace
 
-bool EnhancedMenu::handle(const Input& input, EnhancedToggles* toggles) {
+const char* EnhancedMenu::rowLabel(int32_t row) {
+    if (row == kResumeRow) {
+        return "RESUME";
+    }
+    if (row == kQuitRow) {
+        return "QUIT";
+    }
+    return isToggleRow(row) ? kLabels[row - 1] : "";
+}
+
+EnhancedMenu::Action EnhancedMenu::handle(const Input& input, EnhancedToggles* toggles) {
     if (!open_ || !toggles) {
-        return false;
+        return Action::None;
     }
     if (input.close) {
         open_ = false;
-        return false;
+        return Action::Closed;
     }
-    if (input.up && selected_ > 0) {
-        selected_--;
+    // Up and down wrap: up from RESUME is QUIT, so QUIT is two presses away
+    // from where the menu opens (up, then A) and never one.
+    if (input.up) {
+        selected_ = selected_ > 0 ? selected_ - 1 : kRowCount - 1;
     }
-    if (input.down && selected_ < kRowCount - 1) {
-        selected_++;
+    if (input.down) {
+        selected_ = selected_ < kRowCount - 1 ? selected_ + 1 : 0;
     }
-    if (input.confirm || input.left || input.right) {
-        flip(toggles, selected_);
-        return true;
+    if (input.confirm && selected_ == kResumeRow) {
+        open_ = false;
+        return Action::Closed;
     }
-    return false;
+    if (input.confirm && selected_ == kQuitRow) {
+        return Action::Quit;
+    }
+    if ((input.confirm || input.left || input.right) && isToggleRow(selected_)) {
+        flip(toggles, selected_ - 1);
+        return Action::Toggled;
+    }
+    return Action::None;
 }
 
 void EnhancedMenu::draw(MdkRenderer renderer, FontView& big, FontView& small,
@@ -88,13 +112,15 @@ void EnhancedMenu::draw(MdkRenderer renderer, FontView& big, FontView& small,
     if (!open_ || !big.ready() || !small.ready()) {
         return;
     }
-    // Sized from the fonts' own metrics: the FONTBIG title is 341
-    // units wide, the widest FONTSML row at 1.5x is 248, so a 400-wide
-    // panel holds both with the value column clear of the labels.
+    // Sized from the fonts' own metrics: the FONTBIG title is about 341
+    // units wide at most, the widest FONTSML row at 1.5x is 248, so a
+    // 400-wide panel holds both with the value column clear of the labels.
+    // Twelve rows at 22 + the title and the footer fit the canvas's 360
+    // units of height (render_types.h kCanvasHeight).
     const float kPanelW = 400.0f;
-    const float kPanelH = 304.0f;   // ten rows at 22 + the title and the footer
+    const float kPanelH = 344.0f;
     const float px = (canvasWidth - kPanelW) * 0.5f;
-    const float py = 58.0f;
+    const float py = 8.0f;
     const Colour kPanel{0.0f, 0.0f, 0.0f, 0.72f};
     const Colour kTitle{1.0f, 0.85f, 0.4f, 1.0f};
     const Colour kRow{0.75f, 0.75f, 0.75f, 1.0f};
@@ -103,29 +129,34 @@ void EnhancedMenu::draw(MdkRenderer renderer, FontView& big, FontView& small,
     const Colour kOff{1.0f, 0.45f, 0.45f, 1.0f};
     const Colour kHint{0.55f, 0.55f, 0.55f, 1.0f};
     const Colour kMark{1.0f, 0.85f, 0.4f, 1.0f};
+    const Colour kQuit{1.0f, 0.55f, 0.45f, 1.0f};
 
     fillRect(renderer, px, py, kPanelW, kPanelH, kPanel);
 
-    const char* title = "VIDEO / GRAPHICS";
+    const char* title = "PAUSED";
     const float titleX = px + (kPanelW - (float)big.width(title)) * 0.5f;
-    big.draw(renderer, title, titleX, py + 40.0f, 1.0f, kTitle);
+    big.draw(renderer, title, titleX, py + 34.0f, 1.0f, kTitle);
 
     for (int32_t row = 0; row < kRowCount; row++) {
-        const float baseline = py + 74.0f + (float)row * 22.0f;
+        const float baseline = py + 62.0f + (float)row * 22.0f;
         const bool isSelected = row == selected_;
         if (isSelected) {
             small.draw(renderer, ">", px + 14.0f, baseline, 1.5f, kMark);
         }
-        small.draw(renderer, kLabels[row], px + 30.0f, baseline, 1.5f,
-                   isSelected ? kSelected : kRow);
-        const bool on = valueOf(toggles, row);
+        const Colour& labelColour =
+            isSelected ? kSelected : (row == kQuitRow ? kQuit : kRow);
+        small.draw(renderer, rowLabel(row), px + 30.0f, baseline, 1.5f, labelColour);
+        if (!isToggleRow(row)) {
+            continue;
+        }
+        const bool on = valueOf(toggles, row - 1);
         const char* value = on ? "ON" : "OFF";
         small.draw(renderer, value, px + kPanelW - 24.0f - (float)small.width(value) * 1.5f,
                    baseline, 1.5f, on ? kOn : kOff);
     }
 
-    small.draw(renderer, "A: TOGGLE   SELECT: CLOSE", px + 30.0f, py + kPanelH - 14.0f, 1.0f,
-               kHint);
+    small.draw(renderer, "A: SELECT   START/B: RESUME", px + 30.0f, py + kPanelH - 10.0f,
+               1.0f, kHint);
 }
 
 } // namespace mdk

@@ -255,19 +255,24 @@ public:
         // stream (Animation::staged).
         uint32_t packOffset = 0;
         uint32_t packSize = 0;
-        // The texture is the index texture STANDING IN while the animation's
-        // bytes are being read; the next draw after they arrive replaces it
-        // with the compressed one.
-        bool standIn = false;
+        // The size of the picture INSIDE the compressed copy's texture (the pack
+        // entry's image size): width x height, unless the converter fitted a
+        // frame past 256x256 (the chute's) into 256x256. The frame is still DRAWN
+        // at width x height -- the quad is the frame's, its uv 0..1 maps onto the
+        // image's rectangle (pica::compressedFrameRect) -- so a fitted frame is
+        // exactly as large on screen as an unfitted one.
+        int32_t packWidth = 0;
+        int32_t packHeight = 0;
     };
 
     // Where an animation's pack bytes are (THE STREAM, useCompressedPack).
     enum class StreamState : uint8_t {
         None,      // nothing to stream: no frame of it has a pack copy
         Idle,      // in the pack, not staged: the next draw that needs it asks
+                   // (and HOLDS Kurt's previous frame until the bytes land)
         Pending,   // a read is in flight (the backend's reader thread)
         Ready,     // staged: `staged` holds [packBegin, packEnd)
-        Failed,    // the read failed: logged once, its frames stay 16-bit
+        Failed,    // the read failed: logged once, its frames are 16-bit from then on
     };
 
     // An animation's decoded frames. `repeat` is the C#'s Repeat enum.
@@ -335,10 +340,16 @@ public:
     void useCompressedPack(const formats::KurtPack* pack, int32_t level, const char* path,
                            CompressedReport* report);
 
-    // THE START SET (K_STILL, K_FALL, K_LAND, K_IDLE: what every level opens on)
-    // made NOW, at level load, and pinned for the level -- while it fits the
-    // backend's preload bound (MdkCapabilities::sprite_preload_bytes; a frame
-    // past the bound is streamed and made on first draw like the others).
+    // THE START SET (K_STILL, K_FALL, K_LAND, K_IDLE: what every level opens on;
+    // and the chute's K_CHUTE and K_CHUTEC, which level 7 opens on and any fall
+    // can open: 20 frames, fitted to 256x256, 1,130,496 GPU bytes; and the
+    // jump's K_JUMP and K_RJMP, 39 frames, 1,048,576 GPU bytes) made NOW, at
+    // level load, and pinned for the level -- while it fits the backend's
+    // preload bound (MdkCapabilities::sprite_preload_bytes; a frame past the
+    // bound is streamed and made on first draw like the others). A pinned frame
+    // is never dropped by the residency; the backend keeps each one's .t3x as
+    // its re-make source, so even a backend eviction re-imports from memory and
+    // never goes back to the stream.
     // `bytes` are the pack's bytes [begin, begin + size) -- the caller's one
     // read of the pack's front, which kurt_pack.py fills with the start set --
     // and are only borrowed: the caller frees them after this returns. Frames
@@ -355,7 +366,7 @@ public:
     // animation of the state machine's order not yet staged, once a level, and
     // only while it fits the staging bound without dropping anything -- so the
     // first run, jump or shot after level load is usually made from memory
-    // rather than standing in while its read is in flight.
+    // rather than held (chooseFrame) while its read is in flight.
     void pumpStream();
 
     // The stream's first failure as one log line, once; null otherwise.
@@ -366,8 +377,16 @@ public:
         int32_t reads = 0;           // animations read
         int32_t failures = 0;        // reads that failed (their frames stay 16-bit)
         int32_t bytesRead = 0;
-        int32_t standIns = 0;        // frames drawn from the index texture while waiting
-        int32_t upgrades = 0;        // stand-ins replaced by the compressed copy
+        // THE HOLD (chooseFrame): draws that showed Kurt's previously drawn frame
+        // because the wanted one's bytes were still being read -- never a
+        // 16-bit stand-in made inside the frame -- and draws that had nothing
+        // to hold (no frame drawn yet this level), so Kurt was not drawn.
+        int32_t holds = 0;
+        int32_t holdMisses = 0;
+        // Frames made from their compressed copy for which the HD pack was NOT
+        // asked (makeFrameTexture: its 128x128 Kurt is no better, and the ask
+        // is an SD read and an import on the main thread).
+        int32_t hdSkipped = 0;
         int32_t importFailures = 0;  // compressed bytes the backend refused
         int32_t dropped = 0;         // staged animations dropped to stay in the bound
         uint32_t staged = 0;         // bytes staged now
@@ -377,13 +396,14 @@ public:
 
     // The staging cache's bound: the recently drawn animations' bytes, so a
     // frame the GPU residency dropped is made again from memory, not read again.
-    // K_CHUTEC, the largest animation (163,536 bytes), fits with others.
+    // The largest streamed animation (K_IDLE's and K_BANG's are about 100 KB of
+    // .t3x; the chute's, once the largest, are preloaded) fits with others.
     static constexpr uint32_t kStagedCacheBytes = 256 * 1024;
     // No animation's range is near this (see kStagedCacheBytes); a range past it
     // is not streamed (its frames stay 16-bit).
     static constexpr uint32_t kMaxStreamBytes = 1024 * 1024;
 
-    // The names of the start set, in preload order.
+    // The names of the start set (the chute's included), in preload order.
     static int startSetCount();
     static const char* startSetName(int index);
 
@@ -472,12 +492,27 @@ private:
 
     // The C#'s Texture(name, frame, image): the frame's GPU texture, made
     // the first time the frame is drawn and kept until the residency budget
-    // says it has to go. False when the texture could not be made.
-    bool ensureTexture(int32_t animation, int32_t frame);
+    // says it has to go. Ready: it has one now. Waiting: it has a compressed
+    // copy whose bytes are not in memory yet -- their read is asked for, NO
+    // texture is made (the caller holds the previous frame). Failed: none
+    // could be made.
+    enum class Ensure : uint8_t { Ready, Waiting, Failed };
+    Ensure ensureTexture(int32_t animation, int32_t frame);
 
-    // Makes a frame's GPU copy: from `t3x` (the frame's compressed bytes) when
-    // given and the backend takes them, else the index texture; the HD pack's
-    // link either way. The texture id, or -1.
+    // THE HOLD. The frame to draw for `wanted`: `wanted` itself when its
+    // texture is Ready (it becomes the held frame), else -- its bytes are still
+    // being read -- the frame drawn last, as it is (no texture is made: a
+    // 16-bit stand-in of a 512x512 frame was the quarter-second hitch when the
+    // chute opened). The 16-bit index texture is made only for a frame with no
+    // compressed copy left (none in the pack, a failed read, a refused
+    // import): its permanent store. False: nothing to draw (no frame drawn yet
+    // this level, or the texture could not be made).
+    bool chooseFrame(const Pick& wanted, Pick* drawn);
+
+    // Makes a frame's GPU copy: from `t3x` (the frame's compressed bytes, an
+    // image of packWidth x packHeight) when given and the backend takes them,
+    // else the index texture; the HD pack's link either way. The texture id,
+    // or -1.
     int32_t makeFrameTexture(int32_t animation, int32_t frame, const uint8_t* t3x);
 
     // THE STREAM. The frame's bytes when its animation is staged, else null.
@@ -542,6 +577,8 @@ private:
     // flight (-1: none), the generation that tells a stale read from a current
     // one (a re-load bumps it), and the counters.
     std::string packPath_;
+    // The frame drawn last (chooseFrame's hold); -1: none this level.
+    Pick held_;
     int32_t streamTag_ = -1;
     int32_t generation_ = 0;
     StreamStats stream_;

@@ -248,6 +248,10 @@ bool KurtSprite::add(MdkRenderer renderer, const std::string& name,
         // ever (a GPU copy nobody can name).
         releaseAnimation(existing);
         dropStaged(existing);
+        if (held_.animation == existing) {
+            held_ = Pick();
+            held_.animation = -1;
+        }
         animations_[(size_t)existing] = std::move(loaded);
     } else {
         animations_.push_back(std::move(loaded));
@@ -446,7 +450,17 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
     at.right = scale(right, pixel * flip);
     at.up = scale(up, pixel);
 
-    const Frame& frame = animation.frames[(size_t)selected.frame];
+    // THE FRAME'S TEXTURE IS MADE HERE, the first time the frame is drawn.
+    // The C# uploads every frame of every animation at level load
+    // (KurtSprite.Preload) and keeps them; the 3DS cannot afford that, so
+    // the upload waits for the frame that is actually wanted -- and while a
+    // compressed frame's bytes are still being read, the frame drawn last is
+    // drawn again (chooseFrame: THE HOLD).
+    Pick drawn;
+    if (!chooseFrame(selected, &drawn)) {
+        return false;
+    }
+    const Frame& frame = animations_[(size_t)drawn.animation].frames[(size_t)drawn.frame];
     const float rise = kFeetRise / pixel;
     float floor = 0.0f;
     const bool hasFloor = floorDepth(space, eye, forward, at, frame, rise, &floor);
@@ -454,14 +468,7 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
     pull.body = inFront(depth, hasFloor, floor);
     pull.feet = nearer(depth, hasFloor, floor);
     pull.rise = rise;
-    // THE FRAME'S TEXTURE IS MADE HERE, the first time the frame is drawn.
-    // The C# uploads every frame of every animation at level load
-    // (KurtSprite.Preload) and keeps them; the 3DS cannot afford that, so
-    // the upload waits for the frame that is actually wanted.
-    if (!ensureTexture(selected.animation, selected.frame)) {
-        return false;
-    }
-    if (!drawFrame(renderer, mesh_, selected.animation, selected.frame, eye, at, 0, 0, pull)) {
+    if (!drawFrame(renderer, mesh_, drawn.animation, drawn.frame, eye, at, 0, 0, pull)) {
         return false;
     }
 
@@ -472,7 +479,7 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
         const Kurt::MuzzleFlash& muzzle = player.combat().muzzle();
         const Animation& flash = animations_[(size_t)muzzleFlash_];
         if (muzzle.frame >= 0 && muzzle.frame < (int32_t)flash.frames.size() &&
-            ensureTexture(muzzleFlash_, muzzle.frame)) {
+            ensureTexture(muzzleFlash_, muzzle.frame) == Ensure::Ready) {
             Quad behind = at;
             behind.feet = addVectors(feet, scale(forward, kMuzzleBehind));
             Pull flashPull;
@@ -486,60 +493,87 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
     return true;
 }
 
-bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
-    if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
+bool KurtSprite::chooseFrame(const Pick& wanted, Pick* drawn) {
+    if (!drawn) {
         return false;
+    }
+    const Ensure made = ensureTexture(wanted.animation, wanted.frame);
+    if (made == Ensure::Ready) {
+        held_ = wanted;
+        *drawn = wanted;
+        return true;
+    }
+    if (made == Ensure::Failed) {
+        return false;
+    }
+    // WAITING: the wanted frame's bytes are being read (on the backend's reader
+    // thread). The frame drawn last is drawn again, as it is -- its texture is
+    // resident (it was drawn last, so it is the newest entry the residency
+    // has, and nothing has been made since that could have pushed it out) --
+    // at zero cost; the wanted frame is made from memory on the first draw
+    // after its bytes land (pumpStream). A 16-bit stand-in is NOT made: for a
+    // 512x512 chute frame it was a palette expansion of a quarter of a million
+    // texels on the main thread, inside the frame.
+    if (held_.animation >= 0 && held_.animation < (int32_t)animations_.size() &&
+        held_.frame >= 0 &&
+        held_.frame < (int32_t)animations_[(size_t)held_.animation].frames.size() &&
+        animations_[(size_t)held_.animation].frames[(size_t)held_.frame].texture >= 0) {
+        residency_.touch(held_.animation, held_.frame, residency_.tick());
+        stream_.holds++;
+        *drawn = held_;
+        return true;
+    }
+    // Nothing drawn yet this level (the start set is preloaded, so this is a
+    // level whose first frame was past the preload bound): Kurt is not drawn
+    // until the bytes land, a frame or two, rather than stalling one.
+    stream_.holdMisses++;
+    return false;
+}
+
+KurtSprite::Ensure KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
+    if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
+        return Ensure::Failed;
     }
     Animation& animation = animations_[(size_t)animationIndex];
     if (frameIndex < 0 || frameIndex >= (int32_t)animation.frames.size()) {
-        return false;
+        return Ensure::Failed;
     }
     Frame& frame = animation.frames[(size_t)frameIndex];
     const uint32_t now = residency_.tick();
     animation.lastDrawn = now;
-    // THE FRAME'S COMPRESSED BYTES, when it has a pack copy and needs them (no
-    // texture yet, or an index texture standing in): from the staging cache if
-    // its animation is staged, else its animation's range is asked for -- read
-    // on the backend's reader thread, never here (AGENTS.md P5) -- and the index
-    // texture stands in until it lands (pumpStream).
+    if (frame.texture >= 0) {
+        residency_.touch(animationIndex, frameIndex, now);
+        trimResidency(animationIndex, frameIndex);
+        return Ensure::Ready;
+    }
+    // THE FRAME'S COMPRESSED BYTES, when it has a pack copy: from the staging
+    // cache if its animation is staged, else its animation's range is asked for
+    // -- read on the backend's reader thread, never here (AGENTS.md P5) -- and
+    // NOTHING is made now: the caller holds the previous frame (chooseFrame)
+    // until the bytes land (pumpStream).
     const uint8_t* t3x = nullptr;
-    if (frame.packSize > 0 && (frame.texture < 0 || frame.standIn)) {
+    if (frame.packSize > 0) {
         t3x = stagedFrame(animation, frame);
         if (!t3x) {
             requestStream(animationIndex);
+            return Ensure::Waiting;
         }
     }
-    const bool upgrading = frame.texture >= 0 && frame.standIn && t3x;
-    if (upgrading) {
-        // The bytes arrived: the stand-in goes (the backend defers the release
-        // of a copy still in flight) and the compressed copy is made below.
-        releaseFrame(animationIndex, frameIndex);
-        frame.standIn = false;
+    // THE C#'s Texture(name, frame, image): the frame's texture, made the first
+    // time the frame is drawn -- an import of the bytes in memory, or, for a
+    // frame with no compressed copy (packSize 0: none in the pack, a failed
+    // read, a refused import), the index texture, its permanent store.
+    if (makeFrameTexture(animationIndex, frameIndex, t3x) < 0) {
+        return Ensure::Failed;
     }
-    if (frame.texture < 0) {
-        // THE C#'s Texture(name, frame, image): the frame's texture, made
-        // the first time the frame is drawn.
-        if (makeFrameTexture(animationIndex, frameIndex, t3x) < 0) {
-            return false;
-        }
-        if (upgrading && frame.packSize > 0) {
-            stream_.upgrades++;   // (a refused import zeroed packSize: not one)
-        }
-        frame.standIn = !t3x && frame.packSize > 0;
-        if (frame.standIn) {
-            stream_.standIns++;
-        }
-        SpriteResidency::Entry entry;
-        entry.animation = animationIndex;
-        entry.frame = frameIndex;
-        entry.bytes = frameBytes(frame);
-        entry.lastUsed = now;
-        residency_.add(entry);
-    } else {
-        residency_.touch(animationIndex, frameIndex, now);
-    }
+    SpriteResidency::Entry entry;
+    entry.animation = animationIndex;
+    entry.frame = frameIndex;
+    entry.bytes = frameBytes(frame);
+    entry.lastUsed = now;
+    residency_.add(entry);
     trimResidency(animationIndex, frameIndex);
-    return true;
+    return Ensure::Ready;
 }
 
 int32_t KurtSprite::makeFrameTexture(int32_t animationIndex, int32_t frameIndex,
@@ -550,8 +584,14 @@ int32_t KurtSprite::makeFrameTexture(int32_t animationIndex, int32_t frameIndex,
     // THE COMPRESSED COPY FIRST (EnhancedToggles::kurtCompressed): an import of
     // bytes already in memory, never an expansion. A backend with no compressed
     // textures (the desktop) answers -1 and the index texture is made instead.
+    // THE IMAGE'S SIZE, not the frame's: a frame past 256x256 (the chute's) is
+    // stored fitted to 256x256 (kurt_etc1_convert.py), and the backend maps the
+    // draw's uv 0..1 onto that image's rectangle. The quad stays the frame's
+    // (drawFrame: width x height sprite pixels), so the frame is exactly as
+    // large on screen whether it was fitted or not.
     if (t3x && frame.packSize > 0) {
-        texture = mdk_render_create_compressed_texture(renderer_, frame.width, frame.height, t3x,
+        texture = mdk_render_create_compressed_texture(renderer_, frame.packWidth,
+                                                       frame.packHeight, t3x,
                                                        (int32_t)frame.packSize);
         if (texture < 0) {
             // Refused (the bytes do not import, or not as this frame's size): a
@@ -572,9 +612,20 @@ int32_t KurtSprite::makeFrameTexture(int32_t animationIndex, int32_t frameIndex,
     // A mod's image for this frame (the C#'s KurtSprite.Upscaled: the
     // enhanced look's sprites only, named ANIMATION_frame). Given to
     // the renderer as the frame's colour texture; the frame's own texture
-    // stays for the original look. The HD pack's copy wins over a compressed
-    // frame as it does over the index texture (the backend's per-draw choice).
-    if (mods_ && shading_ == Shading::Sprite) {
+    // stays for the original look.
+    //
+    // NOT FOR A COMPRESSED FRAME (owner's hardware log, 2026-11-19, HD pack
+    // installed): the HD pack's Kurt frames are capped at 128x128 -- usually
+    // FEWER texels than the frame's own ETC1A4 copy from kurt.pak -- and asking
+    // for one cost an SD read and a main-thread import per newly made frame
+    // (150 in a short session, many of them K_LAND / K_RJMP, mid-jump). A frame
+    // made from its pack copy keeps it; the HD path stays for a frame with no
+    // compressed copy (the 16-bit index texture), as before.
+    const bool madeCompressed = t3x && frame.packSize > 0;
+    if (mods_ && shading_ == Shading::Sprite && madeCompressed) {
+        stream_.hdSkipped++;
+    }
+    if (mods_ && shading_ == Shading::Sprite && !madeCompressed) {
         formats::Texture image;
         image.setName(animation.name);
         image.setWidth(frame.width);
@@ -617,7 +668,21 @@ int32_t KurtSprite::frameBytes(const Frame& frame) const {
 }
 
 namespace {
-const char* const kStartSet[] = {"K_STILL", "K_FALL", "K_LAND", "K_IDLE"};
+// What level load makes and pins. The first four are what every level opens
+// on; the chute's two are what level 7 (DANT_1) opens on and any long fall can
+// open, and they were the owner's hitch (2026-11-19): K_CHUTE (8 frames) and
+// K_CHUTEC (12) were 512x512 textures, a quarter of a megabyte each as ETC1A4,
+// cycled through the one-megabyte rotation every frame of the sway and stood in
+// as 16-bit expansions while their bytes streamed. Fitted to 256x256 they are
+// 1,130,496 GPU bytes together, made once here. The jump's two followed (the
+// owner's hardware report, same day: hitches on every jump): a jump is Kurt's
+// most routine button and leads only into K_FALL and K_LAND (already here) or
+// K_CRASHL (a long fall); K_JUMP (442,368 GPU bytes) and K_RJMP (606,208) are
+// the standing and the running take-off. kurt_pack.py's START_SET is
+// this list, in this order: the pack lays these animations out first, so
+// level load reads them in its one read.
+const char* const kStartSet[] = {"K_STILL", "K_FALL",  "K_LAND", "K_IDLE",
+                                 "K_CHUTE", "K_CHUTEC", "K_JUMP", "K_RJMP"};
 } // namespace
 
 int KurtSprite::startSetCount() {
@@ -645,10 +710,13 @@ void KurtSprite::forgetPack() {
         for (size_t f = 0; f < animation.frames.size(); f++) {
             animation.frames[f].packOffset = 0;
             animation.frames[f].packSize = 0;
-            animation.frames[f].standIn = false;
+            animation.frames[f].packWidth = 0;
+            animation.frames[f].packHeight = 0;
         }
     }
     packPath_.clear();
+    held_ = Pick();
+    held_.animation = -1;
     // A read in flight (streamTag_) stays outstanding in the backend until it
     // lands; the new generation makes it stale, and pumpStream drops it.
     generation_ = (generation_ + 1) % 1000000;
@@ -683,7 +751,9 @@ void KurtSprite::useCompressedPack(const formats::KurtPack* pack, int32_t level,
                 continue;
             }
             const formats::KurtPack::Entry& entry = pack->entries()[(size_t)index];
-            if (!entry.valid || entry.width != frame.width || entry.height != frame.height) {
+            if (!entry.valid || entry.width != frame.width || entry.height != frame.height ||
+                entry.imageWidth == 0 || entry.imageHeight == 0 ||
+                entry.imageWidth > entry.width || entry.imageHeight > entry.height) {
                 // A bad entry, or one made from other data: this frame is drawn
                 // from its index texture (the 16-bit path), the others are not.
                 out->badFrames++;
@@ -691,6 +761,8 @@ void KurtSprite::useCompressedPack(const formats::KurtPack* pack, int32_t level,
             }
             frame.packOffset = entry.offset;
             frame.packSize = entry.size;
+            frame.packWidth = entry.imageWidth;
+            frame.packHeight = entry.imageHeight;
             out->compressed++;
             if (end == 0 || entry.offset < begin) {
                 begin = entry.offset;
@@ -872,8 +944,7 @@ void KurtSprite::prefetchNext() {
         // Nothing left to make from it (the start set, preloaded): not read.
         bool wanted = false;
         for (size_t f = 0; f < animation.frames.size() && !wanted; f++) {
-            wanted = animation.frames[f].packSize > 0 &&
-                     (animation.frames[f].texture < 0 || animation.frames[f].standIn);
+            wanted = animation.frames[f].packSize > 0 && animation.frames[f].texture < 0;
         }
         if (!wanted) {
             continue;
@@ -927,11 +998,11 @@ void KurtSprite::trimStaged(int32_t keep) {
 void KurtSprite::streamFailed(int32_t animationIndex, const char* why) {
     Animation& animation = animations_[(size_t)animationIndex];
     animation.stream = StreamState::Failed;
-    // Its frames are plain 16-bit from now on: a stand-in stays as it is (it IS
-    // the 16-bit texture), and nothing asks for these bytes again.
+    // Its frames are plain 16-bit from now on -- the permanent fallback, made
+    // on each one's next draw (a held frame is then let go) -- and nothing asks
+    // for these bytes again.
     for (size_t f = 0; f < animation.frames.size(); f++) {
         animation.frames[f].packSize = 0;
-        animation.frames[f].standIn = false;
     }
     stream_.failures++;
     if (stream_.failures == 1) {
