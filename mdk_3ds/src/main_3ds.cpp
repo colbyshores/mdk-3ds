@@ -113,6 +113,7 @@
 #include "platform/log_3ds.h"
 #include "menu_screens_3ds.h"
 #include "stream_3ds.h"
+#include "platform/worker_core.h"
 
 namespace {
 
@@ -498,6 +499,8 @@ int main(int argc, char** argv) {
     // macro). The line below is the proof that reads back from a pull.
     mdk::log3dsPrintf("main: harness build, autoquit=%ds chainload=netload_stub", (int)(MDK_AUTOQUIT));
 #endif
+    // Core 1's time grant for the workers (worker_core.h), before any starts.
+    mdk::workerCoreInit();
 
     gfxInitDefault();
     // The top screen's parallax barrier. MDK's flat-display stereo modes do

@@ -365,6 +365,21 @@ else ifneq ($(strip $(DSPAUDIO)),1)
 $(error DSPAUDIO=$(DSPAUDIO): use 0 (software mix, the A/B) or 1 (DSP mixing, the default))
 endif
 endif
+# `make AUTOQUIT=90 WORKERCORE=0` puts the async file reader and the DSP audio
+# worker back on the process's default core (-2, the main thread's core 0) and
+# skips the syscore time-limit call (a harness aid, for the owner's A/B of the
+# core-1 placement, worker_core.h). WORKERCORE=1, or unset, is the shipped core 1.
+# worker_core.h's three includers read it: `make clean` after changing it.
+ifneq ($(strip $(WORKERCORE)),)
+ifndef AUTOQUIT
+$(error WORKERCORE=$(WORKERCORE) needs AUTOQUIT: the A/B switch is a harness-build feature)
+endif
+ifeq ($(strip $(WORKERCORE)),0)
+DEFINES += -DMDK_HW_WORKERCORE_DEFAULT=1
+else ifneq ($(strip $(WORKERCORE)),1)
+$(error WORKERCORE=$(WORKERCORE): use 0 (default core, the A/B) or 1 (core 1, the default))
+endif
+endif
 # `make AUTOQUIT=90 GLOWPROBE=1` adds one halo in front of the camera every
 # frame (a harness aid): the glow billboards' path drawn on hardware without a
 # script's explosion. Only main_3ds.cpp reads it: touch it after changing it.

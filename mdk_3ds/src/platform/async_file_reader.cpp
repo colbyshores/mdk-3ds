@@ -10,6 +10,7 @@
 
 #include "platform/log_3ds.h"
 #include "platform/vfp_fpscr.h"
+#include "platform/worker_core.h"
 
 namespace mdk {
 
@@ -90,13 +91,23 @@ bool AsyncFileReader::start() {
     exit_ = false;
     s32 priority = 0x30;
     svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-    // One below the main thread (a larger number is a lower priority), and on the
-    // application core (-2: the default core of the process).
+    // One below the main thread (a larger number is a lower priority) -- and so
+    // also below the DSP audio worker (main - 1), which shares core 1 with it and
+    // must preempt an SD read for its 25 ms music refill. On kWorkerCore (core 1,
+    // the owner decision in worker_core.h), off the main thread's core; if
+    // threadCreate refuses it, on the process's default core as before.
     const s32 workerPriority = priority < 0x3F ? priority + 1 : priority;
-    thread_ = threadCreate(asyncFileReaderThread, this, kStackBytes, workerPriority, -2, false);
+    int core = kWorkerCore;
+    thread_ = threadCreate(asyncFileReaderThread, this, kStackBytes, workerPriority, core, false);
+    if (thread_ == nullptr && core != kWorkerCoreFallback) {
+        core = kWorkerCoreFallback;
+        thread_ = threadCreate(asyncFileReaderThread, this, kStackBytes, workerPriority, core,
+                               false);
+    }
     running_ = thread_ != nullptr;
-    log3dsPrintf("hd: reader thread %s (priority 0x%X, stack %u)", running_ ? "started" : "FAILED",
-                 (unsigned)workerPriority, (unsigned)kStackBytes);
+    log3dsPrintf("hd: reader thread %s (priority 0x%X, stack %u, core %d%s)",
+                 running_ ? "started" : "FAILED", (unsigned)workerPriority, (unsigned)kStackBytes,
+                 core, core != kWorkerCore ? " (kWorkerCore refused)" : "");
     return running_;
 }
 

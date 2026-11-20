@@ -16,8 +16,11 @@
 //   - FZ/DN at entry (vfpThreadFzDn), though it does no float work;
 //   - a small stack (kStackBytes) and no large locals: the path is copied into
 //     a fixed slot, the bytes live in a malloc'd buffer;
-//   - priority one BELOW the main thread's, on the application core: on the Old
-//     3DS it runs while main waits (the frame end's vsync), never instead of it.
+//   - priority one BELOW the main thread's (and below the DSP audio worker's,
+//     which shares its core), on core 1 (kWorkerCore, worker_core.h: the owner
+//     decision, as t2k does) on Old and New 3DS alike, so a read never runs
+//     instead of the main thread; the process's default core if core 1 is
+//     refused, and in the `WORKERCORE=0` harness A/B.
 //   - synchronisation: one LightLock guards the slots; a LightEvent wakes the
 //     worker. No `volatile` stands in for either.
 //
