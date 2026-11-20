@@ -760,7 +760,10 @@ const uint8_t* KurtSprite::stagedFrame(const Animation& animation, const Frame& 
 
 namespace {
 // A read's tag: the generation (a re-load bumps it) and the animation index.
-const int32_t kTagAnimations = 1024;
+// constexpr and a power of two: the tag's split below is a shift and a mask, never
+// a runtime divide (AGENTS.md R11; the audit reads constexpr divisors as constant).
+constexpr int32_t kTagAnimations = 1024;
+static_assert((kTagAnimations & (kTagAnimations - 1)) == 0, "kTagAnimations must be a power of two");
 } // namespace
 
 void KurtSprite::requestStream(int32_t animationIndex) {
@@ -795,7 +798,9 @@ void KurtSprite::pumpStream() {
         if (tag == streamTag_) {
             streamTag_ = -1;
         }
-        const int32_t index = tag % kTagAnimations;
+        // A negative tag is rejected before its split is used (the split of a
+        // negative value would name the wrong animation).
+        const int32_t index = tag < 0 ? -1 : tag % kTagAnimations;
         if (tag < 0 || tag / kTagAnimations != generation_ || index >= (int32_t)animations_.size() ||
             animations_[(size_t)index].stream != StreamState::Pending) {
             // Stale: a re-load or a replaced animation since it was asked for.

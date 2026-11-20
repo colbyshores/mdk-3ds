@@ -178,6 +178,20 @@ Kurt's start set (stand, fall, land, idle) in each format:
 | ETC1A4, full size | 64 KB | ~2.5 MB |
 | ETC1A4, 128×128 (HD pack cap) | 16 KB | ~0.6 MB |
 
+## Per-toggle cost on a5f8b97 (Old 3DS, level 8, stereo, steady mean; baseline 39.4 ms)
+
+| off | mean | change |
+|---|---|---|
+| lighting (shadows go with it) | 33.5 | **−5.9** (locked 30) |
+| sun shadows | 34.5 | **−4.9** |
+| edge smoothing 2x1 | 35.3 | **−4.2** |
+| haze / mirrors / glow / filtering | 39.1–39.3 | ~0 |
+| fragment lights | 39.2 | ~0 (an empty stub on the 3DS: point lights are not gathered in the C++ port at all) |
+| mipmaps | 41.4 | **+1.9** (mipmaps save time) |
+| HD textures | 39.1 | **INVALID**: neither the appliance nor the owner's card has an HD pack (no `hd: pack manifest` line), so the switch had nothing to switch |
+
+Owner play test (New 3DS, level 7 DANT_1): visible differences only from edge smoothing and filtering. DANT_1 has no sunlight (rig sun 0,0,0), near-equal sky/ground, haze 0.0002, so lighting/shadows/haze barely show there; level 8 is the arena to judge them in.
+
 ## Queued candidates
 
 - Merge adjacent draws that share state (Forsaken: 33–66 draws per eye; MDK ~245).
