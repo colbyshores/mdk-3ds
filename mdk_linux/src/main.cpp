@@ -41,6 +41,7 @@
 #include "game/mod_images.h"
 #include "game/mod_models.h"
 #include "game/level_view.h"
+#include "game/cutscene_camera.h"
 #include "game/follow_camera.h"
 #include "game/game_flow.h"
 #include "game/game_settings.h"
@@ -1088,6 +1089,9 @@ int main(int argc, char** argv) {
     mdk::Input input;
     mdk::Player player;
     mdk::FollowCamera follow;
+    // The scripts' cutscene camera (package 13, game/cutscene_camera.h): the C# Viewer's
+    // _cutscene (Viewer.cs:142), the view instead of `follow` while a cutscene holds it.
+    mdk::CutsceneCamera cutsceneCamera;
     std::unique_ptr<mdk::scripts::ScriptRuntime> runtime;
     // THE LEVEL'S MUSIC (audio/level_music.h, the C#'s LevelMusic): the track of
     // Kurt's arena, played through the runtime's mixer -- so it lives and dies
@@ -1134,6 +1138,7 @@ int main(int argc, char** argv) {
             player.combat().setPickupHook(pickupHook);
         }
         follow = mdk::FollowCamera();
+        cutsceneCamera = mdk::CutsceneCamera();
         // Pin Kurt's arena to the one around the spawn (the C# SetSolid of the
         // scripts' drawn arenas). The step loop refreshes it from the runtime's drawn
         // list from here on, or from the arena under his feet when there is no
@@ -1263,6 +1268,8 @@ int main(int argc, char** argv) {
     float endingDelay = 0.0f;
     bool endingStarted = false;
     bool levelEndedExit = false;
+    // C# Event.GameFinished (Viewer.cs:241): special_event 81 latched it (package 13).
+    bool gameFinishedExit = false;
     bool endSeen = false;
     bool tearRefusedLogged = false;
     // C# Viewer._time and TestStart (Viewer.cs:109): the game time the --event fires at.
@@ -1417,6 +1424,10 @@ int main(int argc, char** argv) {
                     music->enter(runtime->currentArena());
                     music->update(kStep);
                 }
+                // The cutscene's shot of this step (Viewer.cs:528-531, after the music).
+                if (runtime && mdk::CutsceneCamera::active(*runtime)) {
+                    cutsceneCamera.update(*runtime);
+                }
                 // The collision world follows him EVERY step, at the point the C#
                 // does it (`_space.SetSolid(_scripts.SolidArenas)`, after
                 // UpdateCamera, Viewer.cs:533). The pin is sticky: while `_solid` is
@@ -1513,6 +1524,24 @@ int main(int argc, char** argv) {
             if (endingStarted && !levelEndedExit) {
                 endingDelay -= elapsed;
                 levelEndedExit = endingDelay <= 0.0f;
+            }
+            // The end of the game (special_event 81): the C#'s GameFinished, at once
+            // (Viewer.cs:241, no delay), acted on after the frame like the level's end.
+            if (runtime && runtime->gameFinished() && !gameFinishedExit) {
+                gameFinishedExit = true;
+                std::printf("[main] game: finished (special_event 81, GameFinished) at frame "
+                            "%u\n",
+                            frame);
+            }
+            // A CUTSCENE HOLDS THE CAMERA (package 13): the C# Viewer draws from its
+            // CutsceneCamera while CutsceneCamera.Active (Viewer.SceneView/Eye, :728/:739),
+            // blended between the scripts' ticks (Viewer.BlendFrame, :614-617; a fixed step
+            // shows the tick's own shot, as it does the objects). The follow camera keeps its
+            // own state and rewrites `camera` on the next step, so nothing is left behind
+            // when the cutscene ends.
+            if (runtime && mdk::CutsceneCamera::active(*runtime)) {
+                cutsceneCamera.blend(fixedStep ? 1.0f : runtime->tick_blend(pending));
+                cutsceneCamera.build(&camera, kAspect);
             }
             mdk_render_set_camera(renderer, &camera);
             // The walk's route evidence: Kurt's arena (the scripts' current one,
@@ -1865,6 +1894,18 @@ int main(int argc, char** argv) {
                             mdk::flow::GameFlow::screenName(after));
                 exitReason = "level ended";
             }
+            break;
+        }
+        // THE GAME-FINISHED HOOK (beside package 2's): the C#'s Game takes
+        // Event.GameFinished to the end movie (Game.cs:458, MDKEND.FLC and MDKBZK.MVE, then
+        // the menu with the splash). The movies are not this package's, so the run ends
+        // through the ordinary teardown.
+        if (gameFinishedExit) {
+            std::printf("[main] game: finished; the flow shows %s (the end movie is not "
+                        "played; exiting)\n",
+                        mdk::flow::GameFlow::screenName(
+                            flow.handle(mdk::flow::Event::GameFinished)));
+            exitReason = "game finished";
             break;
         }
     }

@@ -126,6 +126,7 @@ set(SOURCES
     ${CORE}/src/game/solids.cpp
     ${CORE}/src/game/bsp.cpp
     ${CORE}/src/game/camera_roll.cpp
+    ${CORE}/src/game/cutscene_camera.cpp
     ${CORE}/src/game/follow_camera.cpp
     ${CORE}/src/game/frame_blend.cpp
     ${CORE}/src/game/game_flow.cpp

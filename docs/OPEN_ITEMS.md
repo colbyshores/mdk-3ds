@@ -1388,8 +1388,8 @@ runs special_event like the C#'s `--event`):
 
 Still open:
 - ~~**Package 2**~~: landed 2026-11-20 -- see "The next level (package 2)" below.
-- **Package 13**: special_event's arms above 50 (the cutscenes, the strike, Gunter, the end of
-  the game) still count 131 as unimplemented; `GameOver.Yes` (the town flattened) is package 15.
+- ~~**Package 13**~~: landed 2026-11-20 -- see "The cutscenes (2026-11-20, package 13)" below.
+  `GameOver.Yes` (the town flattened) is package 15.
 - **Unpinned**: FollowCamera's clearance skip while Frozen. No reachable golden blocks the
   camera's sight during the rise (searched: levels 3, 4, 6, 8, eight turns each), so removing
   the skip does not fail a golden. The C#'s `!Dead` arm of the same guard is still not
@@ -1555,6 +1555,47 @@ Still open:
   their values), and the menus' MenuPage start options (--options/--controls).
 - **Death still respawns in place** (the C# goes to the menu with the splash): #19's LASTGAME
   belongs with it.
+
+## The cutscenes (2026-11-20, package 13): what landed, what is open
+
+Landed, operation for operation, pinned by `golden/L7_cut_boss.txt`, `L8_cut_boss.txt`,
+`L5_cut_gunter.txt`, `L5_cut_dog.txt`, `L5_cut_dog_long.txt`, `L5_cut_strike.txt` and
+`L5_cut_end.txt` (byte-identical to the C# probe `tests/scripts/cutscene_probe/`,
+`tick1 dump cutscene <level> <steps> <schedule>`: `at:x:y:z:yaw` is the C#'s --at,
+`ev:step:value` its --event, `show:step` prints from there on):
+
+- `SpecialEvent`'s arms 52, 53, 55, 61, 81, 91, 92, 93 and 51's cutscene half;
+  `StartCutscene`, `EndCutscene`, `CutsceneTick` (RunTick's Cutscene branch: which objects run
+  and which are Visible, Kurt's Visible), `UpdateCutsceneCamera` (shots 0, 1, 2, 11, 12, every
+  bit), `FindObjectNamed`, `GameFinished` (`ScriptRuntime::gameFinished()`, a latch);
+- RunTick's object motion is one function, `ScriptRuntime::motionUpdate`, shared with the
+  cutscene tick (moved, not changed: every older golden still passes);
+- `Kurt.Visible` -> `Player::visible`, read by `KurtSprite::draw`; the objects' `visible` was
+  already written by `updateDrawnArenas` (the drawn list), and the cutscenes now override it;
+- `CutsceneCamera.cs` -> `game/cutscene_camera.{h,cpp}`, used by both frontends in the
+  Viewer's places (Update after each step, Blend per frame, the view while Active);
+  `vm_tests` pins Active, the blend and the cuts;
+- both frontends log `GameFinished` and end the run "game finished" at a hook beside package
+  2's LEVEL-END HOOK (the end movie is not played).
+
+Still open:
+- **51's strike scene (package 14)**: `PlayStrikeScene(Kurt, WithPilot)` is a marked hook in
+  `specialEvent`; until it lands 51 alone still counts opcode 131 as unimplemented.
+- **The oracle's targets look wrong, and are ported as they are.** Every retail call above 50
+  is an ARENA CONTROLLER's (L5 MUSE_5, L7 DANT_10, L8 GUNT_10), so 51, 81, 91 and 93 target
+  the controller, whose position is the origin: the boss shots look at (0, 0, 3) from their
+  fixed points, and 51 teleports Kurt to the origin. And the C#'s CutsceneTick never runs the
+  controllers, while every retail 53 and 92 is a controller's own: a cutscene ends only if
+  its controller reaches the 53/92 in the same run that started it (before a wait), so in
+  the oracle a boss intro that waits in between never ends. Settling this needs the original
+  (0x477cf4, 0x478704), not the C#.
+- **Not pinned**: `CutsceneBoss` keeping the stored position (in shot 12 the point IS the
+  stored position, so no golden can tell); the shot of a target that moves (the dog and
+  Gunter stand still in every parity run -- Gunter moves only next to Kurt, and there his
+  yaw leaves the oracle's within a second, a divergence in his script that predates this
+  package and survives package 4).
+- **Emulator**: unwatched. `make -C mdk_3ds AUTOQUIT=90 LEVEL=7 AT=495,5005,24,0 EVENT=93`
+  (and the other values in mdk_3ds/Makefile's EVENT note) shows each one.
 
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 

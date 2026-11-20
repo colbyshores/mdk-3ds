@@ -2642,6 +2642,173 @@ bool levelEndDump(int level, int steps, const std::string& schedule, const MdkDa
     return true;
 }
 
+// The cutscenes, end to end against the oracle probe (tests/scripts/cutscene_probe): the C++
+// Player and ScriptRuntime stepped at 1/60 s in the C# Viewer's order (Kurt, then the
+// scripts), under the probe's schedule: `at:x:y:z:yaw` (Kurt's start, the C#'s --at),
+// `ev:step:value` (special_event `value` for the controller of Kurt's arena before that step,
+// as every retail call above 50 is an arena controller's), `show:step` (print from there on)
+// and key holds. Its columns are the
+// probe's, byte for byte: Kurt (state, feet in 1/64, Frozen, Visible, firing), Kurt's arena,
+// the cutscene (state in hex, target, shot, timer, and the camera's yaw, pitch, distance,
+// stored position and point as bit patterns), GameFinished, and the objects (count, shown,
+// an FNV-1a hash of the hidden ones' indices, the sum of their positions in 1/64).
+bool cutsceneDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                  const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    std::vector<std::pair<int, int> > events;
+    bool haveAt = false;
+    float at[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    int show = 1;
+    std::string rest;
+    size_t cursor = 0;
+    while (cursor <= schedule.size()) {
+        size_t comma = schedule.find(',', cursor);
+        if (comma == std::string::npos) {
+            comma = schedule.size();
+        }
+        const std::string token = schedule.substr(cursor, comma - cursor);
+        cursor = comma + 1;
+        if (token.compare(0, 3, "ev:") == 0) {
+            int step = 0;
+            int value = 0;
+            if (sscanf(token.c_str() + 3, "%d:%d", &step, &value) != 2) {
+                *why = "the event token did not parse: " + token;
+                return false;
+            }
+            events.push_back(std::make_pair(step, value));
+        } else if (token.compare(0, 3, "at:") == 0) {
+            if (sscanf(token.c_str() + 3, "%f:%f:%f:%f", &at[0], &at[1], &at[2], &at[3]) != 4) {
+                *why = "the start token did not parse: " + token;
+                return false;
+            }
+            haveAt = true;
+        } else if (token.compare(0, 5, "show:") == 0) {
+            show = atoi(token.c_str() + 5);
+        } else if (!token.empty()) {
+            rest += (rest.empty() ? "" : ",") + token;
+        }
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<ItemsPush> pushes;
+    if (!parseItemsSchedule(rest, &holds, &gives, &pushes) || !gives.empty() || !pushes.empty()) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = haveAt ? Vec3{at[0], at[1], at[2]} : Vec3{start[0], start[1], start[2]};
+    player.yaw = haveAt ? at[3] : levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    const auto bits = [](float v) {
+        uint32_t b;
+        memcpy(&b, &v, sizeof(b));
+        char text[16];
+        snprintf(text, sizeof(text), "%08x", b);
+        return std::string(text);
+    };
+    char buffer[1024];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < events.size(); i++) {
+            if (events[i].first == step) {
+                runtime.specialEvent(&runtime.getArenaState(runtime.currentArena()).controller,
+                                     events[i].second);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        // Viewer.RunSteps: Kurt, then the scripts.
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        if (step < show) {
+            continue;
+        }
+
+        std::string target = "-";
+        if (const scripts::MdkObject* t = runtime.cutsceneTarget) {
+            target = t->type_name.empty() ? "@" + t->arena
+                                          : t->type_name + "_" + std::to_string(t->instance_id);
+        }
+        int count = 0;
+        int shown = 0;
+        uint32_t hidden = 2166136261u;
+        long long sum = 0;
+        const std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            const scripts::MdkObject& obj = objects[i];
+            if (runtime.isRemoved(&obj)) {
+                continue;  // not one of the C#'s Objects
+            }
+            if (obj.visible) {
+                shown++;
+            } else {
+                hidden = (hidden ^ (uint32_t)count) * 16777619u;
+            }
+            sum += p64(obj.position.x) + p64(obj.position.y) + p64(obj.position.z);
+            count++;
+        }
+        const Vec3& pos = runtime.cameraPosition;
+        const Vec3& point = runtime.cameraPoint;
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d state=%s feet64=%d,%d,%d frozen=%d kvis=%d fire=%d arena=%s cut=%x "
+                 "target=%s mode=%d timer=%d yaw=%s pitch=%s dist=%s pos=%s,%s,%s "
+                 "point=%s,%s,%s finished=%d objs=%d shown=%d hid=%08x osum=%lld\n",
+                 step, kurtStateName(player.state()), p64(player.feet.x), p64(player.feet.y),
+                 p64(player.feet.z), player.frozen ? 1 : 0, player.visible ? 1 : 0,
+                 player.combat().firing() ? 1 : 0, runtime.currentArena().c_str(),
+                 (unsigned)runtime.cutscene, target.c_str(), (int)runtime.cameraMode,
+                 (int)runtime.cameraTimer, bits(runtime.cameraYaw).c_str(),
+                 bits(runtime.cameraPitch).c_str(), bits(runtime.cameraDistance).c_str(),
+                 bits(pos.x).c_str(), bits(pos.y).c_str(), bits(pos.z).c_str(),
+                 bits(point.x).c_str(), bits(point.y).c_str(), bits(point.z).c_str(),
+                 runtime.gameFinished() ? 1 : 0, count, shown, (unsigned)hidden, sum);
+        *out += buffer;
+    }
+    return true;
+}
+
 // The hazards probe's schedule (tests/scripts/hazards_probe): items_probe's tokens, plus
 // `tp:step:ARENA:x:y:z` (TeleportKurt), `run:step:MODEL:pc:dx:dy:dz` (a plain spawn in
 // Kurt's arena at his feet plus the offset, running the retail script at CMI offset pc)
@@ -5154,6 +5321,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "cutscene") {
+            // `tick1 dump cutscene <level> <steps> <schedule>`: cutsceneDump's text, the C++
+            // side of the cutscene probe.
+            std::string got;
+            std::string why;
+            if (!cutsceneDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                              &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "fire" || what == "firerun") {
             std::string got;
             std::string why;
@@ -6567,6 +6747,74 @@ int main(int argc, char** argv) {
             std::string why;
             if (!kurtWindDump(c.level, c.steps, c.at, c.schedule, data, spritesArg, &got,
                               &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The cutscenes (package 13), end to end against the oracle probe
+    // (tests/scripts/cutscene_probe; see cutsceneDump for the columns): special_event's arms
+    // above 50, the Cutscene branch of RunTick, the camera's shots to the bit, Kurt Frozen
+    // and Visible, the objects' Visible, GameFinished. Each runs where the retail script
+    // calls it (L5 MUSE_5, L7 DANT_10, L8 GUNT_10), from the controller of Kurt's arena.
+    // In L5 Kurt stands at the far corner of MUSE_5 (465, -6): next to Gunter (420, 100),
+    // Gunter's own yaw leaves the oracle's within a second, a divergence in his script that
+    // predates the cutscenes (shot 11 is placed from his yaw, so it would show).
+    {
+        struct CutsceneCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const CutsceneCase kCutsceneCases[] = {
+            {"L7_cut_boss", "golden/L7_cut_boss.txt", 7, 160,
+             "at:495:5005:24:0,fire:10-80,ev:40:93,ev:120:92",
+             "DANT_10's boss intro (0x5d, shot 12 from 1158,5006,315, its position kept): Kurt "
+             "stops firing, freezes and hides, the pickups hide, 92 ends it"},
+            {"L8_cut_boss", "golden/L8_cut_boss.txt", 8, 300,
+             "at:40:3221:-358:180,fire:10-90,ev:60:91,ev:200:92",
+             "GUNT_10's (0x5b, shot 12 from -121,3347,-350): every object runs on, flagged or "
+             "not, until 92"},
+            {"L5_cut_gunter", "golden/L5_cut_gunter.txt", 5, 200,
+             "at:465:-6:-2263:0,ev:30:61,ev:150:53",
+             "Gunter's (0x3d, XGUNTAM by FindObjectNamed, shot 11: placed 45 ahead of him and "
+             "held), 53 ends it"},
+            {"L5_cut_dog", "golden/L5_cut_dog.txt", 5, 340,
+             "at:465:-6:-2263:0,ev:30:52,ev:54:54,ev:150:55,ev:300:53",
+             "the dog's (0x34, XBN): shot 0 to 1 at 12 units, the orbit easing in, 54 the "
+             "oracle's no-op, 55 to shot 2 (25 units, rising), only the cutscene types shown"},
+            {"L5_cut_strike", "golden/L5_cut_strike.txt", 5, 200,
+             "at:465:-6:-2263:0,fire:5-60,ev:30:51,ev:120:53",
+             "51's cutscene half (0x47): Kurt teleported to the controller, which moves 4 "
+             "along y, shown; the shot from 10 behind it (the strike scene is package 14)"},
+            {"L5_cut_end", "golden/L5_cut_end.txt", 5, 120,
+             "at:465:-6:-2263:0,fire:5-60,ev:30:81",
+             "the end of the game (0x51): GameFinished, Kurt shown, nothing else runs or shows"},
+            {"L5_cut_dog_long", "golden/L5_cut_dog_long.txt", 5, 3760,
+             "at:465:-6:-2263:0,ev:30:52,ev:1000:55,ev:3720:53,show:3600",
+             "the dog's a minute on: the orbit's 1800-tick ease-in runs out (timer 0) and the "
+             "shot takes its settled weights (0.7/0.3 pitch, 0.3/0.7 yaw) and point"},
+        };
+        for (size_t i = 0; i < sizeof(kCutsceneCases) / sizeof(kCutsceneCases[0]); i++) {
+            const CutsceneCase& c = kCutsceneCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!cutsceneDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
                 printf("FAIL %s: %s\n", c.name, why.c_str());
                 failures++;
             } else if (got == expected) {

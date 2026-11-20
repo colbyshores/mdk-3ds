@@ -63,6 +63,7 @@ COMMON_SOURCES := \
 	$(CORE)/game/solids.cpp \
 	$(CORE)/game/bsp.cpp \
 	$(CORE)/game/camera_roll.cpp \
+	$(CORE)/game/cutscene_camera.cpp \
 	$(CORE)/game/follow_camera.cpp \
 	$(CORE)/game/frame_blend.cpp \
 	$(CORE)/game/game_flow.cpp \

@@ -634,9 +634,16 @@ void ScriptRuntime::runTick() {
         targetYaw_ = kurtYaw_;
     }
 
+    // A cutscene's tick replaces the game's (ScriptRuntime.cs:890-894): only some objects
+    // run, no controller, no countdown, trigger, pickup, gun or effect -- everything below
+    // waits until EndCutscene.
+    if (cutscene != 0) {
+        cutsceneTick();
+        return;
+    }
+
     // The alarm countdown decays once per tick, before any object runs
-    // (ScriptRuntime.cs:896). There is no cutscene state in this slice, so the
-    // C#'s cutscene early-return cannot suppress this decrement here.
+    // (ScriptRuntime.cs:896), after the cutscene's early return above.
     alarmTicks = alarmTicks > 0 ? alarmTicks - 1 : 0;
 
     // The camera-track request lasts for the current tick and the next one
@@ -720,10 +727,9 @@ void ScriptRuntime::runTick() {
     // the other movement writers that can precede it are later slices, so the
     // copied Player position is the complete source in this runtime.
     //
-    // Two oracle details this slice does not have yet: the C#'s cutscene
-    // early-return (ScriptRuntime.cs:889-892) skips this write AND the
-    // previous-position update during a cutscene — there is no cutscene state
-    // here, so both happen on every tick; and the C#'s save/load snapshot
+    // The cutscene early-return above (ScriptRuntime.cs:890-894) skips this write AND
+    // the previous-position update during a cutscene, as the C# does. One oracle
+    // detail this slice does not have yet: the C#'s save/load snapshot
     // resets the previous position (ScriptRuntime.Snapshot.cs:37-39), so the
     // first tick after a load observes no movement. The snapshot slice must
     // reset previousKurtPosition_ the same way.
@@ -790,106 +796,115 @@ void ScriptRuntime::runTick() {
         const Vec3 carriedFrom = obj->position;
         const float carriedYaw = obj->yaw;
         vm_.run(obj);
-        // ObjectMotion.Update's first branch (ObjectMotion.cs:54-68): an effect (an
-        // explosion) only plays its texture animation and returns, so nothing below --
-        // the path, the velocity, the arena crossing, the pickup, the animation, the
-        // roll -- runs for it; every gate below tests the same `effect_frames <= 0`.
-        if (!obj->dead && obj->effect_frames > 0) {
-            motionEffect(obj);
-            carryKurt(obj, carriedFrom, carriedYaw);
-            continue;
-        }
-        // The path-following half of Motion.Update, gated on liveness exactly as
-        // the C# (Vm.Run then `if (!Dead) Motion.Update`): a script that kills the
-        // object this tick must not have it path-moved afterwards.
+        // ObjectMotion.Update (ScriptRuntime.cs:976-979: `if (!obj.Dead) Motion.Update(obj)`),
+        // shared with the cutscene tick (motionUpdate below).
         if (!obj->dead) {
-            motionPath(obj);
-            motionVelocity(obj);
-            // An object that changes arena follows its own move through a doorway
-            // (ObjectMotion.cs:104-107, after ApplyVelocity and before the pickup
-            // dispatch). motionVelocity returns early on a zero-length move, and so
-            // does the C#'s ApplyVelocity -- the C#'s Update keeps going to
-            // FollowArenas either way, so the hook is HERE, not inside
-            // motionVelocity, even though a move that did not happen crosses nothing.
-            //
-            // The effect gate is NOT decoration: ObjectMotion.Update returns at
-            // :54-68 for EffectFrames > 0, BEFORE ApplyVelocity and therefore before
-            // FollowArenas at :106, so an effect object never evaluates a crossing in
-            // the oracle. It matters here for the same reason it does there:
-            // previous_position is written only for a non-effect object (below, with
-            // Roll and Bank), so an effect's "move" would be read off a stale segment
-            // from before the effect started and could relocate it across a doorway.
-            //
-            // The gate is the INVERSE of the oracle's predicate, so it is `<= 0` and
-            // not `== 0`: the C# returns for a POSITIVE count and runs the normal path
-            // for anything else, and the three gates in this loop must agree with
-            // motionPath() and motionVelocity(), which test `> 0` to return.
-            // No writer in either tree makes it negative today (the oracle's two are
-            // ScriptRuntime.cs:1780 and :1784, both positive counts), so this is
-            // exactness against the oracle rather than a live behaviour change, and no
-            // golden can distinguish the two spellings until an effects port writes a
-            // writer.
-            if (!obj->dead && obj->effect_frames <= 0 &&
-                (obj->flags & MdkObject::FlagChangesArena) != 0) {
-                followArenas(obj);
-            }
-            // Kurt's items (ObjectMotion.cs:110-118): a thrown item (ThrownKind > 0) goes
-            // to Items.UpdateThrown, and the C# returns when that removed it -- no
-            // animation, roll, bank or previous position for it this tick; otherwise
-            // UpdatePickup for a pickup. Both only if the object survived the velocity
-            // step (the C# returns on Dead before them), and never for an effect object.
-            if (!obj->dead && obj->effect_frames <= 0 && obj->thrown_kind > 0) {
-                itemsUpdateThrown(obj);
-                if (obj->dead) {
-                    continue;
-                }
-            } else if (!obj->dead && obj->effect_frames <= 0 &&
-                       (obj->flags & MdkObject::FlagPickup) != 0) {
-                motionPickup(obj);
-            } else if (!obj->dead && obj->effect_frames <= 0 &&
-                       (obj->flags & MdkObject::FlagCow) != 0) {
-                // SW_EWJ's holy cow (ObjectMotion.cs:120-127): it may be killed by its fuse.
-                updateCow(obj);
-                if (obj->dead) {
-                    continue;
-                }
-            }
-            // AdvanceAnimation (ObjectMotion.cs:132), after ApplyVelocity and the
-            // pickup dispatch. An effect object returned from Update before this
-            // point, so it never advances an animation here. Same inverse predicate
-            // as the two gates above: `<= 0`, because the oracle returns on `> 0`.
-            if (!obj->dead && obj->effect_frames <= 0) {
-                float time = obj->animation_time;
-                advanceAnimation(obj, kTick);
-                // The frame sound (ObjectMotion.cs:133): fired once when the frame
-                // clock crosses its frame, at the object's position.
-                if (!obj->frame_sound.empty() && obj->animation != nullptr &&
-                    time < (float)obj->frame_sound_frame &&
-                    (float)obj->frame_sound_frame <= time + kTick * obj->animation_rate *
-                                                           obj->animation->speed) {
-                    playSound(obj, obj->frame_sound, 0, formats::ScriptValue());
-                    obj->frame_sound.clear();
-                }
-                // Roll (ObjectMotion.cs:139-143), then PreviousPosition
-                // (ObjectMotion.cs:146) -- IN THAT ORDER, and both here rather than
-                // at the end of motionVelocity: Roll reads the PREVIOUS frame's
-                // position, so writing it any earlier makes every roll read a zero
-                // movement and the basis never turns.
-                if ((obj->flags & MdkObject::FlagRolling) != 0) {
-                    obj->update_rolling();
-                }
-                // Bank (ObjectMotion.cs:145), between Roll and PreviousPosition.
-                motionBank(obj);
-                obj->previous_position = obj->position;
-            }
+            motionUpdate(obj);
         }
         // Kurt moves and turns with the platform he stands on (ScriptRuntime.cs:982-986,
-        // after Motion.Update). The `continue`s above all leave a dead object, which the
-        // carry skips anyway.
+        // after Motion.Update), for an effect too. Where motionUpdate returned early the
+        // object is dead (a removed thrown item, a cow on its fuse), which the carry skips.
         carryKurt(obj, carriedFrom, carriedYaw);
     }
 
     runControllers();
+}
+
+// C# ObjectMotion.Update, as RunTick's object loop and CutsceneTick (ScriptRuntime.cs:1398-1402)
+// both call it after Vm.Run: one copy, so the cutscene's objects move exactly as the game's.
+void ScriptRuntime::motionUpdate(MdkObject* obj) {
+    // ObjectMotion.Update's first branch (ObjectMotion.cs:54-68): an effect (an
+    // explosion) only plays its texture animation and returns, so nothing below --
+    // the path, the velocity, the arena crossing, the pickup, the animation, the
+    // roll -- runs for it; every gate below tests the same `effect_frames <= 0`.
+    if (!obj->dead && obj->effect_frames > 0) {
+        motionEffect(obj);
+        return;
+    }
+    // The path-following half of Motion.Update, gated on liveness exactly as
+    // the C# (Vm.Run then `if (!Dead) Motion.Update`): a script that kills the
+    // object this tick must not have it path-moved afterwards.
+    if (!obj->dead) {
+        motionPath(obj);
+        motionVelocity(obj);
+        // An object that changes arena follows its own move through a doorway
+        // (ObjectMotion.cs:104-107, after ApplyVelocity and before the pickup
+        // dispatch). motionVelocity returns early on a zero-length move, and so
+        // does the C#'s ApplyVelocity -- the C#'s Update keeps going to
+        // FollowArenas either way, so the hook is HERE, not inside
+        // motionVelocity, even though a move that did not happen crosses nothing.
+        //
+        // The effect gate is NOT decoration: ObjectMotion.Update returns at
+        // :54-68 for EffectFrames > 0, BEFORE ApplyVelocity and therefore before
+        // FollowArenas at :106, so an effect object never evaluates a crossing in
+        // the oracle. It matters here for the same reason it does there:
+        // previous_position is written only for a non-effect object (below, with
+        // Roll and Bank), so an effect's "move" would be read off a stale segment
+        // from before the effect started and could relocate it across a doorway.
+        //
+        // The gate is the INVERSE of the oracle's predicate, so it is `<= 0` and
+        // not `== 0`: the C# returns for a POSITIVE count and runs the normal path
+        // for anything else, and the three gates in this loop must agree with
+        // motionPath() and motionVelocity(), which test `> 0` to return.
+        // No writer in either tree makes it negative today (the oracle's two are
+        // ScriptRuntime.cs:1780 and :1784, both positive counts), so this is
+        // exactness against the oracle rather than a live behaviour change, and no
+        // golden can distinguish the two spellings until an effects port writes a
+        // writer.
+        if (!obj->dead && obj->effect_frames <= 0 &&
+            (obj->flags & MdkObject::FlagChangesArena) != 0) {
+            followArenas(obj);
+        }
+        // Kurt's items (ObjectMotion.cs:110-118): a thrown item (ThrownKind > 0) goes
+        // to Items.UpdateThrown, and the C# returns when that removed it -- no
+        // animation, roll, bank or previous position for it this tick; otherwise
+        // UpdatePickup for a pickup. Both only if the object survived the velocity
+        // step (the C# returns on Dead before them), and never for an effect object.
+        if (!obj->dead && obj->effect_frames <= 0 && obj->thrown_kind > 0) {
+            itemsUpdateThrown(obj);
+            if (obj->dead) {
+                return;
+            }
+        } else if (!obj->dead && obj->effect_frames <= 0 &&
+                   (obj->flags & MdkObject::FlagPickup) != 0) {
+            motionPickup(obj);
+        } else if (!obj->dead && obj->effect_frames <= 0 &&
+                   (obj->flags & MdkObject::FlagCow) != 0) {
+            // SW_EWJ's holy cow (ObjectMotion.cs:120-127): it may be killed by its fuse.
+            updateCow(obj);
+            if (obj->dead) {
+                return;
+            }
+        }
+        // AdvanceAnimation (ObjectMotion.cs:132), after ApplyVelocity and the
+        // pickup dispatch. An effect object returned from Update before this
+        // point, so it never advances an animation here. Same inverse predicate
+        // as the two gates above: `<= 0`, because the oracle returns on `> 0`.
+        if (!obj->dead && obj->effect_frames <= 0) {
+            float time = obj->animation_time;
+            advanceAnimation(obj, kTick);
+            // The frame sound (ObjectMotion.cs:133): fired once when the frame
+            // clock crosses its frame, at the object's position.
+            if (!obj->frame_sound.empty() && obj->animation != nullptr &&
+                time < (float)obj->frame_sound_frame &&
+                (float)obj->frame_sound_frame <= time + kTick * obj->animation_rate *
+                                                       obj->animation->speed) {
+                playSound(obj, obj->frame_sound, 0, formats::ScriptValue());
+                obj->frame_sound.clear();
+            }
+            // Roll (ObjectMotion.cs:139-143), then PreviousPosition
+            // (ObjectMotion.cs:146) -- IN THAT ORDER, and both here rather than
+            // at the end of motionVelocity: Roll reads the PREVIOUS frame's
+            // position, so writing it any earlier makes every roll read a zero
+            // movement and the basis never turns.
+            if ((obj->flags & MdkObject::FlagRolling) != 0) {
+                obj->update_rolling();
+            }
+            // Bank (ObjectMotion.cs:145), between Roll and PreviousPosition.
+            motionBank(obj);
+            obj->previous_position = obj->position;
+        }
+    }
 }
 
 void ScriptRuntime::runControllers() {
@@ -3791,30 +3806,283 @@ void ScriptRuntime::raiseShake(float amount) {
 }
 
 // C# SpecialEvent (ScriptRuntime.cs:1007-1076, opcode 131 special_event, 0x4456d2): 50 and
-// below end the level; the arms above 50 are package 13 (cutscenes, Gunter, the boss
-// intros, the end of the game) and are NOT ported. Their values are named here so the VM
-// can record the opcode as reached-but-unported; a value the C#'s switch has no case for is
-// the C#'s own no-op, and handled.
+// below end the level; above 50 are the cutscenes (0x477cf4). Every retail call above 50 is
+// an ARENA CONTROLLER's (L5 MUSE_5: 51-55, 61, 81; L7 DANT_10: 92, 93; L8 GUNT_10: 91, 92),
+// so `obj` -- the target of 51, 81, 91 and 93 -- is that controller. A value the C#'s switch
+// has no case for (54, the L5 script's own) is the C#'s no-op, and handled.
 bool ScriptRuntime::specialEvent(MdkObject* obj, int32_t value) {
-    (void)obj;  // read only by the unported arms (51's strike, 81's end of the game)
     if (value <= kLastEndEvent) {
         endTheLevel();
         return true;
     }
     switch (value) {
-        case 51:  // Kurt strikes (X_STRIKD), teleported to the object -- package 13
-        case 52:  // the dog's cutscene (XBN) -- package 13
-        case 53:  // EndCutscene -- package 13
-        case 55:  // CameraMode 2 -- package 13
-        case 61:  // Gunter's cutscene (XGUNTAM) -- package 13
-        case 81:  // the end of the game (MDKEND.FLC, GameFinished) -- package 13
-        case 91:  // a flagged cutscene, camera mode 12 -- package 13
-        case 92:  // EndCutscene -- package 13
-        case 93:  // the boss's cutscene -- package 13
+        case 51: {
+            // Kurt strikes (0x4779e0): X_STRIKD full screen (0x4398f0), then he's put at the
+            // object, which moves 4 units along y.
+            //
+            // PACKAGE 14 HOOK: the C# calls PlayStrikeScene(StrikeScene.Kind.Kurt,
+            // StrikeScene.Plane.WithPilot) first. It changes no gameplay state here (the
+            // scene is its own object; the Viewer pauses the steps while it plays), so the
+            // rest of the arm -- the teleport, the cutscene, its shot -- is separable and
+            // ported; the scene itself is AirStrike/StrikeScene's, and until it lands the
+            // arm returns false so opcode 131 is still recorded as reached-but-unported.
+            if (player_ != nullptr) {
+                player_->teleport(obj->position, obj->yaw);
+            }
+            obj->position.y += 4.0f;
+            startCutscene(kCutsceneStrike, obj);
+            cameraDistance = 10.0f;
+            // obj.Position - new Vector3(10f, 4f, -8f), component by component.
+            cameraPosition = Vec3{obj->position.x - 10.0f, obj->position.y - 4.0f,
+                                  obj->position.z - -8.0f};
+            cameraPitch = 0.0f;
+            cameraYaw = 90.0f - obj->yaw;
             return false;
+        }
+        case 52: {
+            MdkObject* dog = findObjectNamed("XBN");
+            if (dog != nullptr) {
+                startCutscene(kCutsceneDog, dog);
+                cameraMode = 0;
+            }
+            return true;
+        }
+        case 53:
+        case 92:
+            endCutscene();
+            return true;
+        case 55:
+            cameraMode = 2;
+            return true;
+        case 61: {
+            MdkObject* gunter = findObjectNamed("XGUNTAM");
+            if (gunter != nullptr) {
+                startCutscene(kCutsceneAll, gunter);
+                cameraMode = 11;
+                // FromAngle(gunter.Yaw) * 45f, then Position + (heading.X, heading.Y, 3f).
+                const Vec3 facing = fromAngle(gunter->yaw);
+                const float hx = facing.x * 45.0f;
+                const float hy = facing.y * 45.0f;
+                cameraPosition = Vec3{gunter->position.x + hx, gunter->position.y + hy,
+                                      gunter->position.z + 3.0f};
+                cameraPitch = -20.0f;
+                cameraYaw = 270.0f - gunter->yaw;
+                cameraDistance = 45.0f;
+            }
+            return true;
+        }
+        case 81:
+            // The end of the game: MISC/FLIC/MDKEND.FLC and MDKBZK.MVE (game state 8). The
+            // movies and the credits are the frontends' (GameFinished, Flow/Game.cs:458).
+            startCutscene(kCutsceneEnd, obj);
+            gameFinished_ = true;
+            return true;
+        case 91:
+            startCutscene(kCutsceneAllFlagged, obj);
+            cameraMode = 12;
+            cameraPosition = Vec3{-121.0f, 3347.0f, -350.0f};
+            return true;
+        case 93:
+            startCutscene(kCutsceneBoss, obj);
+            cameraMode = 12;
+            cameraPosition = Vec3{1158.0f, 5006.0f, 315.0f};
+            return true;
         default:
             return true;
     }
+}
+
+// C# FindObjectNamed (ScriptRuntime.cs:1338): Objects.FirstOrDefault(o => !o.Dead &&
+// o.TypeName == type). A removed object is dead (removeObject sets it first), so the deque's
+// order with the dead skipped is the C# list's.
+MdkObject* ScriptRuntime::findObjectNamed(const std::string& type) {
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        if (!it->dead && it->type_name == type) {
+            return &(*it);
+        }
+    }
+    return nullptr;
+}
+
+// C# StartCutscene (ScriptRuntime.cs:1341-1347): Kurt stops firing (0x4779b0) and stands
+// still; the camera looks at the target from the next tick (cutsceneTick).
+void ScriptRuntime::startCutscene(int32_t state, MdkObject* target) {
+    cutscene = state;
+    cutsceneTarget = target;
+    // Kurt.StopFiring, as endTheLevel spells it: with no Player bound there is no gun, voice
+    // or muzzle to stop, only the combat half's flag.
+    if (player_ != nullptr) {
+        player_->stopFiring();
+        player_->frozen = true;
+    } else {
+        kurt().setFiring(false);
+        kurt().clearMuzzle();
+    }
+}
+
+// C# EndCutscene (ScriptRuntime.cs:1349-1359): every object is drawn again, and Kurt moves
+// and shows. The shot (cameraMode ..) is left as it was, as in the C#.
+void ScriptRuntime::endCutscene() {
+    cutscene = 0;
+    cutsceneTarget = nullptr;
+    if (player_ != nullptr) {
+        player_->frozen = false;
+        player_->visible = true;
+    }
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        it->visible = true;
+    }
+}
+
+// C# CutsceneTick (ScriptRuntime.cs:1363-1410, 0x478704): a tick during a cutscene. Only
+// Kurt's arena's objects are considered; below kCutsceneAll only the cutscene types run
+// (BOLT and BIGBOLT unseen); from it on the objects that are not pickups or Kurt's items run
+// and show (kCutsceneAllFlagged runs those too, unseen); the end of the game runs and shows
+// nothing. Then the camera takes its shot of the target, unless it died.
+void ScriptRuntime::cutsceneTick() {
+    // C# CutsceneTypes (0x47868c).
+    static const char* const kCutsceneTypes[] = {"XM5_FLAP", "XBN",      "BOLT",
+                                                 "BIGBOLT",  "SW_SBONE", "SW_SEAL"};
+    if (player_ != nullptr) {
+        player_->visible = cutscene == kCutsceneStrike || cutscene == kCutsceneEnd;
+    }
+    // ListCopy<MdkObject>.Of(Objects): what this tick spawns waits for the next.
+    std::vector<MdkObject*> snapshot;
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        snapshot.push_back(&(*it));
+    }
+    for (size_t i = 0; i < snapshot.size(); i++) {
+        MdkObject* obj = snapshot[i];
+        if (obj->dead || obj->arena != currentArena_) {
+            continue;
+        }
+        const bool flagged = (obj->flags & kCutsceneHiddenFlags) != 0 || obj->thrown_kind > 0;
+        bool runs;
+        bool shown;
+        if (cutscene == kCutsceneEnd) {
+            runs = false;
+            shown = false;
+        } else if (cutscene < kCutsceneAll) {
+            runs = false;
+            for (size_t t = 0; t < sizeof(kCutsceneTypes) / sizeof(kCutsceneTypes[0]); t++) {
+                if (obj->type_name == kCutsceneTypes[t]) {
+                    runs = true;
+                    break;
+                }
+            }
+            shown = runs && obj->type_name != "BOLT" && obj->type_name != "BIGBOLT";
+        } else {
+            runs = cutscene == kCutsceneAllFlagged || !flagged;
+            shown = !flagged;
+        }
+        obj->visible = shown;
+        if (!runs) {
+            continue;
+        }
+        vm_.run(obj);
+        if (!obj->dead) {
+            motionUpdate(obj);
+        }
+    }
+    // A script that ran above may have ended the cutscene (53, 92): no shot then.
+    if (cutscene != 0 && cutsceneTarget != nullptr && !cutsceneTarget->dead) {
+        updateCutsceneCamera();
+    }
+}
+
+// C# UpdateCutsceneCamera (ScriptRuntime.cs:1415-1492, 0x477d94). Every shot but 11 looks at
+// the target, 3 units above its origin. Shot 0 starts from (423, 85) and switches to 1 once
+// the target is 12 units away; 1 and 2 orbit behind the target (12 or 25 units), easing in
+// for kCameraBlendTicks; 12 looks from the stored position; 11 holds it all.
+//
+// Gameplay-exact arithmetic, operation for operation (the golden pins every bit): the C#'s
+// Vector3 operators are per component and unfused, Vector3.Distance is Sqrt(Dot(d, d)) with
+// Dot summing x, y, then z, and heading()/fromAngle()/atan2f are the libm calls that match
+// .NET's MathF bit for bit here (see heading's note). It runs once per tick, not per object,
+// so it is not a hot path (AGENTS.md section 2).
+void ScriptRuntime::updateCutsceneCamera() {
+    const float kHalfTurn = 180.0f;
+    const float kFullTurn = 360.0f;
+    const float kMotionTicks = 1.0f;  // C# ObjectMotion.Ticks
+    const Vec3 target = cutsceneTarget->position;
+    Vec3 point = cameraPosition;
+    float yaw = cameraYaw;
+    float distance = cameraDistance;
+    switch (cameraMode) {
+        case 0: {
+            point = Vec3{423.0f, 85.0f, mathMax(target.z - 25.0f, -2260.0f)};
+            yaw = 90.0f - heading(point, target);
+            const float dx = point.x - target.x;
+            const float dy = point.y - target.y;
+            const float dz = point.z - target.z;
+            distance = sqrtf((dx * dx + dy * dy) + dz * dz);
+            if (distance >= 12.0f) {
+                cameraMode = 1;
+            }
+            cameraTimer = kCameraBlendTicks;
+            break;
+        }
+        case 1:
+        case 2: {
+            distance = (cameraMode == 1 ? 12.0f : 25.0f) * 0.1f + cameraDistance * 0.9f;
+            const Vec3 facing = fromAngle(cutsceneTarget->yaw + 150.0f);
+            const float aroundX = facing.x * distance;
+            const float aroundY = facing.y * distance;
+            point = Vec3{target.x + aroundX, target.y + aroundY, -2258.0f};
+            if (cameraMode == 2) {
+                point.z = mathMin(cameraPosition.z + kMotionTicks, -2246.0f);
+            }
+            if (cameraTimer > 0) {
+                point = Vec3{point.x * 0.2f + cameraPosition.x * 0.8f,
+                             point.y * 0.2f + cameraPosition.y * 0.8f,
+                             point.z * 0.2f + cameraPosition.z * 0.8f};
+            }
+            yaw = 120.0f - cutsceneTarget->yaw;
+            break;
+        }
+        case 12: {
+            yaw = 90.0f - heading(point, target);
+            const float dx = point.x - target.x;
+            const float dy = point.y - target.y;
+            const float dz = point.z - target.z;
+            distance = sqrtf((dx * dx + dy * dy) + dz * dz);
+            cameraTimer = kCameraBlendTicks;
+            break;
+        }
+        default:
+            break;
+    }
+
+    float pitch = cameraPitch;
+    if (cameraMode != 11) {
+        /* @vfp-exempt R6 — the cutscene shot's pitch, once a tick; glibc atan2f matches the
+         * C# oracle's MathF.Atan2 bit-for-bit on this machine (as heading's pin records),
+         * and golden/L5_cut_*.txt compare the pitch's bits, which the fastAtan2 LUT would
+         * move. measured n/a (corpus empty). Verified 2026-11-20. */
+        pitch = -radiansToDegrees(atan2f(target.z + 3.0f - point.z, distance));
+        if (pitch < -kHalfTurn) {
+            pitch += kFullTurn;
+        }
+    }
+
+    if (cameraMode == 1 || cameraMode == 2) {
+        if (cameraTimer > 0) {
+            pitch = pitch * 0.2f + cameraPitch * 0.8f;
+            yaw = yaw * 0.2f + cameraYaw * 0.8f;
+            cameraTimer--;
+        } else {
+            pitch = pitch * 0.7f + cameraPitch * 0.3f;
+            yaw = yaw * 0.3f + cameraYaw * 0.7f;
+        }
+    }
+
+    cameraDistance = distance;
+    cameraPitch = pitch;
+    cameraYaw = yaw;
+    if (cutscene != kCutsceneBoss) {
+        cameraPosition = point;
+    }
+    cameraPoint = point;
 }
 
 // C# EndTheLevel (ScriptRuntime.cs:1496-1511): once (LevelOver, 0x573b60), the town flags

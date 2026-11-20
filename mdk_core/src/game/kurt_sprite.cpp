@@ -424,6 +424,12 @@ bool KurtSprite::pick(const Player& player, Pick* out) const {
 
 bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& feet, const Vec3& eye,
                       const Vec3& forward, const Vec3& up, float fieldOfView, ArenaSpace* space) {
+    // Kurt.Visible (KurtSprite.cs:182): a cutscene hides him. The C# tests it with the
+    // depth, after nothing that has an effect, so returning first is the same draw and
+    // asks the frame stream for nothing. (The Sniping arm waits for the sniper, package 5.)
+    if (!player.visible) {
+        return false;
+    }
     Pick selected;
     if (!pick(player, &selected)) {
         return false;

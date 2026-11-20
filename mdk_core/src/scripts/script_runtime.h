@@ -420,13 +420,14 @@ public:
     // ---- The end of a level (package 1: ScriptRuntime.cs SpecialEvent/EndTheLevel,
     //      Scripts/EndLevel.cs) ----
     // C# SpecialEvent (ScriptRuntime.cs:1009, opcode 131 special_event, 0x4456d2): 50 and
-    // below end the level (EndTheLevel); above 50 are the cutscenes, Gunter, the boss
-    // intros and the end of the game (0x477cf4), which are package 13 and NOT ported.
-    // Returns false for a value whose C# arm is one of those unported ones (51, 52, 53,
-    // 55, 61, 81, 91, 92, 93), so the VM can record opcode 131 as reached-but-unported;
-    // every other value is fully handled (the end, or the C#'s own no-op for a value its
-    // switch has no case for). Either way the VM's control flow is the C#'s: the opcode
-    // has no branch, and the next instruction follows.
+    // below end the level (EndTheLevel); above 50 are the cutscenes (0x477cf4): the dog
+    // (52), Gunter (61), the end of the game (81), the boss intros (91, 93), the shot
+    // change (55) and the cutscene's end (53, 92) -- package 13, ported below. Returns
+    // false only for 51, whose arm is ported EXCEPT its full-screen strike
+    // (PlayStrikeScene, package 14), so the VM records opcode 131 as reached-but-unported
+    // there; every other value is fully handled (an arm, or the C#'s own no-op for a value
+    // its switch has no case for). Either way the VM's control flow is the C#'s: the
+    // opcode has no branch, and the next instruction follows.
     bool specialEvent(MdkObject* obj, int32_t value);
     // C# ScriptRuntime.LastEndEvent (ScriptRuntime.cs:59).
     static constexpr int32_t kLastEndEvent = 50;
@@ -442,6 +443,45 @@ public:
     // after their steps (the C#'s subscriber is Viewer.cs:240: the level ends 0.5 s
     // later). GameOver.Yes (the town flattened) belongs to the town timer, package 15.
     bool levelEnded() const { return levelEnded_; }
+
+    // ---- Cutscenes (package 13: ScriptRuntime.cs SpecialEvent 51-93, StartCutscene,
+    //      EndCutscene, CutsceneTick, UpdateCutsceneCamera; ScriptRuntime.cs:49-62,
+    //      :229-246, :1009-1077, :1337-1492) ----
+    // C# Cutscene* (0x573c60, set by special_event): 0 = none.
+    static constexpr int32_t kCutsceneDog = 0x34;
+    static constexpr int32_t kCutsceneAll = 0x3d;
+    static constexpr int32_t kCutsceneStrike = 0x47;
+    static constexpr int32_t kCutsceneEnd = 0x51;
+    static constexpr int32_t kCutsceneAllFlagged = 0x5b;
+    static constexpr int32_t kCutsceneBoss = 0x5d;
+    // C# CutsceneHiddenFlags: pickups (0x200000) and Kurt's items (0x1000) are hidden in
+    // the cutscenes from kCutsceneAll on.
+    static constexpr int32_t kCutsceneHiddenFlags = 0x201000;
+    // C# CameraBlendTicks: the shots 1 and 2 ease in over this many ticks.
+    static constexpr int32_t kCameraBlendTicks = 1800;
+    // C# ScriptRuntime.Cutscene / CutsceneTarget. While Cutscene is not 0 the tick is
+    // cutsceneTick() instead of the game's (RunTick's early return, :890-894).
+    int32_t cutscene = 0;
+    MdkObject* cutsceneTarget = nullptr;
+    // The cutscene camera (0x599920...0x599940, C# CameraMode .. CameraPoint): the shot,
+    // yaw (90 degrees - heading), pitch (positive down), distance to the target, the
+    // stored position and the blend timer in ticks; the frontends look from cameraPoint
+    // (game/cutscene_camera.h, the C#'s CutsceneCamera).
+    int32_t cameraMode = 0;
+    float cameraYaw = 0.0f;
+    float cameraPitch = 0.0f;
+    float cameraDistance = 0.0f;
+    Vec3 cameraPosition{0.0f, 0.0f, 0.0f};
+    int32_t cameraTimer = 0;
+    Vec3 cameraPoint{0.0f, 0.0f, 0.0f};
+    // C# FindObjectNamed (ScriptRuntime.cs:1338): the first live object of a type (the
+    // cutscenes' targets), in the object list's order; null when none.
+    MdkObject* findObjectNamed(const std::string& type);
+    // C# ScriptRuntime.GameFinished (ScriptRuntime.cs:246, raised by special_event 81):
+    // a LATCH, as levelEnded() is (section 10 forbids the event). The C#'s subscriber is
+    // Viewer.cs:241 (`_next = Event.GameFinished`, at once: the end movie, MDKEND.FLC and
+    // MDKBZK.MVE, then the credits); the frontends poll it after their steps.
+    bool gameFinished() const { return gameFinished_; }
     // CameraTrack (ScriptRuntime.cs:1188-1216, opcode 203): calculate the
     // camera pitch requested for an object. The runtime keeps the pitch and
     // its two-tick lifetime; the follow-camera consumer and the save/load
@@ -795,9 +835,9 @@ public:
     // path. Same object as solidArenas() off the board, and the only writer is
     // updateDrawnArenas().
     //
-    // Written and NOT yet read: no view in this port consumes it -- the 3DS frontend draws on
-    // obj.visible, which defaults to true and has no writer -- so nothing but a test would
-    // redden if this list were wrong. That is why the trigger cases assert it directly
+    // No view reads the list itself: the frontends draw on obj.visible, which
+    // updateDrawnArenas() derives from it (and the cutscenes, cutsceneTick(), override), so a
+    // wrong order here would redden only a test. That is why the trigger cases assert it directly
     // (size and order), rather than trusting it as an oracle for the view.
     const std::vector<std::string>& drawnArenas() const { return drawnArenas_; }
     // C# ScriptRuntime._residentArena (:312): the last arena whose MTO was resident, i.e.
@@ -1199,6 +1239,15 @@ private:
     void endTheLevel();
     std::unique_ptr<EndLevel> endLevel_;  // C# ScriptRuntime.EndLevel
     bool levelEnded_ = false;             // the C#'s LevelEnded(GameOver.No), latched
+    // Package 13 (ScriptRuntime.cs:1341-1492): see `cutscene` above.
+    void startCutscene(int32_t state, MdkObject* target);
+    void endCutscene();
+    void cutsceneTick();
+    void updateCutsceneCamera();
+    // C# ObjectMotion.Update for one object (the part of RunTick's object loop after
+    // Vm.Run, and CutsceneTick's): the game's tick and the cutscene's run the same motion.
+    void motionUpdate(MdkObject* obj);
+    bool gameFinished_ = false;           // the C#'s GameFinished, latched
     int32_t tickCount_ = 0;
     float tickAccumulator_ = 0.0f;  // C# ScriptRuntime._time
     // spawn_box (hazards.cpp): C# _boxModels and _boxes. A deque so a model's address

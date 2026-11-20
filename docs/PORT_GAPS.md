@@ -36,7 +36,7 @@ A scanner decoded every reachable script in LEVEL3–8 using the C++ decoder and
 | 10 | Snowboard | Scripts/Snowboard.cs | the board drop is not applied | L4's snowboard run | 9 | |
 | 11 | XE bomber | Scripts/Bomber.cs, BomberOverlay, LookDown | none | L7 DANT_5 bomber ride | 9 | |
 | 12 | Ledges | Kurt.Ledge.cs; ArenaSpace Free/Edge | player.cpp:650 | No ledge grab or climb | – | |
-| 13 | Cutscenes and special events 51–93 | SpecialEvent arms, Start/End/CutsceneTick, CutsceneCamera.cs, visibility | no Cutscene branch in runTick; nothing writes `visible` | Boss intros, Gunter, end of game | 1 | |
+| 13 | Cutscenes and special events 51–93 | SpecialEvent arms, Start/End/CutsceneTick, CutsceneCamera.cs, visibility | no Cutscene branch in runTick; nothing writes `visible` | Boss intros, Gunter, end of game | 1 | **landed 2026-11-20**: the arms 52–93, RunTick's Cutscene branch, the shots (to the bit), objects' and Kurt's Visible, `CutsceneCamera` on both frontends, `gameFinished()` (the frontends exit "game finished"); 51's cutscene half, its strike scene left to 14 (goldens `L*_cut_*.txt`) |
 | 14 | Air strike and strike scene | AirStrike.cs, StrikeScene.cs | none | L5 final fight | 5, 6, 13 | |
 | 15 | Town timer, shake, sky modes, group texture | TownTicks; FollowCamera UpdateShake; SkyModes; opcodes 140, 202 | no consumers | Shake on every level; minecrawler town messages | Messages | |
 | 16 | Bullet holes (opcode 130) | Scripts/BulletHoles.cs | none | Cosmetic (L5, L6, L8) | 6 | |

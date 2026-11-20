@@ -184,6 +184,11 @@ endif
 # then loads the next level (3 -> 4 -> 8 -> 5, the screens between skipped), which plays
 # for real: the event is the first level's alone, as the C#'s test options are.
 # `EVENT_EVERY=1` fires it one second into EVERY level, so a run chains level to level.
+# Above 50 are the cutscenes (package 13), for the controller of Kurt's arena -- so start
+# him in the arena whose script makes the call, with AT: LEVEL=7 AT=495,5005,24,0 EVENT=93
+# (DANT_10's boss), LEVEL=8 AT=40,3221,-358,180 EVENT=91 (GUNT_10's), LEVEL=5
+# AT=465,-6,-2263,0 with EVENT=61 (Gunter), 52 (the dog), 51 (the strike's cutscene half)
+# or 81 (the end of the game: the run ends "game finished").
 # Only main_3ds.cpp reads them: touch it after changing EVENT or EVENT_EVERY.
 ifneq ($(strip $(EVENT)),)
 ifndef AUTOQUIT

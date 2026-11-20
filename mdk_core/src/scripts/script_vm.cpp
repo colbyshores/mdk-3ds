@@ -2058,8 +2058,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                                           fval(op(ins, 2)), ScriptRuntime::kTick);
             break;
         case 131:  // special_event (ScriptVm.cs:1044): the end of the level (<= 50), or a
-                   // cutscene arm (package 13, not ported: recorded as unimplemented). No
-                   // branch either way: the next instruction follows, as in the C#.
+                   // cutscene arm (package 13); 51 is recorded as unimplemented until its
+                   // strike scene (package 14) lands. No branch either way: the next
+                   // instruction follows, as in the C#.
             if (!runtime_.specialEvent(obj, ival(op(ins, 0)))) {
                 noteUnimplemented(ins.opcode);
             }

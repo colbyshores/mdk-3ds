@@ -51,9 +51,14 @@ public:
     float cameraTilt = 0.0f;    // degrees, negative looks up
     // C# Kurt.Frozen (Kurt.Combat.cs:89): cutscenes and the level's end -- he stands
     // still (update() takes the C#'s Frozen branch, Kurt.cs:141-150) and the follow
-    // camera skips its clearance (FollowCamera.cs:132). The end of a level
-    // (scripts/end_level.h) is the writer this port has; the cutscenes are package 13.
+    // camera skips its clearance (FollowCamera.cs:132). The writers are the end of a
+    // level (scripts/end_level.h) and the cutscenes (ScriptRuntime::startCutscene).
     bool frozen = false;
+    // C# Kurt.Visible (Kurt.Combat.cs:90): KurtSprite draws him only while it is set
+    // (KurtSprite.cs:182). The cutscenes hide him except in the strike and the end of the
+    // game (ScriptRuntime::cutsceneTick) and show him again at their end; the rides'
+    // writers (Rides.cs:178, :187, Kurt.Ride.cs:81, :95) are packages 9-11.
+    bool visible = true;
     // C# Kurt.Rising (Kurt.Ride.cs:38): the end of a level is lifting him, so the
     // follow camera holds no air tilt (FollowCamera.cs:113-117).
     bool rising = false;

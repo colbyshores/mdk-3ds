@@ -401,12 +401,20 @@ piece it names is broken (see docs/WORK_LEDGER.md).
 and `scripts/end_level.{h,cpp}` (EndLevel.cs whole), pinned end to end by
 `golden/L3_end_level.txt`, `L7_end_level.txt`, `L7_end_air.txt` and `L8_end_level.txt`
 (byte-identical to the C# probe `tests/scripts/end_probe`); the dispatch and the control
-flow are pinned by `vm_tests` (`SpecialEventEndsTheLevelAndKeepsSync`). **The arms above
-50 (51, 52, 53, 55, 61, 81, 91, 92, 93: the strike, the cutscenes, Gunter, the end of the
-game) are package 13 and NOT ported**: they still count opcode 131 in the VM's
-unimplemented diagnostic, and the script carries on to the next instruction exactly as
-the C# does (the opcode has no branch). A value the C#'s switch has no case for is its own
-no-op and is not counted.
+flow are pinned by `vm_tests` (`SpecialEventEndsTheLevelAndKeepsSync`).
+
+**Cutscenes (2026-11-20, package 13):** the arms above 50 are ported
+(`ScriptRuntime::specialEvent`, `startCutscene`, `endCutscene`, `cutsceneTick`,
+`updateCutsceneCamera`, `findObjectNamed`; ScriptRuntime.cs:1009-1077, :1337-1492): 52 (the
+dog, XBN), 53/92 (EndCutscene), 55 (shot 2), 61 (Gunter, XGUNTAM), 81 (the end of the game,
+`gameFinished()`), 91 and 93 (the boss intros), with RunTick's Cutscene branch and the
+objects' and Kurt's Visible. Pinned by `golden/L5_cut_{gunter,dog,dog_long,strike,end}.txt`,
+`L7_cut_boss.txt` and `L8_cut_boss.txt` (byte-identical to the C# probe
+`tests/scripts/cutscene_probe`). **51 is half ported**: its teleport, cutscene and shot run,
+but its full-screen strike (`PlayStrikeScene`) is package 14, so 51 alone still counts
+opcode 131 in the VM's unimplemented diagnostic. The script carries on to the next
+instruction either way, exactly as the C# does (the opcode has no branch). A value the C#'s
+switch has no case for (54) is its own no-op and is not counted.
 
 **Combat and hazard batch (2026-11-20, docs/PORT_GAPS.md package 4):** 158
 (`touch_damage`, over the new `ScriptRuntime::touchDamage`, ScriptRuntime.cs:2758),
@@ -516,8 +524,8 @@ By blocking subsystem (carried grouping, corrected for this batch):
   Rides subsystem also writes that field (`Rides.cs:219,224`); Rides remains
   deferred with its own player/vehicle slice, so the riding vehicle's alarm
   source is not present yet.
-- **Camera/cutscene/debug (no camera/cutscene port):** 131's arms above 50 (its end
-  of a level, 50 and below, is ported: see the 2026-11-20 entry above)
+- **Camera/cutscene/debug:** 131 is ported whole but for 51's strike scene (package 14;
+  see the 2026-11-20 entries above)
   (77 `debug_msg` is a reference no-op, now pinned by `vm_tests`; 13 `if_cheat_key` is an explicit false branch, so
   no camera/cheat subsystem is needed — ported with the harness twin. 243
   `if_point_sees_player` left the same way: it reads only `reference_point`,

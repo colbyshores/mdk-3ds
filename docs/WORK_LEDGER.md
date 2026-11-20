@@ -353,3 +353,19 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - `tests/scripts/menu_frontend_test.sh`: the entry menu, the options' file written and read back, New Game -> briefing -> fall skipped -> level 7 -> Esc -> Main menu -> the menu again, Really Quit? -> Yes, and `--level` still starts in the level. `level_chain_test.sh` now ends at the menu after LEVEL5 ("Level: 6", as the C#'s).
   - 3DS: release and harness builds compile; no emulator run here (the parent's).
 - **Commit:** this entry's commit.
+
+### Package 13: the cutscenes and special events 51-93
+- **What:** ported the cutscenes from the C#, operation for operation:
+  - opcode 131's arms above 50 (`ScriptRuntime::specialEvent`, ScriptRuntime.cs:1009-1077): the dog (52), the end of a cutscene (53, 92), shot 2 (55), Gunter (61), the end of the game (81), the boss intros (91 at L8 GUNT_10, 93 at L7 DANT_10), and 51's cutscene half (the teleport, the strike cutscene, its shot);
+  - `StartCutscene`, `EndCutscene`, `FindObjectNamed`, `CutsceneTick` (RunTick's Cutscene branch: which objects run and show, Kurt's `Visible`) and `UpdateCutsceneCamera` (shots 0, 1, 2, 11 and 12); RunTick's object motion became one function, `motionUpdate`, shared by both ticks;
+  - `Kurt.Visible` (`Player::visible`, read by `KurtSprite::draw`), and `CutsceneCamera.cs` (`game/cutscene_camera.{h,cpp}`), which both frontends use in the C# Viewer's places;
+  - `GameFinished` is the runtime's `gameFinished()` latch: both frontends log it and end the run "game finished", at a hook beside package 2's LEVEL-END HOOK.
+  - 51's full-screen strike (`PlayStrikeScene`) is package 14, a marked hook; until it lands 51 alone still counts opcode 131 as unimplemented.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. Without this the boss intros (L7, L8), Gunter's scene and the end of the game (L5) did nothing, and the game could not finish.
+- **Evidence:**
+  - The C# probe `tests/scripts/cutscene_probe` and `tick1 dump cutscene` are byte-identical on seven goldens, each driving the event the way the retail script does (from the controller of Kurt's arena): `L7_cut_boss` (93, 92), `L8_cut_boss` (91, 92), `L5_cut_gunter` (61, 53), `L5_cut_dog` (52, 54 the no-op, 55, 53), `L5_cut_dog_long` (the orbit's 1800-tick ease-in running out), `L5_cut_strike` (51, 53), `L5_cut_end` (81). The camera's yaw, pitch, distance, position and point are compared as bit patterns.
+  - The goldens bite: no Cutscene branch in RunTick fails all seven; Kurt always visible fails four; the pickups not hidden fails `L7_cut_boss`; the settled weights swapped fails `L5_cut_dog_long`; the blend never letting go of the point fails `L5_cut_dog_long`; the orbit angle off by 10 degrees fails four; 51 not moving its object fails `L5_cut_strike`.
+  - `vm_tests` pins the dispatch (51 counted, 52/53/54/81 not; 81 latches `gameFinished()`) and `CutsceneCamera` (Active from the first shot, the blend, the jump and turn cuts).
+  - Linux headless: `--level=5 --at=465,-6,-2263,0 --event=81` ends "game finished" at frame 61; captures of 93, 91, 52 and 61 show each shot (Gunter framed in his).
+  - Not pinned: `CutsceneBoss` keeping the stored position (shot 12's point is the stored one); a moving target's shot. The oracle's targets look wrong (the controllers, at the origin) and are ported as they are. Open items in `docs/OPEN_ITEMS.md`.
+- **Commit:** see `git log` (the commit that adds this entry).

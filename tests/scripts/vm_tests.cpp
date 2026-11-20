@@ -47,6 +47,7 @@
 #include "formats/script_decoder.h"
 #include "game/arena_space.h"
 #include "game/camera_roll.h"
+#include "game/cutscene_camera.h"
 #include "game/follow_camera.h"
 #include "game/effects_view.h"
 #include "game/level_data.h"
@@ -1193,10 +1194,22 @@ void testSpecialEventEndsTheLevelAndKeepsSync(LevelData* levelData, const Cmi* c
         cutscene.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
         cutscene.end();
         runProgram(runtime, cutscene, &obj);
-        CHECK(sawUnimplemented(kSpecialEvent));  // package 13: reached, not ported
+        CHECK(sawUnimplemented(kSpecialEvent));  // 51's strike scene is package 14
         CHECK(!runtime.levelOver);
         CHECK(runtime.endLevel() == nullptr);
         CHECK(obj.variables[0] == 2.0f);
+        // ...but its cutscene half ran: the object moved 4 along y and is the target.
+        CHECK(runtime.cutscene == scripts::ScriptRuntime::kCutsceneStrike);
+        CHECK(runtime.cutsceneTarget == &obj);
+        CHECK(runtime.cameraDistance == 10.0f);
+
+        Code end;
+        end.u8(kSpecialEvent).u8(53);  // EndCutscene
+        end.end();
+        runProgram(runtime, end, &obj);
+        CHECK(!sawUnimplemented(kSpecialEvent));
+        CHECK(runtime.cutscene == 0);
+        CHECK(runtime.cutsceneTarget == nullptr);
 
         Code none;
         none.u8(kSpecialEvent).u8(54);  // no C# arm: the oracle's own no-op
@@ -1204,6 +1217,59 @@ void testSpecialEventEndsTheLevelAndKeepsSync(LevelData* levelData, const Cmi* c
         runProgram(runtime, none, &obj);
         CHECK(!sawUnimplemented(kSpecialEvent));
         CHECK(!runtime.levelOver);
+        CHECK(runtime.cutscene == 0);
+
+        Code dog;
+        dog.u8(kSpecialEvent).u8(52);  // FindObjectNamed("XBN") finds none: no cutscene
+        dog.end();
+        runProgram(runtime, dog, &obj);
+        CHECK(!sawUnimplemented(kSpecialEvent));
+        CHECK(runtime.cutscene == 0);
+
+        Code finished;
+        finished.u8(kSpecialEvent).u8(81);  // the end of the game
+        finished.end();
+        CHECK(!runtime.gameFinished());
+        runProgram(runtime, finished, &obj);
+        CHECK(!sawUnimplemented(kSpecialEvent));
+        CHECK(runtime.cutscene == scripts::ScriptRuntime::kCutsceneEnd);
+        CHECK(runtime.gameFinished());
+        CHECK(!runtime.levelOver);
+    }
+    // CutsceneCamera (CutsceneCamera.cs): active from the runtime's first shot only, and a
+    // frame between two ticks is blended unless the shot jumped or turned past 45 degrees.
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+        CHECK(!CutsceneCamera::active(runtime));
+        runtime.cutscene = scripts::ScriptRuntime::kCutsceneBoss;
+        CHECK(!CutsceneCamera::active(runtime));  // no shot yet: it would look from the origin
+        runtime.cameraPoint = Vec3{100.0f, 200.0f, 30.0f};
+        CHECK(CutsceneCamera::active(runtime));
+        CutsceneCamera camera;
+        camera.update(runtime);
+        CHECK(camera.position.z == 30.0f);
+        // Yaw 0 looks along +y (90 - heading), pitch positive looks down.
+        CHECK(fabsf(camera.forward.y - 1.0f) < 1e-4f && fabsf(camera.forward.x) < 1e-4f);
+        runtime.update(scripts::ScriptRuntime::kTick);  // a cutscene tick (no target: no shot)
+        runtime.cameraPoint = Vec3{100.0f, 200.0f, 34.0f};
+        runtime.cameraPitch = 10.0f;
+        camera.update(runtime);
+        camera.blend(0.5f);
+        CHECK(camera.position.z == 32.0f);
+        CHECK(camera.forward.z < 0.0f);  // half of the 10 degrees down
+        runtime.update(scripts::ScriptRuntime::kTick);
+        runtime.cameraPoint = Vec3{100.0f, 1200.0f, 34.0f};  // a jump: shown at once
+        camera.update(runtime);
+        camera.blend(0.5f);
+        CHECK(camera.position.y == 1200.0f);
+        runtime.update(scripts::ScriptRuntime::kTick);
+        runtime.cameraYaw = 90.0f;  // a turn past CutTurn: shown at once
+        camera.update(runtime);
+        camera.blend(0.5f);
+        CHECK(fabsf(camera.forward.x - cosf(10.0f * 3.14159265f / 180.0f)) < 1e-3f);
+        Camera view;
+        CHECK(camera.build(&view, 4.0f / 3.0f));
+        CHECK(view.position.y == 1200.0f);
     }
     {
         scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
