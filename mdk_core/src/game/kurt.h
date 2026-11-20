@@ -101,6 +101,13 @@ public:
     enum Mortality { Mortal, God };
     enum Difficulty { Easy, Normal, Hard };
 
+    // Inventory.Difficulty (Inventory.cs, a public field): the fall's own inventory takes
+    // the game's difficulty (FallSim's constructor, FallSim.cs `Inventory.Difficulty =
+    // setup.Difficulty`), which scales the grenades, the super chain gun's time and the
+    // sniper ammo a pickup gives. fall/fall_sim.cpp is the writer.
+    void setDifficulty(Difficulty difficulty) { difficulty_ = difficulty; }
+    Difficulty difficulty() const { return difficulty_; }
+
     // Kurt.Hurt (Kurt.Combat.cs:118, 0x46a604): none while dead, invulnerable,
     // knocked down, getting up, or hard-landing (the guard is Kurt.Combat.cs:125).
     // The four states are read off state() below, which is the entity's own state,

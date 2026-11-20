@@ -34,6 +34,7 @@
 
 #include "test_support.h"
 #include "stream_dump.h"
+#include "skydive_dump.h"
 #include "audio/sound_bank.h"
 #include "audio/sound_mixer.h"
 #include "formats/case_insensitive_path.h"
@@ -4357,6 +4358,26 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "skydive") {
+            // `tick1 dump skydive <level> <difficulty> <seed> <steps> <delta> <schedule> [full]`:
+            // the fall before a level (fall/fall_sim.h), the C++ side of the fall probe
+            // (tests/scripts/fall_probe). Not `fall`: that is Kurt's fall at a level's spawn.
+            if (argc < 9) {
+                printf("usage: tick1 dump skydive <level> <difficulty> <seed> <steps> <delta> "
+                       "<schedule> [full]\n");
+                return 1;
+            }
+            std::string got;
+            std::string why;
+            if (!mdk::test::skydiveDump(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]), atoi(argv[6]),
+                                        argv[7], argv[8], argc > 9 && std::string(argv[9]) == "full",
+                                        data, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "fall") {
             std::string got;
             std::string why;
@@ -5409,6 +5430,62 @@ int main(int argc, char** argv) {
         } else {
             printf("FAIL stream_rand: %s\n", firstDifference(got, expected).c_str());
             failures++;
+        }
+    }
+
+    // The fall before a level (fall/fall_sim.h, the C#'s FallSim), end to end against the
+    // oracle probe (tests/scripts/fall_probe; see skydive_dump.cpp). The arguments are the
+    // probe's, byte for byte, and each golden's first line repeats them.
+    {
+        struct SkydiveCase {
+            const char* name;
+            const char* path;
+            int level;
+            int difficulty;
+            int seed;
+            int steps;
+            const char* delta;
+            const char* schedule;
+            const char* pass;
+        };
+        static const SkydiveCase kSkydiveCases[] = {
+            {"L6_skydive_chase", "golden/L6_skydive_chase.txt", 6, 1, 1, 1200, "0.0333333333",
+             "chase:150-1200",
+             "Kurt steers onto three pickups under their chutes (SW_HOME, SW_HBOMB, SW_GATT), "
+             "is seen and hit, lands at 33 s and carries his health and the pickups into the "
+             "level's inventory"},
+            {"L8_skydive_hard", "golden/L8_skydive_hard.txt", 8, 2, 1, 1200, "0.0333333333",
+             "right:200-260,up:300-340",
+             "hard over LEVEL8: Bones, the steering limits, the missiles' hits to 0 health, the "
+             "red screen and GameOver with no carry"},
+            {"L3_skydive_slow", "golden/L3_skydive_slow.txt", 3, 0, 4, 600, "0.15",
+             "left:20-60,down:30-200",
+             "easy, 0.15 s frames clamped to 0.1 (three ticks a step): the per-tick loops, the "
+             "pull back to the centre, the camera's braking and the fade at 31-33 s"},
+            {"L7_skydive_skip", "golden/L7_skydive_skip.txt", 7, 1, 2, 700, "0.0333333333",
+             "up:160-200,skip:600",
+             "LEVEL7's FALL_T1 message, and Esc skipping the fall (Landed, full health)"},
+        };
+        for (size_t i = 0; i < sizeof(kSkydiveCases) / sizeof(kSkydiveCases[0]); i++) {
+            const SkydiveCase& c = kSkydiveCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!mdk::test::skydiveDump(c.level, c.difficulty, c.seed, c.steps, c.delta, c.schedule,
+                                        false, data, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
         }
     }
 

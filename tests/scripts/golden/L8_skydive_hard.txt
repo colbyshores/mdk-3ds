@@ -1,0 +1,1770 @@
+fall level=8 index=4 difficulty=2 seed=1 steps=1200 delta=3D088889 schedule=right:200-260,up:300-340
+setup beam=43894142 missiles=4 spread=3FC00000 mgap=12 rgap=27 pickups=SW_GATT,SW_HBOMB,SW_SGREN,SW_HOME kurt=3F800000:199 hit=3F800000:30 bones=3F800000:31
+s=1 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F7C2C4EC
+s=2 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=44D552CA
+s=3 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F95515E9
+s=4 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=363E3544
+s=5 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=43CC755F
+s=6 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=ADC6854E
+s=7 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=E1D8B461
+s=8 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=894BFAA9
+s=9 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=B5240EB0
+s=10 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=A477DA1B
+  intro=140 t=00000000 dying=0 kurt=00000000,00000000,00000000 vis=0 pose=0:00000000 cam=00000000,00000000,00000000 bones=-
+  wind=0 haze=0 crawler=00000000 screen=3F800000,3E2AAAAC,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=00000000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=11 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=BFD16EF2
+s=12 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=C58FEAC9
+s=13 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F46D80B8
+s=14 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=57741CAB
+s=15 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=B994F814
+s=16 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=7F152F51
+s=17 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=B0540DFE
+s=18 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=B01CFB7F
+s=19 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=740EDB0E
+s=20 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=9FC73717
+  intro=130 t=00000000 dying=0 kurt=00000000,00000000,00000000 vis=0 pose=0:00000000 cam=00000000,00000000,00000000 bones=-
+  wind=0 haze=0 crawler=00000000 screen=3F800000,3EAAAAAA,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=00000000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=21 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=8B582298
+s=22 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=D695A885
+s=23 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=630106C0
+s=24 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=9B4A5BF5
+s=25 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=032B7ACA
+s=26 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=0B745BAB
+s=27 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=A10908F2
+s=28 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=E3CDB063
+s=29 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=9571BC0C
+s=30 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=7BBE4338
+  intro=120 t=00000000 dying=0 kurt=00000000,00000000,00000000 vis=0 pose=0:00000000 cam=00000000,00000000,00000000 bones=-
+  wind=0 haze=0 crawler=00000000 screen=3F800000,3F000000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=00000000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=31 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=71023472
+s=32 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=361DC6DC
+s=33 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=C03E2CE3
+s=34 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F768374F
+s=35 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=5668D0ED
+s=36 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=5214DED3
+s=37 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=29ACB301
+s=38 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=15653B31
+s=39 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=DE86AA43
+s=40 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=09318E94
+  intro=110 t=00000000 dying=0 kurt=00000000,00000000,00000000 vis=0 pose=0:00000000 cam=00000000,00000000,00000000 bones=-
+  wind=512 haze=10 crawler=00000000 screen=3F800000,3F2AAAAA,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3DD55556 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=41 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=2A1107DB
+s=42 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=749102C7
+s=43 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=72DF8192
+s=44 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=BADF2FEC
+s=45 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=C092D7A7
+s=46 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=1962AEA5
+s=47 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=C83A2C8B
+s=48 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=463A88EC
+s=49 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F87B39C8
+s=50 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=AE25D29F
+  intro=100 t=00000000 dying=0 kurt=00000000,00000000,00000000 vis=0 pose=0:00000000 cam=00000000,00000000,00000000 bones=-
+  wind=1024 haze=4 crawler=00000000 screen=3F800000,3F555555,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3E555556 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=51 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F8CC58E6
+s=52 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=27FD2A84
+s=53 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=E6494154
+s=54 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=6D94D3BE
+s=55 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=EE5BD6DE
+s=56 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=BAC20A5C
+s=57 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F728E0A8
+s=58 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=B08AFDBA
+s=59 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=4445BF83
+s=60 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=641E02D6
+  intro=90 t=00000000 dying=0 kurt=00000000,00000000,00000000 vis=0 pose=0:00000000 cam=00000000,00000000,00000000 bones=-
+  wind=1536 haze=14 crawler=00000000 screen=3F800000,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3EA00000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=61 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=E3442657
+s=62 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F702C9CE
+s=63 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=E94992A2
+s=64 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=8619601F
+s=65 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=5887EB8C
+s=66 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=D2214F1E
+s=67 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=D6CD7443
+s=68 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=BE860519
+s=69 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=CD821CA2
+s=70 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=ABF0C6F5
+  intro=80 t=00000000 dying=0 kurt=C1A6AAAA,C0DE38E3,C0438E3A vis=1 pose=0:41200000 cam=00000000,00000000,00000000 bones=-
+  wind=2048 haze=8 crawler=00000000 screen=3F800000,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3ED55556 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=71 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=AA7229BD
+s=72 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=C54C144F
+s=73 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=ECC6960A
+s=74 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=2C75E64D
+s=75 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=ED4C7E63
+s=76 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=3B96B9EB
+s=77 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=D88779CD
+s=78 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=39639618
+s=79 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=2C469FF4
+s=80 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=E18C90A1
+  intro=70 t=00000000 dying=0 kurt=C1555554,C08E38E3,C0B1C71D vis=1 pose=0:41A00000 cam=00000000,00000000,00000000 bones=-
+  wind=2560 haze=2 crawler=00000000 screen=3F800000,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3F055555 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=81 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=2CFF23F1
+s=82 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=5944E755
+s=83 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=BEABEDE1
+s=84 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=620FE439
+s=85 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=3E88AC4D
+s=86 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=18400B5E
+s=87 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F818845F
+s=88 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=AF73CD7D
+s=89 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=08DA4F17
+s=90 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=8AB0460A
+  intro=60 t=00000000 dying=0 kurt=C0F00000,C0200000,C0F00000 vis=1 pose=0:41F00000 cam=00000000,00000000,00000000 bones=-
+  wind=3072 haze=12 crawler=00000000 screen=3F800000,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3F200000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=91 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=4B07F346
+s=92 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=FC5147F6
+s=93 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=2004845C
+s=94 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=BB25DEEE
+s=95 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=9B96957D
+s=96 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=07798D32
+s=97 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=890FB02A
+s=98 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=9AD40E0C
+s=99 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=37DB8749
+s=100 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=77FD4414
+  intro=50 t=00000000 dying=0 kurt=C0555558,BF8E38E0,C10E38E4 vis=1 pose=0:42200000 cam=00000000,00000000,00000000 bones=-
+  wind=3072 haze=6 crawler=00000000 screen=3F555555,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3F200000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=101 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=59FA71A1
+s=102 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=35346273
+s=103 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=C458D888
+s=104 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=BFA9035D
+s=105 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=32813098
+s=106 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=BEB7EAE2
+s=107 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=5C4C48E9
+s=108 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=8B07F1BF
+s=109 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=D4A09037
+s=110 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=52CD0895
+  intro=40 t=00000000 dying=0 kurt=BF555560,BE8E38E0,C11B8E39 vis=1 pose=0:42480000 cam=00000000,00000000,00000000 bones=-
+  wind=3072 haze=0 crawler=00000000 screen=3F2AAAAA,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3F200000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=111 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=24629C6A
+s=112 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=06BAEE98
+s=113 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=A6DA25B1
+s=114 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=CE4F7AE2
+s=115 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=05252E81
+s=116 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=6A18DA0C
+s=117 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=9F7A27D9
+s=118 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=ED30F8B5
+s=119 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=88240F2A
+s=120 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=AB084400
+  intro=30 t=00000000 dying=0 kurt=00000000,00000000,C1200000 vis=1 pose=0:42700000 cam=00000000,00000000,00000000 bones=-
+  wind=3072 haze=10 crawler=00000000 screen=3F000000,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3F200000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=121 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=7D5FD127
+s=122 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=9141B3BD
+s=123 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=48833207
+s=124 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=E06CA1EB
+s=125 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=0AE7A92F
+s=126 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=D512F79B
+s=127 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=A503ABF3
+s=128 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=D4BFFF51
+s=129 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=3E28B8ED
+s=130 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=07E10D3D
+  intro=20 t=00000000 dying=0 kurt=00000000,00000000,C1200000 vis=1 pose=0:428C0000 cam=00000000,00000000,00000000 bones=-
+  wind=3072 haze=4 crawler=00000000 screen=3EAAAAAA,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3F200000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=131 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=A7792AB5
+s=132 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F3D81E9F
+s=133 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=209C9B9B
+s=134 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=EE203157
+s=135 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=35F08C0F
+s=136 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=796994AF
+s=137 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=7B505515
+s=138 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=212583F3
+s=139 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=CD1B63B5
+s=140 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=97B413A3
+  intro=10 t=00000000 dying=0 kurt=00000000,00000000,C1200000 vis=1 pose=0:42A00000 cam=00000000,00000000,00000000 bones=-
+  wind=3072 haze=14 crawler=00000000 screen=3E2AAAAC,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3F200000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=141 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=79857471
+s=142 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=9FC12D07
+s=143 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=8AB4DA16
+s=144 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=7ED13576
+s=145 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=10D5D006
+s=146 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=C4B3E902
+s=147 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=EF658F62
+s=148 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=4EC75386
+s=149 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=758C915D
+s=150 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=532042A6
+  intro=0 t=00000000 dying=0 kurt=00000000,00000000,45A4B000 vis=1 pose=0:42B40000 cam=00000000,00000000,00000000 bones=00000000,00000000,45A55000:00000000
+  wind=3072 haze=8 crawler=00000000 screen=00000000,3F800000,00000000 radar=0:0:00000000,00000000,00000000:00000000 wv=3F200000 gv=3F2AAAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=151 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=0E555131
+s=152 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=D0B9AB54
+s=153 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=57202688
+s=154 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=1E3B6571
+s=155 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=235E9D4B
+s=156 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=9CEC455B
+s=157 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=D70B7B1F
+s=158 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=A1963A9C
+s=159 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=389C62B1
+s=160 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=R_START h=FE2AFC69
+  intro=0 t=3EAAAAAB dying=0 kurt=00000000,00000000,45A3FE3A vis=1 pose=0:42C80000 cam=00000000,00000000,45A44E3A bones=00000000,00000000,45A48A76:41200000
+  wind=3072 haze=2 crawler=40A00000 screen=3EAAAAAB,3F800000,00000000 radar=1:0:BD978CEC,3EBB28CA,42C80001:3E433DE8 wv=3F200000 gv=3F2B9D64
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=161 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=1CB09D70
+s=162 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=81A7A4CA
+s=163 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=2C09FD33
+s=164 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=8F26FB98
+s=165 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=114C2AAE
+s=166 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=8CC2A523
+s=167 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=F0D60557
+s=168 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=C4EE5E9D
+s=169 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=5A8559F3
+s=170 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=ACFA884D
+  intro=0 t=3F2AAAAD dying=0 kurt=00000000,00000000,45A34C74 vis=1 pose=0:42DC0000 cam=00000000,00000000,45A39C74 bones=00000000,00000000,45A3C4EC:41A00000
+  wind=3072 haze=12 crawler=40000000 screen=3F2AAAAD,3F800000,00000000 radar=1:0:BF5144C1,40813834,44898001:4006CCC6 wv=3F200000 gv=3F2C901F
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=171 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=A1E7695E
+s=172 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=A49DD415
+s=173 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=5F90E3A0
+s=174 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=2B6982F6
+s=175 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=C1E8718B
+s=176 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=6481917E
+s=177 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=435B6A3A
+s=178 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=18FBA0E8
+s=179 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=41524192
+s=180 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=703EA005
+  intro=0 t=3F800003 dying=0 kurt=00000000,00000000,45A29AAE vis=1 pose=0:42F00000 cam=00000000,00000000,45A2EAAE bones=00000000,00000000,45A2FF62:41F00000
+  wind=3072 haze=6 crawler=40E00000 screen=3F7BBBC2,3F800000,00000000 radar=1:0:BFC89C26,40F7BEFA,45034001:408138F3 wv=3F200000 gv=3F2D82D8
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=181 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=1371189A
+s=182 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=B235C879
+s=183 st=0 tk=1 hp=100 m=0 p=0 e=0 c=0 ev=- h=10D2C475
+s=184 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=P_FALL h=1DC33912
+  intro=0 t=3F911113 dying=0 kurt=00000000,00000000,45A25392 vis=1 pose=0:42F80000 cam=00000000,00000000,45A2A392 bones=00000000,00000000,45A2B05E:40400000
+  wind=3072 haze=10 crawler=3F800000 screen=3F800000,3F800000,00000000 radar=1:0:BFEF3AF3,4113B869,451C4001:409A1983 wv=3F200000 gv=3F2DE3F0
+  pickup SW_HOME 42466EBA,C1D5E8A9,45A2A804 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=1/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=185 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=9E508552
+s=186 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=36F218C0
+s=187 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=16ECED4D
+s=188 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=A20A2B35
+s=189 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=F6805A24
+s=190 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=BADE24C3
+  intro=0 t=3FAAAAAB dying=0 kurt=00000000,00000000,45A1E8E8 vis=1 pose=0:43020000 cam=00000000,00000000,45A238E8 bones=00000000,00000000,45A239D8:41100000
+  wind=3072 haze=0 crawler=40800000 screen=3F666668,3F800000,00000000 radar=1:0:C014B466,4137A517,4541C001:40BF935A wv=3F200000 gv=3F2E7593
+  pickup SW_HOME 42466EBA,C1D5E8A9,45A1D2B0 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=7/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=191 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=712E195D
+s=192 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=D1A5EF1C
+s=193 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=A2B809D2
+s=194 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=3D507734
+s=195 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=A125BE3D
+s=196 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=56D64677
+s=197 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=2825EFCF
+s=198 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=19DC3F7F
+s=199 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=AE38C115
+s=200 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=846374CE
+  intro=0 t=3FD55553 dying=0 kurt=3EC8C8C9,00000000,45A13722 vis=1 pose=0:430C0000 cam=3EAAAAAB,00000000,45A18722 bones=00000000,00000000,45A1744E:41980000
+  wind=3072 haze=10 crawler=3F800000 screen=3F800000,3F800000,00000000 radar=1:0:C0458588,4173EE97,45802001:40FE775A wv=3F200000 gv=3F2F684C
+  pickup SW_HOME 42466EBA,C1D5E8A9,45A06F24 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=17/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=201 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=80890783
+s=202 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=8D48A643
+s=203 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=26053D33
+s=204 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=4A3D80D6
+s=205 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=07CCE189
+s=206 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=3C26B326
+s=207 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=A3BA00AB
+s=208 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=825D026B
+s=209 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=F52998E5
+s=210 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=DF28AD61
+  intro=0 t=3FFFFFFB dying=0 kurt=41CBEBEC,00000000,45A0855C vis=1 pose=0:43160000 cam=41AD5556,00000000,45A0D55C bones=00000000,00000000,45A0AEC4:41E80000
+  wind=3072 haze=4 crawler=40C00000 screen=3F800000,3F800000,00000000 radar=1:0:C076C2D9,41985EDA,459F6001:411EF35D wv=3F200000 gv=3F305B05
+  pickup SW_HOME 42466EBA,C1D5E8A9,459F0B98 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=27/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=211 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=EAFD8673
+s=212 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=D61412A9
+s=213 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=7AD0544F
+s=214 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=36642F6D
+s=215 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=B4D0887B
+s=216 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=9C87DBB6
+s=217 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=3DBDE992
+s=218 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=6C58F6B8
+s=219 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=B0820A5C
+s=220 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=R_MOVE h=0CA06147
+  intro=0 t=40155552 dying=0 kurt=426B4B4B,00000000,459FD396 vis=1 pose=0:43200000 cam=42480000,00000000,45A02396 bones=00000000,00000000,459FE93A:41000000
+  wind=3072 haze=14 crawler=40400000 screen=3F777778,3F800000,00000000 radar=1:1:420A6182,C1B6A8A2,459FBB96:41200000 wv=3F200000 gv=3F314DC0
+  pickup SW_HOME 42466EBA,C1D5E8A9,459DA80C v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=37/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=221 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=9C5E57D7
+s=222 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=CC99204F
+s=223 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=006B7153
+s=224 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=D1969D67
+s=225 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=079EA18E
+s=226 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=F783F148
+s=227 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=R_MOVE h=2FF55EE1
+  intro=0 t=40244440 dying=0 kurt=426B4B4B,00000000,459F5725 vis=1 pose=0:43270000 cam=42480000,00000000,459FA725 bones=00000000,00000000,459F5EF3:41700000
+  wind=3072 haze=5 crawler=40D00000 screen=3F6EEEF0,3F800000,00000000 radar=1:1:424E304C,C1C82208,459F3F25:41200000 wv=3F200000 gv=3F31F7A8
+  pickup SW_HOME 42466EBA,C1D5E8A9,459CAF2A v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=44/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=228 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=4D4CFA1E
+s=229 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=E328C0EC
+s=230 st=0 tk=1 hp=100 m=0 p=1 e=0 c=0 ev=- h=6B51B77E
+  intro=0 t=402AAAA6 dying=0 kurt=426B4B4B,00000000,459F21D0 vis=1 pose=0:432A0000 cam=42480000,00000000,459F71D0 bones=00000000,00000000,459F23B0:41900000
+  wind=3072 haze=8 crawler=00000000 screen=3F7BBBBC,3F800000,00000000 radar=1:1:423E2450,C1320CE8,459F09D0:41200000 wv=3F200000 gv=3F324079
+  pickup SW_HOME 42466EBA,C1D5E8A9,459C4480 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=47/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=231 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=K_SEEN;M_LNCH;BONES h=C9794B66
+  intro=0 t=402CCCC8 dying=0 kurt=426B4B4B,00000000,459F1009 vis=1 pose=0:432B0000 cam=42480000,00000000,459F6009 bones=00000000,00000000,459F0FEF:41980000
+  wind=3072 haze=9 crawler=3F000000 screen=3F622222,3F800000,00000000 radar=1:2:42410C46,C0972AC0,459EF809:41200000 wv=3F200000 gv=3F3258BF
+  missile BFAF266E,C1038607,42055556 v=C2243407,C3769B4C,437A0000 trail=1:BFAF266E,C1038607,42055556
+  pickup SW_HOME 42466EBA,C1D5E8A9,459C20F2 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=48/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=232 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=5B253BCD
+s=233 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=52490F6E
+s=234 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=E8642030
+s=235 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=5E32712B
+s=236 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=ECA8D538
+s=237 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=DF48E43A
+s=238 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=667F134C
+s=239 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=C20170A5
+s=240 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=F8EF75FD
+  intro=0 t=403FFFFA dying=0 kurt=426B4B4B,00000000,459E700A vis=1 pose=0:43340000 cam=42480000,00000000,459EC00A bones=00000000,00000000,459E5E26:41E00000
+  wind=3072 haze=2 crawler=40A00000 screen=3F1DDDDD,3F800000,00000000 radar=1:2:42410C46,C0972AC0,4590E809:4111D8A6 wv=3F200000 gv=3F333333
+  missile C15AF00B,C2A46789,43A6AAAB v=C2243407,C3769B4C,437A0000 trail=10:C15AF00B,C2A46789,43A6AAAB
+  pickup SW_HOME 42466EBA,C1D5E8A9,459AE0F4 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=57/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=241 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=7BA9D5F1
+s=242 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=E2E65DF0
+s=243 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=93933987
+s=244 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=BC5D0A79
+s=245 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=2BE4DC7E
+s=246 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=5983B719
+s=247 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=CDF94AD2
+s=248 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=363DEDF0
+s=249 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=29A28CF6
+s=250 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=0DF35F43
+  intro=0 t=4055554E dying=0 kurt=426B4B4B,00000000,459DBE44 vis=1 pose=0:433E0000 cam=42480000,00000000,459E0E44 bones=00000000,00000000,459D989C:40E00000
+  wind=3072 haze=12 crawler=40000000 screen=3F488885,3F800000,00000000 radar=1:2:42410C46,C0972AC0,45814809:41021EB4 wv=3F200000 gv=3F3425ED
+  missile C1DAF00B,C3246787,4426AAAB v=C2243407,C3769B4C,437A0000 trail=20:C1DAF00B,C3246787,4426AAAB
+  pickup SW_HOME 42466EBA,C1D5E8A9,45997D68 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=67/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=251 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=595FA43D
+s=252 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=D56264E8
+s=253 st=0 tk=1 hp=100 m=1 p=1 e=0 c=0 ev=- h=249F60B3
+s=254 st=0 tk=1 hp=100 m=2 p=1 e=0 c=0 ev=M_LNCH;P_CHUTE h=2CF57BA5
+  intro=0 t=405DDDD6 dying=0 kurt=426B4B4B,00000000,459D7728 vis=1 pose=0:43420000 cam=42480000,00000000,459DC728 bones=00000000,00000000,459D4998:41300000
+  wind=3072 haze=0 crawler=40800000 screen=3F4CCCCD,3F800000,00000000 radar=1:2:42410C46,C0972AC0,45761012:40F7A8A7 wv=3F200000 gv=3F348704
+  missile C2035CD3,C3454907,4447FFFF v=C2243407,C3769B4C,437A0000 trail=24:C2035CD3,C3454907,4447FFFF
+  missile 40A3409B,C0D2DADA,42055556 v=43190C91,C345AD2C,437A0000 trail=1:40A3409B,C0D2DADA,42055556
+  pickup SW_HOME 42466EBA,C1D5E8A9,4598EFC7 v=00000000,00000000,C3031C71 yaw=3F800000 chute=1 ticks=71/71
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=255 st=0 tk=1 hp=100 m=2 p=1 e=0 c=0 ev=- h=8225D3E3
+s=256 st=0 tk=1 hp=100 m=2 p=1 e=0 c=0 ev=- h=83C25D25
+s=257 st=0 tk=1 hp=100 m=2 p=1 e=0 c=0 ev=- h=8041BE72
+s=258 st=0 tk=1 hp=100 m=2 p=1 e=0 c=0 ev=- h=133E8044
+s=259 st=0 tk=1 hp=100 m=2 p=1 e=0 c=0 ev=- h=C77D66C6
+s=260 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=P_FALL h=513C08FB
+  intro=0 t=406AAAA2 dying=0 kurt=426B4B4B,00000000,459D0C7E vis=1 pose=0:3F800000 cam=42480000,00000000,459D5C7E bones=00000000,00000000,459CD312:41880000
+  wind=3072 haze=6 crawler=40E00000 screen=3F622221,3F800000,00000000 radar=1:2:42410C46,C0972AC0,45635012:40E4C984 wv=3F200000 gv=3F3518A7
+  missile C2243405,C3769B47,4479FFFD v=C2243407,C3769B4C,437A0000 trail=30:C2243405,C3769B47,4479FFFD
+  missile 420ED888,C2387F7E,43695555 v=43190C91,C345AD2C,437A0000 trail=7:420ED888,C2387F7E,43695555
+  pickup SW_HOME 42466EBA,C1D5E8A9,45982A72 v=00000000,00000000,C2EB8E37 yaw=40E00000 chute=1 ticks=77/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,459D60F0 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=1/70
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=261 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=64800CA7
+s=262 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=FC8FF80E
+s=263 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=5363E53E
+s=264 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=FB116FDE
+s=265 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=B7D51234
+s=266 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=5AC02BE9
+s=267 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=C85375CE
+s=268 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=9380FEF3
+s=269 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=124820FF
+s=270 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=574D41B7
+  intro=0 t=407FFFF6 dying=0 kurt=426B4B4B,00000000,459C5AB8 vis=1 pose=0:41300000 cam=42480000,00000000,459CAAB8 bones=00000000,00000000,459C0D88:41D80000
+  wind=3072 haze=0 crawler=40800000 screen=3F7FFFFD,3F800000,00000000 radar=1:2:42410C46,C0972AC0,45441012:40C555A1 wv=3F200000 gv=3F360B60
+  missile C25AF003,C3A46784,44A6AAAC v=C2243407,C3769B4C,437A0000 trail=32:C25AF003,C3A46784,44A6AAAC
+  missile 42AD74A5,C2E0088A,440DAAAC v=43190C91,C345AD2C,437A0000 trail=17:42AD74A5,C2E0088A,440DAAAC
+  pickup SW_HOME 42466EBA,C1D5E8A9,459710F7 v=00000000,00000000,C2BF1C71 yaw=41880000 chute=1 ticks=87/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,459BFD64 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=11/70
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=271 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=7426934D
+s=272 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=CB0916DB
+s=273 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=C4676800
+s=274 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=BB27AA0A
+s=275 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=3F6D1291
+s=276 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=4A599720
+s=277 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=EB9F29B2
+s=278 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=B3B90034
+s=279 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=22044E15
+s=280 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=76802F0D
+  intro=0 t=408AAAA5 dying=0 kurt=426B4B4B,00000000,459BA8F2 vis=1 pose=0:41A80000 cam=42480000,00000000,459BF8F2 bones=00000000,00000000,459B47FE:40C00000
+  wind=3072 haze=10 crawler=3F800000 screen=3F7FFFFD,3F800000,00000000 radar=1:2:42410C46,C0972AC0,4524D012:40A5E1BD wv=3F200000 gv=3F36FE1B
+  missile C288D602,C3CD8164,44D0555A v=C2243407,C3769B4C,437A0000 trail=32:C288D602,C3CD8164,44D0555A
+  missile 4309BE84,C331E8AB,4460FFFE v=43190C91,C345AD2C,437A0000 trail=27:4309BE84,C331E8AB,4460FFFE
+  pickup SW_HOME 42466EBA,C1D5E8A9,459632BE v=00000000,00000000,C292AAAB yaw=41D80000 chute=1 ticks=97/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,459A99D8 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=21/70
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=281 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=E5DC64E1
+s=282 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=086FCAE2
+s=283 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=4A00077B
+s=284 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=17F111B4
+s=285 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=70297561
+s=286 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=F8AE57FA
+s=287 st=0 tk=1 hp=100 m=2 p=2 e=0 c=0 ev=- h=29CB917E
+s=288 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=M_LNCH h=CC3E6DB4
+  intro=0 t=4093332D dying=0 kurt=426B4B4B,00000000,459B1ABA vis=1 pose=0:41E80000 cam=42480000,00000000,459B6ABA bones=00000000,00000000,459AA9F6:41600000
+  wind=3072 haze=2 crawler=40A00000 screen=3F666663,3F800000,00000000 radar=1:2:42410C46,C0972AC0,450BD012:408CB83A wv=3F200000 gv=3F37C048
+  missile C29EBAD2,C3EE62E4,44F1AAB2 v=C2243407,C3769B4C,437A0000 trail=32:C29EBAD2,C3EE62E4,44F1AAB2
+  missile 43328EAC,C3669F63,4491D555 v=43190C91,C345AD2C,437A0000 trail=32:43328EAC,C3669F63,4491D555
+  missile 404CBF0A,40F63BBD,42055556 v=42BFF319,4366D800,437A0000 trail=1:404CBF0A,40F63BBD,42055556
+  pickup SW_HOME 42466EBA,C1D5E8A9,4595ABA1 v=00000000,00000000,C25E38E6 yaw=420C0000 chute=1 ticks=105/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,45997D68 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=29/70
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=289 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=CAB02998
+s=290 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=FD9594B4
+  intro=0 t=4095554F dying=0 kurt=426B4B4B,00000000,459AF72C vis=1 pose=0:41F80000 cam=42480000,00000000,459B472C bones=00000000,00000000,459A8274:41800000
+  wind=3072 haze=4 crawler=40C00000 screen=3F4CCCCD,3F800000,00000000 radar=1:2:42410C46,C0972AC0,45059012:40866DD9 wv=3F200000 gv=3F37F0D4
+  missile C2A43406,C3F69B44,44FA0008 v=C2243407,C3769B4C,437A0000 trail=32:C2A43406,C3F69B44,44FA0008
+  missile 433CC2B6,C373CD11,449A2AAB v=43190C91,C345AD2C,437A0000 trail=32:433CC2B6,C373CD11,449A2AAB
+  missile 41198F48,41B8ACCE,42C80001 v=42BFF319,4366D800,437A0000 trail=3:41198F48,41B8ACCE,42C80001
+  pickup SW_HOME 42466EBA,C1D5E8A9,45958FC7 v=00000000,00000000,C24C71CA yaw=42140000 chute=1 ticks=107/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4599364C v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=31/70
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=291 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=DEDAFAD3
+s=292 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=EB6C203B
+s=293 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=80521FB4
+s=294 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=8EC5B143
+s=295 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=831B17B4
+s=296 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=6216A042
+s=297 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=5ED669F2
+s=298 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=F743CB62
+s=299 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=4ED7C6D8
+s=300 st=0 tk=1 hp=100 m=3 p=2 e=0 c=0 ev=- h=600AA7F1
+  intro=0 t=409FFFF9 dying=0 kurt=426B4B4B,3EC8C8C9,459A4566 vis=1 pose=0:42240000 cam=42480000,3EAAAAAB,459A9566 bones=00000000,00000000,4599BCEA:41D00000
+  wind=3072 haze=14 crawler=40400000 screen=3F777775,3F800000,00000000 radar=1:2:42410C46,C0972AC0,44CCA024:404DF3EB wv=3F200000 gv=3F38E38D
+  missile C2AA71CD,C401CC01,45117E11 v=412C7CC9,41E30E1A,437299E8 trail=32:C2AA71CD,C401CC01,45117E11
+  missile 436FC6E8,C39AD8B7,44C3D559 v=43190C91,C345AD2C,437A0000 trail=32:436FC6E8,C39AD8B7,44C3D559
+  missile 42265B38,42C8108B,43D8AAAC v=42BFF319,4366D800,437A0000 trail=13:42265B38,42C8108B,43D8AAAC
+  pickup SW_HOME 42466EBA,C1D5E8A9,45950A75 v=00000000,00000000,C2480000 yaw=423C0000 chute=1 ticks=117/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4597D2C0 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=41/70
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=301 st=0 tk=1 hp=100 m=3 p=3 e=0 c=0 ev=P_FALL h=27D9D617
+  intro=0 t=40A1110A dying=0 kurt=426B4B4B,3F969697,459A339F vis=1 pose=0:42280000 cam=42480000,3F800001,459A839F bones=00000000,00000000,4599A929:41D80000
+  wind=3072 haze=15 crawler=40600000 screen=3F7BBBB9,3F800000,00000000 radar=1:2:42410C46,C0972AC0,44C66024:4047A98A wv=3F200000 gv=3F38FBD4
+  missile C2A9B9D0,C4018F75,4513839D v=414395CE,420F302C,437233C4 trail=32:C2A9B9D0,C4018F75,4513839D
+  missile 4374E0ED,C39E2422,44C80004 v=43190C91,C345AD2C,437A0000 trail=32:4374E0ED,C39E2422,44C80004
+  missile 42332729,42D77447,43E95557 v=42BFF319,4366D800,437A0000 trail=14:42332729,42D77447,43E95557
+  pickup SW_HOME 42466EBA,C1D5E8A9,4594FD20 v=00000000,00000000,C2480000 yaw=42400000 chute=1 ticks=118/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4597AF32 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=42/70
+  pickup SW_HBOMB C168358C,C204142E,459A8811 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=1/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=302 st=0 tk=1 hp=100 m=3 p=3 e=0 c=0 ev=- h=6C597215
+s=303 st=0 tk=1 hp=100 m=3 p=3 e=0 c=0 ev=- h=9F1FA9F0
+s=304 st=0 tk=1 hp=100 m=3 p=3 e=0 c=0 ev=- h=637ECE57
+s=305 st=0 tk=1 hp=100 m=3 p=3 e=0 c=0 ev=- h=2B408BE7
+s=306 st=0 tk=1 hp=100 m=3 p=3 e=0 c=0 ev=- h=A4ACD7F5
+s=307 st=0 tk=1 hp=100 m=3 p=3 e=0 c=0 ev=- h=7471719D
+s=308 st=0 tk=1 hp=100 m=3 p=3 e=0 c=0 ev=- h=0A8161A1
+s=309 st=0 tk=1 hp=100 m=3 p=3 e=0 c=0 ev=- h=C43B4A4B
+s=310 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=M_LNCH h=3A14CF5A
+  intro=0 t=40AAAAA3 dying=0 kurt=426B4B4B,41CBEBEC,459993A0 vis=1 pose=0:424C0000 cam=42480000,41AD5556,4599E3A0 bones=00000000,00000000,4598F760:40A00000
+  wind=3072 haze=8 crawler=00000000 screen=3F5DDDDB,3F800000,00000000 radar=1:2:42410C46,C0972AC0,448E2024:400F0C23 wv=3F200000 gv=3F39D648
+  missile C2A04ADD,C3FB1572,4525901B v=41958ABA,4289B03B,436E8894 trail=32:C2A04ADD,C3FB1572,4525901B
+  missile 4391658A,C3BBCAE5,44ED8007 v=43190C91,C345AD2C,437A0000 trail=32:4391658A,C3BBCAE5,44ED8007
+  missile 42932950,4330FAF1,443FAAAA v=42BFF319,4366D800,437A0000 trail=23:42932950,4330FAF1,443FAAAA
+  missile 4103D101,3FA07113,42055556 v=437727E1,42166A01,437A0000 trail=1:4103D101,3FA07113,42055556
+  pickup SW_HOME 42466EBA,C1D5E8A9,45948523 v=00000000,00000000,C2480000 yaw=42640000 chute=1 ticks=127/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,45966F34 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=51/70
+  pickup SW_HBOMB C168358C,C204142E,45994813 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=10/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=311 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=81093125
+s=312 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=D498974D
+s=313 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=0E7FC522
+s=314 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=6D617DD9
+s=315 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=61FFEB94
+s=316 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=AE81EED0
+s=317 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=4AF4CAC8
+s=318 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=9AB4B867
+s=319 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=F32625CB
+s=320 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=3077F259
+  intro=0 t=40B5554D dying=0 kurt=426B4B4B,420D2D2D,4598E1DA vis=1 pose=0:42740000 cam=42480000,41F00000,459931DA bones=00000000,00000000,459831D6:41700000
+  wind=3072 haze=2 crawler=40A00000 screen=3F51110F,3F800000,00000000 radar=1:2:42410C46,C0972AC0,441F4048:3FA048B7 wv=3F200000 gv=3F3AC901
+  missile C292E0DD,C3EE558B,453946AB v=41ACA1CC,42A736DE,436A6C77 trail=32:C292E0DD,C3EE558B,453946AB
+  missile 43A1A1BD,C3D01EDC,450B67FC v=40F82AD7,3E65F3C0,437400F9 trail=32:43A1A1BD,C3D01EDC,450B67FC
+  missile 42D32500,437DED9D,44897FFF v=42BFF319,4366D800,437A0000 trail=32:42D32500,437DED9D,44897FFF
+  missile 42B53F61,415C9B79,43B75556 v=437727E1,42166A01,437A0000 trail=11:42B53F61,415C9B79,43B75556
+  pickup SW_HOME 42466EBA,C1D5E8A9,4593FFD1 v=00000000,00000000,C2480000 yaw=42860000 chute=1 ticks=137/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,45950BA8 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=61/70
+  pickup SW_HBOMB C168358C,C204142E,4597E487 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=20/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=321 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=79F8A9C7
+s=322 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=2978B568
+s=323 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=5C9FF959
+s=324 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=7156777F
+s=325 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=12A4DD3C
+s=326 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=32B8B7C2
+s=327 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=8B704059
+s=328 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=178C6A2A
+s=329 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=P_CHUTE h=F8B7F7B7
+  intro=0 t=40BEEEE6 dying=0 kurt=426B4B4B,420D2D2D,459841DB vis=1 pose=0:428C0000 cam=42480000,41F00000,459891DB bones=00000000,00000000,4597800D:41C00000
+  wind=3072 haze=11 crawler=3FC00000 screen=3F777773,3F800000,00000000 radar=1:2:42410C46,C0972AC0,433B0120:3EBC37A4 wv=3F200000 gv=3F3BA375
+  missile C2855852,C3E12F41,454ABE55 v=41BE9B67,42B99161,4366D828 trail=32:C2855852,C3E12F41,454ABE55
+  missile 439F875B,C3CB92EC,451D93FB v=C1EEA64D,42520682,437071A2 trail=32:439F875B,C3CB92EC,451D93FB
+  missile 43065D5C,43A19735,44AF0002 v=42BFF319,4366D800,437A0000 trail=32:43065D5C,43A19735,44AF0002
+  missile 4324C541,41C88D56,4426AAAB v=437727E1,42166A01,437A0000 trail=20:4324C541,41C88D56,4426AAAB
+  pickup SW_HOME 42466EBA,C1D5E8A9,459387D4 v=00000000,00000000,C2480000 yaw=42980000 chute=1 ticks=146/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4593CC41 v=00000000,00000000,C3031C71 yaw=3F800000 chute=1 ticks=70/70
+  pickup SW_HBOMB C168358C,C204142E,4596A489 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=29/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=330 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=A8E70D07
+  intro=0 t=40BFFFF7 dying=0 kurt=426B4B4B,420D2D2D,45983014 vis=1 pose=0:428E0000 cam=42480000,41F00000,45988014 bones=00000000,00000000,45976C4C:41C80000
+  wind=3072 haze=12 crawler=40000000 screen=3F7BBBB7,3F800000,00000000 radar=1:2:42410C46,C0972AC0,43090120:3E89E49E wv=3F200000 gv=3F3BBBBB
+  missile C283C1B1,C3DFA360,454CAACD v=41C0C7F4,42BBB68E,43666271 trail=32:C283C1B1,C3DFA360,454CAACD
+  missile 439F0813,C3CAB2E5,451F94EE v=C1FB2BA6,425B2F38,437019DA trail=32:439F0813,C3CAB2E5,451F94EE
+  missile 43099058,43A57024,44B32AAD v=42BFF319,4366D800,437A0000 trail=32:43099058,43A57024,44B32AAD
+  missile 432D0251,41D29467,442F0000 v=437727E1,42166A01,437A0000 trail=21:432D0251,41D29467,442F0000
+  pickup SW_HOME 42466EBA,C1D5E8A9,45937A7F v=00000000,00000000,C2480000 yaw=429A0000 chute=1 ticks=147/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4593A9E2 v=00000000,00000000,C300E38D yaw=40000000 chute=1 ticks=71/70
+  pickup SW_HBOMB C168358C,C204142E,459680FB v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=30/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=331 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=F0D125B8
+s=332 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=3B23CCD0
+s=333 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=002C5C7C
+s=334 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=D3753162
+s=335 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=8BCB2586
+s=336 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=A2C891F2
+s=337 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=21AB4E80
+s=338 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=83572D4D
+s=339 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=C6588637
+s=340 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=CF9A38C9
+  intro=0 t=40CAAAA1 dying=0 kurt=426B4B4B,420D2D2D,45977E4E vis=1 pose=0:42A20000 cam=42480000,41F00000,4597CE4E bones=00000000,00000000,4596A6C2:40800000
+  wind=3072 haze=6 crawler=40E00000 screen=3F7FFFFB,3F800000,00000000 radar=0:2:42410C46,C0972AC0,4214047F:3D94FA47 wv=3F200000 gv=3F3CAE75
+  missile C265990A,C3CF1EE4,455FAAAA v=41D9C810,42D42B8B,4360A3FD trail=32:C265990A,C3CF1EE4,455FAAAA
+  missile 439909B0,C3C06960,45337813 v=C21F99B4,4287CAF7,436D00D6 trail=32:439909B0,C3C06960,45337813
+  missile 43298E30,43CBE97A,44DCD55B v=42BFF319,4366D800,437A0000 trail=32:43298E30,43CBE97A,44DCD55B
+  missile 437F64F1,421B6D8B,44812AA9 v=437727E1,42166A01,437A0000 trail=31:437F64F1,421B6D8B,44812AA9
+  pickup SW_HOME 42466EBA,C1D5E8A9,4592F52D v=00000000,00000000,C2480000 yaw=42AE0000 chute=1 ticks=157/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,459272C6 v=00000000,00000000,C2D55554 yaw=41400000 chute=1 ticks=81/70
+  pickup SW_HBOMB C168358C,C204142E,45951D6F v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=40/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=341 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=B08C33C0
+s=342 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=CB987DC9
+s=343 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=456C4328
+s=344 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=862D75F1
+s=345 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=27253A42
+s=346 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=4CB27AF3
+s=347 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=CB910E8A
+s=348 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=9AD5DAA3
+s=349 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=89CA3DA3
+s=350 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=BBBC3CF1
+  intro=0 t=40D5554B dying=0 kurt=426B4B4B,420D2D2D,4596CC88 vis=1 pose=0:42B60000 cam=42480000,41F00000,45971C88 bones=00000000,00000000,4595E138:41600000
+  wind=3072 haze=0 crawler=40800000 screen=3F7FFFFB,3F800000,00000000 radar=0:2:42410C46,C0972AC0,4214047F:3D94FA47 wv=3F200000 gv=3F3DA12F
+  missile C23FB8B5,C3BCAB79,456719B4 v=41E93327,42E3341A,435CC071 trail=32:C23FB8B5,C3BCAB79,456719B4
+  missile 43920128,C3B475E1,454719D8 v=C2340A19,4298D656,4369AAE4 trail=32:43920128,C3B475E1,454719D8
+  missile 434775AD,43EFC2DA,45033946 v=4224D9CA,42BA2286,43771EB9 trail=32:434775AD,43EFC2DA,45033946
+  missile 43A8E3C9,424D90E5,44AAD557 v=437727E1,42166A01,437A0000 trail=32:43A8E3C9,424D90E5,44AAD557
+  pickup SW_HOME 42466EBA,C1D5E8A9,45926FDB v=00000000,00000000,C2480000 yaw=42C20000 chute=1 ticks=167/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,459176EC v=00000000,00000000,C2A8E38E yaw=41B00000 chute=1 ticks=91/70
+  pickup SW_HBOMB C168358C,C204142E,4593B9E3 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=50/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=351 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=50A19A74
+s=352 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=6D4BCBBB
+s=353 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=AC953137
+s=354 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=E5871163
+s=355 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=1105D4EE
+s=356 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=CA73E684
+s=357 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=E315CED4
+s=358 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=9AE9D676
+s=359 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=A45ECE39
+s=360 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=049E022E
+  intro=0 t=40DFFFF5 dying=0 kurt=426B4B4B,420D2D2D,45961AC2 vis=1 pose=0:42CA0000 cam=42480000,41F00000,45966AC2 bones=00000000,00000000,45951BAE:41C00000
+  wind=3072 haze=10 crawler=3F800000 screen=3F73332F,3F800000,00000000 radar=0:2:42410C46,C0972AC0,4214047F:3D94FA47 wv=3F200000 gv=3F3E93E8
+  missile C218C0D6,C3A9AFC7,456BB242 v=41E9C736,42E3C4B4,435C9FC0 trail=32:C218C0D6,C3A9AFC7,456BB242
+  missile 438A1314,C3A6FFAF,455A67FA v=C24C03AB,42AD266C,4364D702 trail=32:438A1314,C3A6FFAF,455A67FA
+  missile 434A3957,43F167B3,45179C93 v=C14CB2BE,C22F6617,437265D2 trail=32:434A3957,43F167B3,45179C93
+  missile 43D21519,427FB43F,44D48005 v=437727E1,42166A01,437A0000 trail=32:43D21519,427FB43F,44D48005
+  pickup SW_HOME 42466EBA,C1D5E8A9,4591EA89 v=00000000,00000000,C2480000 yaw=42D60000 chute=1 ticks=177/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4590B654 v=00000000,00000000,C278E390 yaw=42000000 chute=1 ticks=101/70
+  pickup SW_HBOMB C168358C,C204142E,45925657 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=60/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=361 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=A257E55C
+s=362 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=BE1C4A64
+s=363 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=7680FF52
+s=364 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=773F5CC7
+s=365 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=CA8E34AA
+s=366 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=06265D73
+s=367 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=R_START h=CFF7880E
+  intro=0 t=40E7776C dying=0 kurt=426B4B4B,420D2D2D,45959E51 vis=1 pose=0:42D80000 cam=42480000,41F00000,4595EE51 bones=00000000,00000000,45949167:00000000
+  wind=3072 haze=1 crawler=40900000 screen=3F733332,3F800000,00000000 radar=1:0:BF964C87,BF0B3754,42C80001:3E5602F3 wv=3F200000 gv=3F3F3DD1
+  missile C1FB0ABD,C39C6BA7,456EEA49 v=41E8DE32,42E2E1B8,435CDEAC trail=32:C1FB0ABD,C39C6BA7,456EEA49
+  missile 4383E126,C39C7BB8,456369CC v=C25D891C,42BC044A,4360DBDF trail=32:4383E126,C39C7BB8,456369CC
+  missile 434663CD,43EB2A4A,4525B21D v=C19E8D0B,C27A8DEB,43704318 trail=32:434663CD,43EB2A4A,4525B21D
+  missile 43EEEAD1,4291667C,44F1AAB2 v=437727E1,42166A01,437A0000 trail=32:43EEEAD1,4291667C,44F1AAB2
+  pickup SW_HOME 42466EBA,C1D5E8A9,45918D36 v=00000000,00000000,C2480000 yaw=42E40000 chute=1 ticks=184/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,45905197 v=00000000,00000000,C2480000 yaw=421C0000 chute=1 ticks=108/70
+  pickup SW_HBOMB C168358C,C204142E,45915D75 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=67/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=368 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=EE51232B
+s=369 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=P_CHUTE h=769978D3
+  intro=0 t=40E9998E dying=0 kurt=426B4B4B,420D2D2D,45957AC3 vis=1 pose=0:42DC0000 cam=42480000,41F00000,4595CAC3 bones=00000000,00000000,459469E5:40000000
+  wind=3072 haze=3 crawler=40B00000 screen=3F7BBBBA,3F800000,00000000 radar=1:0:C061A873,BFD104B2,43960001:3F20A86A wv=3F200000 gv=3F3F6E5C
+  missile C1EB85C8,C398A3F2,456FD5E7 v=41E88DAA,42E29342,435CF42E trail=32:C1EB85C8,C398A3F2,456FD5E7
+  missile 43820741,C3995756,45645980 v=C25FAE74,42BDD66E,43605D53 trail=32:43820741,C3995756,45645980
+  missile 43450D12,43E90D7F,4529B2AC v=C1A681CA,C282DE05,436FBDE2 trail=32:43450D12,43E90D7F,4529B2AC
+  missile 43F727E1,42966A04,44FA0008 v=437727E1,42166A01,437A0000 trail=32:43F727E1,42966A04,44FA0008
+  pickup SW_HOME 42466EBA,C1D5E8A9,4591728C v=00000000,00000000,C2480000 yaw=42E80000 chute=1 ticks=186/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,459036ED v=00000000,00000000,C2480000 yaw=42240000 chute=1 ticks=110/70
+  pickup SW_HBOMB C168358C,C204142E,459116F0 v=00000000,00000000,C3031C71 yaw=3F800000 chute=1 ticks=69/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=370 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=7F398E76
+  intro=0 t=40EAAA9F dying=0 kurt=426B4B4B,420D2D2D,459568FC vis=1 pose=0:42DE0000 cam=42480000,41F00000,4595B8FC bones=00000000,00000000,45945624:40400000
+  wind=3072 haze=4 crawler=40C00000 screen=3F7FFFFE,3F800000,00000000 radar=1:0:C0968236,C00B690E,43C80001:3F564F64 wv=3F200000 gv=3F3F86A3
+  missile C1E3C553,C396C096,45704BBF v=41E863F5,42E26AA0,435CFF4B trail=32:C1E3C553,C396C096,45704BBF
+  missile 438118A9,C397C259,4564D129 v=C260697A,42BE7520,43603261 trail=32:438118A9,C397C259,4564D129
+  missile 43445B76,43E7F650,452BB21F v=C1A9E441,C2854944,436F7C6D trail=32:43445B76,43E7F650,452BB21F
+  missile 43FB4669,4298EBC8,44FE2AB3 v=433B5349,41E8E94F,4378E5A2 trail=32:43FB4669,4298EBC8,44FE2AB3
+  pickup SW_HOME 42466EBA,C1D5E8A9,45916537 v=00000000,00000000,C2480000 yaw=42EA0000 chute=1 ticks=187/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,45902998 v=00000000,00000000,C2480000 yaw=42280000 chute=1 ticks=111/70
+  pickup SW_HBOMB C168358C,C204142E,4590F491 v=00000000,00000000,C300E38D yaw=40000000 chute=1 ticks=70/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=371 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=5570F179
+s=372 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=AF82BA4F
+s=373 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=6B82863D
+s=374 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=1643A8FF
+s=375 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=EE23B9C4
+s=376 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=41BA288B
+s=377 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=39CE39BD
+s=378 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=107DA058
+s=379 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=5CC960D3
+s=380 st=0 tk=1 hp=100 m=4 p=3 e=0 c=0 ev=- h=C3829DD6
+  intro=0 t=40F55549 dying=0 kurt=426B4B4B,420D2D2D,4594B736 vis=1 pose=0:42F20000 cam=42480000,41F00000,45950736 bones=00000000,00000000,4593909A:41500000
+  wind=3072 haze=14 crawler=40400000 screen=3F7FFFFE,3F800000,00000000 radar=1:0:C1844F77,C0F51BAB,44AF0001:403C65C5 wv=3F200000 gv=3F40795C
+  missile C1969168,C383F2A0,4574E781 v=41E69AB7,42E0AD26,435D7858 trail=32:C1969168,C383F2A0,4574E781
+  missile 436F6207,C387CBA3,45697B4E v=C2621964,42BFE392,435FD30B trail=32:436F6207,C387CBA3,45697B4E
+  missile 433CC4A1,43DC19BF,453F8D95 v=C1C3CCB1,C298AD92,436CB33D trail=32:433CC4A1,43DC19BF,453F8D95
+  missile 4401F301,429F8DE9,45138FEF v=C209A555,C008401F,4373098F trail=32:4401F301,429F8DE9,45138FEF
+  pickup SW_HOME 42466EBA,C1D5E8A9,4590DFE5 v=00000000,00000000,C2480000 yaw=42FE0000 chute=1 ticks=197/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458FA446 v=00000000,00000000,C2480000 yaw=42500000 chute=1 ticks=121/70
+  pickup SW_HBOMB C168358C,C204142E,458FBD75 v=00000000,00000000,C2D55554 yaw=41400000 chute=1 ticks=80/69
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=381 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=P_FALL h=5E7DECA2
+  intro=0 t=40F6665A dying=0 kurt=426B4B4B,420D2D2D,4594A56F vis=1 pose=0:42F40000 cam=42480000,41F00000,4594F56F bones=00000000,00000000,45937CD9:41600000
+  wind=3072 haze=15 crawler=40600000 screen=3F7FFFFE,3F800000,00000000 radar=1:0:C18DD3D1,C1035E89,44BB8001:4049F2E8 wv=3F200000 gv=3F4091A1
+  missile C18EE195,C3821351,45755D9F v=41E6696C,42E07D20,435D8551 trail=32:C18EE195,C3821351,45755D9F
+  missile 436D7FAF,C3863246,4569F2AD v=C26204AE,42BFD1FD,435FD85F trail=32:436D7FAF,C3863246,4569F2AD
+  missile 433BF3C7,43DAD408,4541868A v=C1C63CE2,C29A8ED8,436C5FA6 trail=32:433BF3C7,43DAD408,4541868A
+  missile 4401A998,429F6994,4515966A v=C2224C93,C03DF77A,4372AE71 trail=32:4401A998,429F6994,4515966A
+  pickup SW_HOME 42466EBA,C1D5E8A9,4590D290 v=00000000,00000000,C2480000 yaw=43000000 chute=1 ticks=198/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458F96F1 v=00000000,00000000,C2480000 yaw=42540000 chute=1 ticks=122/70
+  pickup SW_HBOMB C168358C,C204142E,458FA19B v=00000000,00000000,C2D0E38D yaw=41500000 chute=1 ticks=81/69
+  pickup SW_GATT 42384797,C1EF29F3,4594F9E1 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=1/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=382 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=ACB685E5
+s=383 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=3A01033C
+s=384 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=0616E1FF
+s=385 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=9B95F540
+s=386 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=DF8533A8
+s=387 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=CC46D393
+s=388 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=81570192
+s=389 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=E3A66BC1
+s=390 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=CC380261
+  intro=0 t=40FFFFF3 dying=0 kurt=426B4B4B,420D2D2D,45940570 vis=1 pose=0:43030000 cam=42480000,41F00000,45945570 bones=00000000,00000000,4592CB10:41B80000
+  wind=3072 haze=8 crawler=00000000 screen=3F777776,3F800000,00000000 radar=1:0:C1E3E1F2,C1531432,45160001:40A23DDE wv=3F200000 gv=3F416C15
+  missile C113FF75,C362985A,457985EE v=41E48FD2,42DEAFB3,435E0141 trail=32:C113FF75,C362985A,457985EE
+  missile 435C95C9,C36FAF07,456E25BB v=C260C2B0,42BEC0B5,436027CA trail=32:435C95C9,C36FAF07,456E25BB
+  missile 4334210B,43CEA205,45532433 v=C1DE91BC,C2AD7276,4368C096 trail=32:4334210B,43CEA205,45532433
+  missile 43FB08AC,429C78A4,4527B159 v=C285F9F7,C0CC3CD4,436FFDA8 trail=32:43FB08AC,429C78A4,4527B159
+  pickup SW_HOME 42466EBA,C1D5E8A9,45905A93 v=00000000,00000000,C2480000 yaw=43090000 chute=1 ticks=207/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458F1EF4 v=00000000,00000000,C2480000 yaw=42780000 chute=1 ticks=131/70
+  pickup SW_HBOMB C168358C,C204142E,458EC19B v=00000000,00000000,C2A8E38E yaw=41B00000 chute=1 ticks=90/69
+  pickup SW_GATT 42384797,C1EF29F3,4593B9E3 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=10/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=391 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=5709C32A
+s=392 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=4EE48198
+s=393 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=62C381D6
+s=394 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=6F5BB9F7
+s=395 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=49E969C4
+s=396 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=CED4A7E6
+s=397 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=214D25ED
+s=398 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=A1AF773C
+s=399 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=36F036DA
+s=400 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=0FC6E239
+  intro=0 t=41055553 dying=0 kurt=426B4B4B,420D2D2D,459353AA vis=1 pose=0:430D0000 cam=42480000,41F00000,4593A3AA bones=00000000,00000000,45920586:40000000
+  wind=3072 haze=2 crawler=40A00000 screen=3F7BBBBA,3F800000,00000000 radar=1:0:C2222D9C,C196382B,45548001:40E6ED2A wv=3F200000 gv=3F425ED0
+  missile 3E6C5360,C33DA5BA,457E2760 v=41E23828,42DC6772,435E9C5A trail=32:3E6C5360,C33DA5BA,457E2760
+  missile 4349EC58,C35001DA,4572D248 v=C25EE2FC,42BD2994,43609BF0 trail=32:4349EC58,C35001DA,4572D248
+  missile 432A4227,43BF3FC6,45609E3E v=C1FAFD20,C2C3950B,4363DF41 trail=32:432A4227,43BF3FC6,45609E3E
+  missile 43EEFD24,4297D2C0,453B9821 v=C29BE873,C0F24F80,436D4935 trail=32:43EEFD24,4297D2C0,453B9821
+  pickup SW_HOME 42466EBA,C1D5E8A9,458FD541 v=00000000,00000000,C2480000 yaw=43130000 chute=1 ticks=217/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458E99A2 v=00000000,00000000,C2480000 yaw=42900000 chute=1 ticks=141/70
+  pickup SW_HBOMB C168358C,C204142E,458E0103 v=00000000,00000000,C278E390 yaw=42000000 chute=1 ticks=100/69
+  pickup SW_GATT 42384797,C1EF29F3,45925657 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=20/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=401 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=09E816A4
+s=402 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=D5B15697
+s=403 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=BE257D2A
+s=404 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=380A8992
+s=405 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=5FED32B5
+s=406 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=1B62753A
+s=407 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=AF767DD4
+s=408 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=1CFDE83C
+s=409 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=717C4499
+s=410 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=791328E0
+  intro=0 t=410AAAAD dying=0 kurt=426B4B4B,420D2D2D,4592A1E4 vis=1 pose=0:43170000 cam=42480000,41F00000,4592F1E4 bones=00000000,00000000,45913FFC:41400000
+  wind=3072 haze=12 crawler=40000000 screen=3F7FFFFE,3F800000,00000000 radar=1:0:C252DF49,C1C352A4,45898001:4116218E wv=3F200000 gv=3F43518B
+  missile 4119B597,C3191B77,45816621 v=41DF7B2B,42D9BC79,435F4F18 trail=32:4119B597,C3191B77,45816621
+  missile 43376DAB,C3309D46,45778169 v=C25CB9B1,42BB5400,4361204B trail=32:43376DAB,C3309D46,45778169
+  missile 431FAF04,43AEC4BD,45655AF2 v=C1FF05B3,C2C6B958,43632C5B trail=32:431FAF04,43AEC4BD,45655AF2
+  missile 43E139A5,42927814,454F3CDB v=C2B151AD,C10A0D41,43698602 trail=32:43E139A5,42927814,454F3CDB
+  pickup SW_HOME 42466EBA,C1D5E8A9,458F4FEF v=00000000,00000000,C2480000 yaw=431D0000 chute=1 ticks=227/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458E1450 v=00000000,00000000,C2480000 yaw=42A40000 chute=1 ticks=151/70
+  pickup SW_HBOMB C168358C,C204142E,458D7447 v=00000000,00000000,C2480000 yaw=42280000 chute=1 ticks=110/69
+  pickup SW_GATT 42384797,C1EF29F3,4590F2CB v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=30/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=411 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=74C5E327
+s=412 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=92E8B349
+s=413 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=1E4D6115
+s=414 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=402860F3
+s=415 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=FAE081AA
+s=416 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=A504B248
+s=417 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=C5B42C98
+s=418 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=B1A5902D
+s=419 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=68C8E9ED
+s=420 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=8E47DE36
+  intro=0 t=41100007 dying=0 kurt=426B4B4B,420D2D2D,4591F01E vis=1 pose=0:43210000 cam=42480000,41F00000,4592401E bones=00000000,00000000,45907A72:41B00000
+  wind=3072 haze=6 crawler=40E00000 screen=3F7FFFFE,3F800000,00000000 radar=1:1:C2334955,4149BE86,4591D81E:41200000 wv=3F200000 gv=3F444445
+  missile 4196DF74,C2EA195F,4583BA94 v=41DC30A0,42D68799,43602246 trail=32:4196DF74,C2EA195F,4583BA94
+  missile 43252014,C3118C02,457C3374 v=C25A3D78,42B9380B,4361B682 trail=32:43252014,C3118C02,457C3374
+  missile 43151418,439E3D94,456A170D v=C1FD9E9D,C2C5A17E,4363713B trail=32:43151418,439E3D94,456A170D
+  missile 43D17FD8,428C58BE,455CC3B1 v=C2C7E7F9,C11BAA9E,4364E2F8 trail=32:43D17FD8,428C58BE,455CC3B1
+  pickup SW_HOME 42466EBA,C1D5E8A9,458ECA9D v=00000000,00000000,C2480000 yaw=43270000 chute=1 ticks=237/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458D8EFE v=00000000,00000000,C2480000 yaw=42B80000 chute=1 ticks=161/70
+  pickup SW_HBOMB C168358C,C204142E,458CEEF5 v=00000000,00000000,C2480000 yaw=42500000 chute=1 ticks=120/69
+  pickup SW_GATT 42384797,C1EF29F3,458F8F3F v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=40/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=421 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=78A6185D
+s=422 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=EFB730CF
+s=423 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=R_MOVE h=5B55F840
+  intro=0 t=411199A2 dying=0 kurt=426B4B4B,420D2D2D,4591BAC9 vis=1 pose=0:43240000 cam=42480000,41F00000,45920AC9 bones=00000000,00000000,45903F2F:41C80000
+  wind=3072 haze=9 crawler=3F000000 screen=3F7FFFFE,3F800000,00000000 radar=1:1:C216B197,4213A60F,4591A2C9:41200000 wv=3F200000 gv=3F448D17
+  missile 41ACDACF,C2D4AEAC,45846DF5 v=41DB0F03,42D56D6C,436069F6 trail=32:41ACDACF,C2D4AEAC,45846DF5
+  missile 431FAD14,C3084C28,457D9CB2 v=C2596AD3,42B88545,4361E7C8 trail=32:431FAD14,C3084C28,457D9CB2
+  missile 4311E92C,43994DC5,456B8305 v=C1FCFCF2,C2C52383,43638F73 trail=32:4311E92C,43994DC5,456B8305
+  missile 43CC7B37,428A6493,455E31A3 v=C2C9FEEF,C11D4B9E,43647292 trail=32:43CC7B37,428A6493,455E31A3
+  pickup SW_HOME 42466EBA,C1D5E8A9,458EA29E v=00000000,00000000,C2480000 yaw=432A0000 chute=1 ticks=240/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458D66FF v=00000000,00000000,C2480000 yaw=42BE0000 chute=1 ticks=164/70
+  pickup SW_HBOMB C168358C,C204142E,458CC6F6 v=00000000,00000000,C2480000 yaw=425C0000 chute=1 ticks=123/69
+  pickup SW_GATT 42384797,C1EF29F3,458F2495 v=00000000,00000000,C3055555 yaw=00000000 chute=0 ticks=43/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=424 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=3F0E234A
+s=425 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=D23D8B87
+s=426 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=7CEBC415
+s=427 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=0E0E7983
+s=428 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=606905DD
+s=429 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=E9424E8A
+s=430 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=P_CHUTE h=238717E2
+  intro=0 t=41155561 dying=0 kurt=426B4B4B,420D2D2D,45913E58 vis=1 pose=0:432B0000 cam=42480000,41F00000,45918E58 bones=00000000,00000000,458FB4E8:3F800000
+  wind=3072 haze=0 crawler=40800000 screen=3F7FFFFE,3F800000,00000000 radar=1:1:41058861,42528F17,45912658:41200000 wv=3F200000 gv=3F453700
+  missile 41DFAE10,C2A329E3,4586116D v=41D8122A,42D2843E,43612507 trail=32:41DFAE10,C2A329E3,4586116D
+  missile 43130B60,C2E5B6A4,4580746C v=C2575399,42B6BF05,436263F1 trail=32:43130B60,C2E5B6A4,4580746C
+  missile 430A8D4C,438DD5C9,456ED50F v=C1FB5B4C,C2C3DE10,4363DCEE trail=32:430A8D4C,438DD5C9,456ED50F
+  missile 43C0A7C8,4285C9D5,456185F3 v=C2CB184F,C11E271A,436439F1 trail=32:43C0A7C8,4285C9D5,456185F3
+  pickup SW_HOME 42466EBA,C1D5E8A9,458E454B v=00000000,00000000,C2480000 yaw=43310000 chute=1 ticks=247/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458D09AC v=00000000,00000000,C2480000 yaw=42CC0000 chute=1 ticks=171/70
+  pickup SW_HBOMB C168358C,C204142E,458C69A3 v=00000000,00000000,C2480000 yaw=42780000 chute=1 ticks=130/69
+  pickup SW_GATT 42384797,C1EF29F3,458E2C4A v=00000000,00000000,C3031C71 yaw=3F800000 chute=1 ticks=50/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=431 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=5EEBE4FD
+s=432 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=442B20D5
+s=433 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=78D837B4
+s=434 st=0 tk=1 hp=100 m=4 p=4 e=0 c=0 ev=- h=9AF2D825
+s=435 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=K_SEEN;M_LNCH h=02F2CBF0
+  intro=0 t=4118000E dying=0 kurt=426B4B4B,420D2D2D,4590E575 vis=1 pose=0:43300000 cam=42480000,41F00000,45913575 bones=00000000,00000000,458F5223:40C00000
+  wind=3072 haze=5 crawler=40D00000 screen=3F666664,3F800000,00000000 radar=1:2:4246AA0F,4227363F,4590CD75:41200000 wv=3F200000 gv=3F45B05D
+  missile 4201C3AF,C2803C80,45873DF0 v=41D58CAB,42D00F58,4361C066 trail=32:4201C3AF,C2803C80,45873DF0
+  missile 430A198A,C2C75929,4581A27A v=C255A88C,42B55497,4362C5F2 trail=32:430A198A,C2C75929,4581A27A
+  missile 43055369,4385B0B6,457134F0 v=C1FA1506,C2C2DFD0,43641900 trail=32:43055369,4385B0B6,457134F0
+  missile 43B832C6,42827EDF,4563E6A3 v=C2CAAFD2,C11DD5CE,4364528C trail=32:43B832C6,42827EDF,4563E6A3
+  missile 40B9CFAD,C0BF45D9,42055556 v=432E32B2,C333517B,437A0000 trail=1:40B9CFAD,C0BF45D9,42055556
+  pickup SW_HOME 42466EBA,C1D5E8A9,458E02A2 v=00000000,00000000,C2480000 yaw=43360000 chute=1 ticks=252/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458CC703 v=00000000,00000000,C2480000 yaw=42D60000 chute=1 ticks=176/70
+  pickup SW_HBOMB C168358C,C204142E,458C26FA v=00000000,00000000,C2480000 yaw=42860000 chute=1 ticks=135/69
+  pickup SW_GATT 42384797,C1EF29F3,458D865D v=00000000,00000000,C2EFFFFE yaw=40C00000 chute=1 ticks=55/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=436 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=79A929BE
+s=437 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=49E1CB4F
+s=438 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=4A57B841
+s=439 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=DEACE8C4
+s=440 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=E7E8A4C9
+  intro=0 t=411AAABB dying=0 kurt=426B4B4B,420D2D2D,45908C92 vis=1 pose=0:43350000 cam=42480000,41F00000,4590DC92 bones=00000000,00000000,458EEF5E:41300000
+  wind=3072 haze=10 crawler=3F800000 screen=3F0CCCCD,3F800000,00000000 radar=1:2:4246AA0F,4227363F,4588FD75:41175E18 wv=3F200000 gv=3F4629BB
+  missile 421376EE,C23B7DEC,45886B4D v=41D29352,42CD298E,436274B6 trail=32:421376EE,C23B7DEC,45886B4D
+  missile 43013A3C,C2A93A9A,4582D110 v=C253CF1E,42B3C2CC,43633180 trail=32:43013A3C,C2A93A9A,4582D110
+  missile 43002082,437B2D0F,45739576 v=C1F8B7B8,C2C1CFA2,436458E5 trail=32:43002082,437B2D0F,45739576
+  missile 43AFC3B3,427E6C71,456647AA v=C2C9F6C6,C11D45BA,43647C46 trail=32:43AFC3B3,427E6C71,456647AA
+  missile 420B5BC2,C20F7463,43480000 v=432E32B2,C333517B,437A0000 trail=6:420B5BC2,C20F7463,43480000
+  pickup SW_HOME 42466EBA,C1D5E8A9,458DBFF9 v=00000000,00000000,C2480000 yaw=433B0000 chute=1 ticks=257/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458C845A v=00000000,00000000,C2480000 yaw=42E00000 chute=1 ticks=181/70
+  pickup SW_HBOMB C168358C,C204142E,458BE451 v=00000000,00000000,C2480000 yaw=42900000 chute=1 ticks=140/69
+  pickup SW_GATT 42384797,C1EF29F3,458CEF41 v=00000000,00000000,C2D9C71B yaw=41300000 chute=1 ticks=60/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=441 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=6BC06753
+s=442 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=B8E4B7E1
+s=443 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=7BA76C1F
+s=444 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=1B7ADF5A
+s=445 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=56D79062
+s=446 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=D6ABF60F
+s=447 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=39BDD93C
+s=448 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=51CCA952
+s=449 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=D2BFC4E9
+s=450 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=A1209CF6
+  intro=0 t=41200015 dying=0 kurt=426B4B4B,420D2D2D,458FDACC vis=1 pose=0:433F0000 cam=42480000,41F00000,45902ACC bones=00000000,00000000,458E29D4:41A80000
+  wind=3072 haze=4 crawler=40C00000 screen=3F377775,3F800000,00000000 radar=1:2:4246AA0F,4227363F,4572BAEA:41061A48 wv=3F200000 gv=3F471C75
+  missile 4235FF4C,C153A5FE,458AC944 v=41CA5277,42C51F06,43645864 trail=32:4235FF4C,C153A5FE,458AC944
+  missile 42DF7864,C25BB157,4585300C v=C24F5FC6,42AFFF3C,43642EC0 trail=32:42DF7864,C25BB157,4585300C
+  missile 42EBA36B,435B0C04,4578589A v=C1F5ADCE,C2BF7172,4364E5AD trail=32:42EBA36B,435B0C04,4578589A
+  missile 439EFFEF,42715E61,456B0B30 v=C2C826CF,C11BDC73,4364E355 trail=32:439EFFEF,42715E61,456B0B30
+  missile 42B9CFAF,C2BF45DB,44055557 v=432E32B2,C333517B,437A0000 trail=16:42B9CFAF,C2BF45DB,44055557
+  pickup SW_HOME 42466EBA,C1D5E8A9,458D3AA7 v=00000000,00000000,C2480000 yaw=43450000 chute=1 ticks=267/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458BFF08 v=00000000,00000000,C2480000 yaw=42F40000 chute=1 ticks=191/70
+  pickup SW_HBOMB C168358C,C204142E,458B5EFF v=00000000,00000000,C2480000 yaw=42A40000 chute=1 ticks=150/69
+  pickup SW_GATT 42384797,C1EF29F3,458BED7A v=00000000,00000000,C2AD5555 yaw=41A80000 chute=1 ticks=70/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=451 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=0D484818
+s=452 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=61467147
+s=453 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=846DFC64
+s=454 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=D09AC9F0
+s=455 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=5ECB9C4C
+s=456 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=BDC4EAC1
+s=457 st=0 tk=1 hp=100 m=5 p=4 e=0 c=0 ev=- h=6947DFC1
+s=458 st=0 tk=1 hp=100 m=6 p=4 e=0 c=0 ev=M_LNCH h=CECC7414
+  intro=0 t=4124445D dying=0 kurt=426B4B4B,420D2D2D,458F4C94 vis=1 pose=0:00000000 cam=42480000,41F00000,458F9C94 bones=00000000,00000000,458D8BCC:41E80000
+  wind=3072 haze=12 crawler=40000000 screen=3F4CCCCD,3F800000,00000000 radar=1:2:4246AA0F,4227363F,4559BAEA:40F094DE wv=3F200000 gv=3F47DEA4
+  missile 42505EC7,414778C1,458CB282 v=41BE69EA,42B984DD,4366E64A trail=32:42505EC7,414778C1,458CB282
+  missile 42C41388,C1FD6493,458717BA v=C24AC100,42AC136D,43652F9E trail=32:42C41388,C1FD6493,458717BA
+  missile 42DB56E2,4341A531,457C2A23 v=C1F2E0AE,C2BD42A3,4365659E trail=32:42DB56E2,4341A531,457C2A23
+  missile 4391B431,426703D2,456EDC72 v=C2C67D08,C11A90E2,436540CF trail=32:4391B431,426703D2,456EDC72
+  missile 430B5BC3,C30F7465,4447FFFF v=432E32B2,C333517B,437A0000 trail=24:430B5BC3,C30F7465,4447FFFF
+  missile C0F4D692,C0535532,42055556 v=C3658928,C2C61FDE,437A0000 trail=1:C0F4D692,C0535532,42055556
+  pickup SW_HOME 42466EBA,C1D5E8A9,458CCFFF v=00000000,00000000,C2480000 yaw=434D0000 chute=1 ticks=275/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458B9460 v=00000000,00000000,C2480000 yaw=43020000 chute=1 ticks=199/70
+  pickup SW_HBOMB C168358C,C204142E,458AF457 v=00000000,00000000,C2480000 yaw=42B40000 chute=1 ticks=158/69
+  pickup SW_GATT 42384797,C1EF29F3,458B49EB v=00000000,00000000,C289C71D yaw=41E80000 chute=1 ticks=78/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=459 st=0 tk=1 hp=100 m=6 p=4 e=0 c=0 ev=- h=45F251A6
+s=460 st=0 tk=1 hp=100 m=6 p=4 e=0 c=0 ev=- h=9A24B16F
+  intro=0 t=4125556F dying=0 kurt=426B4B4B,420D2D2D,458F2906 vis=1 pose=0:40000000 cam=42480000,41F00000,458F7906 bones=00000000,00000000,458D644A:00000000
+  wind=3072 haze=14 crawler=40400000 screen=3F511111,3F800000,00000000 radar=1:2:4246AA0F,4227363F,45537AEA:40E9ACF1 wv=3F200000 gv=3F480F30
+  missile 4256ADC3,4194E81D,458D2DC8 v=41B96954,42B4A538,4367E8BD trail=32:4256ADC3,4194E81D,458D2DC8
+  missile 42BD5440,C1CF951B,45879200 v=C2495FE6,42AAE7BF,43657AEA trail=32:42BD5440,C1CF951B,45879200
+  missile 42D74B69,433B576D,457D1EDC v=C1F21D1A,C2BCAA3C,43658834 trail=32:42D74B69,433B576D,457D1EDC
+  missile 438E65C7,426470B4,456FD102 v=C2C60B49,C11A384E,436559A0 trail=32:438E65C7,426470B4,456FD102
+  missile 4316F8BD,C31B68C3,4458AAA9 v=432E32B2,C333517B,437A0000 trail=26:4316F8BD,C31B68C3,4458AAA9
+  missile C1B7A0EE,C11E7FE6,42C80001 v=C3658928,C2C61FDE,437A0000 trail=3:C1B7A0EE,C11E7FE6,42C80001
+  pickup SW_HOME 42466EBA,C1D5E8A9,458CB555 v=00000000,00000000,C2480000 yaw=434F0000 chute=1 ticks=277/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458B79B6 v=00000000,00000000,C2480000 yaw=43040000 chute=1 ticks=201/70
+  pickup SW_HBOMB C168358C,C204142E,458AD9AD v=00000000,00000000,C2480000 yaw=42B80000 chute=1 ticks=160/69
+  pickup SW_GATT 42384797,C1EF29F3,458B26F5 v=00000000,00000000,C280E38F yaw=41F80000 chute=1 ticks=80/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=461 st=0 tk=1 hp=100 m=6 p=4 e=0 c=0 ev=- h=ECD1B526
+s=462 st=0 tk=1 hp=100 m=6 p=4 e=0 c=0 ev=- h=E4986776
+s=463 st=0 tk=1 hp=100 m=6 p=4 e=0 c=0 ev=- h=0C338371
+s=464 st=0 tk=1 hp=100 m=6 p=4 e=0 c=0 ev=- h=8E21ECE5
+s=465 st=0 tk=1 hp=100 m=6 p=4 e=0 c=0 ev=- h=B28B92DB
+s=466 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=EXPLODE2;K_HIT3 h=1E1937CD
+  intro=0 t=412888A5 dying=0 kurt=426B4B4B,420D2D2D,458EBE5C vis=1 pose=1:00000000 cam=42480000,41F00000,458F0E5C bones=00000000,00000000,458CEDC4:40C00000
+  wind=3072 haze=4 crawler=40C00000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,4540BAEA:40D4F52B wv=3F200000 gv=3F48A0D3
+  missile 42A96300,C1105D9E,458901D3 v=C2446A0C,42A6B20B,4366847C trail=32:42A96300,C1105D9E,458901D3
+  missile 42CB3D43,43288DB8,457FFDEF v=C1EFA2EB,C2BABC0E,4365F773 trail=32:42CB3D43,43288DB8,457FFDEF
+  missile 43848634,425CC072,4572AF53 v=C2C4A28D,C1191F63,4365A7E1 trail=32:43848634,425CC072,4572AF53
+  missile 4339CFAB,C33F45DD,44855554 v=432E32B2,C333517B,437A0000 trail=32:4339CFAB,C33F45DD,44855554
+  missile C289B8B2,C1EDBFD7,43960000 v=C3658928,C2C61FDE,437A0000 trail=9:C289B8B2,C1EDBFD7,43960000
+  pickup SW_HOME 42466EBA,C1D5E8A9,458C6557 v=00000000,00000000,C2480000 yaw=43550000 chute=1 ticks=283/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458B29B8 v=00000000,00000000,C2480000 yaw=430A0000 chute=1 ticks=207/70
+  pickup SW_HBOMB C168358C,C204142E,458A89AF v=00000000,00000000,C2480000 yaw=42C40000 chute=1 ticks=166/69
+  pickup SW_GATT 42384797,C1EF29F3,458ACC4A v=00000000,00000000,C24C71CA yaw=42140000 chute=1 ticks=86/50
+  explosion 4267F684,420DD020,458EBE5C yaw=3F7A4BE2 ticks=3F800000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=467 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=2661964D
+s=468 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=EBEC74BC
+s=469 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=28221BF7
+s=470 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=8B168A55
+  intro=0 t=412AAAC9 dying=0 kurt=426B4B4B,420D2D2D,458E7740 vis=1 pose=1:40800000 cam=42480000,41F00000,458EC740 bones=00000000,00000000,458C9EC0:41200000
+  wind=3072 haze=8 crawler=00000000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,45343AEA:40C72552 wv=3F200000 gv=3F4901EB
+  missile 429C652A,400030DE,4589F80B v=C24013AB,42A303AC,436765F2 trail=32:429C652A,400030DE,4589F80B
+  missile 42C34620,431C23C1,4580F464 v=C1EDCDA4,C2B94E5F,436648E4 trail=32:42C34620,431C23C1,4580F464
+  missile 437BF6E2,4257A849,4574996E v=C2C3A006,C1185614,4365DF8C trail=32:437BF6E2,4257A849,4574996E
+  missile 4351099F,C3572E99,44960000 v=432E32B2,C333517B,437A0000 trail=32:4351099F,C3572E99,44960000
+  missile C2C6EE56,C22BB538,43D8AAAC v=C3658928,C2C61FDE,437A0000 trail=13:C2C6EE56,C22BB538,43D8AAAC
+  pickup SW_HOME 42466EBA,C1D5E8A9,458C3003 v=00000000,00000000,C2480000 yaw=43590000 chute=1 ticks=287/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458AF464 v=00000000,00000000,C2480000 yaw=430E0000 chute=1 ticks=211/70
+  pickup SW_HBOMB C168358C,C204142E,458A545B v=00000000,00000000,C2480000 yaw=42CC0000 chute=1 ticks=170/69
+  pickup SW_GATT 42384797,C1EF29F3,458A96F6 v=00000000,00000000,C2480000 yaw=42240000 chute=1 ticks=90/50
+  explosion 4267F684,420DD020,458E7740 yaw=3F7A4BE2 ticks=40A00000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=471 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=58ADF9BF
+s=472 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=3DEF85A4
+s=473 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=27484F33
+s=474 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=B811DB58
+s=475 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=AAFCCB9B
+s=476 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=778913DE
+s=477 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=E3690783
+s=478 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=90B72B56
+s=479 st=0 tk=1 hp=86 m=5 p=4 e=1 c=0 ev=- h=61C79A67
+s=480 st=0 tk=1 hp=86 m=6 p=4 e=1 c=0 ev=M_LNCH h=13C61CF1
+  intro=0 t=41300023 dying=0 kurt=426B4B4B,420D2D2D,458DC57A vis=1 pose=1:41600000 cam=42480000,41F00000,458E157A bones=00000000,00000000,458BD936:41A00000
+  wind=3072 haze=2 crawler=40A00000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,4514FAEA:40A49DB3 wv=3F200000 gv=3F49F4A5
+  missile 427B4A96,41E0CC8E,458C64FE v=C22A4B19,429086DE,436B6D77 trail=32:427B4A96,41E0CC8E,458C64FE
+  missile 42AFA6CA,42FB1DF6,45835B8C v=C1E85A28,C2B50EF5,436736A8 trail=32:42AFA6CA,42FB1DF6,45835B8C
+  missile 435B90D0,424B0AED,457964D4 v=C2C0CC78,C11622A3,4366798D trail=32:435B90D0,424B0AED,457964D4
+  missile 43858D41,C3897A36,44BFAAAE v=432E32B2,C333517B,437A0000 trail=32:43858D41,C3897A36,44BFAAAE
+  missile C32FFA3B,C297E53D,443FAAAA v=C3658928,C2C61FDE,437A0000 trail=23:C32FFA3B,C297E53D,443FAAAA
+  missile C01F6A0A,40FE79C8,42055556 v=C2957369,436E922B,437A0000 trail=1:C01F6A0A,40FE79C8,42055556
+  pickup SW_HOME 42466EBA,C1D5E8A9,458BAAB1 v=00000000,00000000,C2480000 yaw=43630000 chute=1 ticks=297/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458A6F12 v=00000000,00000000,C2480000 yaw=43180000 chute=1 ticks=221/70
+  pickup SW_HBOMB C168358C,C204142E,4589CF09 v=00000000,00000000,C2480000 yaw=42E00000 chute=1 ticks=180/69
+  pickup SW_GATT 42384797,C1EF29F3,458A11A4 v=00000000,00000000,C2480000 yaw=424C0000 chute=1 ticks=100/50
+  explosion 4267F684,420DD020,458DC57A yaw=3F7A4BE2 ticks=41700000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=481 st=0 tk=1 hp=86 m=6 p=4 e=1 c=0 ev=- h=862F2461
+s=482 st=0 tk=1 hp=86 m=6 p=4 e=1 c=0 ev=- h=111156CC
+s=483 st=0 tk=1 hp=86 m=6 p=4 e=1 c=0 ev=- h=A3083B7E
+s=484 st=0 tk=1 hp=66 m=5 p=4 e=2 c=0 ev=EXPLODE1;K_HIT4 h=48E3C48F
+  intro=0 t=41322247 dying=0 kurt=426B4B4B,420D2D2D,458D7E5E vis=1 pose=1:00000000 cam=42480000,41F00000,458DCE5E bones=00000000,00000000,458B8A32:41C00000
+  wind=3072 haze=6 crawler=40E00000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,45087AEA:4096CDD9 wv=3F200000 gv=3F4A55BD
+  missile 42A7F055,42E313A4,45845259 v=C1E5B19E,C2B2FCA7,4367A838 trail=32:42A7F055,42E313A4,45845259
+  missile 434EBE6E,42460CE8,457B50B8 v=C2BF8544,C11523D7,4366BE52 trail=32:434EBE6E,42460CE8,457B50B8
+  missile 43912A3D,C3956E92,44D0555A v=432E32B2,C333517B,437A0000 trail=32:43912A3D,C3956E92,44D0555A
+  missile C34E950F,C2B24FE5,4460FFFE v=C3658928,C2C61FDE,437A0000 trail=27:C34E950F,C2B24FE5,4460FFFE
+  missile C147448C,421F0C1D,4326AAAB v=C2957369,436E922B,437A0000 trail=5:C147448C,421F0C1D,4326AAAB
+  pickup SW_HOME 42466EBA,C1D5E8A9,458B755D v=00000000,00000000,C2480000 yaw=43670000 chute=1 ticks=301/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458A39BE v=00000000,00000000,C2480000 yaw=431C0000 chute=1 ticks=225/70
+  pickup SW_HBOMB C168358C,C204142E,458999B5 v=00000000,00000000,C2480000 yaw=42E80000 chute=1 ticks=184/69
+  pickup SW_GATT 42384797,C1EF29F3,4589DC50 v=00000000,00000000,C2480000 yaw=425C0000 chute=1 ticks=104/50
+  explosion 4267F684,420DD020,458D7E5E yaw=3F7A4BE2 ticks=41980000
+  explosion 4266028C,421485B4,458D7E5E yaw=3F8C0EC2 ticks=3F800000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=485 st=0 tk=1 hp=66 m=5 p=4 e=2 c=0 ev=- h=DFB32770
+s=486 st=0 tk=1 hp=66 m=5 p=4 e=2 c=0 ev=- h=0DC3FE08
+s=487 st=0 tk=1 hp=66 m=5 p=4 e=2 c=0 ev=- h=5C9DD1EE
+s=488 st=0 tk=1 hp=66 m=5 p=4 e=2 c=0 ev=- h=39530DE7
+s=489 st=0 tk=1 hp=66 m=5 p=4 e=2 c=0 ev=- h=B7BFBB31
+s=490 st=0 tk=1 hp=66 m=5 p=4 e=2 c=0 ev=- h=D4439E83
+  intro=0 t=4135557D dying=0 kurt=426B4B4B,420D2D2D,458D13B4 vis=1 pose=1:40C00000 cam=42480000,41F00000,458D63B4 bones=00000000,00000000,458B13AC:41F00000
+  wind=3072 haze=12 crawler=40000000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,44EB75D4:40821613 wv=3F200000 gv=3F4AE760
+  missile 429C8C87,42BF9329,4585C580 v=C1E0EDDB,C2AF4627,43686FDC trail=32:429C8C87,42BF9329,4585C580
+  missile 433BAD8F,423EA081,457E33AC v=C2BD66A9,C1137D4F,43672F29 trail=32:433BAD8F,423EA081,457E33AC
+  missile 43A295B7,C3A75D1C,44E9555C v=432E32B2,C333517B,437A0000 trail=32:43A295B7,C3A75D1C,44E9555C
+  missile C37C7D4D,C2D9EFE1,44897FFF v=C3658928,C2C61FDE,437A0000 trail=32:C37C7D4D,C2D9EFE1,44897FFF
+  missile C1DB31CC,42AEF3B8,43B75556 v=C2957369,436E922B,437A0000 trail=11:C1DB31CC,42AEF3B8,43B75556
+  pickup SW_HOME 42466EBA,C1D5E8A9,458B255F v=00000000,00000000,C2480000 yaw=436D0000 chute=1 ticks=307/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4589E9C0 v=00000000,00000000,C2480000 yaw=43220000 chute=1 ticks=231/70
+  pickup SW_HBOMB C168358C,C204142E,458949B7 v=00000000,00000000,C2480000 yaw=42F40000 chute=1 ticks=190/69
+  pickup SW_GATT 42384797,C1EF29F3,45898C52 v=00000000,00000000,C2480000 yaw=42740000 chute=1 ticks=110/50
+  explosion 4267F684,420DD020,458D13B4 yaw=3F7A4BE2 ticks=41C80000
+  explosion 4266028C,421485B4,458D13B4 yaw=3F8C0EC2 ticks=40E00000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=491 st=0 tk=1 hp=66 m=5 p=4 e=1 c=0 ev=- h=8EEADCEE
+s=492 st=0 tk=1 hp=66 m=5 p=4 e=1 c=0 ev=- h=F47ADDA1
+s=493 st=0 tk=1 hp=66 m=5 p=4 e=1 c=0 ev=- h=46FE7827
+s=494 st=0 tk=1 hp=66 m=5 p=4 e=1 c=0 ev=- h=4EE304F4
+s=495 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=M_LNCH h=F9C9A6CE
+  intro=0 t=4138002A dying=0 kurt=426B4B4B,420D2D2D,458CBAD1 vis=1 pose=1:41300000 cam=42480000,41F00000,458D0AD1 bones=00000000,00000000,458AB0E7:40800000
+  wind=3072 haze=1 crawler=40900000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,44CC35D4:4061A488 wv=3F200000 gv=3F4B60BD
+  missile 429341B5,42A29C79,4586FBD4 v=C1DBE54E,C2AB5A0F,43693D47 trail=32:429341B5,42A29C79,4586FBD4
+  missile 432BF5A1,423881C2,45804E4B v=C2BB67B4,C111EF6C,4367980F trail=32:432BF5A1,423881C2,45804E4B
+  missile 43B119F2,C3B64E8F,44FE2AB3 v=43037E11,C304C725,43783593 trail=32:43B119F2,C3B64E8F,44FE2AB3
+  missile C3915F69,C2FAF533,449E5556 v=C3658928,C2C61FDE,437A0000 trail=32:C3915F69,C2FAF533,449E5556
+  missile C21F6A0A,42FE79C4,44055557 v=C2957369,436E922B,437A0000 trail=16:C21F6A0A,42FE79C4,44055557
+  missile 3F1209D6,41050544,42055556 v=4188E938,437969DE,437A0000 trail=1:3F1209D6,41050544,42055556
+  pickup SW_HOME 42466EBA,C1D5E8A9,458AE2B6 v=00000000,00000000,C2480000 yaw=43720000 chute=1 ticks=312/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4589A717 v=00000000,00000000,C2480000 yaw=43270000 chute=1 ticks=236/70
+  pickup SW_HBOMB C168358C,C204142E,4589070E v=00000000,00000000,C2480000 yaw=42FE0000 chute=1 ticks=195/69
+  pickup SW_GATT 42384797,C1EF29F3,458949A9 v=00000000,00000000,C2480000 yaw=42840000 chute=1 ticks=115/50
+  explosion 4266028C,421485B4,458CBAD1 yaw=3F8C0EC2 ticks=41400000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=496 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=BAC8C294
+s=497 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=D572B437
+s=498 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=A79B4136
+s=499 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=89DDA590
+s=500 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=09DA3ECA
+  intro=0 t=413AAAD7 dying=0 kurt=426B4B4B,420D2D2D,458C61EE vis=1 pose=1:41800000 cam=42480000,41F00000,458CB1EE bones=00000000,00000000,458A4E22:41100000
+  wind=3072 haze=6 crawler=40E00000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,44ACF5D4:403F1CE9 wv=3F200000 gv=3F4BDA1B
+  missile 428A32CD,42866086,45883354 v=C1D53756,C2A62596,436A4520 trail=32:428A32CD,42866086,45883354
+  missile 431C6A76,42327470,45818352 v=C2B923E9,C1102BED,43680D80 trail=32:431C6A76,42327470,45818352
+  missile 43B75337,C3BC3454,45094FE8 v=415FB3A4,C08C139C,43722C9D trail=32:43B75337,C3BC3454,45094FE8
+  missile C3A4802B,C30DFD42,44B32AAD v=C3658928,C2C61FDE,437A0000 trail=32:C3A4802B,C30DFD42,44B32AAD
+  missile C2513B2F,4326FFE8,442F0000 v=C2957369,436E922B,437A0000 trail=21:C2513B2F,4326FFE8,442F0000
+  missile 405B0EC2,424787E6,43480000 v=4188E938,437969DE,437A0000 trail=6:405B0EC2,424787E6,43480000
+  pickup SW_HOME 42466EBA,C1D5E8A9,458AA00D v=00000000,00000000,C2480000 yaw=43770000 chute=1 ticks=317/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4589646E v=00000000,00000000,C2480000 yaw=432C0000 chute=1 ticks=241/70
+  pickup SW_HBOMB C168358C,C204142E,4588C465 v=00000000,00000000,C2480000 yaw=43040000 chute=1 ticks=200/69
+  pickup SW_GATT 42384797,C1EF29F3,45890700 v=00000000,00000000,C2480000 yaw=428E0000 chute=1 ticks=120/50
+  explosion 4266028C,421485B4,458C61EE yaw=3F8C0EC2 ticks=41880000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=501 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=15A57643
+s=502 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=DC61205E
+s=503 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=E85B82DE
+s=504 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=A19C3769
+s=505 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=1A010FC7
+s=506 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=FE7F7DDB
+s=507 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=7D024EE6
+s=508 st=0 tk=1 hp=66 m=6 p=4 e=1 c=0 ev=- h=2395D637
+s=509 st=0 tk=1 hp=66 m=6 p=4 e=0 c=0 ev=- h=D6A71A95
+s=510 st=0 tk=1 hp=66 m=6 p=4 e=0 c=0 ev=- h=C1FDF878
+  intro=0 t=41400031 dying=0 kurt=426B4B4B,420D2D2D,458BB028 vis=1 pose=1:41D00000 cam=42480000,41F00000,458C0028 bones=00000000,00000000,45898898:41980000
+  wind=3072 haze=0 crawler=40800000 screen=3F22222C,3F800000,00000000 radar=1:2:4246AA0F,4227363F,445CEBA8:3FF41B55 wv=3F200000 gv=3F4CCCD5
+  missile 42728A88,42233A19,458AA7EB v=C1B6AD6D,C28E5990,436E715A trail=32:42728A88,42233A19,458AA7EB
+  missile 42FBEC40,422698E0,4583EF68 v=C2B36B7E,C10BB790,43692E97 trail=32:42FBEC40,422698E0,4583EF68
+  missile 43B3F35A,C3B6A170,451D3FEB v=C22B3D62,426AB139,436C8E25 trail=32:43B3F35A,C3B6A170,451D3FEB
+  missile C3CAC1AF,C32F0294,44DCD55B v=C3658928,C2C61FDE,437A0000 trail=32:C3CAC1AF,C32F0294,44DCD55B
+  missile C29A6EBA,437685F4,44812AA9 v=C2957369,436E922B,437A0000 trail=31:C29A6EBA,437685F4,44812AA9
+  missile 411209D7,43050542,44055557 v=4188E938,437969DE,437A0000 trail=16:411209D7,43050542,44055557
+  pickup SW_HOME 42466EBA,C1D5E8A9,458A1ABB v=00000000,00000000,C2480000 yaw=43808000 chute=1 ticks=327/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4588DF1C v=00000000,00000000,C2480000 yaw=43360000 chute=1 ticks=251/70
+  pickup SW_HBOMB C168358C,C204142E,45883F13 v=00000000,00000000,C2480000 yaw=430E0000 chute=1 ticks=210/69
+  pickup SW_GATT 42384797,C1EF29F3,458881AE v=00000000,00000000,C2480000 yaw=42A20000 chute=1 ticks=130/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=511 st=0 tk=1 hp=66 m=6 p=4 e=0 c=0 ev=- h=9281F272
+s=512 st=0 tk=1 hp=66 m=6 p=4 e=0 c=0 ev=- h=D6EDE8B6
+s=513 st=0 tk=1 hp=58 m=5 p=4 e=1 c=0 ev=EXPLODE2;K_HIT2 h=6A1F65EC
+  intro=0 t=414199CC dying=0 kurt=426B4B4B,420D2D2D,458B7AD3 vis=1 pose=1:00000000 cam=42480000,41F00000,458BCAD3 bones=00000000,00000000,45894D55:41B00000
+  wind=3072 haze=3 crawler=40B00000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,44376BA8:3FCAABC9 wv=3F200000 gv=3F4D15A7
+  missile 42EA0D2B,42231E34,4584AA10 v=C2B13D3F,C10A04DB,436999F4 trail=32:42EA0D2B,42231E34,4584AA10
+  missile 43B1B959,C3B398D3,45232763 v=C23E26BD,428066A1,436B6636 trail=32:43B1B959,C3B398D3,45232763
+  missile C3D63BBD,C338EA93,44E9555C v=C3658928,C2C61FDE,437A0000 trail=32:C3D63BBD,C338EA93,44E9555C
+  missile C2A960AA,438730AF,448DAAAA v=C2957369,436E922B,437A0000 trail=32:C2A960AA,438730AF,448DAAAA
+  missile 412D6BAE,431DF63E,441E5556 v=4188E938,437969DE,437A0000 trail=19:412D6BAE,431DF63E,441E5556
+  pickup SW_HOME 42466EBA,C1D5E8A9,4589F2BC v=00000000,00000000,C2480000 yaw=43820000 chute=1 ticks=330/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4588B71D v=00000000,00000000,C2480000 yaw=43390000 chute=1 ticks=254/70
+  pickup SW_HBOMB C168358C,C204142E,45881714 v=00000000,00000000,C2480000 yaw=43110000 chute=1 ticks=213/69
+  pickup SW_GATT 42384797,C1EF29F3,458859AF v=00000000,00000000,C2480000 yaw=42A80000 chute=1 ticks=133/50
+  explosion 4269F92E,4208857F,458B7AD3 yaw=4046F803 ticks=3F800000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=514 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=M_LNCH h=3A27B84F
+  intro=0 t=41422255 dying=0 kurt=426B4B4B,420D2D2D,458B690C vis=1 pose=1:3F800000 cam=42480000,41F00000,458BB90C bones=00000000,00000000,45893994:41B80000
+  wind=3072 haze=4 crawler=40C00000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,442AEBA8:3FBCDBEF wv=3F200000 gv=3F4D2DED
+  missile 42E424BA,4221F7C3,4584E85B v=C2B071BB,C1096660,4369C0B4 trail=32:42E424BA,4221F7C3,4584E85B
+  missile 43B0EE85,C3B286E7,45251D93 v=C24300E2,42834E3A,436B04B6 trail=32:43B0EE85,C3B286E7,45251D93
+  missile C3DA0F17,C33C37E8,44ED8007 v=C3658928,C2C61FDE,437A0000 trail=32:C3DA0F17,C33C37E8,44ED8007
+  missile C2AE5BFA,438B2A96,4491D555 v=C2957369,436E922B,437A0000 trail=32:C2AE5BFA,438B2A96,4491D555
+  missile 41368C4B,43264692,4426AAAB v=4188E938,437969DE,437A0000 trail=20:41368C4B,43264692,4426AAAB
+  missile C0EA6DA5,407E335A,42055556 v=C35BC6CA,42EE5024,437A0000 trail=1:C0EA6DA5,407E335A,42055556
+  pickup SW_HOME 42466EBA,C1D5E8A9,4589E567 v=00000000,00000000,C2480000 yaw=43828000 chute=1 ticks=331/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4588A9C8 v=00000000,00000000,C2480000 yaw=433A0000 chute=1 ticks=255/70
+  pickup SW_HBOMB C168358C,C204142E,458809BF v=00000000,00000000,C2480000 yaw=43120000 chute=1 ticks=214/69
+  pickup SW_GATT 42384797,C1EF29F3,45884C5A v=00000000,00000000,C2480000 yaw=42AA0000 chute=1 ticks=134/50
+  explosion 4269F92E,4208857F,458B690C yaw=4046F803 ticks=40000000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=515 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=3DD84DA3
+s=516 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=D81626A1
+s=517 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=961F9E23
+s=518 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=DC083222
+s=519 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=A77FA58B
+s=520 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=A73BD2AD
+  intro=0 t=4145558B dying=0 kurt=426B4B4B,420D2D2D,458AFE62 vis=1 pose=1:40E00000 cam=42480000,41F00000,458B4E62 bones=00000000,00000000,4588C30E:41E80000
+  wind=3072 haze=10 crawler=3F800000 screen=3F800000,3F800000,00000000 radar=1:2:4246AA0F,4227363F,43BFD750:3F53F9AF wv=3F200000 gv=3F4DBF90
+  missile 42C14DCD,421B2F6E,45865F09 v=C2AAA9E5,C104E5F9,436AD425 trail=32:42C14DCD,421B2F6E,45865F09
+  missile 43ABCF39,C3ABA86B,4530D14C v=C259224E,429110EF,43689C68 trail=32:43ABCF39,C3ABA86B,4530D14C
+  missile C3EE328F,C34D942B,450330B8 v=C2A3351A,C20A8330,43737939 trail=32:C3EE328F,C34D942B,450330B8
+  missile C2CC3FDA,43A30600,44AAD557 v=C2957369,436E922B,437A0000 trail=32:C2CC3FDA,43A30600,44AAD557
+  missile 416D4FF9,4358288A,4458AAA9 v=4188E938,437969DE,437A0000 trail=26:416D4FF9,4358288A,4458AAA9
+  missile C24D1FF1,41DE6CEE,43695555 v=C35BC6CA,42EE5024,437A0000 trail=7:C24D1FF1,41DE6CEE,43695555
+  pickup SW_HOME 42466EBA,C1D5E8A9,45899569 v=00000000,00000000,C2480000 yaw=43858000 chute=1 ticks=337/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458859CA v=00000000,00000000,C2480000 yaw=43400000 chute=1 ticks=261/70
+  pickup SW_HBOMB C168358C,C204142E,4587B9C1 v=00000000,00000000,C2480000 yaw=43180000 chute=1 ticks=220/69
+  pickup SW_GATT 42384797,C1EF29F3,4587FC5C v=00000000,00000000,C2480000 yaw=42B60000 chute=1 ticks=140/50
+  explosion 4269F92E,4208857F,458AFE62 yaw=4046F803 ticks=41000000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=521 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=CB435D19
+s=522 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=EC258421
+s=523 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=5F0DCFFC
+s=524 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=EA4683A5
+s=525 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=255A9718
+s=526 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=C7591F56
+s=527 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=031A0549
+s=528 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=6269BF0E
+s=529 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=DE2234A7
+s=530 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=646418A8
+  intro=0 t=414AAAE5 dying=0 kurt=426B4B4B,420D2D2D,458A4C9C vis=1 pose=1:41880000 cam=42480000,41F00000,458A9C9C bones=00000000,00000000,4587FD84:41000000
+  wind=3072 haze=4 crawler=40C00000 screen=3F800000,3F800000,00000000 radar=0:2:4246AA0F,4227363F,4206BA7F:3D94DE5F wv=3F200000 gv=3F4EB24B
+  missile 428ABEA9,42109054,4588D483 v=C296DCF0,C0EAF574,436E2B01 trail=32:428ABEA9,42109054,4588D483
+  missile 43A22DCC,C39ECEF5,45440524 v=C278B9B1,42A5CA7B,4363630E trail=32:43A22DCC,C39ECEF5,45440524
+  missile C3ECC84C,C34C07D2,451706C9 v=428522FE,41EFE3B0,436975AF trail=32:C3ECC84C,C34C07D2,451706C9
+  missile C2FE10FA,43CAC906,44D48005 v=C2957369,436E922B,437A0000 trail=32:C2FE10FA,43CAC906,44D48005
+  missile 41A44B11,4395A5E9,44960000 v=4188E938,437969DE,437A0000 trail=32:41A44B11,4395A5E9,44960000
+  missile C2F9147D,42870B49,440DAAAC v=C35BC6CA,42EE5024,437A0000 trail=17:C2F9147D,42870B49,440DAAAC
+  pickup SW_HOME 42466EBA,C1D5E8A9,45891017 v=00000000,00000000,C2480000 yaw=438A8000 chute=1 ticks=347/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4587D478 v=00000000,00000000,C2480000 yaw=434A0000 chute=1 ticks=271/70
+  pickup SW_HBOMB C168358C,C204142E,4587346F v=00000000,00000000,C2480000 yaw=43220000 chute=1 ticks=230/69
+  pickup SW_GATT 42384797,C1EF29F3,4587770A v=00000000,00000000,C2480000 yaw=42CA0000 chute=1 ticks=150/50
+  explosion 4269F92E,4208857F,458A4C9C yaw=4046F803 ticks=41900000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=531 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=9F067DE4
+s=532 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=EAD58A2D
+s=533 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=72BDEE04
+s=534 st=0 tk=1 hp=58 m=6 p=4 e=1 c=0 ev=- h=9011C18A
+s=535 st=0 tk=1 hp=46 m=5 p=4 e=2 c=0 ev=EXPLODE2;K_HIT7 h=286A7E09
+  intro=0 t=414D5592 dying=0 kurt=426B4B4B,420D2D2D,4589F3B9 vis=1 pose=1:00000000 cam=42480000,41F00000,458A43B9 bones=00000000,00000000,45879ABF:41500000
+  wind=3072 haze=9 crawler=3F000000 screen=3F800000,3F800000,00000000 radar=0:2:4246AA0F,4227363F,4206BA7F:3D94DE5F wv=3F200000 gv=3F4F2BA8
+  missile 439CD996,C397B475,454D6FFC v=C285713F,42B1DD2C,435FCA3B trail=32:439CD996,C397B475,454D6FFC
+  missile C3E69E5D,C3467E26,4520B566 v=42A534CC,42141248,4366D22F trail=32:C3E69E5D,C3467E26,4520B566
+  missile C30B7CC5,43DEAA89,44E9555C v=C2957369,436E922B,437A0000 trail=32:C30B7CC5,43DEAA89,44E9555C
+  missile 41BB1C9C,43AA6EBB,44AAD557 v=4188E938,437969DE,437A0000 trail=32:41BB1C9C,43AA6EBB,44AAD557
+  missile C3212B60,42AEC350,44375555 v=C35BC6CA,42EE5024,437A0000 trail=22:C3212B60,42AEC350,44375555
+  pickup SW_HOME 42466EBA,C1D5E8A9,4588CD6E v=00000000,00000000,C2480000 yaw=438D0000 chute=1 ticks=352/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458791CF v=00000000,00000000,C2480000 yaw=434F0000 chute=1 ticks=276/70
+  pickup SW_HBOMB C168358C,C204142E,4586F1C6 v=00000000,00000000,C2480000 yaw=43270000 chute=1 ticks=235/69
+  pickup SW_GATT 42384797,C1EF29F3,45873461 v=00000000,00000000,C2480000 yaw=42D40000 chute=1 ticks=155/50
+  explosion 4269F92E,4208857F,4589F3B9 yaw=4046F803 ticks=41B80000
+  explosion 4268B876,420C34BC,4589F3B9 yaw=40B925BA ticks=3F800000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=536 st=0 tk=1 hp=46 m=5 p=4 e=2 c=0 ev=- h=66522360
+s=537 st=0 tk=1 hp=46 m=5 p=4 e=2 c=0 ev=- h=B6957B94
+s=538 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=E9347629
+s=539 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=A7A22F0C
+s=540 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=E58B4FB3
+  intro=0 t=4150003F dying=0 kurt=426B4B4B,420D2D2D,45899AD6 vis=1 pose=1:40A00000 cam=42480000,41F00000,4589EAD6 bones=00000000,00000000,458737FA:41900000
+  wind=3072 haze=14 crawler=40400000 screen=3F800000,3F800000,00000000 radar=0:2:4246AA0F,4227363F,4206BA7F:3D94DE5F wv=3F200000 gv=3F4FA505
+  missile 439727BF,C3901D5D,45512734 v=C28C096F,42BAA4AA,435D05F0 trail=32:439727BF,C3901D5D,45512734
+  missile C3DF6C4F,C3400C44,452A48E7 v=42B66B7E,422347E4,43645196 trail=32:C3DF6C4F,C3400C44,452A48E7
+  missile C317F10D,43F28C0C,44FE2AB3 v=C2575DCA,433234EF,437801E4 trail=32:C317F10D,43F28C0C,44FE2AB3
+  missile 41D1EE27,43BF378D,44BFAAAE v=4188E938,437969DE,437A0000 trail=32:41D1EE27,43BF378D,44BFAAAE
+  missile C345CC81,42D67B57,4460FFFE v=C35BC6CA,42EE5024,437A0000 trail=27:C345CC81,42D67B57,4460FFFE
+  pickup SW_HOME 42466EBA,C1D5E8A9,45888AC5 v=00000000,00000000,C2480000 yaw=438F8000 chute=1 ticks=357/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,45874F26 v=00000000,00000000,C2480000 yaw=43540000 chute=1 ticks=281/70
+  pickup SW_HBOMB C168358C,C204142E,4586AF1D v=00000000,00000000,C2480000 yaw=432C0000 chute=1 ticks=240/69
+  pickup SW_GATT 42384797,C1EF29F3,4586F1B8 v=00000000,00000000,C2480000 yaw=42DE0000 chute=1 ticks=160/50
+  explosion 4268B876,420C34BC,45899AD6 yaw=40B925BA ticks=40C00000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=541 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=4C3DF635
+s=542 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=2ADD95DA
+s=543 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=5F0B61C1
+s=544 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=04C11175
+s=545 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=353F7F92
+s=546 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=254ECAC2
+s=547 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=3D712FD6
+s=548 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=565566C2
+s=549 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=1ADAE401
+s=550 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=3E1945DA
+  intro=0 t=41555599 dying=0 kurt=426B4B4B,420D2D2D,4588E910 vis=1 pose=1:41700000 cam=42480000,41F00000,45893910 bones=00000000,00000000,45867270:41E00000
+  wind=3072 haze=8 crawler=00000000 screen=3F800000,3F800000,00000000 radar=0:2:4246AA0F,4227363F,4206BA7F:3D94DE5F wv=3F200000 gv=3F5097C0
+  missile 438B5AC7,C3806309,4555BE85 v=C28E5433,42BDB18C,435C1471 trail=32:438B5AC7,C3806309,4555BE85
+  missile C3CF3F4D,C33192FC,453D19A1 v=42D00C85,423A1F30,435E548D trail=32:C3CF3F4D,C33192FC,453D19A1
+  missile C319F7AF,43F95907,45134779 v=41C3F908,C239F97D,436DBCA3 trail=32:C319F7AF,43F95907,45134779
+  missile 41FF913D,43E8C931,44E9555C v=4188E938,437969DE,437A0000 trail=32:41FF913D,43E8C931,44E9555C
+  missile C3878763,4312F5B0,449A2AAB v=C35BC6CA,42EE5024,437A0000 trail=32:C3878763,4312F5B0,449A2AAB
+  pickup SW_HOME 42466EBA,C1D5E8A9,45880573 v=00000000,00000000,C2480000 yaw=43948000 chute=1 ticks=367/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4586C9D4 v=00000000,00000000,C2480000 yaw=435E0000 chute=1 ticks=291/70
+  pickup SW_HBOMB C168358C,C204142E,458629CB v=00000000,00000000,C2480000 yaw=43360000 chute=1 ticks=250/69
+  pickup SW_GATT 42384797,C1EF29F3,45866C66 v=00000000,00000000,C2480000 yaw=42F20000 chute=1 ticks=170/50
+  explosion 4268B876,420C34BC,4588E910 yaw=40B925BA ticks=41800000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=551 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=1216AE41
+s=552 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=033B80C8
+s=553 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=448F3EE2
+s=554 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=9BFE25DA
+s=555 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=666BF299
+s=556 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=2B902E1A
+s=557 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=3D2DF938
+s=558 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=5B0382EE
+s=559 st=0 tk=1 hp=46 m=5 p=4 e=1 c=0 ev=- h=40AE0AAD
+s=560 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=B6FACDC3
+  intro=0 t=415AAAF3 dying=0 kurt=426B4B4B,420D2D2D,4588374A vis=1 pose=1:41C80000 cam=42480000,41F00000,4588874A bones=00000000,00000000,4585ACE6:40E00000
+  wind=3072 haze=2 crawler=40A00000 screen=3F5999A4,3F800000,00000000 radar=0:2:4246AA0F,4227363F,4206BA7F:3D94DE5F wv=3F200000 gv=3F518A7B
+  missile 437F06A1,C3613588,455A54DC v=C28DA89E,42BCCCBB,435C6391 trail=32:437F06A1,C3613588,455A54DC
+  missile C3BCDFB4,C3212344,454DFB5E v=42EC33A5,42534BD1,4355C388 trail=32:C3BCDFB4,C3212344,454DFB5E
+  missile C30F8554,43EE7C67,4526E99B v=4212D4BD,C29E6ADE,43692FF4 trail=32:C30F8554,43EE7C67,4526E99B
+  missile 42125908,440301A7,45094D04 v=40DDA8B4,412F1751,4371C148 trail=32:42125908,440301A7,45094D04
+  missile C3AC2889,433AADB2,44C3D559 v=C35BC6CA,42EE5024,437A0000 trail=32:C3AC2889,433AADB2,44C3D559
+  pickup SW_HOME 42466EBA,C1D5E8A9,45878021 v=00000000,00000000,C2480000 yaw=43998000 chute=1 ticks=377/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,45864482 v=00000000,00000000,C2480000 yaw=43680000 chute=1 ticks=301/70
+  pickup SW_HBOMB C168358C,C204142E,4585A479 v=00000000,00000000,C2480000 yaw=43400000 chute=1 ticks=260/69
+  pickup SW_GATT 42384797,C1EF29F3,4585E714 v=00000000,00000000,C2480000 yaw=43030000 chute=1 ticks=180/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=561 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=8AD2642E
+s=562 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=EBB26964
+s=563 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=6B3FACFB
+s=564 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=33690ACE
+s=565 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=086F3B98
+s=566 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=B8CCFE68
+s=567 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=D6B9D081
+s=568 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=7C077CBA
+s=569 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=E7C6197F
+s=570 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=89151648
+  intro=0 t=4160004D dying=0 kurt=426B4B4B,420D2D2D,45878584 vis=1 pose=0:40A00000 cam=42480000,41F00000,4587D584 bones=00000000,00000000,4584E75C:41880000
+  wind=3072 haze=12 crawler=40000000 screen=3F800000,3F800000,00000000 radar=0:2:4246AA0F,4227363F,4206BA7F:3D94DE5F wv=3F200000 gv=3F527D35
+  missile 43677F90,C341DA1A,455EED6F v=C28C851D,42BB4835,435CE521 trail=32:43677F90,C341DA1A,455EED6F
+  missile C3A8BDC3,C30F20CA,4552661B v=42F49DF9,425AD2AF,435309DD trail=32:C3A8BDC3,C30F20CA,4552661B
+  missile C3026829,43E0419E,453A2B1A v=4229C1EA,C2B8CA9B,43642F2F trail=32:C3026829,43E0419E,453A2B1A
+  missile 4218F9B3,43FF5957,451D33FB v=4076754A,C293F1FE,436C0B2C trail=32:4218F9B3,43FF5957,451D33FB
+  missile C3D0C9AF,436265B4,44ED8007 v=C35BC6CA,42EE5024,437A0000 trail=32:C3D0C9AF,436265B4,44ED8007
+  pickup SW_HOME 42466EBA,C1D5E8A9,4586FACF v=00000000,00000000,C2480000 yaw=439E8000 chute=1 ticks=387/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4585BF30 v=00000000,00000000,C2480000 yaw=43720000 chute=1 ticks=311/70
+  pickup SW_HBOMB C168358C,C204142E,45851F27 v=00000000,00000000,C2480000 yaw=434A0000 chute=1 ticks=270/69
+  pickup SW_GATT 42384797,C1EF29F3,458561C2 v=00000000,00000000,C2480000 yaw=430D0000 chute=1 ticks=190/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=571 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=D608DEFC
+s=572 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=B8BCE655
+s=573 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=04B29C14
+s=574 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=09859313
+s=575 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=52E246D5
+s=576 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=B7DB53CC
+s=577 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=398BC582
+s=578 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=45EBE936
+s=579 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=494DCD0E
+s=580 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=538F995E
+  intro=0 t=416555A7 dying=0 kurt=426B4B4B,420D2D2D,4586D3BE vis=1 pose=0:41700000 cam=42480000,41F00000,458723BE bones=00000000,00000000,458421D2:41D80000
+  wind=3072 haze=6 crawler=40E00000 screen=3F800000,3F800000,00000000 radar=0:2:4246AA0F,4227363F,4206BA7F:3D94DE5F wv=3F200000 gv=3F536FF0
+  missile 43502D2A,C322C4E3,456388ED v=C28B2CCB,42B97D4C,435D7C33 trail=32:43502D2A,C322C4E3,456388ED
+  missile C3945985,C2F9C600,4556CB91 v=42F45B4A,425A96FD,435326C4 trail=32:C3945985,C2F9C600,4556CB91
+  missile C2E6AD0E,43CFD7FC,454B8A5E v=4242F312,C2D466FC,435CDE4F trail=32:C2E6AD0E,43CFD7FC,454B8A5E
+  missile 421E06C2,43F1674F,4530B705 v=4077F3A4,C2B99248,4367B1DE trail=32:421E06C2,43F1674F,4530B705
+  missile C3E655EC,437AC8EF,450B3845 v=41883B90,BF8C8118,436DCDAE trail=32:C3E655EC,437AC8EF,450B3845
+  pickup SW_HOME 42466EBA,C1D5E8A9,4586757D v=00000000,00000000,C2480000 yaw=43A38000 chute=1 ticks=397/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,458539DE v=00000000,00000000,C2480000 yaw=437C0000 chute=1 ticks=321/70
+  pickup SW_HBOMB C168358C,C204142E,458499D5 v=00000000,00000000,C2480000 yaw=43540000 chute=1 ticks=280/69
+  pickup SW_GATT 42384797,C1EF29F3,4584DC70 v=00000000,00000000,C2480000 yaw=43170000 chute=1 ticks=200/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=581 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=9DF4042F
+s=582 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=R_START h=AA533C66
+  intro=0 t=416666B9 dying=0 kurt=426B4B4B,420D2D2D,4586B030 vis=1 pose=0:41880000 cam=42480000,41F00000,45870030 bones=00000000,00000000,4583FA50:41E80000
+  wind=3072 haze=8 crawler=00000000 screen=3F777778,3F800000,00000000 radar=1:0:BEA98F79,BCE56E3C,42C80001:3E6DC050 wv=3F200000 gv=3F53A07C
+  missile 434B8A29,C31C96DF,45647536 v=C28AE188,42B918FE,435D9CF8 trail=32:434B8A29,C31C96DF,45647536
+  missile C3904730,C2F27D28,4557ACD1 v=42F41C59,425A5EAF,43533CD6 trail=32:C3904730,C2F27D28,4557ACD1
+  missile C2E025CC,43CC4989,454C75A9 v=42462E83,C2D7EE80,435BDCED trail=32:C2E025CC,43CC4989,454C75A9
+  missile 421F1087,43EE49A0,45349286 v=407CFC26,C2BF186A,4366AF70 trail=32:421F1087,43EE49A0,45349286
+  missile C3E58BAA,437A7CBB,450F2CD5 v=422510EE,C15504DE,436BF8CC trail=32:C3E58BAA,437A7CBB,450F2CD5
+  pickup SW_HOME 42466EBA,C1D5E8A9,45865AD3 v=00000000,00000000,C2480000 yaw=43A48000 chute=1 ticks=399/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,45851F34 v=00000000,00000000,C2480000 yaw=437E0000 chute=1 ticks=323/70
+  pickup SW_HBOMB C168358C,C204142E,45847F2B v=00000000,00000000,C2480000 yaw=43560000 chute=1 ticks=282/69
+  pickup SW_GATT 42384797,C1EF29F3,4584C1C6 v=00000000,00000000,C2480000 yaw=43190000 chute=1 ticks=202/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=583 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=B68C599F
+s=584 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=31509F12
+s=585 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=39E5B2E6
+s=586 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=04AD55A9
+s=587 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=1FEEE46A
+s=588 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=573B1FCC
+s=589 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=4D3E4494
+s=590 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=0FB485CA
+  intro=0 t=416AAB01 dying=0 kurt=426B4B4B,420D2D2D,458621F8 vis=1 pose=0:41C80000 cam=42480000,41F00000,458671F8 bones=00000000,00000000,45835C48:40C00000
+  wind=3072 haze=0 crawler=40800000 screen=3F733334,3F800000,00000000 radar=1:0:C03F8BCD,BE8196F0,44610001:40064A12 wv=3F200000 gv=3F5462AB
+  missile 43391840,C304019C,456827C6 v=C2899B47,42B7662C,435E29FE trail=32:43391840,C304019C,456827C6
+  missile C380098B,C2D56EB2,455B32D7 v=42F2EC1D,42594E86,4353A646 trail=32:C380098B,C2D56EB2,455B32D7
+  missile C2C56063,43BDB3CF,45501C4F v=424A7AB9,C2DCA044,435A89AA trail=32:C2C56063,43BDB3CF,45501C4F
+  missile 422376C1,43E0E3CC,4543D0B7 v=408BF309,C2D6489C,4361AFBA trail=32:422376C1,43E0E3CC,4543D0B7
+  missile C3DD0A34,4373F1D8,451EBF7C v=42A49C28,C2067345,4366F168 trail=32:C3DD0A34,4373F1D8,451EBF7C
+  pickup SW_HOME 42466EBA,C1D5E8A9,4585F02B v=00000000,00000000,C2480000 yaw=43A88000 chute=1 ticks=407/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4584B48C v=00000000,00000000,C2480000 yaw=43830000 chute=1 ticks=331/70
+  pickup SW_HBOMB C168358C,C204142E,45841483 v=00000000,00000000,C2480000 yaw=435E0000 chute=1 ticks=290/69
+  pickup SW_GATT 42384797,C1EF29F3,4584571E v=00000000,00000000,C2480000 yaw=43210000 chute=1 ticks=210/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=591 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=BA609281
+s=592 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=BC4E02B7
+s=593 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=7DBD41D4
+s=594 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=D172639D
+s=595 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=5C839515
+s=596 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=44A018F6
+s=597 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=428392E1
+s=598 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=B63C0727
+s=599 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=5430BE18
+s=600 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=09372C24
+  intro=0 t=4170005B dying=0 kurt=426B4B4B,420D2D2D,45857032 vis=1 pose=0:420C0000 cam=42480000,41F00000,4585C032 bones=00000000,00000000,458296BE:41800000
+  wind=3072 haze=10 crawler=3F800000 screen=3F800000,3F800000,00000000 radar=1:0:C0CB3D91,BF09805A,44ED8001:408E7CF2 wv=3F200000 gv=3F555565
+  missile 43224BB0,C2CB3D83,456CCA80 v=C287BC8F,42B4E823,435EF5EE trail=32:43224BB0,C2CB3D83,456CCA80
+  missile C357B765,C2B15475,455F9D0D v=42F1273E,4257B96A,43544170 trail=32:C357B765,C2B15475,455F9D0D
+  missile C2A3A0F5,43AB50ED,4554A9E6 v=424A164C,C2DC336D,435AB00E trail=32:C2A3A0F5,43AB50ED,4554A9E6
+  missile 42299CB8,43CE08CA,454CAC33 v=4098E113,C2EA9F2C,435CA9B0 trail=32:42299CB8,43CE08CA,454CAC33
+  missile C3CDE963,436770D1,4531CA0F v=42C663FE,C225057B,43614FFD trail=32:C3CDE963,436770D1,4531CA0F
+  pickup SW_HOME 42466EBA,C1D5E8A9,45856AD9 v=00000000,00000000,C2480000 yaw=43AD8000 chute=1 ticks=417/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,45842F3A v=00000000,00000000,C2480000 yaw=43880000 chute=1 ticks=341/70
+  pickup SW_HBOMB C168358C,C204142E,45838F31 v=00000000,00000000,C2480000 yaw=43680000 chute=1 ticks=300/69
+  pickup SW_GATT 42384797,C1EF29F3,4583D1CC v=00000000,00000000,C2480000 yaw=432B0000 chute=1 ticks=220/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=601 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=8598CDB2
+s=602 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=70F1734B
+s=603 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=BAED9343
+s=604 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=B0E8C860
+s=605 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=724EC549
+s=606 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=03E2FAFF
+s=607 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=2D29124E
+s=608 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=7430E365
+s=609 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=A7F2589B
+s=610 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=0CCDE47B
+  intro=0 t=417555B5 dying=0 kurt=426B4B4B,420D2D2D,4584BE6C vis=1 pose=0:42340000 cam=42480000,41F00000,45850E6C bones=00000000,00000000,4581D134:41D00000
+  wind=3072 haze=4 crawler=40C00000 screen=3F800000,3F800000,00000000 radar=1:0:C11BEAA4,BF52F81E,45354001:40DA9ECC wv=3F200000 gv=3F564820
+  missile 430BD6B9,C28F6153,457171DB v=C2856CFC,42B1D3B2,435FED0A trail=32:430BD6B9,C28F6153,457171DB
+  missile C32FACAC,C28D82A7,45640AB7 v=42EF16B2,4255E09C,4354F47C trail=32:C32FACAC,C28D82A7,45640AB7
+  missile C2820D99,43990608,4559395C v=4248991D,C2DA9425,435B2E78 trail=32:C2820D99,43990608,4559395C
+  missile 4230028B,43BA64EC,455143B7 v=4099A80E,C2EBDF87,435C6018 trail=32:4230028B,43BA64EC,455143B7
+  missile C3BC5705,4358CF01,45444B9A v=42E2E6BC,C23D0F5F,43598610 trail=32:C3BC5705,4358CF01,45444B9A
+  pickup SW_HOME 42466EBA,C1D5E8A9,4584E587 v=00000000,00000000,C2480000 yaw=43B28000 chute=1 ticks=427/71
+  pickup SW_SGREN 4253C095,BF4D1DCF,4583A9E8 v=00000000,00000000,C2480000 yaw=438D0000 chute=1 ticks=351/70
+  pickup SW_HBOMB C168358C,C204142E,458309DF v=00000000,00000000,C2480000 yaw=43720000 chute=1 ticks=310/69
+  pickup SW_GATT 42384797,C1EF29F3,45834C7A v=00000000,00000000,C2480000 yaw=43350000 chute=1 ticks=230/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=611 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=F1FAC551
+s=612 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=1D376217
+s=613 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=B093E907
+s=614 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=3F0A7EA6
+s=615 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=97EDEE5F
+s=616 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=0C2723C7
+s=617 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=76DE0524
+s=618 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=0643F977
+s=619 st=0 tk=1 hp=46 m=5 p=4 e=0 c=0 ev=- h=A2377058
+s=620 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=B5FA2598
+  intro=0 t=417AAB0F dying=0 kurt=426B4B4B,420D2D2D,45840CA6 vis=1 pose=0:425C0000 cam=42480000,41F00000,45845CA6 bones=00000000,00000000,45810BAA:40A00000
+  wind=3072 haze=14 crawler=40400000 screen=3F6AAAAC,3F800000,00000000 radar=1:0:C152C8CD,BF8E9AEB,4573C001:4113C6E5 wv=3F200000 gv=3F573ADB
+  missile 42EBA146,C229595E,45761EED v=C2826824,42ADCDA6,436127CA trail=32:42EBA146,C229595E,45761EED
+  missile C30800FA,C2540BB2,45687C60 v=42ECA3F4,4253AFF2,4355C604 trail=32:C30800FA,C2540BB2,45687C60
+  missile C2418189,4386E18E,455DCBB9 v=4246C613,C2D89740,435BC727 trail=32:C2418189,4386E18E,455DCBB9
+  missile 42366538,43A6CA22,4555DBF3 v=4098A61A,C2EA5550,435CCA92 trail=32:42366538,43A6CA22,4555DBF3
+  missile C3A8906C,43485440,454B78D2 v=42F3E45E,C24B409E,435430EA trail=32:C3A8906C,43485440,454B78D2
+  pickup SW_SGREN 4253C095,BF4D1DCF,45832496 v=00000000,00000000,C2480000 yaw=43920000 chute=1 ticks=361/70
+  pickup SW_HBOMB C168358C,C204142E,4582848D v=00000000,00000000,C2480000 yaw=437C0000 chute=1 ticks=320/69
+  pickup SW_GATT 42384797,C1EF29F3,4582C728 v=00000000,00000000,C2480000 yaw=433F0000 chute=1 ticks=240/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=621 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=E1226FDE
+s=622 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=4466AF03
+s=623 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=A175BCFF
+s=624 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=CE1A82F3
+s=625 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=35FBE02E
+s=626 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=96D83FDE
+s=627 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=60157AFE
+s=628 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=AD5A68E1
+s=629 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=1E180667
+s=630 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=3CE21C6A
+  intro=0 t=41800034 dying=0 kurt=426B4B4B,420D2D2D,45835AE0 vis=1 pose=0:42820000 cam=42480000,41F00000,4583AAE0 bones=00000000,00000000,45804620:41700000
+  wind=3072 haze=8 crawler=00000000 screen=3F733334,3F800000,00000000 radar=1:1:C215D6A5,41AA9765,458342E0:41200000 wv=3F200000 gv=3F582D95
+  missile 42C0C2E9,C15C5254,457AD38F v=C27C1F0D,42A802CA,4362DCE4 trail=32:42C0C2E9,C15C5254,457AD38F
+  missile C2C18F01,C20DDE71,456CF2C7 v=42E9A51B,425101F6,4356C258 trail=32:C2C18F01,C20DDE71,456CF2C7
+  missile C1FF1E10,4369D53C,4562617B v=4244A3B4,C2D643EB,435C776D trail=32:C1FF1E10,4369D53C,4562617B
+  missile 423CBB1C,4393568E,455A76CB v=40974786,C2E83B59,435D58CE trail=32:423CBB1C,4393568E,455A76CB
+  missile C3942D50,433756BF,454FE34E v=42F4B74F,C24BF169,4353F571 trail=32:C3942D50,433756BF,454FE34E
+  pickup SW_SGREN 4253C095,BF4D1DCF,45829F44 v=00000000,00000000,C2480000 yaw=43970000 chute=1 ticks=371/70
+  pickup SW_HBOMB C168358C,C204142E,4581FF3B v=00000000,00000000,C2480000 yaw=43830000 chute=1 ticks=330/69
+  pickup SW_GATT 42384797,C1EF29F3,458241D6 v=00000000,00000000,C2480000 yaw=43490000 chute=1 ticks=250/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=631 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=R_MOVE h=69E78070
+  intro=0 t=41804478 dying=0 kurt=426B4B4B,420D2D2D,45834919 vis=1 pose=0:42840000 cam=42480000,41F00000,45839919 bones=00000000,00000000,4580325F:41800000
+  wind=3072 haze=9 crawler=3F000000 screen=3F6EEEF0,3F800000,00000000 radar=1:1:C22C96C2,41D6C94D,45833119:41200000 wv=3F200000 gv=3F5845DB
+  missile 42BC8F31,C12F84C9,457B4C8D v=C27B00DD,42A74414,436313BC trail=32:42BC8F31,C12F84C9,457B4C8D
+  missile C2B9C53C,C206E6E9,456D6551 v=42E94E3A,4250B43E,4356DEA7 trail=32:C2B9C53C,C206E6E9,456D6551
+  missile C1F20215,43664309,4562D710 v=424467E2,C2D602BE,435C8A93 trail=32:C1F20215,43664309,4562D710
+  missile 423D5C79,43916720,455AECD8 v=40972131,C2E80082,435D6840 trail=32:423D5C79,43916720,455AECD8
+  missile C3922340,4335A3AB,45505459 v=42F49F40,C24BDD62,4353FDE0 trail=32:C3922340,4335A3AB,45505459
+  pickup SW_SGREN 4253C095,BF4D1DCF,458291EF v=00000000,00000000,C2480000 yaw=43978000 chute=1 ticks=372/70
+  pickup SW_HBOMB C168358C,C204142E,4581F1E6 v=00000000,00000000,C2480000 yaw=43838000 chute=1 ticks=331/69
+  pickup SW_GATT 42384797,C1EF29F3,45823481 v=00000000,00000000,C2480000 yaw=434A0000 chute=1 ticks=251/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=632 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=535BFC52
+s=633 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=CF87F3B8
+s=634 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=EDF19B0F
+s=635 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=6540DFC3
+s=636 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=DF95C8E6
+s=637 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=0BBFF7B0
+s=638 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=2087B3BA
+s=639 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=571B3B35
+s=640 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=6DB02356
+  intro=0 t=4182AADC dying=0 kurt=426B4B4B,420D2D2D,4582A91A vis=1 pose=0:42960000 cam=42480000,41F00000,4582F91A bones=00000000,00000000,457F012C:41C80000
+  wind=3072 haze=2 crawler=40A00000 screen=3F800000,3F800000,00000000 radar=1:1:C0035630,4226833A,4582911A:41200000 wv=3F200000 gv=3F59204F
+  missile 4297BF78,4158F900,457F938A v=C26C83F5,429D9C87,4365BDC0 trail=32:4297BF78,4158F900,457F938A
+  missile C26872B0,C19160C9,45716EFF v=42E5CD24,424D91C0,4357FFA7 trail=32:C26872B0,C19160C9,45716EFF
+  missile C179859B,4346529A,4566FB2E v=42421898,C2D37E74,435D4644 trail=32:C179859B,4346529A,4566FB2E
+  missile 42430142,43801346,455F14D0 v=4095AC08,C2E5C3A7,435DFD97 trail=32:42430142,43801346,455F14D0
+  missile C37FA892,4326619D,45544EBE v=42F36045,C24AD3A6,43546A6C trail=32:C37FA892,4326619D,45544EBE
+  pickup SW_SGREN 4253C095,BF4D1DCF,458219F2 v=00000000,00000000,C2480000 yaw=439C0000 chute=1 ticks=381/70
+  pickup SW_HBOMB C168358C,C204142E,458179E9 v=00000000,00000000,C2480000 yaw=43880000 chute=1 ticks=340/69
+  pickup SW_GATT 42384797,C1EF29F3,4581BC84 v=00000000,00000000,C2480000 yaw=43530000 chute=1 ticks=260/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=641 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=13DA433E
+s=642 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=49DB314B
+s=643 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=9433D8DA
+s=644 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=14F70F4F
+s=645 st=0 tk=1 hp=46 m=5 p=3 e=0 c=0 ev=- h=9AC4B2EA
+s=646 st=0 tk=1 hp=46 m=6 p=3 e=0 c=0 ev=K_SEEN;M_LNCH h=E8862D03
+  intro=0 t=41844474 dying=0 kurt=426B4B4B,420D2D2D,45823E70 vis=1 pose=0:42A20000 cam=42480000,41F00000,45828E70 bones=00000000,00000000,457E1420:00000000
+  wind=3072 haze=8 crawler=00000000 screen=3F666666,3F800000,00000000 radar=1:2:424721DE,4215616A,45822670:41200000 wv=3F200000 gv=3F59B1F0
+  missile 4280DF8A,41E66F27,45813B78 v=C25489F6,428DA240,4369A6E9 trail=32:4280DF8A,41E66F27,45813B78
+  missile C20CFFCA,C0FE4A06,45742364 v=42E2D989,424AEDD2,4358EE6F trail=32:C20CFFCA,C0FE4A06,45742364
+  missile C0BDA7C8,433140AD,4569BFFE v=42404D40,C2D189EE,435DD618 trail=32:C0BDA7C8,433140AD,4569BFFE
+  missile 4246BC4A,43693E35,4561DBC0 v=409492C0,C2E413DA,435E6CF0 trail=32:4246BC4A,43693E35,4561DBC0
+  missile C3675D01,431C41F6,4556F6ED v=42F255B8,C249F584,4354C3D9 trail=32:C3675D01,431C41F6,4556F6ED
+  missile 40EB7716,407A5680,42055556 v=435CBFA4,42EAB117,437A0000 trail=1:40EB7716,407A5680,42055556
+  pickup SW_SGREN 4253C095,BF4D1DCF,4581C9F4 v=00000000,00000000,C2480000 yaw=439F0000 chute=1 ticks=387/70
+  pickup SW_HBOMB C168358C,C204142E,458129EB v=00000000,00000000,C2480000 yaw=438B0000 chute=1 ticks=346/69
+  pickup SW_GATT 42384797,C1EF29F3,45816C86 v=00000000,00000000,C2480000 yaw=43590000 chute=1 ticks=266/50
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=647 st=0 tk=1 hp=46 m=6 p=3 e=0 c=0 ev=- h=248BBF00
+s=648 st=0 tk=1 hp=46 m=6 p=3 e=0 c=0 ev=- h=C8439F6B
+s=649 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=EXPLODE1;K_HIT3 h=9A509B39
+  intro=0 t=41851140 dying=0 kurt=426B4B4B,420D2D2D,4582091B vis=1 pose=1:00000000 cam=42480000,41F00000,4582591B bones=00000000,00000000,457D9D9A:40400000
+  wind=3072 haze=11 crawler=3FC00000 screen=3F800000,3F800000,00000000 radar=1:2:424721DE,4215616A,457AECE0:411A3CC8 wv=3F200000 gv=3F59FAC1
+  missile C1BF7C2C,C038B3E4,45757EC3 v=42E11A27,42495D9C,435979D0 trail=32:C1BF7C2C,C038B3E4,45757EC3
+  missile BF904CCF,4326CB22,456B2318 v=423F4E82,C2D0745A,435E251F trail=32:BF904CCF,4326CB22,456B2318
+  missile 42489718,435DDAAA,45633FC2 v=4093FA5B,C2E329E7,435EA8D4 trail=32:42489718,435DDAAA,45633FC2
+  missile C35B417E,43173669,45584B73 v=42F1C5AB,C2497D78,4354F3E8 trail=32:C35B417E,43173669,45584B73
+  missile 41EB7716,417A5680,43055556 v=435CBFA4,42EAB117,437A0000 trail=4:41EB7716,417A5680,43055556
+  pickup SW_SGREN 4253C095,BF4D1DCF,4581A1F5 v=00000000,00000000,C2480000 yaw=43A08000 chute=1 ticks=390/70
+  pickup SW_HBOMB C168358C,C204142E,458101EC v=00000000,00000000,C2480000 yaw=438C8000 chute=1 ticks=349/69
+  pickup SW_GATT 42384797,C1EF29F3,45814487 v=00000000,00000000,C2480000 yaw=435C0000 chute=1 ticks=269/50
+  explosion 426DB6BA,420DEA8A,4582091B yaw=3FBC4A02 ticks=3F800000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=650 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=68AAF0FB
+  intro=0 t=41855584 dying=0 kurt=426B4B4B,420D2D2D,4581F754 vis=1 pose=1:3F800000 cam=42480000,41F00000,45824754 bones=00000000,00000000,457D7618:40800000
+  wind=3072 haze=12 crawler=40000000 screen=3F800000,3F800000,00000000 radar=1:2:424721DE,4215616A,4577CCE0:4118510A wv=3F200000 gv=3F5A1307
+  missile C1A178AF,BF9A9D87,4575F2C0 v=42E077CB,4248CC60,4359AC07 trail=32:C1A178AF,BF9A9D87,4575F2C0
+  missile 3EEF0AAC,432351BA,456B9992 v=423EF543,C2D0131C,435E40AE trail=32:3EEF0AAC,432351BA,456B9992
+  missile 424934F0,435A116F,4563B682 v=4093C598,C2E2D8E8,435EBD7E trail=32:424934F0,435A116F,4563B682
+  missile C35739EE,43158891,4558BD06 v=42F1941A,C249542B,43550468 trail=32:C35739EE,43158891,4558BD06
+  missile 42132A6E,419C7610,4326AAAB v=435CBFA4,42EAB117,437A0000 trail=5:42132A6E,419C7610,4326AAAB
+  pickup SW_SGREN 4253C095,BF4D1DCF,458194A0 v=00000000,00000000,C2480000 yaw=43A10000 chute=1 ticks=391/70
+  pickup SW_HBOMB C168358C,C204142E,4580F497 v=00000000,00000000,C2480000 yaw=438D0000 chute=1 ticks=350/69
+  pickup SW_GATT 42384797,C1EF29F3,45813732 v=00000000,00000000,C2480000 yaw=435D0000 chute=1 ticks=270/50
+  explosion 426DB6BA,420DEA8A,4581F754 yaw=3FBC4A02 ticks=40000000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=651 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=A0414796
+s=652 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=2AFC2E61
+s=653 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=30CBA873
+s=654 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=0271D294
+s=655 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=2134CD41
+s=656 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=F1E83CD7
+s=657 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=4DA469ED
+s=658 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=7388CCBC
+s=659 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=D490EB75
+s=660 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=AD378B53
+  intro=0 t=4188002C dying=0 kurt=426B4B4B,420D2D2D,4581458E vis=1 pose=1:41300000 cam=42480000,41F00000,4581958E bones=00000000,00000000,457BEB04:41600000
+  wind=3072 haze=6 crawler=40E00000 screen=3F800000,3F800000,00000000 radar=1:2:424721DE,4215616A,45588CE0:41051BA5 wv=3F200000 gv=3F5B05C0
+  missile 41853382,417445F0,457A8147 v=42D7D2C0,424110AF,435C4506 trail=32:41853382,417445F0,457A8147
+  missile 4181E1A6,4300F4B3,45703DC0 v=423ADEF8,C2CB9F0B,435F7EF9 trail=32:4181E1A6,4300F4B3,45703DC0
+  missile 424F5281,43348423,45685C89 v=409174FA,C2DF4B33,435FA312 trail=32:424F5281,43348423,45685C89
+  missile C32F1DFC,4304D1F9,455D2EBF v=42EF76BD,C2479102,4355B76C trail=32:C32F1DFC,4304D1F9,455D2EBF
+  missile 42DCBFA3,426AB118,43FA0002 v=435CBFA4,42EAB117,437A0000 trail=15:42DCBFA3,426AB118,43FA0002
+  pickup SW_SGREN 4253C095,BF4D1DCF,45810F4E v=00000000,00000000,C2480000 yaw=43A60000 chute=1 ticks=401/70
+  pickup SW_HBOMB C168358C,C204142E,45806F45 v=00000000,00000000,C2480000 yaw=43920000 chute=1 ticks=360/69
+  pickup SW_GATT 42384797,C1EF29F3,4580B1E0 v=00000000,00000000,C2480000 yaw=43670000 chute=1 ticks=280/50
+  explosion 426DB6BA,420DEA8A,4581458E yaw=3FBC4A02 ticks=41400000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=661 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=D9C00D1D
+s=662 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=671093F0
+s=663 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=B4E6F36E
+s=664 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=A6B9E844
+s=665 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=A7ACEB2C
+s=666 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=D695FA87
+s=667 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=D6B1224F
+s=668 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=340F7C0C
+s=669 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=5C339432
+s=670 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=845C834F
+  intro=0 t=418AAAD4 dying=0 kurt=426B4B4B,420D2D2D,458093C8 vis=1 pose=1:41A80000 cam=42480000,41F00000,4580E3C8 bones=00000000,00000000,457A5FF0:41C00000
+  wind=3072 haze=0 crawler=40800000 screen=3F4CCCD8,3F800000,00000000 radar=1:2:424721DE,4215616A,45394CE0:40E3CC7E wv=3F200000 gv=3F5BF879
+  missile 424D57C0,41F63FAE,457F2390 v=42C012FA,422BD200,4362A0D1 trail=32:424D57C0,41F63FAE,457F2390
+  missile 41FCD827,42BEEB5A,4574E990 v=423506B2,C2C540A7,436136CE trail=32:41FCD827,42BEEB5A,4574E990
+  missile 42555492,430F9FAD,456D07D7 v=408E8050,C2DAC19E,4360C188 trail=32:42555492,430F9FAD,456D07D7
+  missile C3076372,42E887ED,4561A478 v=42ECF404,C245795E,4356891F trail=32:C3076372,42E887ED,4561A478
+  missile 4337F50A,42C39394,44505554 v=435CBFA4,42EAB117,437A0000 trail=25:4337F50A,42C39394,44505554
+  pickup SW_SGREN 4253C095,BF4D1DCF,458089FC v=00000000,00000000,C2480000 yaw=43AB0000 chute=1 ticks=411/70
+  pickup SW_HBOMB C168358C,C204142E,457FD3E4 v=00000000,00000000,C2480000 yaw=43970000 chute=1 ticks=370/69
+  pickup SW_GATT 42384797,C1EF29F3,45802C8E v=00000000,00000000,C2480000 yaw=43710000 chute=1 ticks=290/50
+  explosion 426DB6BA,420DEA8A,458093C8 yaw=3FBC4A02 ticks=41B00000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=671 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=3E5AE8CE
+s=672 st=0 tk=1 hp=28 m=5 p=3 e=1 c=0 ev=- h=8C37BF8A
+s=673 st=0 tk=1 hp=20 m=4 p=3 e=2 c=0 ev=EXPLODE2;K_HIT3 h=086DBF27
+  intro=0 t=418B77A0 dying=0 kurt=426B4B4B,420D2D2D,45805E73 vis=1 pose=1:00000000 cam=42480000,41F00000,4580AE73 bones=00000000,00000000,4579E96A:41D80000
+  wind=3072 haze=3 crawler=40B00000 screen=3F800000,3F800000,00000000 radar=1:2:424721DE,4215616A,452FECE0:40D8460E wv=3F200000 gv=3F5C414B
+  missile 421072DC,42AB46EC,45765241 v=4232A701,C2C2AA7E,4361E445 trail=32:421072DC,42AB46EC,45765241
+  missile 42571B75,4304B676,456E6FA8 v=408D6DF8,C2D91C78,4361278E trail=32:42571B75,4304B676,456E6FA8
+  missile C2F71C11,42DEAB40,4562FBDF v=42EC19BD,C244C375,4356CFA6 trail=32:C2F71C11,42DEAB40,4562FBDF
+  missile 434E0835,42DB0BB0,44695553 v=435CBFA4,42EAB117,437A0000 trail=28:434E0835,42DB0BB0,44695553
+  pickup SW_SGREN 4253C095,BF4D1DCF,458061FD v=00000000,00000000,C2480000 yaw=43AC8000 chute=1 ticks=414/70
+  pickup SW_HBOMB C168358C,C204142E,457F83E3 v=00000000,00000000,C2480000 yaw=43988000 chute=1 ticks=373/69
+  pickup SW_GATT 42384797,C1EF29F3,4580048F v=00000000,00000000,C2480000 yaw=43740000 chute=1 ticks=293/50
+  explosion 426DB6BA,420DEA8A,45805E73 yaw=3FBC4A02 ticks=41C80000
+  explosion 4271E894,420B7AB6,45805E73 yaw=3FA82ADB ticks=3F800000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=674 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=6C4F7956
+s=675 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=7BB4476D
+s=676 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=A0554E65
+s=677 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=E3593755
+s=678 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=74B6D028
+s=679 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=A1D5B92B
+s=680 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=B12AD19A
+  intro=0 t=418D557C dying=0 kurt=426B4B4B,420D2D2D,457FC404 vis=1 pose=1:40E00000 cam=42480000,41F00000,45803202 bones=00000000,00000000,4578D4DC:40400000
+  wind=3072 haze=10 crawler=3F800000 screen=3F800000,3F800000,00000000 radar=1:2:424721DE,4215616A,451A0CE0:40BD61B2 wv=3F200000 gv=3F5CEB31
+  missile 42396D97,427D3FB1,4579A0BA v=422ABEF4,C2BA0D04,43641042 trail=32:42396D97,427D3FB1,4579A0BA
+  missile 425B3257,42D73432,4571B9E7 v=408A6B73,C2D47DA4,436240E0 trail=32:425B3257,42D73432,4571B9E7
+  missile C2C03C21,42C7CD8D,45661EF1 v=42E9E109,C242E982,435785C4 trail=32:C2C03C21,42C7CD8D,45661EF1
+  missile 4380C522,4308E74E,4491D555 v=435CBFA4,42EAB117,437A0000 trail=32:4380C522,4308E74E,4491D555
+  pickup SW_SGREN 4253C095,BF4D1DCF,458004AA v=00000000,00000000,C2480000 yaw=43B00000 chute=1 ticks=421/70
+  pickup SW_HBOMB C168358C,C204142E,457EC936 v=00000000,00000000,C2480000 yaw=439C0000 chute=1 ticks=380/69
+  pickup SW_GATT 42384797,C1EF29F3,457F4E71 v=00000000,00000000,C2480000 yaw=437B0000 chute=1 ticks=300/50
+  explosion 4271E894,420B7AB6,457FC404 yaw=3FA82ADB ticks=41000000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=681 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=AACAE6B5
+s=682 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=E4BF124A
+s=683 st=0 tk=1 hp=20 m=4 p=3 e=1 c=0 ev=- h=1E3EE258
+s=684 st=0 tk=1 hp=20 m=5 p=3 e=1 c=0 ev=M_LNCH h=85FFA2AC
+  intro=0 t=418E668C dying=0 kurt=426B4B4B,420D2D2D,457F35CC vis=1 pose=1:41300000 cam=42480000,41F00000,457FD5CC bones=00000000,00000000,457836D4:40E00000
+  wind=3072 haze=14 crawler=40400000 screen=3F800000,3F800000,00000000 radar=1:2:424721DE,4215616A,450D8CE0:40AE03C7 wv=3F200000 gv=3F5D4C48
+  missile 424FD7F8,424C6635,457B88BB v=4222D00F,C2B16814,43661B10 trail=32:424FD7F8,424C6635,457B88BB
+  missile 425D7D94,42BB085A,45739D2D v=40883BAB,C2D1224E,4363086D trail=32:425D7D94,42BB085A,45739D2D
+  missile C2A11F35,42BAD69D,4567EB15 v=42E86E07,C241B44D,4357FB4E trail=32:C2A11F35,42BAD69D,4567EB15
+  missile 438F7C92,43188CB6,44A28001 v=435CBFA4,42EAB117,437A0000 trail=32:438F7C92,43188CB6,44A28001
+  missile C06DE3F1,C0EEAB67,42055556 v=C2DF05B1,C35FC0B0,437A0000 trail=1:C06DE3F1,C0EEAB67,42055556
+  pickup SW_SGREN 4253C095,BF4D1DCF,457F9EA8 v=00000000,00000000,C2480000 yaw=43B20000 chute=1 ticks=425/70
+  pickup SW_HBOMB C168358C,C204142E,457E5E8A v=00000000,00000000,C2480000 yaw=439E0000 chute=1 ticks=384/69
+  pickup SW_GATT 42384797,C1EF29F3,457EE3C5 v=00000000,00000000,C2480000 yaw=437F0000 chute=1 ticks=304/50
+  explosion 4271E894,420B7AB6,457F35CC yaw=3FA82ADB ticks=41400000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=685 st=0 tk=1 hp=20 m=5 p=3 e=1 c=0 ev=- h=51DC4A91
+s=686 st=0 tk=1 hp=20 m=5 p=3 e=1 c=0 ev=- h=B7208030
+s=687 st=0 tk=1 hp=20 m=5 p=3 e=1 c=0 ev=- h=EFA257EF
+s=688 st=0 tk=1 hp=20 m=5 p=3 e=1 c=0 ev=- h=088B42C8
+s=689 st=0 tk=1 hp=20 m=5 p=3 e=1 c=0 ev=- h=A9645D17
+s=690 st=0 tk=1 hp=4 m=4 p=3 e=2 c=0 ev=EXPLODE1;K_HIT2 h=7D6BF14E
+  intro=0 t=41900024 dying=0 kurt=426B4B4B,420D2D2D,457E6078 vis=1 pose=1:00000000 cam=42480000,41F00000,457F0078 bones=00000000,00000000,457749C8:41500000
+  wind=3072 haze=4 crawler=40C00000 screen=3F800000,3F800000,00000000 radar=1:2:424721DE,4215616A,44F599C0:4096F6E7 wv=3F200000 gv=3F5DDDEB
+  missile 4260DAA1,4291B9E2,45767592 v=4083D26E,C2CA5CDC,43648E88 trail=32:4260DAA1,4291B9E2,45767592
+  missile C265AC98,42A78D3F,456A9F3C v=42E5EDFE,C23F9EEA,4358C3BE trail=32:C265AC98,42A78D3F,456A9F3C
+  missile 43A58FBA,433004D2,44BB8003 v=435CBFA4,42EAB117,437A0000 trail=32:43A58FBA,433004D2,44BB8003
+  missile C1D02773,C250D5FA,43695555 v=C2DF05B1,C35FC0B0,437A0000 trail=7:C1D02773,C250D5FA,43695555
+  pickup SW_SGREN 4253C095,BF4D1DCF,457EFEA6 v=00000000,00000000,C2480000 yaw=43B50000 chute=1 ticks=431/70
+  pickup SW_HBOMB C168358C,C204142E,457DBE88 v=00000000,00000000,C2480000 yaw=43A10000 chute=1 ticks=390/69
+  pickup SW_GATT 42384797,C1EF29F3,457E43C3 v=00000000,00000000,C2480000 yaw=43828000 chute=1 ticks=310/50
+  explosion 4271E894,420B7AB6,457E6078 yaw=3FA82ADB ticks=41900000
+  explosion 426DD1AD,420B131E,457E6078 yaw=40446312 ticks=3F800000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=691 st=0 tk=1 hp=4 m=4 p=2 e=2 c=0 ev=- h=55AA247E
+s=692 st=0 tk=1 hp=4 m=4 p=2 e=2 c=0 ev=- h=C7580638
+s=693 st=0 tk=1 hp=4 m=4 p=2 e=2 c=0 ev=- h=1AF06D68
+s=694 st=0 tk=1 hp=4 m=4 p=2 e=2 c=0 ev=- h=788B4908
+s=695 st=0 tk=1 hp=4 m=4 p=2 e=2 c=0 ev=- h=4431EB58
+s=696 st=0 tk=1 hp=4 m=4 p=2 e=2 c=0 ev=- h=7EE8BD74
+s=697 st=0 tk=1 hp=4 m=4 p=2 e=2 c=0 ev=- h=36DEABA4
+s=698 st=0 tk=1 hp=4 m=4 p=2 e=1 c=0 ev=- h=BB5EB7F4
+s=699 st=0 tk=1 hp=4 m=4 p=2 e=1 c=0 ev=- h=5216B75D
+s=700 st=0 tk=1 hp=4 m=4 p=2 e=1 c=0 ev=- h=F41372FF
+  intro=0 t=4192AACC dying=0 kurt=426B4B4B,420D2D2D,457CFCEC vis=1 pose=1:41200000 cam=42480000,41F00000,457D9CEC bones=00000000,00000000,4575BEB4:41B80000
+  wind=3072 haze=14 crawler=40400000 screen=3F800000,3F800000,00000000 radar=1:2:424721DE,4215616A,44B719C0:40611837 wv=3F200000 gv=3F5ED0A4
+  missile 42661906,4222A7DD,457B42C4 v=4061D2BC,C2AD5522,436A485C trail=32:42661906,4222A7DD,457B42C4
+  missile C19BD70E,4287EF27,456F2714 v=42E06FA9,C23B0AE6,435A71CE trail=32:C19BD70E,4287EF27,456F2714
+  missile 43CA5A52,43572256,44E52AB1 v=435CBFA4,42EAB117,437A0000 trail=32:43CA5A52,43572256,44E52AB1
+  missile C27CC230,C2FD961A,440DAAAC v=C2DF05B1,C35FC0B0,437A0000 trail=17:C27CC230,C2FD961A,440DAAAC
+  pickup SW_HBOMB C168358C,C204142E,457CB3DA v=00000000,00000000,C2480000 yaw=43A60000 chute=1 ticks=400/69
+  pickup SW_GATT 42384797,C1EF29F3,457D3915 v=00000000,00000000,C2480000 yaw=43878000 chute=1 ticks=320/50
+  explosion 426DD1AD,420B131E,457CFCEC yaw=40446312 ticks=41300000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=701 st=0 tk=1 hp=4 m=4 p=2 e=1 c=0 ev=- h=A911B156
+s=702 st=0 tk=1 hp=4 m=4 p=2 e=1 c=0 ev=- h=9F9B3847
+s=703 st=0 tk=1 hp=0 m=3 p=2 e=2 c=0 ev=EXPLODE1;K_HIT7 h=55006FCE
+  intro=0 t=41937798 dying=1 kurt=426B4B4B,420D2D2D,457C9242 vis=1 pose=0:00000000 cam=42480000,41F00000,457D3242 bones=00000000,00000000,4575482E:41D00000
+  wind=3072 haze=1 crawler=40900000 screen=3F800000,3F800000,3CA0A0A1 radar=1:2:424721DE,4215616A,44A459C0:404A0B56 wv=3F200000 gv=3F5F1975
+  missile C104B040,427D38E0,457084EC v=42DE4656,C2393DC3,435B1721 trail=32:C104B040,427D38E0,457084EC
+  missile 43D563E6,4362DE64,44F1AAB2 v=435CBFA4,42EAB117,437A0000 trail=32:43D563E6,4362DE64,44F1AAB2
+  missile C294AE78,C3152B1E,4426AAAB v=C2DF05B1,C35FC0B0,437A0000 trail=20:C294AE78,C3152B1E,4426AAAB
+  pickup SW_HBOMB C168358C,C204142E,457C63D9 v=00000000,00000000,C2480000 yaw=43A78000 chute=1 ticks=403/69
+  pickup SW_GATT 42384797,C1EF29F3,457CE914 v=00000000,00000000,C2480000 yaw=43890000 chute=1 ticks=323/50
+  explosion 426DD1AD,420B131E,457C9242 yaw=40446312 ticks=41600000
+  explosion 42676313,4202FD39,457C9242 yaw=40B13578 ticks=3F800000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=704 st=0 tk=1 hp=0 m=3 p=2 e=2 c=0 ev=- h=8A2C44C0
+s=705 st=0 tk=1 hp=0 m=3 p=2 e=2 c=0 ev=- h=350370BB
+s=706 st=0 tk=1 hp=0 m=3 p=2 e=2 c=0 ev=- h=F8261B7C
+s=707 st=0 tk=1 hp=0 m=3 p=2 e=2 c=0 ev=- h=3777344C
+s=708 st=0 tk=1 hp=0 m=4 p=2 e=2 c=0 ev=M_LNCH h=ED9F3558
+  intro=0 t=4194CCEC dying=1 kurt=426B4B4B,420D2D2D,457BE07C vis=1 pose=0:40A00000 cam=42480000,41F00000,457C807C bones=00000000,00000000,457482A4:00000000
+  wind=3072 haze=6 crawler=40E00000 screen=3F800000,3F800000,3DF0F0F1 radar=1:2:424721DE,4215616A,448519C0:4023A08B wv=3F200000 gv=3F5F92D1
+  missile 41216B02,425E9583,4572CE7D v=42D9C283,C2357A80,435C6962 trail=32:41216B02,425E9583,4572CE7D
+  missile 43E51A59,43739648,4503322C v=429F8674,422AFD3E,437416A9 trail=32:43E51A59,43739648,4503322C
+  missile C2B9DA18,C33A75E5,44505554 v=C2DF05B1,C35FC0B0,437A0000 trail=25:C2B9DA18,C33A75E5,44505554
+  missile 40CF65BA,40A79F78,42055556 v=43426F5E,431D2580,437A0000 trail=1:40CF65BA,40A79F78,42055556
+  pickup SW_HBOMB C168358C,C204142E,457BDE82 v=00000000,00000000,C2480000 yaw=43AA0000 chute=1 ticks=408/69
+  pickup SW_GATT 42384797,C1EF29F3,457C63BD v=00000000,00000000,C2480000 yaw=438B8000 chute=1 ticks=328/50
+  explosion 426DD1AD,420B131E,457BE07C yaw=40446312 ticks=41980000
+  explosion 42676313,4202FD39,457BE07C yaw=40B13578 ticks=40C00000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=709 st=0 tk=1 hp=0 m=4 p=2 e=2 c=0 ev=- h=23467681
+s=710 st=0 tk=1 hp=0 m=4 p=2 e=2 c=0 ev=- h=05AF7672
+  intro=0 t=41955574 dying=1 kurt=426B4B4B,420D2D2D,457B9960 vis=1 pose=0:40E00000 cam=42480000,41F00000,457C3960 bones=00000000,00000000,457433A0:40000000
+  wind=3072 haze=8 crawler=00000000 screen=3F800000,3F800000,3E20A0A1 radar=1:2:424721DE,4215616A,44713380:401442A0 wv=3F200000 gv=3F5FC35C
+  missile 418AA1CD,42528414,4573B9C4 v=42D77A6E,C23393BC,435D10A5 trail=32:418AA1CD,42528414,4573B9C4
+  missile 43E7421F,4375E77B,4507407A v=41C8DB10,415D521A,43715415 trail=32:43E7421F,4375E77B,4507407A
+  missile C2C8B858,C349609B,4460FFFE v=C2DF05B1,C35FC0B0,437A0000 trail=27:C2C8B858,C349609B,4460FFFE
+  missile 419B8C4C,417B6F34,42C80001 v=43426F5E,431D2580,437A0000 trail=3:419B8C4C,417B6F34,42C80001
+  pickup SW_HBOMB C168358C,C204142E,457BA92C v=00000000,00000000,C2480000 yaw=43AB0000 chute=1 ticks=410/69
+  pickup SW_GATT 42384797,C1EF29F3,457C2E67 v=00000000,00000000,C2480000 yaw=438C8000 chute=1 ticks=330/50
+  explosion 426DD1AD,420B131E,457B9960 yaw=40446312 ticks=41A80000
+  explosion 42676313,4202FD39,457B9960 yaw=40B13578 ticks=41000000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=711 st=0 tk=1 hp=0 m=4 p=2 e=2 c=0 ev=- h=36C393DA
+s=712 st=0 tk=1 hp=0 m=4 p=1 e=2 c=0 ev=- h=F2AB1F26
+s=713 st=0 tk=1 hp=0 m=4 p=1 e=2 c=0 ev=- h=BBF7BCEC
+s=714 st=0 tk=1 hp=0 m=4 p=1 e=2 c=0 ev=- h=E78F20A0
+s=715 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=6490A6DF
+s=716 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=FF876974
+s=717 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=488A1254
+s=718 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=21141FF0
+s=719 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=A851B81A
+s=720 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=7F4C2A1D
+  intro=0 t=4198001C dying=1 kurt=426B4B4B,420D2D2D,457A35D4 vis=1 pose=0:41880000 cam=42480000,41F00000,457AD5D4 bones=00000000,00000000,4572A88C:41400000
+  wind=3072 haze=2 crawler=40A00000 screen=3F800000,3F800000,3EB4B4B5 radar=1:2:424721DE,4215616A,43E86700:3F8EDA12 wv=3F200000 gv=3F60B615
+  missile 424F8A5A,4218EB2C,45786092 v=42BDE0AE,C21E3DF0,4363ADE7 trail=32:424F8A5A,4218EB2C,45786092
+  missile 43E1F155,437077F3,451B06E3 v=C28BF6CF,C211B6E6,43697176 trail=32:43E1F155,437077F3,451B06E3
+  missile C30987CC,C389FB16,449A2AAB v=C2DF05B1,C35FC0B0,437A0000 trail=32:C30987CC,C389FB16,449A2AAB
+  missile 42A882A8,42883192,43D8AAAC v=43426F5E,431D2580,437A0000 trail=13:42A882A8,42883192,43D8AAAC
+  pickup SW_HBOMB C168358C,C204142E,457A9E7E v=00000000,00000000,C2480000 yaw=43B00000 chute=1 ticks=420/69
+  explosion 42676313,4202FD39,457A35D4 yaw=40B13578 ticks=41900000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=721 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=93667490
+s=722 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=584B6912
+s=723 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=4C2D4F57
+s=724 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=M_PASS h=6CBB3890
+  intro=0 t=4199112C dying=1 kurt=426B4B4B,420D2D2D,4579A79C vis=1 pose=0:41A80000 cam=42480000,41F00000,457A479C bones=00000000,00000000,45720A84:41800000
+  wind=3072 haze=6 crawler=40E00000 screen=3F800000,3F800000,3EDCDCDD radar=1:2:424721DE,4215616A,43846700:3F22C4CC wv=3F200000 gv=3F61172C
+  missile 4275CAFF,4208FAA1,457A2FDD v=419D1112,C102E5B6,4332D461 trail=32:4275CAFF,4208FAA1,457A2FDD
+  missile 43DCFC3C,436B4DCC,4522C769 v=C2A1372D,C22815BA,436716CC trail=32:43DCFC3C,436B4DCC,4522C769
+  missile C318660C,C398E5CE,44AAD557 v=C2DF05B1,C35FC0B0,437A0000 trail=32:C318660C,C398E5CE,44AAD557
+  missile 42DC5C18,42B21972,440DAAAC v=43426F5E,431D2580,437A0000 trail=17:42DC5C18,42B21972,440DAAAC
+  pickup SW_HBOMB C168358C,C204142E,457A33D2 v=00000000,00000000,C2480000 yaw=43B20000 chute=1 ticks=424/69
+  explosion 42676313,4202FD39,4579A79C yaw=40B13578 ticks=41B00000
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=725 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=537B6F26
+s=726 st=0 tk=1 hp=0 m=4 p=1 e=1 c=0 ev=- h=D3FEA51D
+s=727 st=0 tk=1 hp=0 m=4 p=0 e=1 c=0 ev=- h=19DFBD26
+s=728 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=D236B212
+s=729 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=BB43EC55
+s=730 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=ED6C43DC
+  intro=0 t=419AAAC4 dying=1 kurt=426B4B4B,420D2D2D,4578D248 vis=1 pose=0:41D80000 cam=42480000,41F00000,45797248 bones=00000000,00000000,45711D78:41B00000
+  wind=3072 haze=12 crawler=40000000 screen=3F800000,3F800000,3F0C8C8D radar=0:2:424721DE,4215616A,416CDFFC:3D1199DD wv=3F200000 gv=3F61A8CF
+  missile 4282BFF3,42026F27,457C6C1D v=419D1112,C102E5B6,4332D461 trail=32:4282BFF3,42026F27,457C6C1D
+  missile 43D474BF,4362687A,452E415F v=C2B68BD2,C23E7245,436333B2 trail=32:43D474BF,4362687A,452E415F
+  missile C32EB36C,C3AF45E2,44C3D559 v=C2DF05B1,C35FC0B0,437A0000 trail=32:C32EB36C,C3AF45E2,44C3D559
+  missile 43151120,42F0F542,443FAAAA v=43426F5E,431D2580,437A0000 trail=23:43151120,42F0F542,443FAAAA
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=731 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=E32EC535
+s=732 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=6B93D139
+s=733 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=617AB125
+s=734 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=BC5B4042
+s=735 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=320202EA
+s=736 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=38F73FB9
+s=737 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=D76CC317
+s=738 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=B78DB039
+s=739 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=4E57B6CF
+s=740 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=DE05A89E
+  intro=0 t=419D556C dying=1 kurt=426B4B4B,420D2D2D,45776EBC vis=1 pose=0:42140000 cam=42480000,41F00000,45780EBC bones=00000000,00000000,456F9264:3F800000
+  wind=3072 haze=6 crawler=40E00000 screen=3F800000,3F800000,3F3EBEBF radar=0:2:424721DE,4215616A,416CDFFC:3D1199DD wv=3F200000 gv=3F629B87
+  missile 428FD6B1,41EF0D5A,458012EF v=419D1112,C102E5B6,4332D461 trail=32:428FD6B1,41EF0D5A,458012EF
+  missile 43C4145E,43515225,453B5C9E v=C2D1CFEC,C25AEED9,435C0FBA trail=32:43C4145E,43515225,453B5C9E
+  missile C353DF0C,C3D490AE,44ED8007 v=C2DF05B1,C35FC0B0,437A0000 trail=32:C353DF0C,C3D490AE,44ED8007
+  missile 4355E0EC,432CDC79,44897FFF v=43426F5E,431D2580,437A0000 trail=32:4355E0EC,432CDC79,44897FFF
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=741 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=M_LNCH h=A9880143
+  intro=0 t=419D99B0 dying=1 kurt=426B4B4B,420D2D2D,45774B2E vis=1 pose=0:42180000 cam=42480000,41F00000,4577EB2E bones=00000000,00000000,456F6AE2:40000000
+  wind=3072 haze=7 crawler=40F00000 screen=3F800000,3F800000,3F43C3C4 radar=0:2:424721DE,4215616A,416CDFFC:3D1199DD wv=3F200000 gv=3F62B3CD
+  missile 429125C4,41ECDEDB,4580429F v=419D1112,C102E5B6,4332D461 trail=32:429125C4,41ECDEDB,4580429F
+  missile 43C254C5,434F7F16,453BD1FC v=C2D2DD5C,C25C083B,435BC51C trail=32:43C254C5,434F7F16,453BD1FC
+  missile C357969C,C3D84B5C,44F1AAB2 v=C2DF05B1,C35FC0B0,437A0000 trail=32:C357969C,C3D84B5C,44F1AAB2
+  missile 435C5C1A,43321975,448DAAAA v=43426F5E,431D2580,437A0000 trail=32:435C5C1A,43321975,448DAAAA
+  missile 41019E1A,3FFA1069,42055556 v=4373086F,426A6F62,437A0000 trail=1:41019E1A,3FFA1069,42055556
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=742 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=7499452D
+s=743 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=6E58C3E2
+s=744 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=990280F2
+s=745 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=2CF8DCF3
+s=746 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=49A4812C
+s=747 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=4178B00C
+s=748 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=D147775D
+s=749 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=EFDEA48C
+s=750 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=1BEE513A
+  intro=0 t=41A00014 dying=1 kurt=426B4B4B,420D2D2D,45760B30 vis=1 pose=0:423C0000 cam=42480000,41F00000,4576AB30 bones=00000000,00000000,456E0750:41300000
+  wind=3072 haze=0 crawler=40800000 screen=3F800000,3F800000,3F70F0F1 radar=0:2:424721DE,4215616A,416CDFFC:3D1199DD wv=3F200000 gv=3F638E40
+  missile 429CED6F,41D93C64,4581EFCF v=419D1112,C102E5B6,4332D461 trail=32:429CED6F,41D93C64,4581EFCF
+  missile 43B25EBC,433ED761,453FEE54 v=C2D5C8F5,C25F152E,435AFC90 trail=32:43B25EBC,433ED761,453FEE54
+  missile C3689189,C3EA0C77,450B0AA8 v=41904F7E,41C609EE,4367CA84 trail=32:C3689189,C3EA0C77,450B0AA8
+  missile 438B585C,43613E51,44B32AAD v=43426F5E,431D2580,437A0000 trail=32:438B585C,43613E51,44B32AAD
+  missile 42A2059F,419C4A42,43A6AAAB v=4373086F,426A6F62,437A0000 trail=10:42A2059F,419C4A42,43A6AAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=751 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=B5038DC2
+s=752 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=98BD8FD2
+s=753 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=8022B34B
+s=754 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=CF9B5A0C
+s=755 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=3D4B7009
+s=756 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=89EEE30E
+s=757 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=F29A7C8D
+s=758 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=716EC704
+s=759 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=A27D3994
+s=760 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=C664CA3C
+  intro=0 t=41A2AABC dying=1 kurt=426B4B4B,420D2D2D,4574A7A4 vis=1 pose=0:42640000 cam=42480000,41F00000,457547A4 bones=00000000,00000000,456C7C3C:41A80000
+  wind=3072 haze=10 crawler=3F800000 screen=3F800000,3F800000,3F800000 radar=0:2:424721DE,4215616A,416CDFFC:3D1199DD wv=3F200000 gv=3F6480F9
+  missile 42AA042D,41C36B6E,4583CCAF v=419D1112,C102E5B6,4332D461 trail=32:42AA042D,41C36B6E,4583CCAF
+  missile 43A0958A,432C4825,45447EE6 v=C2D4B8E8,C25DF96A,435B551C trail=32:43A0958A,432C4825,45447EE6
+  missile C35B4D37,C3DF0666,451DE832 v=425C891C,42BE05DF,435CE955 trail=32:C35B4D37,C3DF0666,451DE832
+  missile 43ABC042,438AD014,44DCD55B v=43426F5E,431D2580,437A0000 trail=32:43ABC042,438AD014,44DCD55B
+  missile 432205A1,421C4A42,4426AAAB v=4373086F,426A6F62,437A0000 trail=20:432205A1,421C4A42,4426AAAB
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=761 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=D68B7AD4
+s=762 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=A3831415
+s=763 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=8806378C
+s=764 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=B6F903E8
+s=765 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=05717330
+s=766 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=7E14BCE5
+s=767 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=131B436B
+s=768 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=5F445FFD
+s=769 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=C9D5528F
+s=770 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=7365112C
+  intro=0 t=41A55564 dying=1 kurt=426B4B4B,420D2D2D,45734418 vis=1 pose=0:42860000 cam=42480000,41F00000,4573E418 bones=00000000,00000000,456AF128:00000000
+  wind=3072 haze=4 crawler=40C00000 screen=3F800000,3F3BBBD8,3F800000 radar=0:2:424721DE,4215616A,416CDFFC:3D1199DD wv=3F200000 gv=3F6573B1
+  missile 42B71AEB,41AD9A78,4585A98F v=419D1112,C102E5B6,4332D461 trail=32:42B71AEB,41AD9A78,4585A98F
+  missile 438EECC8,4319DAC3,45491203 v=C2D2D6F8,C25C0288,435BE94D trail=32:438EECC8,4319DAC3,45491203
+  missile C3471B6D,C3CD8B1E,452FF7BD v=42848EA4,42E6146E,43532F00 trail=32:C3471B6D,C3CD8B1E,452FF7BD
+  missile 43C9C51C,43A30D3D,45033025 v=4289EDC6,425A132A,43733743 trail=32:43C9C51C,43A30D3D,45033025
+  missile 43730875,426A6F60,4479FFFD v=4373086F,426A6F62,437A0000 trail=30:43730875,426A6F60,4479FFFD
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=771 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=80E3DCB3
+s=772 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=FD5F236F
+s=773 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=365E3B5D
+s=774 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=8F336096
+s=775 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=5FAD9BBA
+s=776 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=3592918A
+s=777 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=7A6C56FB
+s=778 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=32E78480
+s=779 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=92A32D8D
+s=780 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=E5CC2E4F
+  intro=0 t=41A8000C dying=1 kurt=426B4B4B,420D2D2D,4571E08C vis=1 pose=0:429A0000 cam=42480000,41F00000,4572808C bones=00000000,00000000,45696614:41200000
+  wind=3072 haze=14 crawler=40400000 screen=3F800000,3ECCCCFF,3F800000 radar=0:2:424721DE,4215616A,416CDFFC:3D1199DD wv=3F200000 gv=3F66666B
+  missile 42C431A9,4197C982,4587866F v=419D1112,C102E5B6,4332D461 trail=32:42C431A9,4197C982,4587866F
+  missile 437ADFF5,43079B40,454DA879 v=C2D091DF,C259A428,435C993E trail=32:437ADFF5,43079B40,454DA879
+  missile C32FBE44,C3B94217,45398087 v=4292157F,42FDBB9C,434A803A trail=32:C32FBE44,C3B94217,45398087
+  missile 43C87A59,43A1AB90,4516F90F v=C267B564,C245BA16,43682C75 trail=32:43C87A59,43A1AB90,4516F90F
+  missile 43A205A4,429C4A43,44A6AAAC v=4373086F,426A6F62,437A0000 trail=32:43A205A4,429C4A43,44A6AAAC
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=781 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=01A7FDA5
+s=782 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=852E5790
+s=783 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=9F14EC38
+s=784 st=0 tk=1 hp=0 m=5 p=0 e=0 c=0 ev=- h=DA91ED77
+s=785 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=DFF76E88
+s=786 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=9EF53A6D
+s=787 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=B986B64B
+s=788 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=636AEC26
+s=789 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=4FD3EAFC
+s=790 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=00C2C07D
+  intro=0 t=41AAAAB4 dying=1 kurt=426B4B4B,420D2D2D,45707D00 vis=1 pose=0:42AE0000 cam=42480000,41F00000,45711D00 bones=00000000,00000000,4567DB00:41A00000
+  wind=3072 haze=8 crawler=00000000 screen=3F800000,3D888954,3F800000 radar=0:2:424721DE,4215616A,416CDFFC:3D1199DD wv=3F200000 gv=3F675924
+  missile 43584F46,42EB24F6,455242E1 v=C2CDDAD9,C256CEE8,435D6867 trail=32:43584F46,42EB24F6,455242E1
+  missile C3173BAA,C3A3F8AD,453DB529 v=42937BF0,43001780,43499CB5 trail=32:C3173BAA,C3A3F8AD,453DB529
+  missile 43BCAD9B,4397A82C,452A0BE3 v=C2A43451,C28AFB18,4360B04B trail=32:43BCAD9B,4397A82C,452A0BE3
+  missile 43CA870E,42C35CD7,44D0555A v=4373086F,426A6F62,437A0000 trail=32:43CA870E,42C35CD7,44D0555A
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+s=791 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=3CF821B3
+s=792 st=0 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=CB267F88
+s=793 st=2 tk=1 hp=0 m=4 p=0 e=0 c=0 ev=- h=A00919FB
+  intro=0 t=41AB7780 dying=1 kurt=426B4B4B,420D2D2D,45701256 vis=1 pose=0:42B40000 cam=42480000,41F00000,4570B256 bones=00000000,00000000,4567647A:41B80000
+  wind=3072 haze=11 crawler=3FC00000 screen=3F800000,00000000,3F800000 radar=0:2:424721DE,4215616A,416CDFFC:3D1199DD wv=3F200000 gv=3F67A1F5
+  missile 434E083B,42E06B7C,4553A547 v=C2CCEDA6,C255D765,435DAE4D trail=32:434E083B,42E06B7C,4553A547
+  missile C30FDC27,C39D9159,453EF7C5 v=429365A6,4300044C,4349AF2F trail=32:C30FDC27,C39D9159,453EF7C5
+  missile 43B87E6F,43941DAC,452FA45B v=C2ADA1B5,C292E7D0,435E03F4 trail=32:43B87E6F,43941DAC,452FA45B
+  missile 43D6ADE1,42CF159D,44DCD55B v=4373086F,426A6F62,437A0000 trail=32:43D6ADE1,42CF159D,44DCD55B
+  collected=- inv=- sel=0 ammo=0:0:0:0:0/0 sgun=0
+end state=2 time=41AB7780 health=0
+carry none

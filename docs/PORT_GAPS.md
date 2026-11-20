@@ -40,7 +40,7 @@ A scanner decoded every reachable script in LEVEL3–8 using the C++ decoder and
 | 14 | Air strike and strike scene | AirStrike.cs, StrikeScene.cs | none | L5 final fight | 5, 6, 13 | |
 | 15 | Town timer, shake, sky modes, group texture | TownTicks; FollowCamera UpdateShake; SkyModes; opcodes 140, 202 | no consumers | Shake on every level; minecrawler town messages | Messages | |
 | 16 | Bullet holes (opcode 130) | Scripts/BulletHoles.cs | none | Cosmetic (L5, L6, L8) | 6 | |
-| 17 | Fall (pre-level skydive): sim, then screen | Fall/*.cs | only formats/fall3d.cpp | Skydive, and the pickups carried into the level | 2 | |
+| 17 | Fall (pre-level skydive): sim, then screen | Fall/*.cs | 17a (the simulation) is ported: `fall/fall_sim.{h,cpp}`, `fall/fall_missile.{h,cpp}`, golden/L*_skydive_*.txt. 17b lacks the screen and view (FallScreen, FallView, FallModels, FallGround, FallPalette, FallHud) and the flow does not enter it yet | Skydive, and the pickups carried into the level | 2 | 17a done (2026-11-20); 17b open |
 | 18 | Stream (post-level tube): sim, then screen | Stream/*.cs | 18a sim done: `mdk_core/src/stream/` (Flight, StreamTube, TubeBasis, WatcomRandom), byte-exact against `tests/scripts/stream_probe` (golden/stream_*.txt). 18b open: StreamScreen/StreamView (the BNI models, the tube and sprite drawing, the background, sounds, the input mapping) and the flow's hookup | Tube ride; the Gunter route | 2 | 18a done 2026-11-20; 18b open |
 | 19 | Save/load | SaveGames, Snapshot, Restore, SavePrompt | owner cut 2026-11-05 | No saves; a death reloads the level | 2 | ask the owner (cut) |
 | 20 | Menus and screens | MainMenu, PauseMenu, Stats, EndMovie, Settings | Menu/ cut | Briefings, statistics, difficulty | 2 | ask the owner (cut) |

@@ -227,3 +227,27 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - No existing golden changed.
 - **Commit:** see the git log ("Sniper mode: the scope and the mode").
 - **Still open:** the rounds (#6), the frontends' scope view, overlay and listener (#7), the 3DS zoom buttons (owner), the beta helmet, the saves' clip fields.
+
+### The fall before a level: the simulation (gap package 17a)
+- **What:**
+  - Ported `Fall/FallSim.cs` with its partials `FallSim.Missiles.cs`, `FallSim.Pickups.cs` and `FallSim.Radar.cs` to `mdk_core/src/fall/fall_sim.{h,cpp}`, and `Fall/FallMissile.cs` to `fall/fall_missile.{h,cpp}`. They are ported operation for operation, in the C#'s tick order. The parts are: the intro in space, steering and the pull back to the centre, the camera and its braking, the radars, the missiles and their hits, the explosions, the pickups on their chutes, Bones, the palette effects, and the end (Landed or GameOver).
+  - The C# `Sound`/`Message` events became `FallSim::Hooks`, which are function pointers. The input is `FallSim::Input`: steering x/y (−1/0/1) and skip. The seeded `System.Random` is `mdk::Random`. Every place where the C# draws twice inside one call's arguments has those draws put in order explicitly.
+  - The fall's inventory is a `Kurt`. Its health makes the round trip the way `Kurt.Collect` does. `Kurt::setDifficulty` is new, and is the C#'s `Inventory.Difficulty = setup.Difficulty`.
+  - The handoff to the level is two calls. `FallSim::carry(FallCarry*)` is `FallScreen.Next` on Landed. `fall::carryIntoLevel(carry, Kurt*)` is `Viewer.CarryFromFall`: it collects the pickups again with no messages, then sets the health.
+  - `fall::fallSetup(bni, level, difficulty, Setup*)` is the setup `FallScreen` builds: the clamped index, `FALLPU_n`, and the KURTANIM, KURT_HIT and BONESANM animations.
+  - The view's parts are package 17b and are not here.
+- **Why:** the owner's 2026-11-20 direction to port all the gameplay from the C#. The fall is the skydive before LEVEL7/6/3/4/8. It decides the health Kurt starts each of those levels with, and the pickups he carries into it. Until now the C++ had only the data parser (`formats/fall3d.cpp`), and the flow carried nothing (`game_flow.cpp`, `play()`).
+- **Evidence:**
+  - A new C# probe, `tests/scripts/fall_probe`, is built against the C# FallSim. It wrote `golden/L6_skydive_chase.txt`, `L8_skydive_hard.txt`, `L3_skydive_slow.txt` and `L7_skydive_skip.txt`. `tick1 dump skydive` matches all four byte for byte. They cover:
+    - three pickups taken and carried into the level's inventory;
+    - Bones, and a hard-mode death ending in GameOver with no carry;
+    - 0.15 s frames clamped to three ticks a step, through the 30-33 s pull-back and fade;
+    - the FALL_T1 message and Esc.
+  - Each step prints an FNV-1a hash of all the public state, so a single-ULP drift fails. The full state prints every 10th step and on every event.
+  - Beyond the goldens, 36 more probe-vs-C++ runs matched byte for byte, over every level (5 clamps to 8's fall), difficulty, a negative seed, 0.021 s frames and the full mode.
+  - Breaking the code fails the goldens:
+    - the pickup's x and y draws swapped: all four fail at the first P_FALL;
+    - `carryIntoLevel` without its health: L6 and L3 fail on the `level` line;
+    - the missile's homing pull at 0.21: all four fail.
+  - There are no opcode changes, so `docs/OPCODE_COVERAGE.md` is unchanged.
+- **Commit:** 48f570a on the agent's branch (on e0d79d4), cherry-picked onto the main branch after sniper mode (9fb8235); the only conflict was this ledger ("The fall before a level: the simulation").

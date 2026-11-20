@@ -103,6 +103,10 @@ COMMON_SOURCES := \
 SOURCES := \
 	tick1.cpp \
 	stream_dump.cpp \
+	skydive_dump.cpp \
+	$(CORE)/fall/fall_sim.cpp \
+	$(CORE)/fall/fall_missile.cpp \
+	$(CORE)/formats/fall3d.cpp \
 	$(COMMON_SOURCES)
 
 SOURCES_VM := \

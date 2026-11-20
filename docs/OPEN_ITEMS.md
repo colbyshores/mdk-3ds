@@ -1393,6 +1393,28 @@ The batch that ported 158/159/167/172/178/184 and `UpdatePathSpeed` (PORT_GAPS p
 - **The boxes' fire light** (`LightSources`, FIRE boxes as point lights) is the enhanced
   look's and is not ported; the box SPRITES are, in `EffectsView` (both frontends).
 
+## The fall before a level (2026-11-20, gap package 17a): what landed and what is still open
+
+Landed: `fall/fall_sim.{h,cpp}` and `fall/fall_missile.{h,cpp}`, the C#'s FallSim (and its partials
+Missiles, Pickups, Radar) and FallMissile, byte-identical to the C# probe
+`tests/scripts/fall_probe` on `golden/L*_skydive_*.txt` (`tick1 dump skydive`). Open:
+
+- **17b, the screen and the view:** FallScreen (the keys to `FallSim::Input`, the sounds on 8
+  voices, the WINDLOOP/C_GRIND loops at `windVolume()`/`grindVolume()`, the 3 s zoomed messages),
+  FallView, FallModels, FallGround (its minecrawler track and the `CentreRow` scroll, which are
+  view arithmetic over `time()`), FallPalette and FallHud. None of it is ported; the sim exposes
+  every field they read.
+- **The flow (package 2) does not enter the fall.** `GameFlow::play` takes `state_.carry`'s health
+  only. The fall is entered by `Event.Fall`/`Start.Fall`; on Landed the screen should store
+  `FallSim::carry()` in `GameState::carry` and the level should call `fall::carryIntoLevel` on
+  its Kurt (before binding the HUD's PickupHook, though the helper clears it anyway). On GameOver
+  the C# goes to the menu.
+- **The seed.** FallScreen uses an unseeded `new Random()`; the C++ sim takes a seed, and the
+  screen must pick one (a clock).
+- **Target libm.** The missile's launch direction is `sinf`/`cosf` and the intro's ease is
+  `powf(x, 2)`; the host matches the oracle, newlib on the 3DS is unmeasured (the same leaf as
+  "The 3DS build's libm trig leaf" above).
+
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 
 Batch 40 removed the duplicated *health*; the same split still duplicated the *state*.
