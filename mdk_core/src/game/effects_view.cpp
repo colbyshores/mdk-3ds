@@ -15,6 +15,7 @@
 #include "scripts/end_level.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
+#include "util/math_minmax.h"
 
 namespace mdk {
 
@@ -287,6 +288,64 @@ void EffectsView::addEndPieces(const scripts::EndLevel& end) {
     }
 }
 
+// One sprite's quad at `position`, `texel` world units per texel, showing
+// `textureFrame`, and its halo when the texture glows: the sprite effects' and the
+// spawn_box boxes' common half of EffectsView.Draw (AddQuad).
+void EffectsView::queueSprite(SpriteEntry& entry, const Vec3& position, float texel,
+                              int32_t textureFrame, const Vec3& right, const Vec3& up,
+                              const Vec3& forward, EffectsFrame* frame) {
+    lastSprites_++;
+    if (!entry.glowMeasured) {
+        // Its pixels were away when the entry was made: measured now if
+        // they are back (once), counted as unmeasured if not.
+        const formats::Texture& t = *entry.surface.texture;
+        if (!t.pixelsAway() && t.residentBytes() > 0 && entry.palette != nullptr) {
+            effectsGlowOf(t.indices(), t.width() * t.height() * t.frameCount(),
+                          entry.palette->rgba(), &entry.glow, entry.glowColour);
+            entry.glowMeasured = true;
+        } else {
+            lastUnmeasured_++;
+        }
+    }
+    if ((int32_t)frame->vertices.size() + 6 > kMaxVertices) {
+        return;
+    }
+    Vertex quad[6];
+    effectsQuadVertices(position, scaled(right, texel), scaled(up, texel),
+                        entry.surface.texture->width(), entry.surface.texture->height(), quad);
+    EffectsDrawItem queued;
+    queued.first = (int32_t)frame->vertices.size();
+    queued.count = 6;
+    queued.surface = entry.surface;
+    queued.palette = entry.palette;
+    queued.frame = textureFrame;
+    frame->draws.push_back(queued);
+    frame->vertices.insert(frame->vertices.end(), quad, quad + 6);
+    // ITS HALO, if the PC's bloom would catch it: the same quad, kGlowHaloScale
+    // times the size, the measured colour at the bloom's gain and share.
+    if (entry.glow > 0.0f) {
+        GlowQuad glow;
+        const float haloTexel = texel * kGlowHaloScale;
+        // Half the sprite's size towards the camera: the sprite writes depth,
+        // and a coplanar halo tested LEQUAL could round behind it on the
+        // console's 24-bit floats and leave a hole where it is brightest.
+        const int32_t w = entry.surface.texture->width();
+        const int32_t h = entry.surface.texture->height();
+        const float nudge = texel * (float)(w > h ? w : h) * 0.5f;
+        effectsQuadVertices(sub(position, scaled(forward, nudge)),
+                            scaled(right, haloTexel), scaled(up, haloTexel), w, h,
+                            glow.corners);
+        // What the PC's bloom adds over a dark ground: to_srgb(gain * the
+        // excess), and as much of it as the texture's bright share.
+        for (int32_t c = 0; c < 3; c++) {
+            glow.colour[c] =
+                powf(kGlowIntensity * entry.glowColour[c], 0.45454545f) * entry.glow;
+        }
+        frame->glows.push_back(glow);
+        lastGlowing_++;
+    }
+}
+
 void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& camera,
                         EffectsFrame* frame) {
     frame->reset();
@@ -374,57 +433,33 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
         if (!entry.present) {
             continue;
         }
-        lastSprites_++;
-        if (!entry.glowMeasured) {
-            // Its pixels were away when the entry was made: measured now if
-            // they are back (once), counted as unmeasured if not.
-            const formats::Texture& t = *entry.surface.texture;
-            if (!t.pixelsAway() && t.residentBytes() > 0 && entry.palette != nullptr) {
-                effectsGlowOf(t.indices(), t.width() * t.height() * t.frameCount(),
-                              entry.palette->rgba(), &entry.glow, entry.glowColour);
-                entry.glowMeasured = true;
-            } else {
-                lastUnmeasured_++;
-            }
-        }
-        if ((int32_t)frame->vertices.size() + 6 > kMaxVertices) {
+        const float texel = effect.scale / scripts::Effects::kTexelsPerUnit;
+        queueSprite(entry, effect.position, texel, effect.frame(), right, up, forward, frame);
+    }
+
+    // spawn_box sprites (EffectsView.cs:66-76): as wide as the box, playing at 30
+    // frames per second -- the FIRE and PULSE hazards the scripts make (opcode 159).
+    const std::vector<scripts::MdkObject*>& boxes = scripts.boxes();
+    for (size_t i = 0; i < boxes.size(); i++) {
+        const scripts::MdkObject& box = *boxes[i];
+        if (box.dead || !box.visible || box.model == nullptr) {
             continue;
         }
-        const float texel = effect.scale / scripts::Effects::kTexelsPerUnit;
-        Vertex quad[6];
-        effectsQuadVertices(effect.position, scaled(right, texel), scaled(up, texel),
-                            entry.surface.texture->width(), entry.surface.texture->height(), quad);
-        EffectsDrawItem queued;
-        queued.first = (int32_t)frame->vertices.size();
-        queued.count = 6;
-        queued.surface = entry.surface;
-        queued.palette = entry.palette;
-        queued.frame = effect.frame();
-        frame->draws.push_back(queued);
-        frame->vertices.insert(frame->vertices.end(), quad, quad + 6);
-        // ITS HALO, if the PC's bloom would catch it: the same quad, kGlowHaloScale
-        // times the size, the measured colour at the bloom's gain and share.
-        if (entry.glow > 0.0f) {
-            GlowQuad glow;
-            const float haloTexel = texel * kGlowHaloScale;
-            // Half the sprite's size towards the camera: the sprite writes depth,
-            // and a coplanar halo tested LEQUAL could round behind it on the
-            // console's 24-bit floats and leave a hole where it is brightest.
-            const int32_t w = entry.surface.texture->width();
-            const int32_t h = entry.surface.texture->height();
-            const float nudge = texel * (float)(w > h ? w : h) * 0.5f;
-            effectsQuadVertices(sub(effect.position, scaled(forward, nudge)),
-                                scaled(right, haloTexel), scaled(up, haloTexel), w, h,
-                                glow.corners);
-            // What the PC's bloom adds over a dark ground: to_srgb(gain * the
-            // excess), and as much of it as the texture's bright share.
-            for (int32_t c = 0; c < 3; c++) {
-                glow.colour[c] =
-                    powf(kGlowIntensity * entry.glowColour[c], 0.45454545f) * entry.glow;
-            }
-            frame->glows.push_back(glow);
-            lastGlowing_++;
+        SpriteEntry& entry = sprite(box.arena, box.model->name);
+        if (!entry.present) {
+            continue;
         }
+        const float sizeX = box.model->bounds.max.x - box.model->bounds.min.x;
+        const float sizeZ = box.model->bounds.max.z - box.model->bounds.min.z;
+        const int32_t width = entry.surface.texture->width();
+        const float texel = mathMax(sizeX, sizeZ) / (float)(width > 1 ? width : 1);
+        const int32_t frames = entry.surface.frameCount > 0 ? entry.surface.frameCount : 1;
+        /* @vfp-exempt R11 — the box sprite's frame, a 1:1 port of the C#'s
+         * TickCount % FrameCount (EffectsView.cs:75); one modulo per live spawn_box box per
+         * frame (a handful), by the texture's small positive frame count. measured n/a
+         * (corpus empty). Verified 2026-11-20. */
+        const int32_t boxFrame = scripts.tickCount() % frames;
+        queueSprite(entry, box.position, texel, boxFrame, right, up, forward, frame);
     }
 
     // The twisters' ribbons (AddRibbon): one draw of WMIBTEX each, its corners in

@@ -324,6 +324,7 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
 }
 
 ScriptRuntime::~ScriptRuntime() {
+    forgetBoxModels();
     if (player_ != nullptr && player_->itemHooks().context == this) {
         player_->setItemHooks(Player::ItemHooks());
     }
@@ -1453,6 +1454,25 @@ void ScriptRuntime::motionPath(MdkObject* obj) {
     if (obj->path == 0) {
         return;
     }
+    if ((obj->flags & MdkObject::FlagPathSpeedByKurt) != 0) {
+        // ObjectMotion.UpdatePathSpeed (ObjectMotion.cs:189, 0x43c258; opcode 164): the
+        // path speed goes towards the speed for Kurt being ahead of, around, or behind
+        // the set distance (along the object's heading), by (near - far) * 0.5 per
+        // second. It runs before UpdatePath, so before the path-stop test below.
+        const float kAround = 5.0f;
+        const Vec3 heading = fromAngle(obj->yaw);
+        const float ahead = (obj->position.x - kurtPosition_.x) * heading.x +
+                            (obj->position.y - kurtPosition_.y) * heading.y;
+        const std::array<float, 4>& speeds = obj->path_speeds;
+        const float distance = speeds[0];
+        float target = speeds[1];
+        if (ahead <= distance + kAround) {
+            target = ahead >= distance - kAround ? speeds[2] : speeds[3];
+        }
+        const float step = (speeds[3] - speeds[1]) * kTick * 0.5f;
+        obj->path_speed = obj->path_speed <= target ? mathMin(obj->path_speed + step, target)
+                                                    : mathMax(obj->path_speed - step, target);
+    }
     int32_t path = obj->path;
     if (obj->path_stop >= 0) {
         // Round halves away from zero (ObjectMotion.Round == MathF.Round's
@@ -1520,8 +1540,13 @@ void ScriptRuntime::motionPath(MdkObject* obj) {
         obj->position = p;
         return;
     }
-    // FlagPathPushes drives horizontal velocity (Push) instead of position; that
-    // belongs to the velocity/footing motion slice.
+    // The path drives the horizontal velocity instead of the position
+    // (ObjectMotion.cs:309-310): Push, which ApplyVelocity spends this tick. The
+    // snowboarders of LEVEL4 (XGSNOW) ride their paths this way, at the speed
+    // path_speed_by_kurt sets above.
+    const float pathDt = kTick;  // ObjectMotion.Dt: a float divide, as the C#'s
+    obj->push.x += (p.x - old.x) / pathDt;
+    obj->push.y += (p.y - old.y) / pathDt;
 }
 
 void ScriptRuntime::motionVelocity(MdkObject* obj) {

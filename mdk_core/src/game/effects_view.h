@@ -174,6 +174,9 @@ private:
     const ObjectLook& lookOf(const std::string& arena);
     void addEndPieces(const scripts::EndLevel& end);
     SpriteEntry& sprite(const std::string& arena, const std::string& texture);
+    void queueSprite(SpriteEntry& entry, const Vec3& position, float texel, int32_t textureFrame,
+                     const Vec3& right, const Vec3& up, const Vec3& forward,
+                     EffectsFrame* frame);
     Batch& batchFor(const Surface& surface, const formats::Palette* palette);
 
     const MaterialResolver* resolver_;

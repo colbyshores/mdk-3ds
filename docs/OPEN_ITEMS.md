@@ -1292,9 +1292,9 @@ Still open:
 - **The slot keys 1-5** (`Key.Item1-5`) have no action in `input.h`; the mouse wheel's item
   keys are not bound on Linux; the 3DS bindings are the input owner's.
 - **The sniper's ammo selection** (`SelectAmmo`/`UseAmmo`/`NextAmmo`) waits for the sniper.
-- **Opcodes 172, 178, 184** (explosion, explosion_damage, explode) are now unblocked:
-  `ScriptRuntime::blast` is their dependency, but none fires in the corpus, so they wait for a
-  `vm_tests` case each (the rule in `docs/OPCODE_COVERAGE.md`).
+- **Opcodes 172, 178, 184** — CLOSED 2026-11-20 by the combat and hazard batch (with 158,
+  159, 167 and 164's consumer); they DO fire in the levels (see `docs/OPCODE_COVERAGE.md`),
+  and nine `golden/L*_hazards_*.txt` from `tests/scripts/hazards_probe` pin them.
 - **Kurt's own updraft** (`Kurt.Updraft.cs`) is still unported; the objects' is not.
 
 ## Kurt walks through closed doors; the second arena over a doorway is faithful (2026-11-20)
@@ -1370,6 +1370,25 @@ Still open:
 - **3DS**: K_TAKEOF / K_FLOATC are not in Kurt's start set, so their first frames stream (the
   held frame shows meanwhile). Unmeasured on hardware: the torn arena's per-frame dynamic
   upload (the whole arena's vertices, for the few seconds of the end).
+
+## The combat and hazard opcodes: what their goldens cannot see (2026-11-20)
+
+The batch that ported 158/159/167/172/178/184 and `UpdatePathSpeed` (PORT_GAPS package 4,
+`golden/L*_hazards_*.txt`) left these open, each measured:
+
+- **touch_damage's untouchable mask** (`0x820`, ScriptRuntime.cs:2764) is not pinned: every
+  object the retail scripts make untouchable carries BOTH bits (pickups `0x2008A6`,
+  projectiles `0x80820`, the boxes' `flags_set 2080`), so narrowing the mask to `0x800`
+  changes no golden. Only an object with `0x20` alone (a killed object running its death
+  script, an explosion effect, HMO_3's XG generators) touching a `targets 2` toucher can.
+- **Fans lift the debris in the C# and not here** (`Debris.Update`'s `Updraft` hook,
+  `FanSpark`; package 8). Two hazard scenarios were dropped from the goldens for it: an
+  explode beside a victim in GUNT_2 (one piece lived 5 ticks longer in the C++ from s=152) and
+  MEAT_10's XBN_BOMBs (the fan's spark is a piece from s=4). Re-pin both when package 8 lands.
+- **spawn_box mode 1 and op172_position modes 1/2** are ported but unreachable in the retail
+  scripts (they use modes 0/2 and 0/3), so no golden pins them.
+- **The boxes' fire light** (`LightSources`, FIRE boxes as point lights) is the enhanced
+  look's and is not ported; the box SPRITES are, in `EffectsView` (both frontends).
 
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 

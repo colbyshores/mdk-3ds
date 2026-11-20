@@ -258,6 +258,22 @@ public:
     MdkObject* spawnExplosion(const std::string& arena, const Vec3& center, float scale,
                               float yaw, float lift);
 
+    // ---- Contact damage and spawned boxes (hazards.cpp) ----
+    // C# TouchDamage (ScriptRuntime.cs:2758, touch_damage 0x45cf60, opcode 158):
+    // `targets` 1 hurts Kurt once per visible part touching him, 2 hurts the other
+    // objects touching its box (hit event -3, hit type -4). With flags 1 the object
+    // dies when it hits. Returns whether it hit.
+    bool touchDamage(MdkObject* obj, int32_t targets, int32_t damage, int32_t flags);
+    // C# SpawnBox (ScriptRuntime.cs:1593, spawn_box, opcode 159): an object whose model
+    // is a box of `size` (model_create_box 0x404188, 8 corners, 12 triangles, not
+    // drawn) named after the texture its sprite shows (FIRE, PULSE). No init script
+    // runs. The box models are kept by (size, texture), as the C#'s _boxModels.
+    MdkObject* spawnBox(MdkObject* parent, const Vec3& position, const Vec3& size,
+                        const std::string& texture, int32_t script);
+    // C# Boxes (ScriptRuntime.cs:1647): the objects spawn_box made, dead ones too (skip
+    // them); their model's name is the texture their sprite shows.
+    const std::vector<MdkObject*>& boxes() const { return boxes_; }
+
     // ---- The chain gun (ScriptRuntime.cs:1816-2137) ----
     // C# FireChainGun (0x41a304): one tick of fire. It hits the best target in front of
     // Kurt (aimScore) or, without one, the arena up to 150 units away. runTick calls it
@@ -1110,6 +1126,17 @@ private:
     bool levelEnded_ = false;             // the C#'s LevelEnded(GameOver.No), latched
     int32_t tickCount_ = 0;
     float tickAccumulator_ = 0.0f;  // C# ScriptRuntime._time
+    // spawn_box (hazards.cpp): C# _boxModels and _boxes. A deque so a model's address
+    // (the pose caches' key, MdkObject::model) never moves; the keys are parallel.
+    struct BoxModelKey {
+        Vec3 size;
+        std::string texture;
+    };
+    std::deque<formats::Model> boxModels_;
+    std::vector<BoxModelKey> boxModelKeys_;
+    std::vector<MdkObject*> boxes_;
+    // The destructor's half of the box models: the pose caches drop their keys.
+    void forgetBoxModels();
 };
 
 } // namespace scripts

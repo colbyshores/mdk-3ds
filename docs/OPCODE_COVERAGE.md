@@ -2,6 +2,11 @@
 
 Method and reachability evidence in the final Phase 2 report. Summary:
 
+- **Combat and hazard batch (2026-11-20, PORT_GAPS package 4):** 158, 159, 167,
+  172, 178 and 184 ported, with the consumer of 164's flag; recount (top-level
+  `case` labels of both brace-matched spans, set semantics): C# **238**, C++ **234**,
+  remaining **4** (28, 114, 130, 224), recounted after rebasing onto the end of a level
+  (131). Details under "Remaining" below.
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
   owns **238** cases, the C++ has **226** unique labels (225 true dispatches — one
@@ -355,11 +360,11 @@ one-line branch on `Rides.Ridden == obj`, and the runtime already carries that
 state as `ridesRidden_` (the ride slice is unported, so it is null and the branch
 is false for every object — the value the C# reads on foot). It never fires in
 levels 3–8; a synthetic `vm_tests` case pins the dispatch and the false branch.
-Remaining 10 (after the chain-gun batch and the end of a level below):
+Remaining 4 (after the chain-gun batch, the end of a level and the combat and
+hazard batch below):
 28,
 114,
-130, 158, 159, 167,
-172, 178, 184,
+130,
 224
 
 **End of a level (2026-11-20, package 1 of `docs/PORT_GAPS.md`):** 131
@@ -374,6 +379,23 @@ game) are package 13 and NOT ported**: they still count opcode 131 in the VM's
 unimplemented diagnostic, and the script carries on to the next instruction exactly as
 the C# does (the opcode has no branch). A value the C#'s switch has no case for is its own
 no-op and is not counted.
+
+**Combat and hazard batch (2026-11-20, docs/PORT_GAPS.md package 4):** 158
+(`touch_damage`, over the new `ScriptRuntime::touchDamage`, ScriptRuntime.cs:2758),
+159 (`spawn_box`, over `ScriptRuntime::spawnBox` and its box models,
+ScriptRuntime.cs:1593-1647; mode 1 is unreachable in the retail scripts, which use
+modes 0 and 2), 167 (`move_to_bomb`, drawing the game's random for the aside at the
+C#'s point), 172 (`explosion`), 178 (`explosion_damage`, a counted blast) and 184
+(`explode`, an uncounted blast, then `kill`), with `ScriptVm.Point` (op172_position;
+the retail scripts use modes 0 and 3). 164's flag now has its consumer,
+`ObjectMotion.UpdatePathSpeed`, in `motionPath`, together with the path push
+(`FlagPathPushes`, ObjectMotion.cs:309-310) that the snowboarders ride. These are
+NOT corpus-silent: decoding every reachable script of LEVEL3-8 counts 158 ×68,
+167 ×84, 184 ×38, 178 ×36, 172 ×32, 159 ×15 — the reachability probe's Kurt
+stands still in the first arena, which is why it never saw them. Pinned by nine
+goldens from the C# probe `tests/scripts/hazards_probe`
+(`golden/L*_hazards_*.txt`, `tick1 dump hazards`); each breaks when the piece it
+names is broken (see docs/WORK_LEDGER.md).
 
 **Chain-gun batch (2026-11-19):** 181 (`boss_bar`) and 209
 (`if_player_on_me_low`) ported with Kurt's firing (`Kurt::firing()`, written by
@@ -403,7 +425,7 @@ two-line dispatch.
 By blocking subsystem (carried grouping, corrected for this batch):
 
 - **Kurt/player/HUD (needs Kurt items, ammo, platform, firing, camera
-  state):** 114 (if_player_on_me), 178, 189,
+  state):** 114 (if_player_on_me), 189,
   215, 240, 244, 247 (181 and 209 landed with the chain-gun batch).
   (171 (`if_is_573c30`) landed over the runtime's `ridesRidden_` (the
   `Rides.Ridden` equivalent): it is not gated by the Kurt items/platform/firing
@@ -422,10 +444,10 @@ By blocking subsystem (carried grouping, corrected for this batch):
   `enterArena` makes an unreachable arena answer the arena RULE and not yet
   the collision) and `Kurt.Keeper`, whose `_keeper = null` the port cannot do.)
 - **Arena/world (needs arena texture/sky/fan/wind state, spawn helpers):**
-  28, 130, 133, 142, 143, 159, 190, 224 (156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
+  28, 130, 133, 142, 143, 190, 224 (159 landed with the combat and hazard batch; 156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 128, 132,
-  136, 158, 167, 172, 184 (121 landed with the floor-below batch over
+  136 (158, 167, 172 and 184 landed with the combat and hazard batch; 121 landed with the floor-below batch over
   the existing raycast seam; 192 landed with the no-flat-floor batch over the
   same seam extended to carry the hit normal; 195 landed with the hit-weapon
   batch over the existing `hit_type` field, but its only C++ writer is the
@@ -506,11 +528,16 @@ Opcode 170 is a faithful dispatch over the borrowed live `Player` source, now
 realized by the Linux frontend integration.)
 
 **Partial — faithful dispatch, effect gated behind a partial/unported subsystem
-(13 cases), each verified against the code. The rule is consistent for input
+(9 cases), each verified against the code. The rule is consistent for input
 fields and output consumers: a required input with no reachable writer, or an
 output with no consumer, is partial even when the dispatch itself is exact.
-Thus 81/165/166/174/195 are partial for unwritten inputs, and
-135/202/203/215 for missing visual, snapshot or movement consumers. (240 and 244 are
+Thus 81/174/195 are partial for unwritten inputs, and
+135/202/203 for missing visual, snapshot or movement consumers. (16/56, 165/166
+and 215 left this table on 2026-11-20, re-verified with the combat and hazard
+batch: `kill` runs Explode's sound, flash, break-up and explosion
+(`ScriptRuntime::explode`); `itemsBomb` is written by the Items slice
+(items.cpp, golden/L8_items_bomb.txt, golden/L6_hazards_bomb.txt); and the white
+flash is drawn by `hud_view.cpp` from `Kurt::whiteFlash()` on both frontends.) (240 and 244 are
 not in this table and no longer belong to that second group: 240 writes
 `knockDamage` and 244 writes `invulnerable`, and both fields are live state that
 `Player` declines each tick and the `L3_kurt_knock`/`L3_kurt_invuln` goldens pin, so
@@ -521,22 +548,19 @@ portable with no new subsystem, and it is ported.)**
 
 | Opcode | Name | Gating subsystem (verified) |
 |---|---|---|
-| 16 | set_health | on health 0 calls `kill()` (script_runtime.cpp:2976); its death-script and removal accounting are ported, but the Explode branch's sound/flash/debris/explosion effects are not |
-| 56 | add_health | on death calls the same `kill()` placeholder |
-| 81 | push_hit_dir | reads `hit_direction`; its chain-gun, mortar, Twister, sniper-round and touch-damage writers are unported, so integrated play uses the default east direction |
+| 81 | push_hit_dir | reads `hit_direction`; the chain gun, the blast, the mortar, Twister and touch_damage write it now, but the sniper rounds' writer (SniperRounds.cs:610, PORT_GAPS package 6) is unported |
 | 135 | raise_573aa8 | writes the runtime's per-tick maximum, but the C# `ShakeRaised` follow-camera consumer is not ported |
 | 140 | group_set_texture | sets the group material VM state; the renderer ignores it (open item 1, dynamic scene updates) |
-| 165 | if_no_bomb | reads `itemsBomb`, which is never assigned (script_runtime.h:295, `= nullptr` only) → always "no bomb" until the Items slice |
-| 166 | if_bomb_visible | same `itemsBomb` gap → always false |
 | 174 | if_ammo | reads `Kurt`'s super-chain-gun timer and five sniper-ammo entries, but their pickup writers and chain-gun/sniper combat writers are not ported; integrated play therefore sees zero |
 | 202 | set_574304 | writes the runtime's shared `skyMode`, but the renderer's `SkyModes.BackdropOf` and save/load snapshot consumers are not ported |
 | 203 | camera_track | writes the runtime's `cameraTrackPitch`/`cameraTrackTicks`, and the Linux follow camera consumes them, but the save/load snapshot's `camera_track_*` fields are not ported |
-| 195 | if_hit_weapon | reads `hit_type`; its only C++ writer is `ScriptRuntime::hitGroup`, which has no caller. The C# group-hit call sites (including Kurt's `HitTypeKurt = -11` touch) and direct combat writers remain deferred |
-| 215 | screen_flash | writes whiteFlash and Player::fadeFlashes fades it (golden/L3_kurt_flashes.txt), but the renderer's white-overlay consumer is not ported |
+| 131 | special_event | the <= 50 arm (the end of a level) is ported; the arms above 50 (the strike, the cutscenes, Gunter, the end of the game) are package 13 and still count as unimplemented |
+| 195 | if_hit_weapon | reads `hit_type`; the chain gun, the blast, the mortar, the cow, touch_damage and `hitGroup` write it now, but the sniper rounds' writer (SniperRounds.cs:609, weapon types 0, 2, 3, 4 and -6; PORT_GAPS package 6) is unported |
 | 248 | push_kurt | knocks Kurt down and shoves him, from the object's frame or away from it (golden/L3_kurt_push.txt); the C#'s `StopFiring()` inside KnockDown is inert because the firing/muzzle subsystem is not ported |
 
-**Complete — effect realized with the subsystems present (198 cases):** every
-owned case not in the partial table above (211 true dispatches − 13 = 198). These are the pure
+**Complete — effect realized with the subsystems present (225 cases):** every
+owned case not in the partial table above (234 true dispatches − 9 = 225, recounted
+2026-11-20 after package 1's 131 and package 4). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases, exercised by byte-for-byte goldens
 through t600 on levels 3-8 or by the synthetic tests where the corpus cannot reach them.
@@ -554,7 +578,7 @@ conditions/flags/variables
 9, 12, 64, 94, 95, 125, 183); explicit no-ops (77, 239); group state (98, 99, 162, 163, 168, 194); spawn
 (113, 149, 150, 152, 153, 156, 206); partner links (179, 180, 228); chain links
 (29, 49 — with movement command 30, which moves the chain); alarm state (15, 27). The authoritative complete set is the owned set minus
-the 13 partial cases in the table above, not this illustrative grouping. (121 joined the conditions group with the floor-below batch; 192 joined it with the no-flat-floor batch; 206 joined the spawn group with the 206 batch; 217 joined the new stats-counters group with the stats slice; 243 joins the conditions group with the vision-condition batch. 81, 174 and 195 are partial until their input writers exist; 135 and 203 are partial until their remaining camera/snapshot consumers exist; 170, 219 and 220 joined the complete set when the Linux frontend constructed `ScriptRuntime` and bound the live `Player`.)
+the 9 partial cases in the table above, not this illustrative grouping. (121 joined the conditions group with the floor-below batch; 192 joined it with the no-flat-floor batch; 206 joined the spawn group with the 206 batch; 217 joined the new stats-counters group with the stats slice; 243 joins the conditions group with the vision-condition batch. 81, 174 and 195 are partial until their input writers exist; 135 and 203 are partial until their remaining camera/snapshot consumers exist; 170, 219 and 220 joined the complete set when the Linux frontend constructed `ScriptRuntime` and bound the live `Player`.)
 
 All three oracle `Linked` writers are now ported: `find_object` (245),
 `spawn_partner` (179), and `link_partners` (228). The partner-condition cases

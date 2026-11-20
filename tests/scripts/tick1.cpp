@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -2101,6 +2102,258 @@ bool levelEndDump(int level, int steps, const std::string& schedule, const MdkDa
     return true;
 }
 
+// The hazards probe's schedule (tests/scripts/hazards_probe): items_probe's tokens, plus
+// `tp:step:ARENA:x:y:z` (TeleportKurt), `run:step:MODEL:pc:dx:dy:dz` (a plain spawn in
+// Kurt's arena at his feet plus the offset, running the retail script at CMI offset pc)
+// and `watch:TYPE` (the objects of that type printed each step). The items tokens go to
+// parseItemsSchedule untouched.
+struct HazardsTeleport {
+    int step;
+    std::string arena;
+    Vec3 position;
+};
+struct HazardsRun {
+    int step;
+    std::string model;
+    int32_t pc;
+    Vec3 offset;
+};
+
+std::vector<std::string> splitColons(const std::string& token) {
+    std::vector<std::string> fields;
+    size_t at = 0;
+    while (true) {
+        const size_t next = token.find(':', at);
+        fields.push_back(token.substr(at, next == std::string::npos ? std::string::npos : next - at));
+        if (next == std::string::npos) {
+            break;
+        }
+        at = next + 1;
+    }
+    return fields;
+}
+
+bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* holds,
+                          std::vector<ItemsGive>* gives, std::vector<HazardsTeleport>* teleports,
+                          std::vector<HazardsRun>* runs, std::vector<std::string>* watched) {
+    std::string items;
+    size_t start = 0;
+    while (start < schedule.size()) {
+        size_t end = schedule.find(',', start);
+        if (end == std::string::npos) {
+            end = schedule.size();
+        }
+        const std::string token = schedule.substr(start, end - start);
+        start = end + 1;
+        if (token.empty()) {
+            continue;
+        }
+        const std::vector<std::string> f = splitColons(token);
+        if (f[0] == "tp") {
+            if (f.size() != 6) {
+                return false;
+            }
+            HazardsTeleport t;
+            t.step = atoi(f[1].c_str());
+            t.arena = f[2];
+            t.position = Vec3{strtof(f[3].c_str(), nullptr), strtof(f[4].c_str(), nullptr),
+                              strtof(f[5].c_str(), nullptr)};
+            teleports->push_back(t);
+        } else if (f[0] == "run") {
+            if (f.size() != 7) {
+                return false;
+            }
+            HazardsRun r;
+            r.step = atoi(f[1].c_str());
+            r.model = f[2];
+            r.pc = atoi(f[3].c_str());
+            r.offset = Vec3{strtof(f[4].c_str(), nullptr), strtof(f[5].c_str(), nullptr),
+                            strtof(f[6].c_str(), nullptr)};
+            runs->push_back(r);
+        } else if (f[0] == "watch") {
+            if (f.size() != 2) {
+                return false;
+            }
+            watched->push_back(f[1]);
+        } else {
+            items += (items.empty() ? "" : ",") + token;
+        }
+    }
+    // The items probe's `push:` (a HUD message) is not a hazards token: the hazards
+    // probe has no HUD, so a schedule that carries one is refused, not ignored.
+    std::vector<ItemsPush> pushes;
+    return parseItemsSchedule(items, holds, gives, &pushes) && pushes.empty();
+}
+
+// `tick1 dump hazards <level> <steps> <schedule>`: the C++ side of tests/scripts/
+// hazards_probe, column for column -- Kurt, the object list's totals, the live spawn_box
+// boxes (place and half size), the watched objects (health, place, movement command and
+// destination, path speed, flags, last hit), the bomb, the pieces and effects, the white
+// flash, the shake and the voices. It pins the combat and hazard opcodes (158, 159, 167, 172, 178, 184)
+// and path_speed_by_kurt's consumer.
+bool kurtHazardsDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                     const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<HazardsTeleport> teleports;
+    std::vector<HazardsRun> runs;
+    std::vector<std::string> watched;
+    if (!parseHazardsSchedule(schedule, &holds, &gives, &teleports, &runs, &watched)) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    char buffer[1024];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < teleports.size(); i++) {
+            if (teleports[i].step == step) {
+                runtime.teleportKurt(teleports[i].arena, teleports[i].position, player.yaw);
+            }
+        }
+        for (size_t i = 0; i < gives.size(); i++) {
+            if (gives[i].step == step && !gives[i].drop) {
+                player.collect(gives[i].model);
+            }
+        }
+        for (size_t i = 0; i < gives.size(); i++) {
+            if (gives[i].step == step && gives[i].drop) {
+                const Vec3 at{start[0] + gives[i].offset.x, start[1] + gives[i].offset.y,
+                              start[2] + gives[i].offset.z};
+                runtime.spawn(&runtime.getArenaState(runtime.currentArena()).controller,
+                              gives[i].model, at, 0.0f, -1, 0, true);
+            }
+        }
+        for (size_t i = 0; i < runs.size(); i++) {
+            if (runs[i].step == step) {
+                const Vec3 at{player.feet.x + runs[i].offset.x, player.feet.y + runs[i].offset.y,
+                              player.feet.z + runs[i].offset.z};
+                runtime.spawn(&runtime.getArenaState(runtime.currentArena()).controller,
+                              runs[i].model, at, 0.0f, -1, runs[i].pc, false);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+
+        const Kurt& combat = player.combat();
+        int32_t ohp = 0;
+        long long sx = 0;
+        long long sy = 0;
+        long long sz = 0;
+        std::string watch;
+        const std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            const scripts::MdkObject& o = objects[i];
+            if (o.dead) {
+                continue;
+            }
+            ohp += o.health;
+            sx += p64(o.position.x);
+            sy += p64(o.position.y);
+            sz += p64(o.position.z);
+            if (std::find(watched.begin(), watched.end(), o.type_name) != watched.end()) {
+                snprintf(buffer, sizeof(buffer),
+                         "%s%s#%d:h%d@%d,%d,%d/m%d>%d,%d,%d/v%.4f/f%X/e%d/t%d",
+                         watch.empty() ? "" : ";", o.type_name.c_str(), o.instance_id, o.health,
+                         p64(o.position.x), p64(o.position.y), p64(o.position.z), o.move_command,
+                         p64(o.move_destination.x), p64(o.move_destination.y),
+                         p64(o.move_destination.z), o.path_speed, (unsigned)o.flags, o.hit_event,
+                         o.hit_type);
+                watch += buffer;
+            }
+        }
+        std::string boxes;
+        const std::vector<scripts::MdkObject*>& live = runtime.boxes();
+        for (size_t i = 0; i < live.size(); i++) {
+            const scripts::MdkObject& b = *live[i];
+            if (b.dead) {
+                continue;
+            }
+            const formats::Vec3f& half = b.model->bounds.max;
+            snprintf(buffer, sizeof(buffer), "%s%s#%d@%d,%d,%d/%d,%d,%d", boxes.empty() ? "" : ";",
+                     b.type_name.c_str(), b.instance_id, p64(b.position.x), p64(b.position.y),
+                     p64(b.position.z), p64(half.x), p64(half.y), p64(half.z));
+            boxes += buffer;
+        }
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& playing = runtime.mixer().voices();
+        for (size_t i = 0; i < playing.size(); i++) {
+            if (i) {
+                voices += ",";
+            }
+            voices += playing[i].name;
+        }
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d state=%s arena=%s feet64=%d,%d,%d yaw=%.4f hp=%d kd=%.4f objs=%d ohp=%d "
+                 "opos=%lld,%lld,%lld kills=%d boxes=",
+                 step, kurtStateName(player.state()), runtime.currentArena().c_str(),
+                 p64(player.feet.x), p64(player.feet.y), p64(player.feet.z), player.yaw,
+                 player.health(), combat.knockDamage(), runtime.objectCount(), ohp, sx, sy, sz,
+                 runtime.stats.kills);
+        *out += buffer;
+        *out += boxes.empty() ? "-" : boxes;
+        *out += " watch=";
+        *out += watch.empty() ? "-" : watch;
+        snprintf(buffer, sizeof(buffer),
+                 " bomb=%d pieces=%d effects=%d white=%.4f shake=%.4f voices=",
+                 runtime.itemsBomb != nullptr && !runtime.itemsBomb->dead ? 1 : 0,
+                 runtime.debris().pieceCount(), runtime.effects.count(), combat.whiteFlash(),
+                 runtime.shake);
+        *out += buffer;
+        *out += voices.empty() ? "-" : voices;
+        *out += "\n";
+    }
+    return true;
+}
+
 // Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
 // the ScriptRuntime bound to the Player it drives. Shared by the golden and by
 // `tick1 dump hurt`, so a failing golden diffs the same text it compares.
@@ -3873,6 +4126,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "hazards") {
+            // `tick1 dump hazards <level> <steps> <schedule>`: kurtHazardsDump's text, the
+            // C++ side of the hazards probe.
+            std::string got;
+            std::string why;
+            if (!kurtHazardsDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                                 &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "items" || what == "hud" || what == "ribbon") {
             // `tick1 dump items|hud|ribbon <level> <steps> <schedule>`: kurtItemsDump's
             // text, the C++ side of the items probe (`Probe [hud|ribbon] ...`).
@@ -4858,6 +5124,83 @@ int main(int argc, char** argv) {
             std::string got;
             std::string why;
             if (!levelEndDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The combat and hazard opcodes, end to end against the oracle probe (tests/scripts/
+    // hazards_probe; see kurtHazardsDump for the columns): 158 touch_damage, 159
+    // spawn_box, 167 move_to_bomb, 172 explosion, 178 explosion_damage, 184 explode, and
+    // path_speed_by_kurt's consumer. The schedules are the probe's arguments, byte for
+    // byte: each golden's first line repeats its schedule. A `run:` token enters the
+    // level's own bytecode at an opcode (the CMI offset of the instruction).
+    {
+        struct HazardsCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const HazardsCase kHazardsCases[] = {
+            {"L6_hazards_bomb", "golden/L6_hazards_bomb.txt", 6, 300,
+             "tp:1:OLYM_1:-1142:-935:-68,give:2:SW_INTER,use:21-23,watch:XT",
+             "the World's Most Interesting Bomb thrown by OLYM_1's XT: move_to_bomb (167) "
+             "draws the aside and walks it over"},
+            {"L5_hazards_touch", "golden/L5_hazards_touch.txt", 5, 600,
+             "tp:1:MUSE_2:190:199:-570,watch:XGUNTAM",
+             "MUSE_2's XGUNTAM rides its path through Kurt: touch_damage (158) hurts him "
+             "once per part"},
+            {"L8_hazards_bang", "golden/L8_hazards_bang.txt", 8, 400,
+             "tp:1:GUNT_2:-209:480:40,fire:60-300,watch:XBANG,watch:BOLT,watch:BIGBOLT",
+             "GUNT_2's XBANG dies: explode (184), its uncounted blast on everything, the "
+             "kill, its bolts"},
+            {"L4_hazards_snow", "golden/L4_hazards_snow.txt", 4, 600,
+             "tp:1:MEAT_4:284:7382:-1139,fwd:100-400,turbo:100-400,watch:XGSNOW",
+             "MEAT_4's snowboarder: path_speed_by_kurt (164) eases its path speed by Kurt's "
+             "lead, and the path pushes it"},
+            {"L8_hazards_kill", "golden/L8_hazards_kill.txt", 8, 300,
+             "tp:1:GUNT_2:-156:53:-4,run:3:XG:21471:40:0:0,run:20:XBANG:25067:44:0:0,"
+             "watch:XBANG",
+             "XBANG's explode (184) next to a grunt: the blast kills it, and the kill is not "
+             "counted (Kills.Ignored)"},
+            {"L4_hazards_blast", "golden/L4_hazards_blast.txt", 4, 500,
+             "tp:1:MEAT_5:-134:13260:-1985,run:3:XC:55585:-20:0:0,run:5:XMT:55470:-20:0:0,"
+             "run:7:XMT:55470:-20:0:0,watch:XMT,watch:XC,watch:SW_THUMP",
+             "MEAT_5's group 1 blown up twice: explosion_damage (178) on objects and groups "
+             "kills an XC and counts it, a BIGBOLT's touch_damage, XC's FIRE boxes (159)"},
+            {"L4_hazards_touch", "golden/L4_hazards_touch.txt", 4, 300,
+             "tp:1:MEAT_5:-130:13260:-1980,run:5:XMT:54289:-20:0:0,run:5:XMT:54289:-20:0:0,"
+             "watch:XMT",
+             "two XMTs in one place: touch_damage (158) hits the other and branches (flags 2)"},
+            {"L3_hazards_boxes", "golden/L3_hazards_boxes.txt", 3, 300,
+             "tp:1:HMO_3:3:1241:-931,run:5:XG:44160:0:0:0,run:9:XG:8127:10:0:0,"
+             "run:13:XG:52115:-10:0:0,watch:PULSE,watch:FIRE",
+             "spawn_box (159) at a point (PULSE) and at the object (FIRE), and HMO_4's "
+             "explosion (172) at a point"},
+            {"L8_hazards_points", "golden/L8_hazards_points.txt", 8, 300,
+             "tp:1:GUNT_10:-43:3300:-380,run:5:XBSHIP:137303:0:20:0,watch:XBSHIP",
+             "GUNT_10's XBSHIP turret explosion (172) at a reference point of its model"},
+        };
+        for (size_t i = 0; i < sizeof(kHazardsCases) / sizeof(kHazardsCases[0]); i++) {
+            const HazardsCase& c = kHazardsCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!kurtHazardsDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
                 printf("FAIL %s: %s\n", c.name, why.c_str());
                 failures++;
             } else if (got == expected) {

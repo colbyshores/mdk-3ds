@@ -27,7 +27,7 @@ A scanner decoded every reachable script in LEVEL3–8 using the C++ decoder and
 | 1 | End of level | EndLevel.cs; ScriptRuntime EndTheLevel, SpecialEvent ≤ 50; Kurt Frozen/Rising; FollowCamera rising | 131 falls to `noteUnimplemented` (script_vm.cpp:2294); no Frozen; Rising not ported | No level can be finished (L3–L8) | – | **landed 2026-11-20**: 131's ≤ 50 arm, EndLevel.cs, Frozen/Rising/Pose, the camera's rising, the torn arena and its pieces on both frontends, `levelEnded()` (goldens `L*_end_*.txt`); the frontends exit "level ended" at the hook #2 replaces |
 | 2 | Next-level transition | Flow/Game.cs AfterLevel/Play/AfterStream; Viewer `_ending` | Both frontends exit on any screen other than Level; no teardown/reload | The game stops instead of loading the next level | 1 | after 1 |
 | 3 | Solid objects, platforms, lifts (+ Keeper) | Collision/Solids.cs; ArenaSpace.Move with solids; Kurt Nearby/FindPlatform/Platform/Contact/Carry; SolidsWithin; ClipView; Kurt.Keeper.cs | arena_space move has no solids; getKurtPlatform returns null; opcode 114 missing; the default-case GosubElse divergence (script_vm.cpp:2293 vs ScriptVm.cs:1799) | Kurt walks through doors and object walls and falls through lifts; lifts never move; floor triggers dead (L3, L4, L6, L7, L8) | – | wave 1 |
-| 4 | Combat and hazard opcodes | ScriptVm 158/159/167/172/178/184; TouchDamage; SpawnBox; UpdatePathSpeed | All fall to the default case; their dependencies already exist | No contact damage; objects that should explode keep running; no explosion damage; aliens ignore the bomb (all levels) | – | wave 1 |
+| 4 | Combat and hazard opcodes | ScriptVm 158/159/167/172/178/184; TouchDamage; SpawnBox; UpdatePathSpeed | All fall to the default case; their dependencies already exist | No contact damage; objects that should explode keep running; no explosion damage; aliens ignore the bomb (all levels) | – | done 2026-11-20: ported with nine C# goldens (`golden/L*_hazards_*.txt`), plus the path push the snowboarders ride and the box sprites; see WORK_LEDGER |
 | 5 | Sniper A: scope and mode | Kurt.Sniper.cs, Scope.cs, Inventory SelectAmmo/UseAmmo, FollowCamera ScopeView | player.cpp:989 | Sniper can't be entered | – | |
 | 6 | Sniper B: rounds | Scripts/SniperRounds.cs; UpdateSniperTarget/FireSniper; opcode 28 | none | Sniper targets, homing and mortar rounds; L7 mortar puzzle | 5 | |
 | 7 | Sniper frontends and HUD | SniperOverlay, SniperView; zoom keys | sniper bound but not implemented | Sniper unusable on device | 5, 6 | |
@@ -63,11 +63,11 @@ Merge order: 1 before 2; 3 before 9–11; 5 before 6, and 6 before 7, 14 and 16.
 
 ## Ledger entries now stale (fix them when the package they belong to lands)
 
-- `OPCODE_COVERAGE.md`'s partial table:
-  - 165/166: `itemsBomb` now has a writer.
-  - 81/195: now written by the chain gun, the blast and the mortar.
-  - 215: the white flash is drawn.
-  - 16/56: `kill` now runs the explode effects.
+- `OPCODE_COVERAGE.md`'s partial table — FIXED 2026-11-20 with package 4, each re-verified in the code:
+  - 165/166: `itemsBomb` has a writer (items.cpp) — moved to complete.
+  - 81/195: written by the chain gun, the blast, the mortar, Twister (81), the cow (195) and now touch_damage; they stay partial for the sniper rounds' writer alone (package 6).
+  - 215: the white flash is drawn (`hud_view.cpp`) — moved to complete.
+  - 16/56: `kill` runs the explode effects (`ScriptRuntime::explode`) — moved to complete.
 
 ## Oracle gaps — don't chase these
 

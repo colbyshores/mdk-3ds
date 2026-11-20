@@ -134,6 +134,50 @@ bool boxesIntersect(const formats::Box& a, const formats::Box& b) {
            a.max.y > b.min.y && a.min.z < b.max.z && a.max.z > b.min.z;
 }
 
+// ScriptMath.Rotated (ScriptMath.cs:29): (x, y) turned by `degrees` about Z.
+// float.DegreesToRadians is left-associated (degrees * pi / 180f).
+void rotatedXY(float x, float y, float degrees, float* outX, float* outY) {
+    const float rad = degrees * 3.14159265358979323846f / 180.0f;
+    /* @vfp-exempt R6 — spawn_box's offset and the explosion opcodes' position
+     * (one per opcode run, not per element); libm sinf/cosf match the C#
+     * oracle's MathF.SinCos bit-for-bit on this machine (probed, as for
+     * spawn_relative), and the LUT's error would move the spawned point.
+     * measured n/a (cold). Verified 2026-11-20. */
+    const float s = sinf(rad);
+    const float c = cosf(rad);
+    *outX = x * c - y * s;
+    *outY = x * s + y * c;
+}
+
+// ScriptMath.V(list, start) over a list operand: three floats from `start`.
+Vec3 vlist(const std::vector<ScriptValue>& list, size_t start) {
+    Vec3 out;
+    out.x = fval(start < list.size() ? list[start] : kNull);
+    out.y = fval(start + 1 < list.size() ? list[start + 1] : kNull);
+    out.z = fval(start + 2 < list.size() ? list[start + 2] : kNull);
+    return out;
+}
+
+// ScriptVm.Point (ScriptVm.cs:2028, op172_position): mode 3 a reference point of
+// the object, 1 relative to the object, 2 turned by its yaw, other modes absolute.
+Vec3 positionOperand(const MdkObject* obj, const std::vector<ScriptValue>& operand) {
+    const int32_t mode = ival(operand.size() > 0 ? operand[0] : kNull);
+    if (mode == 3) {
+        return obj->reference_point(ival(operand.size() > 1 ? operand[1] : kNull));
+    }
+    const Vec3 v = vlist(operand, 1);
+    if (mode == 1) {
+        return Vec3{obj->position.x + v.x, obj->position.y + v.y, obj->position.z + v.z};
+    }
+    if (mode == 2) {
+        float x = 0.0f;
+        float y = 0.0f;
+        rotatedXY(v.x, v.y, obj->yaw, &x, &y);
+        return Vec3{obj->position.x + x, obj->position.y + y, obj->position.z + v.z};
+    }
+    return v;
+}
+
 // MdkObject.IsAnimationDone: no animation, or the hold frame marked ended.
 bool isAnimDone(const MdkObject& obj) {
     return obj.animation == nullptr || obj.animation_end_frame == MdkObject::AnimationEnded;
@@ -754,6 +798,27 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.spawn(obj, strval(op(ins, 1)), obj->reference_point(ival(op(ins, 0))), 0.0f, -1,
                            ival(op(ins, 2)), false);
             break;
+        case 159: {  // spawn_box: [[position mode, x, y, z], size x, y, z, texture, script]
+            // ScriptVm.cs:1024-1039: mode 1 an offset turned by the yaw (z as is),
+            // mode 2 absolute, else the object's own place.
+            const std::vector<ScriptValue>& where = listval(op(ins, 0));
+            const int32_t mode = ival(where.size() > 0 ? where[0] : kNull);
+            Vec3 point = obj->position;
+            if (mode == 1) {
+                const Vec3 v = vlist(where, 1);
+                float x = 0.0f;
+                float y = 0.0f;
+                rotatedXY(v.x, v.y, obj->yaw, &x, &y);
+                point.x += x;
+                point.y += y;
+                point.z += v.z;
+            } else if (mode == 2) {
+                point = vlist(where, 1);
+            }
+            const Vec3 size{fval(op(ins, 1)), fval(op(ins, 2)), fval(op(ins, 3))};
+            runtime_.spawnBox(obj, point, size, strval(op(ins, 4)), ival(op(ins, 5)));
+            break;
+        }
         case 206: {  // spawn_along_path: one flagged object every step along the path
             int32_t path = ival(op(ins, 0));
             int32_t end = runtime_.pathKeyFrame(path, runtime_.pathKeyCount(path) - 1);
@@ -1494,6 +1559,39 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             return branch(obj, ins, sees);
         }
+        case 167: {  // move_to_bomb: next to the bomb, on this side, a little aside
+            // ScriptVm.cs:885-900. The aside draws the game's random only while the
+            // bomb is out, at this point of the tick, as the C# does.
+            const float kMaxAside = 6.0f;
+            const float kAboveBomb = 2.5f;
+            const MdkObject* bomb =
+                runtime_.itemsBomb != nullptr && !runtime_.itemsBomb->dead ? runtime_.itemsBomb
+                                                                          : nullptr;
+            if (bomb == nullptr) {
+                break;
+            }
+            float awayX = obj->position.x - bomb->position.x;
+            float awayY = obj->position.y - bomb->position.y;
+            if (!(awayX == 0.0f && awayY == 0.0f)) {
+                // Vector2.Normalize: each component over the length.
+                const float length = sqrtf(awayX * awayX + awayY * awayY);
+                awayX = awayX / length;
+                awayY = awayY / length;
+            }
+            const float distance = fval(op(ins, 0));
+            // new Vector2(away.Y, -away.X) * (r * 2 - 1) * Min(distance, MaxAside),
+            // left to right.
+            const float r = runtime_.rng().nextSingle() * 2.0f - 1.0f;
+            const float reach = mathMin(distance, kMaxAside);
+            const float asideX = awayY * r * reach;
+            const float asideY = -awayX * r * reach;
+            Vec3 spot;
+            spot.x = bomb->position.x + awayX * distance + asideX;
+            spot.y = bomb->position.y + awayY * distance + asideY;
+            spot.z = bomb->position.z + kAboveBomb + obj->height_offset;
+            runtime_.startMove(obj, 78, spot);
+            break;
+        }
         case 243: {  // if_point_sees_player: the reference point is within
             // range of Kurt's feet and the line to his chest is clear
             // (ScriptVm.cs:1703-1708). The *u16* range rides an int operand on
@@ -1557,6 +1655,51 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, (obj->flags & MdkObject::FlagCollected) != 0);
         case 195:  // if_hit_weapon: the last hit's weapon type matches exactly
             return branch(obj, ins, obj->hit_type == ival(op(ins, 0)));
+        case 158: {  // touch_damage: stops the script when the object died of it
+            // ScriptVm.cs:1528-1543: [targets, damage, flags, target when flags & 2].
+            const int32_t kGoesOnHit = 2;
+            const bool hit = runtime_.touchDamage(obj, ival(op(ins, 0)), ival(op(ins, 1)),
+                                                  ival(op(ins, 2)));
+            if (obj->dead || obj->health == 0) {
+                return kYield;
+            }
+            if (hit && (ival(op(ins, 2)) & kGoesOnHit) != 0) {
+                return gotoTarget(obj, ival(op(ins, 3)));
+            }
+            break;
+        }
+        case 184: {  // explode: a blast on everything around, then the object dies
+            // ScriptVm.cs:1544-1556. The blast is Kills.Ignored: no KurtDamage, no count.
+            const int32_t kAllTargets = 7;
+            const int32_t kBlastHitType = -5;
+            obj->flags |= MdkObject::FlagNotTarget;
+            if (fval(op(ins, 0)) != 0.0f && fval(op(ins, 1)) != 0.0f) {
+                const Vec3 center = obj->position;
+                runtime_.blast(center, roundAwaySaturating(fval(op(ins, 0))), fval(op(ins, 1)),
+                               kAllTargets, kBlastHitType, nullptr, false);
+            }
+            runtime_.kill(obj);
+            return kYield;
+        }
+        case 172: {  // explosion: its sound and the animated explosion at a point
+            // ScriptVm.cs:1557-1563; SpawnExplosion's defaults (yaw 0, DefaultLift 3).
+            const float kDefaultLift = 3.0f;
+            const Vec3 point = positionOperand(obj, listval(op(ins, 0)));
+            runtime_.playSoundAt("EXPLODE", point);
+            runtime_.spawnExplosion(obj->arena, point, fval(op(ins, 1)), 0.0f, kDefaultLift);
+            break;
+        }
+        case 178: {  // explosion_damage: flags are the targets (1 Kurt, 2 objects, 4 groups)
+            // ScriptVm.cs:1564-1572. The blast is Kills.Counted (the C#'s default).
+            const float kDefaultLift = 3.0f;
+            const int32_t kBlastHitType = -5;
+            const Vec3 point = positionOperand(obj, listval(op(ins, 0)));
+            runtime_.playSoundAt("EXPLODE", point);
+            runtime_.spawnExplosion(obj->arena, point, fval(op(ins, 1)), 0.0f, kDefaultLift);
+            runtime_.blast(point, roundAwaySaturating(fval(op(ins, 2))), fval(op(ins, 3)),
+                           ival(op(ins, 4)), kBlastHitType, nullptr, true);
+            break;
+        }
         case 208: {  // if_part_hit: the part is hidden (blown off or destroyed)
             const int32_t part = obj->findPart(strval(op(ins, 0)));
             const bool hit = part >= 0 && (obj->hidden_parts & (1 << part)) != 0;
