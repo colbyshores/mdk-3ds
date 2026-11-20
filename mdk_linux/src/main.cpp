@@ -50,6 +50,7 @@
 #include "game/input.h"
 #include "game/arena_space.h"
 #include "game/arena_views.h"
+#include "game/walk_script.h"
 #include "formats/mdk_data.h"
 #include "formats/bni.h"
 #include "formats/file_system.h"
@@ -215,6 +216,12 @@ int main(int argc, char** argv) {
     float gammaValue = 1.0f;
     std::vector<std::string> onlyMods;
     bool onlyModsSet = false;
+    // --walk=<script>: the hardware harness's scripted walk (game/walk_script.h,
+    // the 3DS's `make AUTOQUIT=.. WALK=..`), here to FIND and VERIFY a route on
+    // the shared simulation: with --fixed-step frame f is step f on both
+    // frontends. A walk also logs Kurt's arena on every change.
+    bool hasWalk = false;
+    mdk::WalkScript walk;
 
     auto optionValue = [](const char* arg, const char* name) -> const char* {
         const size_t length = std::strlen(name);
@@ -279,6 +286,13 @@ int main(int argc, char** argv) {
             hasStartOverride = true;
             hasYawOverride = fields == 4;
             yawOverride = yaw;
+        } else if ((value = optionValue(argv[i], "--walk")) != nullptr) {
+            char error[256];
+            if (!mdk::parseWalkScript(value, &walk, error, sizeof(error))) {
+                std::fprintf(stderr, "[main] invalid --walk: %s\n", error);
+                return 1;
+            }
+            hasWalk = true;
         } else if (std::strcmp(argv[i], "--enhanced") == 0) {
             enhancedLook = true;
         } else if (std::strcmp(argv[i], "--original") == 0) {
@@ -965,6 +979,21 @@ int main(int argc, char** argv) {
         if (!headless && !mdk::windowPump(&window, &input)) {
             break;
         }
+        // The scripted walk OWNS the actions (game/walk_script.h): after the
+        // platform's poll, before the game reads the input.
+        if (hasWalk) {
+            mdk::applyWalk(walk, frame, &input);
+            const int32_t started = mdk::walkSegmentStartingAt(walk, frame);
+            if (started >= 0) {
+                char keys[96];
+                mdk::formatWalkKeys(walk.segments[started].keys, keys, sizeof(keys));
+                std::printf("[walk] frame %u: segment %d %s@%u-%u starts at feet (%.1f,%.1f,%.1f) "
+                            "yaw %.1f\n",
+                            frame, (int)started + 1, keys, walk.segments[started].first,
+                            walk.segments[started].end, player.feet.x, player.feet.y,
+                            player.feet.z, player.yaw);
+            }
+        }
 
         MdkFrameParams params;
         params.elapsed = elapsed;
@@ -1103,6 +1132,31 @@ int main(int argc, char** argv) {
                                        mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
             }
             mdk_render_set_camera(renderer, &camera);
+            // The walk's route evidence: Kurt's arena (the scripts' current one,
+            // which the 3DS's arena-entry table keys on) on every change, and his
+            // feet every 30 frames.
+            if (hasWalk) {
+                static std::string walkArena;
+                static std::string walkSecond;
+                const std::string current = runtime ? runtime->currentArena() : std::string();
+                const std::string second = runtime ? runtime->secondArena() : std::string();
+                if (current != walkArena || second != walkSecond) {
+                    std::printf("[walk] frame %u: arena %s -> %s (second %s%s) feet "
+                                "(%.1f,%.1f,%.1f)\n",
+                                frame, walkArena.empty() ? "-" : walkArena.c_str(),
+                                current.empty() ? "-" : current.c_str(),
+                                second.empty() ? "-" : second.c_str(),
+                                runtime && runtime->secondActive() ? " active" : "",
+                                player.feet.x, player.feet.y, player.feet.z);
+                    walkArena = current;
+                    walkSecond = second;
+                }
+                if (frame % 30u == 0u) {
+                    std::printf("[walk] frame %u: feet (%.1f,%.1f,%.1f) yaw %.1f arena %s\n", frame,
+                                player.feet.x, player.feet.y, player.feet.z, player.yaw,
+                                current.empty() ? "-" : current.c_str());
+                }
+            }
         }
 
         // The frame's light (LevelLight.Update): the scripts' current

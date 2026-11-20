@@ -382,6 +382,9 @@ if [ "$MODE" = "--profile" ]; then
     [ -n "$SPANS" ] && echo "hw_cycle: $SPANS"
     STEPS=$(printf '%s' "$SESSION" | grep -F 'profile: step ' | tail -1)
     [ -n "$STEPS" ] && echo "hw_cycle: $STEPS"
+    # A WALK payload's segment starts and the arena-entry table (harness_3ds.h),
+    # when the payload logs them: printed at exit, so they are this session's.
+    printf '%s' "$SESSION" | grep -E '^(walk: frame |profile: arena)' | sed 's/^/hw_cycle: /' || true
     echo "hw_cycle: $CONS"
     case "$CONS" in
         *family=old3ds*) echo "hw_cycle: PROFILE OG (Old-3DS family)" ;;

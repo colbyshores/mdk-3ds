@@ -14,6 +14,10 @@
 #include <string.h>
 
 #include "platform/log_3ds.h"
+#ifdef MDK_HW_WALK
+#include "game/input.h"
+#include "game/walk_script.h"
+#endif
 
 namespace mdk {
 
@@ -27,6 +31,88 @@ bool harnessAutoquitDue() {
         return false;
     }
     return now >= quitAtTick;
+}
+
+#ifdef MDK_HW_WALK
+namespace {
+WalkScript g_walk;
+bool g_walkReady = false;
+#ifdef MDK_HW_PROFILE
+// A PROFILE build keeps each segment's start here and prints it at exit.
+struct WalkStart {
+    uint32_t frame;
+    int32_t segment;
+    float x, y, z, yaw;
+    char arena[16];
+};
+WalkStart g_walkStarts[WalkScript::kMaxSegments];
+int32_t g_walkStartCount = 0;
+#endif
+
+void walkSegmentText(int32_t segment, char* out, size_t size) {
+    char keys[96];
+    formatWalkKeys(g_walk.segments[segment].keys, keys, sizeof(keys));
+    snprintf(out, size, "%s@%lu-%lu", keys, (unsigned long)g_walk.segments[segment].first,
+             (unsigned long)g_walk.segments[segment].end);
+}
+} // namespace
+#endif
+
+bool harnessWalkInit() {
+#ifdef MDK_HW_WALK
+    // Cold: once, at boot, before the first frame. The script is the Makefile's
+    // WALK, a string literal (-DMDK_HW_WALK='"..."').
+    char error[256];
+    mdk::log3dsPrintf("main: harness walk WALK=%s", MDK_HW_WALK);
+    if (!parseWalkScript(MDK_HW_WALK, &g_walk, error, sizeof(error))) {
+        mdk::log3dsPrintf("main: harness walk REFUSED: %s", error);
+        return false;
+    }
+    for (int32_t i = 0; i < g_walk.count; i++) {
+        char text[128];
+        walkSegmentText(i, text, sizeof(text));
+        mdk::log3dsPrintf("walk: segment %d of %d: %s (%lu frames)", (int)(i + 1),
+                          (int)g_walk.count, text,
+                          (unsigned long)(g_walk.segments[i].end - g_walk.segments[i].first));
+    }
+    g_walkReady = true;
+#endif
+    return true;
+}
+
+void harnessWalkApply(uint32_t frame, Input* input, float x, float y, float z, float yaw,
+                      const char* arena) {
+#ifdef MDK_HW_WALK
+    if (!g_walkReady) {
+        return;
+    }
+    applyWalk(g_walk, frame, input);
+    const int32_t started = walkSegmentStartingAt(g_walk, frame);
+    if (started < 0) {
+        return;
+    }
+#ifdef MDK_HW_PROFILE
+    if (g_walkStartCount < WalkScript::kMaxSegments) {
+        WalkStart& s = g_walkStarts[g_walkStartCount++];
+        s.frame = frame;
+        s.segment = started;
+        s.x = x;
+        s.y = y;
+        s.z = z;
+        s.yaw = yaw;
+        snprintf(s.arena, sizeof(s.arena), "%s", arena ? arena : "");
+    }
+#else
+    char text[128];
+    walkSegmentText(started, text, sizeof(text));
+    mdk::log3dsPrintf("walk: frame %lu: segment %d %s starts, feet (%.1f,%.1f,%.1f) yaw %.1f "
+                      "arena %s",
+                      (unsigned long)frame, (int)(started + 1), text, (double)x, (double)y,
+                      (double)z, (double)yaw, arena && arena[0] ? arena : "-");
+#endif
+#else
+    (void)frame; (void)input; (void)x; (void)y; (void)z; (void)yaw; (void)arena;
+#endif
 }
 
 #ifdef MDK_HW_PROFILE
@@ -69,6 +155,74 @@ uint64_t g_simT = 0, g_beginT = 0, g_drawT = 0, g_endT = 0, g_audioT = 0;
 uint64_t g_simSteps = 0;
 uint32_t g_spanFrames = 0;
 uint64_t g_playerT = 0, g_runtimeT = 0, g_cameraT = 0, g_solidT = 0;
+
+// THE ARENA-ENTRY TABLE (harness_3ds.h, HarnessArenaFrame). Fixed storage: the
+// last kArenaBefore+1 frames in a ring, and the kept windows' rows in a flat
+// table filled in frame order. Raw ticks while measuring; converted at exit.
+constexpr uint32_t kArenaBefore = 3;
+constexpr uint32_t kArenaAfter = 24;
+constexpr uint32_t kArenaRing = kArenaBefore + 1;
+constexpr uint32_t kArenaRows = 384;
+constexpr uint32_t kArenaEvents = 32;
+constexpr uint32_t kArenaName = 16;
+enum : uint8_t {
+    kArenaFlagArena = 1,    // A: Kurt's (the scripts') current arena changed
+    kArenaFlagSecond = 2,   // 2: the second arena, or its activation, changed
+    kArenaFlagSwitch = 4,   // W: the arena stream switched (an MTO arena began streaming)
+    kArenaFlagViews = 8,    // V: arena views were built this frame
+    kArenaFlagStall = 16,   // T: an arena was shown before its stream was done
+};
+struct ArenaRow {
+    uint32_t frame;
+    uint32_t periodUs;      // 0 until the next frame's start fills it in
+    uint32_t simT, beginT, drawT, endT, audioT;   // ticks (clamped to 32 bits)
+    uint32_t steps;
+    uint32_t streamBytes;   // read by the arena stream this frame
+    float streamMs, viewsMs;
+    uint16_t viewsBuilt, textures, hd, kurtReads, kurtStandIns, logLines;
+    uint8_t flags;
+};
+struct ArenaEvent {
+    uint32_t frame;
+    uint8_t flags;
+    bool secondActive;
+    char from[kArenaName];
+    char to[kArenaName];
+    char second[kArenaName];
+};
+ArenaRow g_arenaRing[kArenaRing];
+uint32_t g_arenaRingNext = 0;     // the slot the next frame goes in
+uint32_t g_arenaRingFill = 0;     // how many slots hold a frame
+int32_t g_arenaRingNewest = -1;   // the newest frame's slot (its period comes next)
+ArenaRow g_arenaRows[kArenaRows];
+uint32_t g_arenaRowCount = 0;
+uint32_t g_arenaRowsDropped = 0;
+int32_t g_arenaRowNewest = -1;    // the newest frame's table row, if it was kept
+ArenaEvent g_arenaEvents[kArenaEvents];
+uint32_t g_arenaEventCount = 0;
+uint32_t g_arenaEventsDropped = 0;
+bool g_arenaWindowOpen = false;
+uint32_t g_arenaWindowEnd = 0;
+bool g_arenaSeen = false;          // the first frame sets the baseline
+char g_arenaName[kArenaName];
+char g_arenaSecond[kArenaName];
+bool g_arenaSecondActive = false;
+int32_t g_arenaPrevSwitches = 0, g_arenaPrevStalls = 0, g_arenaPrevTextures = 0;
+int32_t g_arenaPrevHd = 0, g_arenaPrevKurtReads = 0, g_arenaPrevKurtStandIns = 0;
+int64_t g_arenaPrevBytes = 0;
+uint32_t g_arenaPrevLog = 0;
+
+uint32_t clampTicks(uint64_t ticks) {
+    return ticks > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)ticks;
+}
+
+uint16_t clamp16(int64_t value) {
+    return value < 0 ? (uint16_t)0 : (value > 0xFFFF ? (uint16_t)0xFFFF : (uint16_t)value);
+}
+
+void copyName(char* out, const char* name) {
+    snprintf(out, kArenaName, "%s", name ? name : "");
+}
 
 uint32_t percentileUs(uint32_t pct) {
     // The bucket's upper edge: an estimate, stated as one in the log line.
@@ -135,6 +289,14 @@ void harnessProfileFrame(double periodSeconds) {
     if (us > 16667) g_over17++;
     if (us > 33333) g_over34++;
     if (osGet3DSliderState() > 0.0f) g_stereoSeen = true;
+    // The arena-entry table's newest frame (the one that just ended) gets its
+    // period now: in the ring, and in the table if its window kept it.
+    if (g_arenaRingNewest >= 0) {
+        g_arenaRing[g_arenaRingNewest].periodUs = us;
+    }
+    if (g_arenaRowNewest >= 0) {
+        g_arenaRows[g_arenaRowNewest].periodUs = us;
+    }
 #else
     (void)periodSeconds;
 #endif
@@ -181,6 +343,190 @@ void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTic
     (void)audioTicks;
 #endif
 }
+
+void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
+#ifdef MDK_HW_PROFILE
+    // Once per frame, at its end (after harnessProfileSpans, so g_last* are this
+    // frame's spans): integer differences and a few short string compares.
+    const char* arena = s.arena ? s.arena : "";
+    const char* second = s.second ? s.second : "";
+    if (!g_arenaSeen) {
+        // The baseline: the counters as the level left them, and the start pair.
+        // The start itself is not an event (the level load is not a room entry).
+        g_arenaSeen = true;
+        copyName(g_arenaName, arena);
+        copyName(g_arenaSecond, second);
+        g_arenaSecondActive = s.secondActive;
+        g_arenaPrevSwitches = s.streamSwitches;
+        g_arenaPrevStalls = s.streamStalls;
+        g_arenaPrevBytes = s.streamBytes;
+        g_arenaPrevTextures = s.texturesMade;
+        g_arenaPrevHd = s.hdImported;
+        g_arenaPrevKurtReads = s.kurtReads;
+        g_arenaPrevKurtStandIns = s.kurtStandIns;
+        g_arenaPrevLog = s.logLines;
+    }
+    ArenaRow row;
+    memset(&row, 0, sizeof(row));
+    row.frame = frame;
+    row.simT = clampTicks(g_lastSimT);
+    row.beginT = clampTicks(g_lastBeginT);
+    row.drawT = clampTicks(g_lastDrawT);
+    row.endT = clampTicks(g_lastEndT);
+    row.audioT = clampTicks(g_lastAudioT);
+    row.steps = g_lastSteps;
+    row.streamBytes = (uint32_t)(s.streamBytes - g_arenaPrevBytes);
+    row.streamMs = s.streamMs;
+    row.viewsMs = s.viewsMs;
+    row.viewsBuilt = clamp16(s.viewsBuilt);
+    row.textures = clamp16((int64_t)s.texturesMade - g_arenaPrevTextures);
+    row.hd = clamp16((int64_t)s.hdImported - g_arenaPrevHd);
+    row.kurtReads = clamp16((int64_t)s.kurtReads - g_arenaPrevKurtReads);
+    row.kurtStandIns = clamp16((int64_t)s.kurtStandIns - g_arenaPrevKurtStandIns);
+    row.logLines = clamp16((int64_t)s.logLines - (int64_t)g_arenaPrevLog);
+    const bool arenaChanged = strncmp(g_arenaName, arena, kArenaName - 1) != 0;
+    const bool secondChanged = strncmp(g_arenaSecond, second, kArenaName - 1) != 0 ||
+                               g_arenaSecondActive != s.secondActive;
+    if (arenaChanged) row.flags |= kArenaFlagArena;
+    if (secondChanged) row.flags |= kArenaFlagSecond;
+    if (s.streamSwitches != g_arenaPrevSwitches) row.flags |= kArenaFlagSwitch;
+    if (s.viewsBuilt > 0) row.flags |= kArenaFlagViews;
+    if (s.streamStalls != g_arenaPrevStalls) row.flags |= kArenaFlagStall;
+    g_arenaPrevSwitches = s.streamSwitches;
+    g_arenaPrevStalls = s.streamStalls;
+    g_arenaPrevBytes = s.streamBytes;
+    g_arenaPrevTextures = s.texturesMade;
+    g_arenaPrevHd = s.hdImported;
+    g_arenaPrevKurtReads = s.kurtReads;
+    g_arenaPrevKurtStandIns = s.kurtStandIns;
+    g_arenaPrevLog = s.logLines;
+
+    if (row.flags != 0) {
+        if (g_arenaEventCount < kArenaEvents) {
+            ArenaEvent& event = g_arenaEvents[g_arenaEventCount++];
+            event.frame = frame;
+            event.flags = row.flags;
+            event.secondActive = s.secondActive;
+            copyName(event.from, g_arenaName);
+            copyName(event.to, arena);
+            copyName(event.second, second);
+        } else {
+            g_arenaEventsDropped++;
+        }
+        if (!g_arenaWindowOpen) {
+            // The frames before it, oldest first, out of the ring.
+            const uint32_t before = g_arenaRingFill < kArenaBefore ? g_arenaRingFill : kArenaBefore;
+            for (uint32_t i = before; i > 0; i--) {
+                const uint32_t slot = (g_arenaRingNext + kArenaRing - i) % kArenaRing;
+                if (g_arenaRowCount > 0 &&
+                    g_arenaRing[slot].frame <= g_arenaRows[g_arenaRowCount - 1].frame) {
+                    continue;   // the previous window already kept it
+                }
+                if (g_arenaRowCount < kArenaRows) {
+                    g_arenaRows[g_arenaRowCount++] = g_arenaRing[slot];
+                } else {
+                    g_arenaRowsDropped++;
+                }
+            }
+        }
+        g_arenaWindowOpen = true;
+        g_arenaWindowEnd = frame + kArenaAfter;
+        copyName(g_arenaName, arena);
+        copyName(g_arenaSecond, second);
+        g_arenaSecondActive = s.secondActive;
+    }
+    g_arenaRing[g_arenaRingNext] = row;
+    g_arenaRingNewest = (int32_t)g_arenaRingNext;
+    g_arenaRingNext = (g_arenaRingNext + 1) % kArenaRing;
+    if (g_arenaRingFill < kArenaRing) g_arenaRingFill++;
+    g_arenaRowNewest = -1;
+    if (g_arenaWindowOpen && frame <= g_arenaWindowEnd) {
+        if (g_arenaRowCount < kArenaRows) {
+            g_arenaRowNewest = (int32_t)g_arenaRowCount;
+            g_arenaRows[g_arenaRowCount++] = row;
+        } else {
+            g_arenaRowsDropped++;
+        }
+    } else {
+        g_arenaWindowOpen = false;
+    }
+#else
+    (void)frame;
+    (void)s;
+#endif
+}
+
+#ifdef MDK_HW_PROFILE
+namespace {
+void flagText(uint8_t flags, char* out) {
+    // Always five characters plus the terminator: "AW-V-" style.
+    out[0] = (flags & kArenaFlagArena) ? 'A' : '-';
+    out[1] = (flags & kArenaFlagSecond) ? '2' : '-';
+    out[2] = (flags & kArenaFlagSwitch) ? 'W' : '-';
+    out[3] = (flags & kArenaFlagViews) ? 'V' : '-';
+    out[4] = (flags & kArenaFlagStall) ? 'T' : '-';
+    out[5] = '\0';
+}
+
+// At exit, never inside a measured frame: one line per event, then one per kept
+// row that is flagged, slow (over 1.25x the steady mean) or did first-use work.
+void arenaReport(uint32_t steadyUs) {
+    const uint32_t slowUs = steadyUs > 0 ? steadyUs + steadyUs / 4u : 0u;
+    mdk::log3dsPrintf("profile: arena-entry table: %lu events (%lu dropped), %lu frames kept "
+                      "(%lu dropped); window -%lu..+%lu frames of each; a row is shown when "
+                      "flagged, over %lu.%01lums (1.25x the steady mean) or doing first-use "
+                      "work",
+                      (unsigned long)g_arenaEventCount, (unsigned long)g_arenaEventsDropped,
+                      (unsigned long)g_arenaRowCount, (unsigned long)g_arenaRowsDropped,
+                      (unsigned long)kArenaBefore, (unsigned long)kArenaAfter,
+                      (unsigned long)(slowUs / 1000u), (unsigned long)(slowUs % 1000u / 100u));
+    char flags[6];
+    for (uint32_t i = 0; i < g_arenaEventCount; i++) {
+        const ArenaEvent& e = g_arenaEvents[i];
+        flagText(e.flags, flags);
+        const bool moved = (e.flags & kArenaFlagArena) != 0;
+        mdk::log3dsPrintf("profile: arena event %lu frame %lu [%s]: %s %s%s%s, second %s%s",
+                          (unsigned long)(i + 1u), (unsigned long)e.frame, flags,
+                          moved ? "entered" : "in", e.to[0] ? e.to : "-",
+                          moved ? " from " : "", moved ? (e.from[0] ? e.from : "-") : "",
+                          e.second[0] ? e.second : "-",
+                          e.second[0] ? (e.secondActive ? " (active)" : " (inactive)") : "");
+    }
+    mdk::log3dsPrintf("profile: arena  frame period    sim(st)  begin   draw    end  "
+                      "strmKB strmMs views viewMs  tex  hd kRd kSI log flags "
+                      "(ms; period = this frame's start to the next's; tex/hd/kRd/kSI/log = "
+                      "textures made, HD imports, Kurt animations read, Kurt stand-ins, SD "
+                      "log lines, this frame)");
+    const double msPerTick = 1000.0 / (double)SYSCLOCK_ARM11;
+    uint32_t hidden = 0;
+    for (uint32_t i = 0; i < g_arenaRowCount; i++) {
+        const ArenaRow& r = g_arenaRows[i];
+        const bool work = r.streamBytes != 0 || r.viewsBuilt != 0 || r.textures != 0 ||
+                          r.hd != 0 || r.kurtReads != 0 || r.kurtStandIns != 0 ||
+                          r.logLines != 0;
+        const bool slow = slowUs == 0u || r.periodUs == 0u || r.periodUs > slowUs;
+        if (r.flags == 0 && !work && !slow) {
+            hidden++;
+            continue;
+        }
+        flagText(r.flags, flags);
+        mdk::log3dsPrintf("profile: arena %6lu %6lu.%01lu %5.1f(%lu) %6.1f %6.1f %6.1f %7lu "
+                          "%6.1f %5u %6.1f %4u %3u %3u %3u %3u %s",
+                          (unsigned long)r.frame, (unsigned long)(r.periodUs / 1000u),
+                          (unsigned long)(r.periodUs % 1000u / 100u),
+                          (double)r.simT * msPerTick, (unsigned long)r.steps,
+                          (double)r.beginT * msPerTick, (double)r.drawT * msPerTick,
+                          (double)r.endT * msPerTick, (unsigned long)(r.streamBytes / 1024u),
+                          (double)r.streamMs, (unsigned)r.viewsBuilt, (double)r.viewsMs,
+                          (unsigned)r.textures, (unsigned)r.hd, (unsigned)r.kurtReads,
+                          (unsigned)r.kurtStandIns, (unsigned)r.logLines, flags);
+    }
+    mdk::log3dsPrintf("profile: arena table end (%lu kept rows hidden: unflagged, not slow, "
+                      "no first-use work)",
+                      (unsigned long)hidden);
+}
+} // namespace
+#endif
 
 void harnessProfileReport() {
 #ifdef MDK_HW_PROFILE
@@ -247,6 +593,19 @@ void harnessProfileReport() {
                       (unsigned)model, oldFamily ? "old3ds" : (model == 0xFF ? "unknown" : "new3ds"),
                       oldFamily ? "268MHz(by-model)" : "unverified", oldFamily ? "none(by-model)" : "unverified",
                       g_stereoSeen ? "on" : "off");
+#ifdef MDK_HW_WALK
+    // The walk's segment starts, held back from the measured frames.
+    for (int32_t i = 0; i < g_walkStartCount; i++) {
+        const WalkStart& s = g_walkStarts[i];
+        char text[128];
+        walkSegmentText(s.segment, text, sizeof(text));
+        mdk::log3dsPrintf("walk: frame %lu: segment %d %s started, feet (%.1f,%.1f,%.1f) yaw "
+                          "%.1f arena %s",
+                          (unsigned long)s.frame, (int)(s.segment + 1), text, (double)s.x,
+                          (double)s.y, (double)s.z, (double)s.yaw, s.arena[0] ? s.arena : "-");
+    }
+#endif
+    arenaReport(steadyUs);
 #endif
 }
 
@@ -318,6 +677,14 @@ void harnessProfileSpans(uint64_t, uint32_t, uint64_t, uint64_t, uint64_t, uint6
 void harnessProfileFrame(double) {}
 
 void harnessProfileReport() {}
+
+void harnessArenaFrame(uint32_t, const HarnessArenaFrame&) {}
+
+bool harnessWalkInit() {
+    return true;
+}
+
+void harnessWalkApply(uint32_t, Input*, float, float, float, float, const char*) {}
 
 void harnessChainloadStub() {}
 

@@ -17,6 +17,7 @@
 // ============================================================================
 
 #include <stdarg.h>
+#include <stdint.h>
 
 namespace mdk {
 
@@ -75,5 +76,11 @@ void log3dsClose();
 // stays the gate's job (check 17 of main_3ds_flow_test.sh): a call can be
 // format-clean and still print a corner count where the sentence says bytes.
 void log3dsPrintf(const char* format, ...) __attribute__((format(printf, 1, 2)));
+
+// Lines written to the SD file so far (each one an fflush'd SD write). The
+// harness's arena-entry table (harness_3ds.h) takes the difference per frame, so
+// a slow frame says how many log writes it carried. Counted in PROFILE builds
+// only (0 in every other), so the release's log path is unchanged.
+uint32_t log3dsLinesWritten();
 
 } // namespace mdk

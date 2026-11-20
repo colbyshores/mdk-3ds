@@ -32,16 +32,17 @@ OUT="$1"; ELF="$2"; SMDH="$3"; ROMFS="$4"; ICON="$5"; BANNER="$6"
 # The harness must never ship (mdk_3ds/Makefile's AUTOQUIT): a CIA built
 # from a harness ELF would quit by itself and chain-load a stub that is
 # not on a retail console.
-if [ -n "${AUTOQUIT:-}" ] || [ -n "${CAPTURE:-}" ] || [ -n "${PROFILE:-}" ]; then
-    echo "build_cia: AUTOQUIT, CAPTURE or PROFILE is set -- this is a harness build, not a release." >&2
-    echo "            Rebuild without AUTOQUIT/CAPTURE/PROFILE (after make clean) for a CIA." >&2
+if [ -n "${AUTOQUIT:-}" ] || [ -n "${CAPTURE:-}" ] || [ -n "${PROFILE:-}" ] || [ -n "${WALK:-}" ]; then
+    echo "build_cia: AUTOQUIT, CAPTURE, PROFILE or WALK is set -- this is a harness build, not a release." >&2
+    echo "            Rebuild without AUTOQUIT/CAPTURE/PROFILE/WALK (after make clean) for a CIA." >&2
     exit 2
 fi
 
 # The environment is not the binary: the Makefile does not track -D changes, so
 # a plain `make` after a harness build without `make clean` can relink the old
 # harness objects. Ask the ELF itself; each literal exists only under its flag.
-for lit in '/3ds/netload_stub.3dsx' 'sdmc:/3ds/mdk/hwcap.bmp.log' 'profile: console model='; do
+for lit in '/3ds/netload_stub.3dsx' 'sdmc:/3ds/mdk/hwcap.bmp.log' 'profile: console model=' \
+           'main: harness walk WALK=' 'profile: arena-entry table'; do
     if grep -aqF -- "$lit" "$ELF"; then
         echo "build_cia: $ELF carries the harness literal '$lit' -- it is a harness build." >&2
         echo "            make -C mdk_3ds clean && make -C mdk_3ds, then build the CIA." >&2

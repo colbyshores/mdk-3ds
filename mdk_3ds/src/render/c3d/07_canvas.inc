@@ -251,3 +251,16 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     if (requested) *requested = cr ? cr->capturesRequested : 0;
     if (written) *written = cr ? cr->capturesWritten : 0;
  }
+
+// The first-use counters (render_c3d_stats.h): what this renderer has made since
+// it was created, for the harness's arena-entry table. Copies, nothing else.
+ void mdk_render_c3d_first_use(MdkRenderer r, MdkC3dFirstUse* out) {
+    if (!out) return;
+    *out = MdkC3dFirstUse();
+    RendererC3D* cr = asC3d(r);
+    if (!cr) return;
+    out->texturesMade = cr->texturesMade[0] + cr->texturesMade[1] + cr->texturesMade[2] +
+                        cr->texturesMade[3] + cr->compressedMade;
+    out->hdImported = cr->hdImported;
+    out->hdEvicted = cr->hdEvicted;
+ }

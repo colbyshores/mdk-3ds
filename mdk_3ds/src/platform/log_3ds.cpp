@@ -21,6 +21,7 @@ namespace {
 FILE* g_log = nullptr;
 bool g_tried = false;
 bool g_fsOpen = false;
+uint32_t g_linesWritten = 0;   // lines flushed to the SD file (log3dsLinesWritten)
 
 } // namespace
 
@@ -112,6 +113,13 @@ void log3dsPrintf(const char* format, ...) {
     }
     fprintf(g_log, "%s\n", line);
     fflush(g_log);
+#ifdef MDK_HW_PROFILE
+    g_linesWritten++;   // the PROFILE build's arena-entry table reads it
+#endif
+}
+
+uint32_t log3dsLinesWritten() {
+    return g_linesWritten;
 }
 
 } // namespace mdk

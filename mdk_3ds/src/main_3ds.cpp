@@ -88,6 +88,7 @@
 #include "game/player.h"
 #include "render/material_resolver.h"
 #include "render/render.h"
+#include "render/render_c3d_stats.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
@@ -1276,7 +1277,14 @@ int main(int argc, char** argv) {
             // NOT reproducible here either, so a fixed seed would be the divergence,
             // not the fidelity. The console's clock is the ARM11 cycle counter, and
             // the value is logged at spawn so a run can be replayed by hand.
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
+            // A WALK harness build replays one scene: the same script, the same
+            // seed (the Linux build's --seed 1 for the same route), so two
+            // profiles of two builds measure the same enemies and effects.
+            const int32_t seed = 1;
+#else
             const int32_t seed = (int32_t)(uint32_t)svcGetSystemTick();
+#endif
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, seed, &bank, &player,
                                                           &sprites));
             runtime->option = kScriptOption;
@@ -1429,6 +1437,10 @@ int main(int argc, char** argv) {
     u32 prevHeld = 0;  // last frame's held mask; the menu reads edges
 
     heapProbe("loop");
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
+    // The scripted walk (harness_3ds.h), parsed and logged before the first frame.
+    const bool walkReady = mdk::harnessWalkInit();
+#endif
     mdk::log3dsPrintf("loop: entering main loop");
     while (aptMainLoop()) {
         // The harness deadline (harness builds only; a no-op question in
@@ -1536,6 +1548,16 @@ int main(int argc, char** argv) {
         // runs zero steps.
         mdk::Input input;
         const u32 held = mdk::input3dsPoll(&input, elapsed);
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
+        // The scripted walk owns the actions, after the poll and before the game
+        // reads them (harness_3ds.h). A refused script stops the run at once.
+        if (!walkReady) {
+            exitReason = "harness walk refused (MDK_HW_WALK)";
+            break;
+        }
+        mdk::harnessWalkApply(frame, &input, player.feet.x, player.feet.y, player.feet.z,
+                              player.yaw, runtime ? runtime->currentArena().c_str() : "");
+#endif
 
         const u32 pressed = held & ~prevHeld;
         prevHeld = held;
@@ -1841,6 +1863,12 @@ int main(int argc, char** argv) {
         // then the views. Outside begin/end_frame: both make and release GPU
         // resources. A stall (an arena SHOWN before its stream was done, as the
         // original's BSPShow blocks) is logged with its time: spec Phase 3.
+#ifdef MDK_HW_PROFILE
+        // This frame's stream and view work, for the arena-entry table (harness_3ds.h).
+        float hwStreamMs = 0.0f;
+        float hwViewsMs = 0.0f;
+        int32_t hwViewsBuilt = 0;
+#endif
         if (arena) {
             const std::string& streamCurrent =
                 (runtime && !runtime->currentArena().empty()) ? runtime->currentArena()
@@ -1876,6 +1904,11 @@ int main(int argc, char** argv) {
             const double stream1 = nowSeconds();
             const int32_t builtViews = arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);
             const double stream2 = nowSeconds();
+#ifdef MDK_HW_PROFILE
+            hwStreamMs = (float)((stream1 - stream0) * 1000.0);
+            hwViewsMs = (float)((stream2 - stream1) * 1000.0);
+            hwViewsBuilt = builtViews;
+#endif
             const mdk::ArenaStream::Stats& after = stream.stats();
             if (after.switches != before.switches) {
                 const mdk::formats::Arena* target = level.arenaNamed(stream.resident());
@@ -2293,6 +2326,35 @@ int main(int argc, char** argv) {
                                      spanEnd0 - spanDraw0,
                                      mdk::harnessProfileTick() - spanEnd0, spanAudio);
         }
+#ifdef MDK_HW_PROFILE
+        // The arena-entry table's sample (harness_3ds.h): counters and the arena
+        // pair, copied into RAM; nothing reaches the SD card before exit.
+        {
+            mdk::HarnessArenaFrame sample;
+            sample.arena = (runtime && !runtime->currentArena().empty())
+                               ? runtime->currentArena().c_str()
+                               : startArenaName.c_str();
+            sample.second = runtime ? runtime->secondArena().c_str() : "";
+            sample.secondActive = runtime && runtime->secondActive();
+            const mdk::ArenaStream::Stats& streamStats = level.stream().stats();
+            sample.streamSwitches = streamStats.switches;
+            sample.streamBytes = streamStats.bytesRead;
+            sample.streamStalls = streamStats.stalls;
+            sample.streamMs = hwStreamMs;
+            sample.viewsBuilt = hwViewsBuilt;
+            sample.viewsMs = hwViewsMs;
+            MdkC3dFirstUse made;
+            mdk_render_c3d_first_use(renderer, &made);
+            sample.texturesMade = made.texturesMade;
+            sample.hdImported = made.hdImported;
+            if (kurtSpriteReady) {
+                sample.kurtReads = kurtSprite.streamStats().reads;
+                sample.kurtStandIns = kurtSprite.streamStats().standIns;
+            }
+            sample.logLines = mdk::log3dsLinesWritten();
+            mdk::harnessArenaFrame(frame, sample);
+        }
+#endif
         frame++;
 
         if (frame == 1u) {

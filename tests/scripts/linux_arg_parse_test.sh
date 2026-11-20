@@ -411,6 +411,13 @@ expect_reject "non-numeric --level" --headless --fixed-step --level=abc --size=3
 expect_reject "--seed with no value" --headless --fixed-step --seed
 expect_reject "non-numeric --seed" --headless --fixed-step --seed one --frames 1
 
+# 13b. --walk (game/walk_script.h, the hardware harness's scripted walk): a script
+#      that does not parse is refused whole -- a route run that walks half its
+#      script would put Kurt somewhere else and still report the arena crossings.
+expect_reject "unknown --walk action" --headless --fixed-step --walk=sprint@0-10 --frames 1
+expect_reject "--walk end not after its first frame" --headless --fixed-step --walk=forward@10-5 --frames 1
+expect_reject "empty --walk" --headless --fixed-step --walk= --frames 1
+
 # --- a value that parses, but that THIS run can never act on --------------------
 # 14/15/16. A capture frame the run cannot reach. Both halves were measured on the
 #      binary before this batch: `--capture=f.bmp --capture-frame=99 --frames 2`
@@ -437,6 +444,7 @@ expect_reject "--seed past INT_MAX" --headless --fixed-step --seed 9999999999999
 # 19/20. Both documented value styles, or the gate is just a refusal machine.
 expect_accept "documented run" --headless --fixed-step --level=3 --size=320x240 --seed 1 --frames 2
 expect_accept "highest shipped level" --headless --fixed-step --level=8 --size=320x240 --seed 1 --frames 2
+expect_accept "a scripted walk" --headless --fixed-step --level=7 --size=320x240 --seed 1 --walk='forward+turbo@0-2;turnleft@1-2' --frames 2
 # 21. The frame count is honoured, not just parsed.
 expect_frames "--frames 3 stops at 3" 3 \
     --headless --fixed-step --level=3 --size=320x240 --seed 1 --frames 3

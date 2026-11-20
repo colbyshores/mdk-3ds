@@ -152,6 +152,20 @@ $(error AT=$(AT) needs AUTOQUIT: the start override is a harness-build feature)
 endif
 DEFINES += -DMDK_HW_AT='$(AT)'
 endif
+# `make AUTOQUIT=90 WALK='forward+turbo@60-260;turnright@270-307'` drives Kurt by a
+# script (platform/harness_3ds.h, game/walk_script.h): `<keys>@<first>-<end>`
+# segments, ';' between them, '+' between keys (forward, back, strafeleft,
+# straferight, turnleft, turnright, jump, turbo, fire, useitem, itemnext,
+# itemprevious), the end frame exclusive. With FIXED=1 frame f is step f, as on the
+# Linux build's --fixed-step --walk=..., where a route is found and checked. The
+# script is parsed at boot and a refused one stops the run. main_3ds.cpp and
+# harness_3ds.cpp read it: `make clean` after changing WALK. No spaces, no quotes.
+ifneq ($(strip $(WALK)),)
+ifndef AUTOQUIT
+$(error WALK=$(WALK) needs AUTOQUIT: the scripted walk is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_WALK='"$(WALK)"'
+endif
 # `make AUTOQUIT=90 TOGGLES='enableGlowBillboards=0;shadowMapSize=128'` applies
 # config.ini lines (';' between them, no spaces, no commas) over the console's own
 # config, for the per-toggle cost profiles: one console config per run without

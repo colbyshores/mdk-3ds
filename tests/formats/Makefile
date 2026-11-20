@@ -32,6 +32,7 @@ SOURCES := \
 	mods_tests.cpp \
 	kurt_pack_tests.cpp \
 	random_tests.cpp \
+	walk_script_tests.cpp \
 	$(CORE)/util/math_lut.cpp \
 	$(CORE)/util/random.cpp \
 	$(CORE)/util/sha256.cpp \
@@ -75,7 +76,8 @@ SOURCES := \
 	$(CORE)/render/surface_cache.cpp \
 	$(CORE)/render/arena_scene.cpp \
 	$(CORE)/game/level_view.cpp \
-	$(CORE)/game/arena_views.cpp
+	$(CORE)/game/arena_views.cpp \
+	$(CORE)/game/walk_script.cpp
 
 # scripts/pose_cache.cpp is here because game/level_data.cpp calls
 # scripts::forgetPoseCaches(), and a target links whatever a call resolves to.
