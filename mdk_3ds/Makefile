@@ -191,6 +191,21 @@ else ifneq ($(strip $(DRAWDEDUPE)),1)
 $(error DRAWDEDUPE=$(DRAWDEDUPE): use 0 (off, the A/B) or 1 (on, the default))
 endif
 endif
+# `make AUTOQUIT=90 DSPAUDIO=0` keeps the software mix (a harness aid, for the
+# owner's A/B profile): the shared mixer sums the voices on the ARM11 into one
+# ndsp channel (audio_3ds.cpp), as before SPEC.md 8's DSP mixing. DSPAUDIO=1, or
+# unset, is the shipped DSP path (audio_dsp_3ds.h: one ndsp channel per voice).
+# main_3ds.cpp and audio_dsp_3ds.cpp read it: `make clean` after changing it.
+ifneq ($(strip $(DSPAUDIO)),)
+ifndef AUTOQUIT
+$(error DSPAUDIO=$(DSPAUDIO) needs AUTOQUIT: the A/B switch is a harness-build feature)
+endif
+ifeq ($(strip $(DSPAUDIO)),0)
+DEFINES += -DMDK_HW_DSPAUDIO_OFF=1
+else ifneq ($(strip $(DSPAUDIO)),1)
+$(error DSPAUDIO=$(DSPAUDIO): use 0 (software mix, the A/B) or 1 (DSP mixing, the default))
+endif
+endif
 # `make AUTOQUIT=90 GLOWPROBE=1` adds one halo in front of the camera every
 # frame (a harness aid): the glow billboards' path drawn on hardware without a
 # script's explosion. Only main_3ds.cpp reads it: touch it after changing it.

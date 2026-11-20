@@ -56,8 +56,11 @@ uint64_t harnessProfileTick();
 // scripts (runtime->update), the follow camera, and space.setSolid, summed.
 void harnessProfileStepSpans(uint64_t playerTicks, uint64_t runtimeTicks,
                              uint64_t cameraTicks, uint64_t solidTicks);
+// `audioTicks` is the frame's audio work: listenFromCamera, the mixer's update,
+// the DSP path's channel sync (audio_dsp_3ds.h) and the device's update -- the
+// whole CPU cost of sound in either mode, so a DSPAUDIO=0 A/B reads it directly.
 void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTicks,
-                         uint64_t drawTicks, uint64_t endTicks);
+                         uint64_t drawTicks, uint64_t endTicks, uint64_t audioTicks);
 void harnessProfileReport();
 
 // True once the harness deadline expires (first call arms it). Always

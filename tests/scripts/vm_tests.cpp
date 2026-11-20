@@ -31,6 +31,7 @@
 #include "archive_guard_tests.h"
 #include "audio_sink_tests.h"
 #include "audio_stream_tests.h"
+#include "voice_binding_tests.h"
 #include "flow_tests.h"
 #include "input_3ds_tests.h"
 #include "heap_split_tests.h"
@@ -8215,6 +8216,16 @@ int main() {
     failures += sinkFailures;
     if (sinkFailures == 0) {
         printf("PASS AudioSinkSeam\n");
+    }
+
+    // The 3DS DSP output's platform-neutral half (voice_binding_tests.h): the
+    // lifecycle with the sample plane off, bit for bit against the mix's, and the
+    // voice -> channel binding (allocation, eviction that never ends a voice,
+    // release on end, the music pool, the looping rebind).
+    const int bindingFailures = mdk::test::runVoiceBindingTests();
+    failures += bindingFailures;
+    if (bindingFailures == 0) {
+        printf("PASS VoiceBinding\n");
     }
 
     // The MVE audio decode: the 8-bit PCM path over the whole byte domain, the

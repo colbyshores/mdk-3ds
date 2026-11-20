@@ -56,6 +56,7 @@
 #include <string>
 
 #include "audio/audio_3ds.h"
+#include "audio/audio_dsp_3ds.h"
 #include "audio/level_music.h"
 #include "audio/sound_bank.h"
 #include "audio/sound_mixer.h"
@@ -1043,12 +1044,22 @@ int main(int argc, char** argv) {
     }
     heapProbe("post-audio");
     mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
-    // The sink gets no queue query (audio_3ds.h: ndsp has no queued-frames
-    // query, only a position inside the buffer now playing), so the device keeps
-    // the frame's own accounting and the wave-buffer queue absorbs the jitter.
-    const bool audioReady = mdk::audioOpen();
+    // THE OUTPUT (SPEC.md 8). Release builds mix on the DSP (audio_dsp_3ds.h):
+    // every audible voice on its own ndsp channel, the device's sample plane OFF
+    // so the ARM11 sums nothing and only advances the voices' lifecycle. A harness
+    // build made with DSPAUDIO=0 keeps the software mix into audio_3ds.cpp's one
+    // channel, for the console's A/B. Either way the device keeps the frame's own
+    // `owed` accounting (no queue query), so the voices end on the same frames.
+    const bool audioReady = mdk::kDspAudio ? mdk::audioDspOpen(bankReady ? &bank : nullptr)
+                                           : mdk::audioOpen();
+    if (!mdk::kDspAudio) {
+        mdk::log3dsPrintf("audio: software mix (harness DSPAUDIO=0): 64 voices summed on the "
+                          "ARM11 into ndsp chn0, limiter on; the `audio: frame=` ledger is "
+                          "this sink's");
+    }
+    mixer.device().setSampleMix(!mdk::kDspAudio);
     if (audioReady) {
-        mixer.device().setSink(mdk::audioSink, nullptr);
+        mixer.device().setSink(mdk::kDspAudio ? nullptr : mdk::audioSink, nullptr);
     }
 
     // The three assets the scripts need, all of them loaded above: the CMI is the
@@ -1236,6 +1247,9 @@ int main(int argc, char** argv) {
         // than reset, because that is what the C# does (a fresh Viewer, a fresh
         // ScriptRuntime) and because the runtime has no reset: its arena states,
         // object deque, tick count and RNG are the level's history.
+        // The DSP channels follow the device being replaced: silence and forget
+        // them (and give back the music stream's bank pins) before it goes.
+        mdk::audioDspDetach();
         music.reset();   // its voices are the runtime's mixer's
         musicPrefetchedFor.clear();
         runtime.reset();
@@ -1270,10 +1284,12 @@ int main(int argc, char** argv) {
             // are the same mixer.
             player.setMixer(&runtime->mixer());
             mix = &runtime->mixer();
+            // The new mixer owns a new SoundDevice, so the output has to be handed
+            // to it: a respawn without this would be a silent level (and, on the
+            // DSP path, a device mixing samples nobody hears).
+            mix->device().setSampleMix(!mdk::kDspAudio);
             if (audioReady) {
-                // The new mixer owns a new SoundDevice, so the sink has to be handed
-                // to it: a respawn without this would be a silent level.
-                mix->device().setSink(mdk::audioSink, nullptr);
+                mix->device().setSink(mdk::kDspAudio ? nullptr : mdk::audioSink, nullptr);
             }
             mdk::log3dsPrintf("scripts: runtime ready (seed %d, option %d)", (int)seed,
                               (int)kScriptOption);
@@ -1420,6 +1436,7 @@ int main(int argc, char** argv) {
         // atexit chain-load hands the console back to the stub.
         // The OG profile's per-frame spans (PROFILE builds; all zero otherwise).
         uint64_t spanSim0 = 0, spanSim = 0;
+        uint64_t spanAudio = 0;
         uint32_t spanSteps0 = steps;
         if (mdk::harnessAutoquitDue()) {
             exitReason = "harness autoquit (MDK_AUTOQUIT)";
@@ -1768,9 +1785,18 @@ int main(int argc, char** argv) {
         // play forever to a silent console. `mix` is the runtime's mixer when the
         // scripts are running, which is the C#'s one-mixer shape and the only way a
         // script's play_sound reaches this device at all.
+        //
+        // THE DSP PATH'S FRAME sits between the two updates (voice_binding.h):
+        // after the mixer, so this frame's gain, pitch and pan are set and stopped
+        // voices are gone; before the device, so a voice started this frame is
+        // bound at its first sample. A no-op on the software path.
+        // The `audio` profile span is all of it, in both modes (PROFILE builds).
+        const uint64_t spanAudio0 = mdk::harnessProfileTick();
         mix->listenFromCamera(camera);
         mix->update(elapsed);
+        mdk::audioDspFrame(*mix);
         mix->device().update(elapsed);
+        spanAudio = mdk::harnessProfileTick() - spanAudio0;
         // AFTER the device, so the clock is exactly the sum of what the device
         // was given and not of what the frame happened to measure.
         audioClock += elapsed;
@@ -2255,7 +2281,7 @@ int main(int argc, char** argv) {
         if (frame > 0) {
             mdk::harnessProfileSpans(spanSim, steps - spanSteps0, spanDraw0 - spanBegin0,
                                      spanEnd0 - spanDraw0,
-                                     mdk::harnessProfileTick() - spanEnd0);
+                                     mdk::harnessProfileTick() - spanEnd0, spanAudio);
         }
         frame++;
 
@@ -2346,6 +2372,30 @@ int main(int argc, char** argv) {
                               (unsigned)st.done,
                               (unsigned)st.dropped, (unsigned)st.requeued, st.inDsp,
                               (unsigned)st.dspFrames, (unsigned)st.dspDropped);
+            if (mdk::kDspAudio) {
+                // THE DSP PATH'S LEDGER (audio_dsp_3ds.h). The line above counts the
+                // software sink and reads 0 here; this one says what the DSP path did:
+                // voices bound, evicted, rebound, cut and left to finish; the sample
+                // arena; the music stream (buffers queued, drained-channel restarts =
+                // underruns); and ndsp's own frame counters.
+                const mdk::AudioDspStats ds = mdk::audioDspStats();
+                // `frame` goes in as %u and not as the sink line's %lu: that line's
+                // `(unsigned long)frame, audioClock` argument pair is the one
+                // tests/scripts/ndsp_sink_test.sh pins, and a second spelling of it
+                // here would let a mutant of the first pass unseen.
+                mdk::log3dsPrintf("audio: dsp frame=%u secs=%.3f bound=%d binds=%u evicted=%u "
+                                  "rebound=%u cut=%u drained=%u arena=%u/%u fills=%u "
+                                  "arenaevict=%u nospace=%u music=%d queued=%u restarts=%u "
+                                  "dspframes=%u dspdropped=%u",
+                                  (unsigned)frame, audioClock, (int)ds.bound, (unsigned)ds.binds,
+                                  (unsigned)ds.evictions, (unsigned)ds.rebinds,
+                                  (unsigned)ds.cuts, (unsigned)ds.drains,
+                                  (unsigned)ds.arenaUsed, (unsigned)ds.arenaBytes,
+                                  (unsigned)ds.cacheFills, (unsigned)ds.cacheEvictions,
+                                  (unsigned)ds.cacheMisses, (int)ds.musicActive,
+                                  (unsigned)ds.musicQueued, (unsigned)ds.musicRestarts,
+                                  (unsigned)ds.dspFrames, (unsigned)ds.dspDropped);
+            }
         }
 
         if (g_frameBudget != 0 && frame >= g_frameBudget) {
@@ -2375,6 +2425,9 @@ int main(int argc, char** argv) {
     arenaViews.clear();
     mdk_render_destroy(renderer);
     mdk::audioClose();
+    // The DSP path: join its worker and give back its bank pins while the bank
+    // (a local of this function) is still alive.
+    mdk::audioDspClose();
     mdk::romfsFileSystemExit();
     // The log is closed BEFORE gfxExit(): libctru's gfxExit() tears the SD
     // card's filesystem down, and a FILE* opened on it cannot be flushed

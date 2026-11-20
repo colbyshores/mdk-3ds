@@ -85,6 +85,8 @@ set(SOURCES
     ${CORE}/src/audio/sound_device.cpp
     ${CORE}/src/audio/sound_mixer.cpp
     ${CORE}/src/audio/level_music.cpp
+    ${CORE}/src/audio/voice_lifecycle.cpp
+    ${CORE}/src/audio/voice_binding.cpp
     ${CORE}/src/formats/arena.cpp
     ${CORE}/src/formats/beta_demo.cpp
     ${CORE}/src/formats/bin_reader.cpp

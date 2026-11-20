@@ -60,12 +60,12 @@ uint32_t g_vblanks[5] = {0, 0, 0, 0, 0};   // [1], [2], [3], [4+]; [0] unused
 constexpr uint32_t kSpikeUs = 60000u;
 constexpr uint32_t kSpikeLogs = 40u;
 uint32_t g_spikesLogged = 0;
-uint64_t g_lastSimT = 0, g_lastBeginT = 0, g_lastDrawT = 0, g_lastEndT = 0;
+uint64_t g_lastSimT = 0, g_lastBeginT = 0, g_lastDrawT = 0, g_lastEndT = 0, g_lastAudioT = 0;
 uint32_t g_lastSteps = 0;
 uint32_t g_over17 = 0;   // > 16.667 ms: missed a 60 Hz vblank
 uint32_t g_over34 = 0;   // > 33.333 ms: missed a 30 Hz vblank
 bool g_stereoSeen = false;
-uint64_t g_simT = 0, g_beginT = 0, g_drawT = 0, g_endT = 0;
+uint64_t g_simT = 0, g_beginT = 0, g_drawT = 0, g_endT = 0, g_audioT = 0;
 uint64_t g_simSteps = 0;
 uint32_t g_spanFrames = 0;
 uint64_t g_playerT = 0, g_runtimeT = 0, g_cameraT = 0, g_solidT = 0;
@@ -111,12 +111,13 @@ void harnessProfileFrame(double periodSeconds) {
         g_spikesLogged++;
         const double usPerTick = 1000000.0 / (double)SYSCLOCK_ARM11;
         mdk::log3dsPrintf("profile: spike %lu.%01lu ms at profiled frame %lu: sim %.2f ms (%lu steps) "
-                          "begin %.2f draw %.2f end %.2f",
+                          "begin %.2f draw %.2f end %.2f audio %.2f",
                           (unsigned long)(us / 1000u), (unsigned long)(us % 1000u / 100u),
                           (unsigned long)g_count, (double)g_lastSimT * usPerTick / 1000.0,
                           (unsigned long)g_lastSteps, (double)g_lastBeginT * usPerTick / 1000.0,
                           (double)g_lastDrawT * usPerTick / 1000.0,
-                          (double)g_lastEndT * usPerTick / 1000.0);
+                          (double)g_lastEndT * usPerTick / 1000.0,
+                          (double)g_lastAudioT * usPerTick / 1000.0);
     }
     if (us > 500000u) {
         mdk::log3dsPrintf("profile: STALL %lu.%03lu ms at profiled frame %lu",
@@ -160,21 +161,24 @@ void harnessProfileStepSpans(uint64_t playerTicks, uint64_t runtimeTicks,
 }
 
 void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTicks,
-                         uint64_t drawTicks, uint64_t endTicks) {
+                         uint64_t drawTicks, uint64_t endTicks, uint64_t audioTicks) {
 #ifdef MDK_HW_PROFILE
     g_simT += simTicks;
     g_simSteps += simSteps;
     g_beginT += beginTicks;
     g_drawT += drawTicks;
     g_endT += endTicks;
+    g_audioT += audioTicks;
     g_spanFrames++;
     g_lastSimT = simTicks;
     g_lastSteps = simSteps;
     g_lastBeginT = beginTicks;
     g_lastDrawT = drawTicks;
     g_lastEndT = endTicks;
+    g_lastAudioT = audioTicks;
 #else
     (void)simTicks; (void)simSteps; (void)beginTicks; (void)drawTicks; (void)endTicks;
+    (void)audioTicks;
 #endif
 }
 
@@ -187,13 +191,15 @@ void harnessProfileReport() {
         const double f = (double)g_spanFrames;
         const double simUs = (double)g_simT * usPerTick;
         mdk::log3dsPrintf("profile: spans frames=%lu sim=%.2fms/frame steps=%.2f/frame "
-                          "step=%.2fms begin(vblank wait)=%.2fms draw=%.2fms end=%.2fms",
+                          "step=%.2fms begin(vblank wait)=%.2fms draw=%.2fms end=%.2fms "
+                          "audio=%.2fms",
                           (unsigned long)g_spanFrames, simUs / f / 1000.0,
                           (double)g_simSteps / f,
                           g_simSteps ? simUs / (double)g_simSteps / 1000.0 : 0.0,
                           (double)g_beginT * usPerTick / f / 1000.0,
                           (double)g_drawT * usPerTick / f / 1000.0,
-                          (double)g_endT * usPerTick / f / 1000.0);
+                          (double)g_endT * usPerTick / f / 1000.0,
+                          (double)g_audioT * usPerTick / f / 1000.0);
         // The step's parts, per STEP, and the residual so the accounting is
         // seen to close (the runbook's rule: an unexplained residual is where
         // the next phantom hides).
@@ -307,7 +313,7 @@ uint64_t harnessProfileTick() {
 
 void harnessProfileStepSpans(uint64_t, uint64_t, uint64_t, uint64_t) {}
 
-void harnessProfileSpans(uint64_t, uint32_t, uint64_t, uint64_t, uint64_t) {}
+void harnessProfileSpans(uint64_t, uint32_t, uint64_t, uint64_t, uint64_t, uint64_t) {}
 
 void harnessProfileFrame(double) {}
 

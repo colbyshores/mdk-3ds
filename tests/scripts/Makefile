@@ -25,6 +25,8 @@ COMMON_SOURCES := \
 	$(CORE)/audio/sound_device.cpp \
 	$(CORE)/audio/sound_mixer.cpp \
 	$(CORE)/audio/level_music.cpp \
+	$(CORE)/audio/voice_lifecycle.cpp \
+	$(CORE)/audio/voice_binding.cpp \
 	$(CORE)/util/math_lut.cpp \
 	$(CORE)/util/random.cpp \
 	$(CORE)/formats/bin_reader.cpp \
@@ -95,6 +97,7 @@ SOURCES_VM := \
 	vm_tests.cpp \
 	audio_sink_tests.cpp \
 	audio_stream_tests.cpp \
+	voice_binding_tests.cpp \
 	archive_guard_tests.cpp \
 	flow_tests.cpp \
 	layer_tests.cpp \

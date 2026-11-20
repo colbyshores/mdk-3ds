@@ -8,6 +8,8 @@
 #include <math.h>
 #include <string.h>
 
+#include "audio/voice_lifecycle.h"
+
 namespace mdk {
 namespace audio {
 
@@ -34,6 +36,26 @@ SoundDevice::SoundDevice()
     // AudioDevice.Update's `(int)(OutputRate * QueueSeconds)`, once instead of
     // per Update: 44100 * 0.06f rounds to 2646.0f, so the frame count is 2646.
     queueFrames_ = (int32_t)((float)kOutputRate * kQueueSeconds);
+    ended_.reserve((size_t)kMaxVoices);
+}
+
+bool SoundDevice::endedInLastUpdate(int32_t id) const {
+    for (size_t i = 0; i < ended_.size(); i++) {
+        if (ended_[i] == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void SoundDevice::panGains(float gain, float pan, float* left, float* right) {
+    /* @vfp-exempt R6 — the pan law's far-channel attenuation, once per voice per
+     * update and not per sample: the C# computes it outside its frame loop too.
+     * Checked bit-for-bit against MathF.Pow (0x3B4F3E37 at pan 0.5). measured
+     * n/a. Verified 2026-11-05. */
+    const float far = powf(10.0f, -kPanRangeDb * fabsf(pan) / 20.0f);
+    *left = gain * (pan > 0.0f ? far : 1.0f);
+    *right = gain * (pan < 0.0f ? far : 1.0f);
 }
 
 void SoundDevice::setBusGain(int32_t bus, float gain) {
@@ -152,13 +174,10 @@ bool SoundDevice::mixVoice(Voice& voice, float* out, int32_t frames) {
     }
 
     const float step = voice.pitch * (float)voice.sampleRate / (float)kOutputRate;
-    /* @vfp-exempt R6 — the pan law's far-channel attenuation, once per voice per
-     * update and not per sample: the C# computes it outside its frame loop too.
-     * Checked bit-for-bit against MathF.Pow (0x3B4F3E37 at pan 0.5). measured
-     * n/a. Verified 2026-11-05. */
-    const float far = powf(10.0f, -kPanRangeDb * fabsf(voice.pan) / 20.0f);
-    const float left = voice.gain * (voice.pan > 0.0f ? far : 1.0f);
-    const float right = voice.gain * (voice.pan < 0.0f ? far : 1.0f);
+    // The pan law, shared with the hardware voices of a backend whose DSP mixes.
+    float left;
+    float right;
+    panGains(voice.gain, voice.pan, &left, &right);
 
     /* @vfp-exempt R2,R3,R4 — the three pieces of the oracle's own frame loop, kept
      * because together they choose the samples: the double position (R4), the float
@@ -222,6 +241,7 @@ void SoundDevice::addMusic(int32_t frames) {
 // the `owed` accounting the golden pins. Both branches are the oracle's, line for
 // line; the only thing that moved is which sink is allowed to take which.
 void SoundDevice::update(float delta) {
+    ended_.clear();
     owed_ += (double)kOutputRate * (double)delta;
     int32_t frames;
     if (sink_ != nullptr && queued_ != nullptr) {
@@ -235,6 +255,25 @@ void SoundDevice::update(float delta) {
         return;
     }
     mixedFrames_ = frames;
+
+    if (!sampleMix_) {
+        // THE LIFECYCLE ALONE (setSampleMix): the same voices end on the same
+        // update as the mix below ends them, from the same step expression and the
+        // same frame count, and nothing is summed. A voice with nothing to play
+        // takes this arithmetic in the mix too (mixVoice's first branch); a voice
+        // with samples steps its position identically while it reads them.
+        for (size_t i = 0; i < voices_.size();) {
+            Voice& voice = voices_[i];
+            const float step = voice.pitch * (float)voice.sampleRate / (float)kOutputRate;
+            if (!lifecycleAdvance(&voice.position, step, voice.frames, voice.looping, frames)) {
+                ended_.push_back(voice.id);
+                voices_.erase(voices_.begin() + (long)i);
+            } else {
+                i++;
+            }
+        }
+        return;
+    }
 
     if ((size_t)(frames * 2) > mix_.size()) {
         mix_.resize((size_t)(frames * 2));
@@ -252,6 +291,7 @@ void SoundDevice::update(float delta) {
         float* into = voice.bus == Music ? music_.data() : mix_.data();
         const bool mixed = mixVoice(voice, into, frames);
         if (!mixed) {
+            ended_.push_back(voice.id);
             voices_.erase(voices_.begin() + (long)i);
         } else {
             i++;

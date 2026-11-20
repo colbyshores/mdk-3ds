@@ -163,10 +163,15 @@ public:
     void setMusicFilter(bool on) { musicFilter_ = on; }
 
     // The last update()'s mix: interleaved stereo, mixedFrames() frames.
-    const float* mix() const { return mix_.empty() ? nullptr : mix_.data(); }
+    const float* mix() const { return !sampleMix_ || mix_.empty() ? nullptr : mix_.data(); }
     int32_t mixedFrames() const { return mixedFrames_; }
 
-private:
+    // ---- The voice table, read by a backend whose hardware mixes the voices ----
+    //
+    // SPEC.md 8: on the 3DS the DSP mixes, one ndsp channel per voice, so the
+    // backend needs what each live voice is (its samples, rate, position, loop)
+    // and what the laws made of it this frame (gain, pitch, pan). Read-only: the
+    // table stays this object's, and the laws that write it stay the mixer's.
     struct Voice {
         int32_t id = 0;
         int32_t bus = Effects;
@@ -182,7 +187,29 @@ private:
         // what the script goldens depend on.
         const Sound* sound = nullptr;
     };
+    // The live voices in play order (ids ascending: an id is never reused).
+    const std::vector<Voice>& voices() const { return voices_; }
+    // Whether `id` ENDED in the last update() -- a non-looping voice that ran out,
+    // as opposed to one that was stopped. A hardware voice lets the first finish
+    // its last few milliseconds and cuts the second.
+    bool endedInLastUpdate(int32_t id) const;
 
+    // The pan law (AudioDevice.PanRangeDb, DirectSound's): the near channel at
+    // `gain`, the far one attenuated by up to 100 dB. MixVoice applies it per
+    // voice per update; a hardware voice takes the same two numbers as its mix.
+    static void panGains(float gain, float pan, float* left, float* right);
+
+    // THE SAMPLE PLANE ON OR OFF. On (the default, and the oracle's): update()
+    // mixes, filters, limits and hands the sink a buffer. Off: update() advances
+    // every voice's lifecycle exactly as the mix would (voice_lifecycle.h --
+    // solved, not stepped) and produces no buffer, no music filter and no limiter;
+    // mix() is then null. The 3DS turns it off when the DSP mixes the voices, so
+    // the ARM11 runs no per-sample loop while every voice still ends on the frame
+    // the scripts expect.
+    void setSampleMix(bool on) { sampleMix_ = on; }
+    bool sampleMix() const { return sampleMix_; }
+
+private:
     // MixVoice: one voice into `out` (interleaved stereo, `frames` frames).
     // FALSE once the voice has ended, exactly as the C# returns false.
     static bool mixVoice(Voice& voice, float* out, int32_t frames);
@@ -193,6 +220,10 @@ private:
 
     // The live voices in play order (the C#'s Dictionary order).
     std::vector<Voice> voices_;
+    // The ids that ended (ran out) in the last update; at most kMaxVoices, and
+    // reserved to that in the constructor so an update never grows it.
+    std::vector<int32_t> ended_;
+    bool sampleMix_ = true;
     int32_t nextId_ = 1;
     double owed_ = 0.0;  // output frames owed when there is no device
 
