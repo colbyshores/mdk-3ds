@@ -11,7 +11,7 @@
 //   feet ──► box (0.6,0.6,2.5) at feet+0.5 (walk) │ (0.4,0.4,2.5) at feet+0.01 (fall)
 //        ──► Kurt's arena: 4 slides ──free?──► the other arena: no slide ──► new feet
 //
-// The solid-object pass and the ledge/camera probes (ArenaSpace.Probes.cs)
+// The solid-object pass is below (package #3); the ledge probes (ArenaSpace.Probes.cs)
 // land with the entities and camera ports; this is the BSP move Kurt needs to
 // walk and fall.
 // ============================================================================
@@ -24,6 +24,7 @@
 
 #include "formats/arena.h"
 #include "game/bsp.h"
+#include "game/solids.h"
 #include "game/vec_util.h"
 
 namespace mdk {
@@ -101,6 +102,19 @@ public:
     // Moves Kurt's feet by delta, sliding along faces met obliquely enough
     // ((D·n)^2 <= slideK·|D|^2).
     Result move(Vec feet, Vec delta, Motion motion, float slideK);
+
+    // ---- The solid-object pass (package #3: ArenaSpace.cs:172-188) ----
+    // C# ArenaSpace.Move(feet, delta, motion, slideK, solids): the BSP move, then
+    // against the solid objects around (damp_collide_move's object pass): they change
+    // only the XY, and the BSP is swept again to the new end. An empty list is the
+    // plain move.
+    Result move(Vec feet, Vec delta, Motion motion, float slideK,
+                const std::vector<solids::Solid>& solids);
+    // C# ArenaSpace.Touching: the owners of the solids Kurt's walking box at `feet`
+    // touches or is in, each added once.
+    static void touching(Vec feet, const std::vector<solids::Solid>& solids,
+                         std::vector<scripts::MdkObject*>* owners);
+    // ---- end of the solid-object pass ----
 
     // The lowest point of Kurt's arena (or of an arena around the feet), or
     // false when there is none.

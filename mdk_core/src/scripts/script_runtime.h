@@ -302,11 +302,29 @@ public:
     MdkObject* barObject = nullptr;
     int32_t barHealth = 0;
     int32_t barMax = 0;
-    // C# GetKurtPlatform (:2720): the object Kurt stands on, when he is on a floor.
-    // Kurt.Platform (the platform footing, Kurt.cs:110) is not ported, so this is null on
-    // every step, which is what the C# answers for a Kurt on the arena's own floor.
-    // Opcode 209 (if_player_on_me_low) reads it.
-    MdkObject* getKurtPlatform() const { return nullptr; }
+    // ---- Solid objects and platforms (package #3, scripts/platforms.cpp) ----
+    // C# GetKurtPlatform (:2720): the object Kurt stands on (Kurt.Platform, 0x573b84),
+    // when he is on a floor; null without a Player. Opcodes 114 (if_player_on_me) and
+    // 209 (if_player_on_me_low) read it.
+    MdkObject* getKurtPlatform() const;
+    // C# SolidsWithin (:2725): what Kurt collides with (damp_collide_move) -- the
+    // visible parts of the objects of his arena that are alive, walls or floors
+    // (MdkObject.Footing), but the one he rides and doors' LOCK parts. The list is one
+    // scratch list, overwritten by the next call (Kurt uses each answer at once).
+    const std::vector<solids::Solid>& solidsWithin(const formats::Box& region);
+    // C# MdkObject.Footing (MdkObject.cs:57): how Kurt meets the object; false when he
+    // passes through it.
+    static bool footingOf(const MdkObject* obj, solids::Footing* footing);
+    // C# KeeperAt (:2229): where a platform that keeps Kurt is (flag 0x800000, alive).
+    static bool keeperAt(const MdkObject* obj, Vec3* at);
+    // C# ClipView (:1995, camera_clearance 0x417ee8): the camera's line of sight from
+    // `from` to `to` against the objects of Kurt's arena that block it (flag 0x1000000,
+    // not 0x810): where it first meets one of their parts, or its end.
+    Vec3 clipView(const Vec3& from, const Vec3& to);
+    // The FollowCamera's ClipViewHook over clipView (Viewer.cs:237:
+    // `new FollowCamera(_space) { ClipView = _scripts.ClipView }`).
+    static Vec3 clipViewTrampoline(void* ctx, const Vec3& from, const Vec3& to);
+    // ---- end of solid objects and platforms ----
     // C# ScriptRuntime.Eye (:206): the camera's position, which the frontend sets each
     // frame (Viewer.cs:699) and an explosion turns its face to. A harness with no camera
     // leaves it at the origin, as the C#'s headless probe does.
@@ -969,6 +987,19 @@ private:
     void blastKurt(const Vec3& center, int32_t damage, float radius);
     void blastGroups(const Vec3& center, int32_t damage, float radius, int32_t hitType,
                      bool counted);
+    // ---- Solid objects and platforms (package #3, scripts/platforms.cpp) ----
+    // C# KurtTouchesGroups (:554): the triangle groups of his arena that Kurt ran into
+    // this tick get a hit (0x46634e).
+    void kurtTouchesGroups();
+    // C# Kurt.Carry's call site in the object loop (:983): Kurt moves and turns with
+    // the platform he stands on.
+    void carryKurt(MdkObject* obj, const Vec3& position, float yaw);
+    static const std::vector<solids::Solid>* solidsWithinTrampoline(void* ctx,
+                                                                   const formats::Box& region);
+    static bool keeperAtTrampoline(void* ctx, MdkObject* owner, Vec3* at);
+    std::vector<solids::Solid> solidsWithin_;
+    std::vector<int32_t> touchedGroups_;
+    // ---- end of solid objects and platforms ----
     static void itemUsedTrampoline(void* ctx);
     static void bombTriggeredTrampoline(void* ctx);
     static bool canUseItemTrampoline(void* ctx, Kurt::Item item);

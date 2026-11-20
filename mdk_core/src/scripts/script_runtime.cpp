@@ -320,6 +320,13 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
         hooks.bombTriggered = &ScriptRuntime::bombTriggeredTrampoline;
         hooks.canUseItem = &ScriptRuntime::canUseItemTrampoline;
         player_->setItemHooks(hooks);
+        // Kurt's solids and keeper (ScriptRuntime.cs:334, 346): kurt.SolidsWithin =
+        // SolidsWithin, kurt.Keeper = KeeperAt (package #3, scripts/platforms.cpp).
+        Player::SolidHooks solids;
+        solids.context = this;
+        solids.solidsWithin = &ScriptRuntime::solidsWithinTrampoline;
+        solids.keeperAt = &ScriptRuntime::keeperAtTrampoline;
+        player_->setSolidHooks(solids);
     }
 }
 
@@ -327,6 +334,8 @@ ScriptRuntime::~ScriptRuntime() {
     forgetBoxModels();
     if (player_ != nullptr && player_->itemHooks().context == this) {
         player_->setItemHooks(Player::ItemHooks());
+        // The platform, the keeper and the touched list point into objects_ (package #3).
+        player_->releaseSolids();
     }
 }
 
@@ -681,6 +690,9 @@ void ScriptRuntime::runTick() {
     // that runs in the object loop below belongs to the next one's.
     checkTriggers();
     updateDrawnArenas();
+    // KurtTouchesGroups (ScriptRuntime.cs:936), after UpdateArenas and before
+    // Rides.Update and CollectPickups (package #3).
+    kurtTouchesGroups();
 
     // ScriptRuntime.cs:945-946 records Kurt's observed feet delta before the
     // object scripts run. The C# computes it after CollectPickups; pickups and
@@ -748,6 +760,10 @@ void ScriptRuntime::runTick() {
         if ((obj->flags & MdkObject::FlagDoor) != 0) {
             updateDoor(obj);
         }
+        // Where the object was before its script and motion (ScriptRuntime.cs:975): the
+        // platform carry below moves Kurt by the difference (package #3).
+        const Vec3 carriedFrom = obj->position;
+        const float carriedYaw = obj->yaw;
         vm_.run(obj);
         // ObjectMotion.Update's first branch (ObjectMotion.cs:54-68): an effect (an
         // explosion) only plays its texture animation and returns, so nothing below --
@@ -755,6 +771,7 @@ void ScriptRuntime::runTick() {
         // roll -- runs for it; every gate below tests the same `effect_frames <= 0`.
         if (!obj->dead && obj->effect_frames > 0) {
             motionEffect(obj);
+            carryKurt(obj, carriedFrom, carriedYaw);
             continue;
         }
         // The path-following half of Motion.Update, gated on liveness exactly as
@@ -841,6 +858,10 @@ void ScriptRuntime::runTick() {
                 obj->previous_position = obj->position;
             }
         }
+        // Kurt moves and turns with the platform he stands on (ScriptRuntime.cs:982-986,
+        // after Motion.Update). The `continue`s above all leave a dead object, which the
+        // carry skips anyway.
+        carryKurt(obj, carriedFrom, carriedYaw);
     }
 
     runControllers();

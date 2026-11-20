@@ -164,7 +164,8 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
     return true;
 }
 
-Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera) {
+Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera,
+                       const ClipViewHook* clip) {
     // C# calls Clear only when space != null && !Sniping && !Frozen && !Dead
     // (FollowCamera.cs:132). Frozen is ported (the end of a level: no clearance, so
     // the camera does not shove a lifted Kurt), and so is Sniping (a sniping Kurt is
@@ -201,18 +202,28 @@ Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera) {
             cam = vAdd(cam, toVec(moved));
         }
     }
-    // The solid-object ClipView pass is not ported (no objects yet): the camera
-    // has moved as far as Kurt did.
-    return fromVec(cam);
+    // C# FollowCamera.Clear's ClipView pass (FollowCamera.cs:268-274): the line of
+    // sight from the head against the objects that block the view; Kurt is shoved
+    // toward where it ends and the camera goes with him.
+    if (clip == nullptr || clip->clip == nullptr) {
+        return fromVec(cam);
+    }
+    const Vec3 camera3 = fromVec(cam);
+    const Vec3 end = clip->clip(clip->context,
+                                Vec3{player.feet.x, player.feet.y, player.feet.z + kHeadHeight},
+                                camera3);
+    const Vec3 moved =
+        player.shove(Vec3{end.x - camera3.x, end.y - camera3.y, end.z - camera3.z});
+    return Vec3{camera3.x + moved.x, camera3.y + moved.y, camera3.z + moved.z};
 }
 
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect,
-                              float rollDegrees) {
+                              float rollDegrees, const ClipViewHook* clip) {
     const float pitch = follow_camera::degreesToRadians(clampViewPitch(pitchDegrees));
     const Vec3 facing = player.facing();
     Vec3 position = followCameraPoint(player.feet, facing, pitch, pivot);
-    position = followCameraClear(space, player, position);
+    position = followCameraClear(space, player, position, clip);
     Vec3 forward;
     Vec3 up;
     followCameraOrient(facing, pitch, &forward, &up);
@@ -405,7 +416,7 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     const float degrees =
         _arenaPitch + _lookOffset + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt;
     buildFollowCameraCleared(camera, space, player, degrees, player.cameraPivot,
-                             aspect, player.cameraRoll().roll());
+                             aspect, player.cameraRoll().roll(), &clipView);
 
     // The Aim the next Blend interpolates (C# FollowCamera.cs:141-143): the
     // pitch WITHOUT the mouse look (Blend adds the current look on top), the

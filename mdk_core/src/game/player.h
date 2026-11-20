@@ -28,6 +28,7 @@
 #include "game/input.h"
 #include "game/kurt.h"
 #include "game/scope.h"
+#include "game/solids.h"
 #include "render/render_types.h"
 #include "util/random.h"
 
@@ -262,10 +263,57 @@ public:
     // The chute closes silently, the feet and yaw are set, and all three speeds go:
     // a teleport is not a move he is still carrying. ScriptRuntime::teleportKurt
     // (opcode 112 / 173) is its only caller in this port, as in the oracle.
-    // NOT reproduced, because the subsystem is not ported: `_keeper = null`
-    // (Kurt.cs:254) belongs to Kurt.Keeper.cs, which has no C++ twin, and the
+    // A keeping platform lets him go (`_keeper = null`, Kurt.cs:254). The
     // `Teleports++` counter below has no reader until FrameBlend's Kurt half does.
     void teleport(const Vec3& at, float newYaw);
+
+    // ---- Platforms, solid objects and touches (package #3) ----
+    // Kurt.cs:107-110 (SolidsWithin, Platform), Kurt.Ride.cs:40-45 and :110-143
+    // (Touched, TakeContacts, Contact, UpdateTouched), Kurt.Keeper.cs (Keeper). The C#'s
+    // two delegates the scripts runtime sets (ScriptRuntime.cs:334, 346) are plain
+    // function pointers over a context here, the ItemHooks shape (§10: no
+    // std::function). A hook left null is the C#'s null delegate: no solids (Nearby
+    // answers []), and no platform keeps him.
+    struct SolidHooks {
+        void* context = nullptr;
+        // C# Kurt.SolidsWithin (ScriptRuntime.SolidsWithin): the solid object boxes of
+        // Kurt's arena within a region. The list is the runtime's one scratch list,
+        // used at once and overwritten by the next call, exactly as the C#'s is.
+        const std::vector<solids::Solid>* (*solidsWithin)(void* context,
+                                                          const formats::Box& region) = nullptr;
+        // C# Kurt.Keeper (ScriptRuntime.KeeperAt): where a platform that keeps Kurt is
+        // (flag 0x800000, alive), or false when it doesn't keep him.
+        bool (*keeperAt)(void* context, scripts::MdkObject* owner, Vec3* at) = nullptr;
+    };
+    void setSolidHooks(const SolidHooks& hooks) { _solidHooks = hooks; }
+
+    // C# Kurt.Platform (Kurt.cs:110): the object Kurt stands on (0x573b84), or null.
+    // Set by the fall move that landed him on it (and by the keeping platform), cleared
+    // by every other fall move.
+    scripts::MdkObject* platform() const { return _platform; }
+    // C# Kurt.Touched (Kurt.Ride.cs:45): the objects Kurt's box touches
+    // (damp_collide_move's 0x573c2c), and his platform.
+    const std::vector<scripts::MdkObject*>& touched() const { return _touched; }
+    // C# Kurt.TakeContacts (Kurt.Ride.cs:112): the arena triangles Kurt's moves ran
+    // into since the last call (0x46634e: his arena's groups get a hit). The returned
+    // list is kept until the next call, as the C#'s _taken is.
+    struct Contact {
+        const formats::Arena* arena;
+        int32_t triangle;
+    };
+    const std::vector<Contact>& takeContacts();
+    // C# Kurt.Carry (Kurt.cs:282): the platform Kurt stands on moved from `from` to
+    // `to` and turned by `turn` degrees: he moves and turns with it.
+    void carry(const Vec3& from, const Vec3& to, float turn);
+    // The runtime that owns the objects these pointers name is going (a level's end):
+    // the platform, the keeping platform and the touched list are let go, so nothing
+    // dangles into a freed object list. The C# holds references that keep the objects
+    // alive; this is the pointer port's version of that, not a behaviour.
+    void releaseSolids();
+    // C# Kurt._keeper (Kurt.Keeper.cs:160): the platform that keeps him, or null. The
+    // C# field is private and its probe reads it by reflection; this is that read.
+    scripts::MdkObject* keeper() const { return _keeper; }
+    // ---- end of platforms, solid objects and touches ----
 
     // C# Kurt.Teleports (Kurt.cs:126, incremented by Teleport at :260). Its only
     // reader in the oracle is FrameBlend's jump test (FrameBlend.cs:53: a pose whose
@@ -285,6 +333,31 @@ private:
     // Kurt.SniperMove: the sidestep and the fall. In player.cpp, beside the walk it
     // shares the movement constants with.
     void sniperMove(const Input& input, bool turbo, float delta);
+    // ---- Platforms, solid objects and touches (package #3) ----
+    // C# Kurt.Nearby (Kurt.cs:290): the solid object boxes around Kurt and `to`.
+    const std::vector<solids::Solid>& nearby(const Vec3& to);
+    // C# Kurt.FindPlatform (Kurt.cs:303): a platform the fall of dz reaches.
+    bool findPlatform(float dz, float* top, scripts::MdkObject** owner);
+    // C# Kurt.Contact (Kurt.Ride.cs:123): records the triangle a move hit.
+    ArenaSpace::Result contact(const ArenaSpace::Result& result);
+    // C# Kurt.UpdateTouched (Kurt.Ride.cs:133).
+    void updateTouched();
+    // Kurt.Keeper.cs: CheckKeeper, KeptPlatform, KeepOn, StayOnKeeper, Kept.
+    bool keeperAt(scripts::MdkObject* owner, Vec3* at) const;
+    void checkKeeper();
+    bool keptPlatform(float dz, float* top, scripts::MdkObject** owner) const;
+    void keepOn(scripts::MdkObject* owner);
+    void stayOnKeeper();
+    bool kept() const { return _keeper != nullptr; }
+    SolidHooks _solidHooks;
+    scripts::MdkObject* _platform = nullptr;
+    scripts::MdkObject* _keeper = nullptr;   // C# Kurt._keeper
+    float _keptHeight = 0.0f;                // C# Kurt._keptHeight (0x573a20)
+    std::vector<scripts::MdkObject*> _touched;
+    std::vector<Contact> _contacts;
+    std::vector<Contact> _taken;
+    // ---- end of platforms, solid objects and touches ----
+
     void updateVertical(const Input& input, const Vec3& move, float delta);
     void updateAir(bool jumpHeld, float delta);
     void glueDownhill(const Vec3& move, float delta);

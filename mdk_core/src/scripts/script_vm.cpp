@@ -1709,10 +1709,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, hit);
         }
         case 209: {  // if_player_on_me_low: Kurt stands on it, fires, and isn't above its top
-            // ScriptVm.cs:1269-1273. The platform half is Kurt.Platform, which is not
-            // ported (ScriptRuntime::getKurtPlatform answers null, the C#'s answer for a
-            // Kurt on the arena's own floor), so the branch is not taken until the
-            // platform footing lands; the firing half is the live flag.
+            // ScriptVm.cs:1269-1273: the platform Kurt stands on (Kurt.Platform while on
+            // a floor, package #3) is this object, he fires, and his feet are not above
+            // its top.
             const bool onMe = runtime_.getKurtPlatform() == obj && runtime_.kurt().firing();
             return branch(obj, ins,
                           onMe && runtime_.kurtPosition().z <= runtime_.worldBounds(obj).max.z);
@@ -2440,8 +2439,17 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, compare(delta, listval(op(ins, 1))));
         }
 
+        case 114:  // if_player_on_me: Kurt stands on it (ScriptVm.cs:1416-1417, package #3)
+            return branch(obj, ins, runtime_.getKurtPlatform() == obj);
+
         default:
             noteUnimplemented(ins.opcode);
+            // ScriptVm.cs:1799-1806: an unhandled opcode with a branch action takes it
+            // as false -- which for a GosubElse calls the else-target, not the next
+            // instruction.
+            if (ins.hasAction) {
+                return branch(obj, ins, false);
+            }
             break;
     }
     return ins.next;

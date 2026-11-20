@@ -98,8 +98,17 @@ void followCameraRoll(const Vec3& forward, Vec3* up, float rollDegrees);
 // from it (with a floor there, else half of it to a side), and the camera moves
 // as far as Kurt did. May move the player. `space` may be null (no clearance).
 // `camera` is the un-cleared place from followCameraPoint; returns the cleared
-// place. The solid-object ClipView pass is not ported (no objects yet).
-Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera);
+// place. `clip` is the C#'s ClipView delegate (package #3): the solid objects that
+// block the view, then Kurt is shoved toward the clipped end and the camera with
+// him. Null is the C#'s null delegate (no object pass).
+struct ClipViewHook {
+    void* context = nullptr;
+    // C# FollowCamera.ClipView (ScriptRuntime.ClipView): where the line of sight from
+    // `from` to `to` first meets a blocking object's part, or `to`.
+    Vec3 (*clip)(void* context, const Vec3& from, const Vec3& to) = nullptr;
+};
+Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera,
+                       const ClipViewHook* clip = nullptr);
 
 // Fills camera with the follow camera's view for the feet, the horizontal
 // facing (unit), the pitch in DEGREES (positive looks down) and the pivot, at
@@ -114,7 +123,7 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
 // the player (Kurt is shoved off a wall) and the camera with him.
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect,
-                              float rollDegrees);
+                              float rollDegrees, const ClipViewHook* clip = nullptr);
 
 // ---- Sniper mode's view (FollowCamera.cs:381-430) ----
 // The frontends draw the world through these while Player::sniping() (C#
@@ -197,6 +206,10 @@ public:
     // pitch of the arena Kurt is in (the C# PitchGoal).
     void update(Camera* camera, ArenaSpace* space, Player& player, float arenaPitchTarget,
                 float delta, float aspect);
+
+    // C# FollowCamera.ClipView (FollowCamera.cs:87), set by the frontend to the scripts
+    // runtime's ClipView (Viewer.cs:237). Left empty, there is no object pass.
+    ClipViewHook clipView;
 
 private:
     struct Aim {

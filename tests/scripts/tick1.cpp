@@ -2575,6 +2575,210 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
     return true;
 }
 
+// ---- KURT AGAINST THE SOLID OBJECTS, ON PLATFORMS AND LIFTS (package #3) -----------
+// (golden/L*_plat_*.txt). The C# Kurt and ScriptRuntime stepped together at 1/60 s, Kurt
+// then the scripts, as tests/scripts/platform_probe does; this prints the same columns:
+//
+//   arena            the runtime's current arena.
+//   state / feet64 / Kurt's state, feet x64 (floored), yaw, vertical speed, OnFloor.
+//   yaw / vz / floor
+//   plat / on        Kurt.Platform (the fall that landed him on it), and GetKurtPlatform
+//                    (the platform while he is on a floor), as TYPE#instance.
+//   kept             Kurt._keeper (Kurt.Keeper.cs): the platform that keeps him.
+//   touched          Kurt.Touched: what his walking box touches, and his platform.
+//   hit              his arena's hit-script scratch object's hit type and restart: a group
+//                    hit by KurtTouchesGroups runs there with hit type -11.
+//   clip             ScriptRuntime::clipView from his head to 30 units north (x64): where
+//                    an object that blocks the view (0x1000000) cuts the camera's sight.
+//   objs / near      the object count, and the solid objects of his arena within 40 units
+//                    (position x64, yaw, hidden parts, flags): the lifts' moves.
+//
+// The schedule is items_probe's key holds (fwd back left right sleft sright jump turbo
+// fire), `tp:step:ARENA:x:y:z:yaw`, ScriptRuntime.TeleportKurt before that step, and
+// `spawn:step:TYPE:x:y:z:yaw:script`, ScriptRuntime.Spawn (Spawning.Plain, as spawn_relative
+// does) of TYPE in Kurt's arena with its script at that CMI offset, before that step.
+struct PlatformTeleport {
+    int step;
+    std::string arena;  // tp: the arena; spawn: the object type
+    Vec3 at;
+    float yaw;
+    bool spawn;         // `spawn:`: ScriptRuntime::spawn, not teleportKurt
+    int32_t script;
+};
+
+bool parsePlatformSchedule(const std::string& schedule, std::vector<ItemsHold>* holds,
+                           std::vector<PlatformTeleport>* teleports) {
+    std::string keys;
+    size_t start = 0;
+    while (start < schedule.size()) {
+        size_t end = schedule.find(',', start);
+        if (end == std::string::npos) {
+            end = schedule.size();
+        }
+        const std::string token = schedule.substr(start, end - start);
+        start = end + 1;
+        const bool spawn = token.compare(0, 6, "spawn:") == 0;
+        if (token.compare(0, 3, "tp:") != 0 && !spawn) {
+            keys += (keys.empty() ? "" : ",") + token;
+            continue;
+        }
+        std::vector<std::string> fields;
+        size_t at = spawn ? 6 : 3;
+        while (true) {
+            const size_t next = token.find(':', at);
+            fields.push_back(token.substr(at, next == std::string::npos ? std::string::npos
+                                                                      : next - at));
+            if (next == std::string::npos) {
+                break;
+            }
+            at = next + 1;
+        }
+        if (fields.size() != (spawn ? 7u : 6u)) {
+            return false;
+        }
+        // strtof, not atof: C#'s float.Parse rounds the text to a float once.
+        PlatformTeleport tp;
+        tp.step = atoi(fields[0].c_str());
+        tp.arena = fields[1];
+        tp.at = Vec3{strtof(fields[2].c_str(), nullptr), strtof(fields[3].c_str(), nullptr),
+                     strtof(fields[4].c_str(), nullptr)};
+        tp.yaw = strtof(fields[5].c_str(), nullptr);
+        tp.spawn = spawn;
+        tp.script = spawn ? atoi(fields[6].c_str()) : 0;
+        teleports->push_back(tp);
+    }
+    std::vector<ItemsGive> gives;
+    std::vector<ItemsPush> pushes;
+    return parseItemsSchedule(keys, holds, &gives, &pushes) && gives.empty() && pushes.empty();
+}
+
+std::string platformName(const scripts::MdkObject* o) {
+    return o == nullptr ? "-" : o->type_name + "#" + std::to_string(o->instance_id);
+}
+
+bool kurtPlatformsDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                       const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<PlatformTeleport> teleports;
+    if (!parsePlatformSchedule(schedule, &holds, &teleports)) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    char buffer[512];
+    for (int step = 1; step <= steps; step++) {
+        // The probe's order: the teleports of the step, then its spawns.
+        for (size_t i = 0; i < teleports.size(); i++) {
+            if (teleports[i].step == step && !teleports[i].spawn) {
+                runtime.teleportKurt(teleports[i].arena, teleports[i].at, teleports[i].yaw);
+            }
+        }
+        for (size_t i = 0; i < teleports.size(); i++) {
+            if (teleports[i].step == step && teleports[i].spawn) {
+                runtime.spawn(&runtime.getArenaState(runtime.currentArena()).controller,
+                              teleports[i].arena, teleports[i].at, teleports[i].yaw, -1,
+                              teleports[i].script, false);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+
+        std::string touched;
+        for (size_t i = 0; i < player.touched().size(); i++) {
+            touched += (i ? "|" : "") + platformName(player.touched()[i]);
+        }
+        const scripts::MdkObject& hits = runtime.getArenaState(runtime.currentArena()).hit_scripts;
+        std::string near;
+        const std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            const scripts::MdkObject& o = objects[i];
+            solids::Footing footing;
+            const float dx = o.position.x - player.feet.x;
+            const float dy = o.position.y - player.feet.y;
+            const float dz = o.position.z - player.feet.z;
+            if (o.dead || o.arena != runtime.currentArena() ||
+                !scripts::ScriptRuntime::footingOf(&o, &footing) ||
+                dx * dx + dy * dy + dz * dz > 1600.0f) {
+                continue;
+            }
+            snprintf(buffer, sizeof(buffer), "%s%s@%d,%d,%d/y%.4f/h%X/f%X/r%d", near.empty() ? "" : ";",
+                     platformName(&o).c_str(), p64(o.position.x), p64(o.position.y),
+                     p64(o.position.z), o.yaw, (unsigned)o.hidden_parts, (unsigned)o.flags,
+                     o.restart);
+            near += buffer;
+        }
+        // ScriptRuntime::clipView (the follow camera's object pass) from his head
+        // (HeadHeight 5.5) to 30 units north of it.
+        const Vec3 head{player.feet.x, player.feet.y, player.feet.z + 5.5f};
+        const Vec3 clip = runtime.clipView(head, Vec3{head.x, head.y + 30.0f, head.z});
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d arena=%s state=%s feet64=%d,%d,%d yaw=%.4f vz=%.4f floor=%d plat=%s on=%s "
+                 "kept=%s touched=%s hit=%d/%d clip=%d,%d,%d objs=%d near=",
+                 step, runtime.currentArena().c_str(), kurtStateName(player.state()),
+                 p64(player.feet.x), p64(player.feet.y), p64(player.feet.z), player.yaw,
+                 player.verticalSpeed, player.onFloor ? 1 : 0,
+                 platformName(player.platform()).c_str(),
+                 platformName(runtime.getKurtPlatform()).c_str(),
+                 platformName(player.keeper()).c_str(), touched.empty() ? "-" : touched.c_str(),
+                 hits.hit_type, hits.restart, p64(clip.x), p64(clip.y), p64(clip.z),
+                 runtime.objectCount());
+        *out += buffer;
+        *out += near.empty() ? "-" : near;
+        *out += "\n";
+    }
+    return true;
+}
+// ---- end of the platforms dump (package #3) ------------------------------------------
+
 // Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
 // the ScriptRuntime bound to the Player it drives. Shared by the golden and by
 // `tick1 dump hurt`, so a failing golden diffs the same text it compares.
@@ -4414,6 +4618,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "platforms") {
+            // `tick1 dump platforms <level> <steps> <schedule>`: kurtPlatformsDump's text,
+            // the C++ side of the platform probe (package #3).
+            std::string got;
+            std::string why;
+            if (!kurtPlatformsDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                                   &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "corridor") {
             // `tick1 dump corridor <level> <steps> <x,y,z,yaw> <schedule>`:
             // kurtCorridorDump's text, the C++ side of the corridor probe.
@@ -5520,6 +5737,96 @@ int main(int argc, char** argv) {
             failures++;
         }
     }
+
+    // ---- Package #3: solid objects, platforms, lifts and the keeper -------------------
+    // The same corridor run WITHOUT the unlock (docs/OPEN_ITEMS.md, "Kurt walks through
+    // closed doors"): X7DOOR starts locked, a locked door is solid to Kurt
+    // (ScriptRuntime.SolidsWithin, Solids.Walk), and the oracle's Kurt stops at y = 478.4.
+    {
+        static const char* kLockedSchedule =
+            "fwd:61-261,turbo:61-261,right:271-308,fwd:321-553,turbo:321-553,"
+            "left:563-600,sright:606-640,fwd:650-800,turbo:650-800";
+        std::string expected;
+        std::string got;
+        std::string why;
+        if (!readText("golden/L7_corridor_locked.txt", &expected)) {
+            printf("FAIL L7_corridor_locked: no golden file golden/L7_corridor_locked.txt\n");
+            failures++;
+        } else if (!kurtCorridorDump(7, 300, "0,380,15,90", kLockedSchedule, data, spritesArg,
+                                     &got, &why)) {
+            printf("FAIL L7_corridor_locked: %s\n", why.c_str());
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L7_corridor_locked: the locked door is solid, Kurt stops at y=478.4\n");
+        } else {
+            printf("FAIL L7_corridor_locked: %s\n", firstDifference(got, expected).c_str());
+            failures++;
+        }
+    }
+    // The platform probe's goldens (tests/scripts/platform_probe; see kurtPlatformsDump for
+    // the columns). Each case is the probe's command line.
+    {
+        struct PlatformCase {
+            const char* golden;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* what;
+        };
+        static const PlatformCase kPlatformCases[] = {
+            // L3's hover ship (Kurt.Keeper.cs): the empty XGS a head shot leaves (spawn_relative
+            // XGS 117762) lands and becomes a keeping platform (set_targetable 2), and waits
+            // on if_player_on_me -- false while Kurt stands beside it (restart 117823 for 200
+            // steps). Dropped onto it he lands on it (Solids.Platform), 114 turns true (spawns
+            // XF, H9START, follow_path, restart 118098) and it flies him through HMO_9, kept
+            // at its XY and carried round its turns.
+            {"L3_plat_keeper", 3, 700,
+             "tp:1:HMO_9:-200:2950:-195:0,spawn:2:XGS:-200:2965:-185:0:117762,"
+             "tp:220:HMO_9:-195:2965:-268:0",
+             "the hover ship keeps Kurt and flies him (114 false, then true)"},
+            // L7's tank (XTANK/XTANKT, platforms 0x100): Kurt lands on the turret's top and
+            // the object loop's Carry takes him along as it drives (ScriptRuntime.cs:983).
+            {"L7_plat_tank", 7, 300, "tp:1:DANT_3:136:1292:101:0",
+             "Kurt stands on the tank and is carried"},
+            // L6's flying gun XBGUN (0x800100): a keeping platform lifts him and keeps him
+            // while the guns around fire (their bullets and explosions are package #4's
+            // opcodes, which made this stop at step 66 before that package landed).
+            {"L6_plat_gun", 6, 600, "tp:1:OLYM_4:-1732:90:-1285:90",
+             "the flying gun keeps Kurt"},
+            // L7's locked X7DOOR (a wall, Solids.Walk): he stops at its face (y 478.4), slides
+            // along it while strafing, and touches it (Kurt.Touched); it also blocks the
+            // camera's sight (0x1000000, ClipView).
+            {"L7_plat_door", 7, 300,
+             "tp:1:DANT_1:0:380:15:90,fwd:61-261,turbo:61-261,sright:200-240",
+             "the locked door stops Kurt, he slides along it, and it clips the view"},
+            // L4's hatch (MEAT_1 group 1, hit flags 0x48): landing on it is a contact
+            // (Kurt.Contact); KurtTouchesGroups hits the group (hit type -11), its script
+            // opens it and he falls through.
+            {"L4_plat_trigger", 4, 60, "tp:1:MEAT_1:-5:3:226:90",
+             "a floor trigger fires through KurtTouchesGroups"},
+        };
+        for (size_t i = 0; i < sizeof(kPlatformCases) / sizeof(kPlatformCases[0]); i++) {
+            const PlatformCase& c = kPlatformCases[i];
+            const std::string path = std::string("golden/") + c.golden + ".txt";
+            std::string expected;
+            std::string got;
+            std::string why;
+            if (!readText(path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.golden, path.c_str());
+                failures++;
+            } else if (!kurtPlatformsDump(c.level, c.steps, c.schedule, data, spritesArg, &got,
+                                          &why)) {
+                printf("FAIL %s: %s\n", c.golden, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.golden, c.what);
+            } else {
+                printf("FAIL %s: %s\n", c.golden, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+    // ---- end of package #3 -------------------------------------------------------------
 
     // The end of a level, end to end against the oracle probe (tests/scripts/end_probe; see
     // levelEndDump for the columns): special_event <= 50 -> EndTheLevel -> EndLevel.cs, and

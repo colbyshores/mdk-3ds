@@ -281,3 +281,21 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - #20 splits into three agents: menus/UI/settings, the statistics screen and slideshow, and the movies (the FLC/MVE parsers already exist).
   - `docs/OWNER_DIRECTIVE_2026-11-05.md` is not edited. This entry records the reversal.
 - **Commit:** lands with the next merge.
+
+### Package #3: solid objects, platforms, lifts and the keeper; the VM default case
+- **What:** ported from the C#, operation for operation:
+  - `Collision/Solids.cs` (Walk, Platform, Touching) as `game/solids.{h,cpp}`; `ArenaSpace.Move(..., solids)` and `ArenaSpace.Touching` as a delimited block in `game/arena_space`.
+  - Kurt's half in `game/player`: `Nearby`, `FindPlatform`, the platform landing in `FallMove` (`Platform`, 0.05 lift), `Contact`/`TakeContacts`, `UpdateTouched` (also in `UpdateSpecial`), `Shove` against the objects, `Carry` (the transform measured on .NET 10: one rounded product, then one fused multiply-add), and all of `Kurt.Keeper.cs` (CheckKeeper, KeptPlatform, KeepOn, StayOnKeeper, the kept Kurt not walking, the teleport letting go).
+  - The runtime's half in the new `scripts/platforms.cpp`: `SolidsWithin`, `MdkObject.Footing`, `GetKurtPlatform`, `KeeperAt`, `KurtTouchesGroups` (called after UpdateArenas, as the C#), the object loop's Carry, and `ClipView`, wired into `FollowCamera` and both frontends (Viewer.cs:237).
+  - VM: opcode 114 (`if_player_on_me`), 209's platform half, and the default case: an unhandled opcode with a branch action now takes it as false (`ScriptVm.cs:1799`), so a GosubElse calls its else-target.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. Before this, Kurt walked through doors and object walls, fell through lifts, lifts waiting on opcode 114 never moved and floor triggers never fired (L3, L4, L6, L7, L8).
+- **Evidence:** C# probe `tests/scripts/platform_probe` and `tick1 dump platforms`, byte for byte:
+  - `L3_plat_keeper` (700 steps): the empty hover ship waits on 114 (false while Kurt stands beside it), Kurt lands on it, 114 turns true, it keeps him and flies him through HMO_9, turning him with it.
+  - `L7_plat_tank` (300): carried on the tank's turret. `L6_plat_gun` (600; it stopped at 66 until package #4's combat opcodes landed, and now agrees to step 1200): kept by the flying gun.
+  - `L7_plat_door` (300) and `L7_corridor_locked` (the corridor probe without its unlock): the locked X7DOOR stops Kurt at y = 478.4, he slides along it, and it clips the camera's sight. `L7_corridor_middle` is unchanged.
+  - `L4_plat_trigger` (60): landing on MEAT_1's hatch hits its group (hit type -11), it opens, he falls through.
+  - `vm_tests`: `IfPlayerOnMeIsFalseWithoutAPlatform`, `UnhandledGosubElseCallsTheElseTarget` (opcode 225, in neither VM).
+  - Every existing golden passes unchanged.
+  - The goldens bite. Each of these breaks fails the named goldens: 114 always false (keeper, gun); no KurtTouchesGroups (trigger); no Carry (keeper, tank, gun); no object pass in the move (corridor_locked, door); the old default case (the vm_test); no ClipView (door); no StayOnKeeper (keeper, gun). Not pinned: Carry's fused-vs-unfused rounding (no golden turns a carried, unkept Kurt).
+- **Still open:** the ride parts of the same code (package #9); the slide branch of FallMove (#8); the upstream C#'s later triangle-platform and kept-in-air changes; Old-3DS cost unmeasured. All in `docs/OPEN_ITEMS.md`.
+- **Commit:** this entry.

@@ -362,10 +362,9 @@ one-line branch on `Rides.Ridden == obj`, and the runtime already carries that
 state as `ridesRidden_` (the ride slice is unported, so it is null and the branch
 is false for every object — the value the C# reads on foot). It never fires in
 levels 3–8; a synthetic `vm_tests` case pins the dispatch and the false branch.
-Remaining 4 (after the chain-gun batch, the end of a level and the combat and
-hazard batch below):
+Remaining 3 (after the chain-gun batch, the end of a level, the combat and
+hazard batch and package #3 below):
 28,
-114,
 130,
 224
 
@@ -415,6 +414,20 @@ on the arena's own floor) and the branch is not taken until the platform footing
 lands. Neither fires in levels 3-8 to t30000; both are pinned by `vm_tests`
 (`BossBarShowsOnlyWhileKurtFires`, `IfPlayerOnMeLowNeedsThePlatform`).
 
+**Package #3, solid objects and platforms (2026-11-20):** 114 (`if_player_on_me`,
+ScriptVm.cs:1416) is `GetKurtPlatform() == obj`, and `GetKurtPlatform` now reads the
+ported `Kurt.Platform` (the fall that landed Kurt on an object, `Player::platform()`,
+while he is on a floor) -- which also completes 209's platform half. Pinned by
+`vm_tests` `IfPlayerOnMeIsFalseWithoutAPlatform` and, on a real platform, by
+`golden/L3_plat_keeper.txt` (L3's hover ship waits on 114 at restart 117823 while Kurt
+stands beside it, and goes to 118098 the step he lands on it). **The default case now
+matches the C#'s** (ScriptVm.cs:1799-1806): an unhandled opcode with a branch action
+takes it as false, so a GosubElse gosubs to its else-target where the port used to
+return `ins.next` (`vm_tests` `UnhandledGosubElseCallsTheElseTarget`, over opcode 225,
+which neither VM handles). Every existing golden is unchanged by it: for Goto, Gosub
+and Return a false branch IS `ins.next`, and no default-case opcode in the corpus
+carries a GosubElse that fires before its own port lands.
+
 **Reachability, re-probed to t30000 (2026-10-28, `tick1 probe 30000`):**
 after the Debris slice the only remaining opcode that fires anywhere in
 levels 3–8 is **208** (`if_part_hit`, L5 ×9134), now ported; the probe is
@@ -432,8 +445,9 @@ two-line dispatch.
 By blocking subsystem (carried grouping, corrected for this batch):
 
 - **Kurt/player/HUD (needs Kurt items, ammo, platform, firing, camera
-  state):** 114 (if_player_on_me), 189,
-  215, 240, 244, 247 (181 and 209 landed with the chain-gun batch).
+  state):** 189,
+  215, 240, 244, 247 (181 and 209 landed with the chain-gun batch, 114 with
+  package #3).
   (171 (`if_is_573c30`) landed over the runtime's `ridesRidden_` (the
   `Rides.Ridden` equivalent): it is not gated by the Kurt items/platform/firing
   subsystem at all, only by the ride slice, and it reads the same null the C#

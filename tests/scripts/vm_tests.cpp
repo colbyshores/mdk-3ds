@@ -89,6 +89,11 @@ const int32_t kIfIsRidden = 171;
 const int32_t kIfAmmo = 174;
 const int32_t kBossBar = 181;
 const int32_t kIfPlayerOnMeLow = 209;
+const int32_t kIfPlayerOnMe = 114;
+// if_kurt_on_floor: in the opcode table, handled by neither the C# VM nor this one and
+// used by no retail script -- both VMs' default case (package #3).
+const int32_t kIfKurtOnFloor = 225;
+const uint8_t kActionGosubElse = 0xFE;
 const int32_t kIfPartnerDistance = 213;
 const int32_t kIfPartnerAngle = 214;
 const int32_t kSpawnPartner = 179;
@@ -2284,10 +2289,10 @@ void testBossBarShowsOnlyWhileKurtFires(LevelData* levelData, const Cmi* cmi,
 }
 
 // Opcode 209 (if_player_on_me_low): Kurt stands on the object, fires, and is not above
-// its top (ScriptVm.cs:1269-1273). Kurt.Platform is not ported, so the platform half is
-// null and the branch is not taken even while he fires; what this pins is that the
-// opcode is dispatched (not the unimplemented bucket) and reads the live firing flag
-// through getKurtPlatform, which a platform port will make the whole condition.
+// its top (ScriptVm.cs:1269-1273). With no Player bound there is no Kurt to stand on
+// anything (GetKurtPlatform is null), so the branch is not taken even while he fires;
+// what this pins is that the opcode is dispatched (not the unimplemented bucket). The
+// platform half is pinned on a real platform by golden/L3_plat_keeper.txt.
 void testIfPlayerOnMeLowNeedsThePlatform(LevelData* levelData, const Cmi* cmi,
                                          audio::SoundBank* bank) {
     scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
@@ -2304,6 +2309,50 @@ void testIfPlayerOnMeLowNeedsThePlatform(LevelData* levelData, const Cmi* cmi,
     CHECK(!sawUnimplemented(kIfPlayerOnMeLow));
     CHECK(runtime.getKurtPlatform() == nullptr);
     CHECK(obj.variables[0] == 1.0f);
+}
+
+// Opcode 114 (if_player_on_me, ScriptVm.cs:1416-1417): GetKurtPlatform() == obj. With no
+// Player bound it is null, so the goto is not taken -- and the opcode is dispatched, not
+// the unimplemented bucket. A Kurt landed on the object makes it true:
+// golden/L3_plat_keeper.txt pins both answers on the hover ship.
+void testIfPlayerOnMeIsFalseWithoutAPlatform(LevelData* levelData, const Cmi* cmi,
+                                             audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+    Code code;
+    code.u8(kIfPlayerOnMe).u8(kActionGoto).target("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    code.end();
+    scripts::MdkObject obj;
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kIfPlayerOnMe));
+    CHECK(runtime.getKurtPlatform() == nullptr);
+    CHECK(obj.variables[0] == 1.0f);
+}
+
+// The VM's default case (ScriptVm.cs:1799-1806): an opcode no case handles is counted,
+// and when it carries a branch action the action is taken as FALSE -- Branch(obj, ins,
+// false). For a GosubElse that is a gosub to the ELSE target, then the instruction after
+// it; returning ins.next instead (this port before package #3) skips the else-gosub
+// altogether. Opcode 225 is in the table but in neither VM, so both take this path.
+void testUnhandledGosubElseCallsTheElseTarget(scripts::ScriptRuntime& runtime) {
+    Code code;
+    code.u8(kIfKurtOnFloor).u8(kActionGosubElse).target("then").target("else");
+    code.u8(kSetVar).u8(kOwn).u8(1).f32(5.0f);
+    code.end();
+    code.label("then");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.u8(kReturn);
+    code.label("else");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    code.u8(kReturn);
+    scripts::MdkObject obj;
+    runProgram(runtime, code, &obj);
+    CHECK(sawUnimplemented(kIfKurtOnFloor));
+    CHECK(obj.variables[0] == 2.0f);
+    CHECK(obj.variables[1] == 5.0f);
 }
 
 // Opcodes 213 (if_partner_distance) and 214 (if_partner_angle) have no C#
@@ -8273,6 +8322,10 @@ int main(int argc, char** argv) {
     printf("PASS BossBarShowsOnlyWhileKurtFires\n");
     testIfPlayerOnMeLowNeedsThePlatform(&levelData, &cmi, &bank);
     printf("PASS IfPlayerOnMeLowNeedsThePlatform\n");
+    testIfPlayerOnMeIsFalseWithoutAPlatform(&levelData, &cmi, &bank);
+    printf("PASS IfPlayerOnMeIsFalseWithoutAPlatform\n");
+    testUnhandledGosubElseCallsTheElseTarget(runtime);
+    printf("PASS UnhandledGosubElseCallsTheElseTarget\n");
     testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);
     printf("PASS PartnerConditionsUseLiveLinkedObjectAndGeometry\n");
     testIfHitWeaponBranchesOnExactHitType(runtime);

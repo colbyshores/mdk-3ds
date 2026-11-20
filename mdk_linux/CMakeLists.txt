@@ -123,6 +123,7 @@ set(SOURCES
     ${CORE}/src/formats/texture_archive.cpp
     ${CORE}/src/formats/wav.cpp
     ${CORE}/src/game/arena_space.cpp
+    ${CORE}/src/game/solids.cpp
     ${CORE}/src/game/bsp.cpp
     ${CORE}/src/game/camera_roll.cpp
     ${CORE}/src/game/follow_camera.cpp
@@ -176,6 +177,7 @@ set(SOURCES
     ${CORE}/src/scripts/items.cpp
     ${CORE}/src/scripts/end_level.cpp
     ${CORE}/src/scripts/hazards.cpp
+    ${CORE}/src/scripts/platforms.cpp
     ${CORE}/src/scripts/script_vm.cpp
     ${CORE}/src/scripts/debris.cpp
     ${CORE}/src/stream/stream_flight.cpp

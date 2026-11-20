@@ -265,6 +265,38 @@ bool ArenaSpace::floor(Vec from, Vec to, Vec* out) {
     return best < FLT_MAX;
 }
 
+// ---- The solid-object pass (package #3) ----------------------------------
+
+ArenaSpace::Result ArenaSpace::move(Vec feet, Vec delta, Motion motion, float slideK,
+                                    const std::vector<solids::Solid>& solids) {
+    // C# ArenaSpace.Move with solids (ArenaSpace.cs:172-184), line for line: the
+    // BSP move, then Solids.Walk from the box centre over the move the BSP allowed;
+    // a hit re-sweeps the BSP horizontally to the walk's end and keeps the first
+    // move's Z.
+    const Result result = move(feet, delta, motion, slideK);
+    const Vec box = motion == kMotionWalk ? kWalkBox : kFallBox;
+    const float lift = motion == kMotionWalk ? kWalkLift : kFallLift;
+    const Vec a = vAdd(feet, Vec{0.0f, 0.0f, box.z + lift});
+    Vec end;
+    if (solids.empty() ||
+        !solids::walk(a, vAdd(a, vSub(result.feet, feet)), box, solids, &end)) {
+        return result;
+    }
+
+    Result again = move(feet, Vec{end.x - a.x, end.y - a.y, 0.0f}, motion, slideK);
+    again.feet = Vec{again.feet.x, again.feet.y, result.feet.z};
+    return again;
+}
+
+void ArenaSpace::touching(Vec feet, const std::vector<solids::Solid>& solids,
+                          std::vector<scripts::MdkObject*>* owners) {
+    // C# ArenaSpace.Touching (ArenaSpace.cs:186-188): the walking box's centre.
+    solids::touching(vAdd(feet, Vec{0.0f, 0.0f, kWalkBox.z + kWalkLift}), kWalkBox, solids,
+                     owners);
+}
+
+// ---- end of the solid-object pass ------------------------------------------
+
 const std::string* ArenaSpace::arenaAt(Vec point) const {
     const Entry* e = firstEntry(point);
     return e ? &e->arena->name() : nullptr;

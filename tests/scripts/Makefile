@@ -60,6 +60,7 @@ COMMON_SOURCES := \
 	$(CORE)/game/arena_stream.cpp \
 	$(CORE)/game/level_flow.cpp \
 	$(CORE)/game/arena_space.cpp \
+	$(CORE)/game/solids.cpp \
 	$(CORE)/game/bsp.cpp \
 	$(CORE)/game/camera_roll.cpp \
 	$(CORE)/game/follow_camera.cpp \
@@ -91,6 +92,7 @@ COMMON_SOURCES := \
 	$(CORE)/scripts/items.cpp \
 	$(CORE)/scripts/end_level.cpp \
 	$(CORE)/scripts/hazards.cpp \
+	$(CORE)/scripts/platforms.cpp \
 	$(CORE)/scripts/debris.cpp \
 	$(CORE)/stream/tube_basis.cpp \
 	$(CORE)/stream/stream_tube.cpp \

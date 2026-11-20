@@ -1359,6 +1359,7 @@ int main(int argc, char** argv) {
         mdk::audioDspDetach();
         music.reset();   // its voices are the runtime's mixer's
         musicPrefetchedFor.clear();
+        follow.clipView = mdk::ClipViewHook();  // its context is the runtime going now
         runtime.reset();
         mix = &mixer;
         // THE CACHES THAT KEY ON A MODEL ADDRESS DIE WITH THE RUNTIME, and this is
@@ -1398,6 +1399,10 @@ int main(int argc, char** argv) {
             runtime->hudMessages = &hud.messages();
             // Kurt's sounds go through the runtime's mixer, because in the C# they
             // are the same mixer.
+            // The camera's line of sight against the objects (Viewer.cs:237: ClipView =
+            // _scripts.ClipView, package #3).
+            follow.clipView.context = runtime.get();
+            follow.clipView.clip = &mdk::scripts::ScriptRuntime::clipViewTrampoline;
             player.setMixer(&runtime->mixer());
             mix = &runtime->mixer();
             // The new mixer owns a new SoundDevice, so the output has to be handed

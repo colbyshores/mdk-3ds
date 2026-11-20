@@ -1111,6 +1111,10 @@ int main(int argc, char** argv) {
             // constructor argument (Kurt.cs, the `SoundMixer` field) and the
             // viewer builds both over one bank. Without this the Player's play
             // calls all go to a null mixer and are dropped.
+            // The camera's line of sight against the objects (Viewer.cs:237: ClipView =
+            // _scripts.ClipView, package #3).
+            follow.clipView.context = runtime.get();
+            follow.clipView.clip = &mdk::scripts::ScriptRuntime::clipViewTrampoline;
             player.setMixer(&runtime->mixer());
             std::printf("[main] scripts: runtime ready (seed %d)\n", runtimeSeed);
             // The level starts in Kurt's arena, its music at once (C#

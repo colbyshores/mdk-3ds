@@ -297,7 +297,7 @@ struct MdkObject {
     int32_t findPart(const std::string& name) const;
 
     // Still unported MdkObject behavior:
-    //   Footing -> the Solids footing enum (collision slice)
+    //   Footing -> ported as ScriptRuntime::footingOf (scripts/platforms.cpp).
     //   pose() (pose_parts() with the hidden parts emptied). part_bounds() is
     //   ported as ScriptRuntime::partBounds (it uses no runtime state, but lives
     //   beside the other blast geometry).

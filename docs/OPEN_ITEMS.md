@@ -376,8 +376,8 @@ original's own lookup (0x431590 searches the SNI directory) and none here.
   hands out `const` only. The C#'s shape is one mixer owned by `Viewer` and passed to
   both Kurt and the runtime; reaching that is a `ScriptRuntime` constructor change
   (and a lifetime question, because the `Player` outlives the runtime across a
-  respawn), so it is not this batch's call. `UpdateSpecial`/`UpdateDeath` still skip
-  `UpdateTouched`, because there are no touch volumes yet.
+  respawn), so it is not this batch's call. (`UpdateSpecial` runs `UpdateTouched`
+  since package #3, 2026-11-20; `UpdateDeath` has none in the C# either.)
 - **The 3DS sampler fix stays deferred with cause.** `renderer_c3d.cpp` never calls
   `C3D_TexSetWrap`, so its wrap field is 0 — not `GPU_REPEAT` (`enums.h:39`) — and it
   clamps like Vulkan used to. It cannot take the same one-liner: the 3DS pads index
@@ -1240,7 +1240,7 @@ pass skipped the effect after every removal and a wound's pointer named its neig
 
 Still open:
 - ~~**Items**~~: landed on branch `port/pickups-items` (next section).
-- **Opcode 209's platform half** waits for `Kurt.Platform` (the platform footing).
+- ~~**Opcode 209's platform half**~~ landed with `Kurt.Platform` (package #3, 2026-11-20).
 - ~~**The sniper half of `StopFiring`** (`LeaveSniper`)~~: landed with sniper mode
   (2026-11-20, section below). The ride's K_SURF muzzle offset waits for the ride.
 - **The run goldens print no `pc=`**: `Player::facing()`'s trig LUT (the owner-gated item
@@ -1328,11 +1328,42 @@ state the oracle cannot reach. DANT_1's triangle 60 is a slanted face crossing t
 (`wall=DANT_1:60`), and at x ~ 133 it lies beyond the trigger that drops DANT_1 at y ~ 582,
 which is why the harness's route had to hug the west wall.
 
-Still open: **port the object pass** (`Solids.Walk`/`Platform`/`Touching`, `SolidsWithin`,
-`MdkObject.PartBounds`/`GetWorldBounds(obj, part)`/`Footing`, `Kurt.Nearby`, the platform and
-`Touched` consumers). Until then a walk harness that crosses a door must not treat "Kurt got
-through" as evidence the door was open. The corridor probe's `unlock:<step>` is how a probe
-reaches the corridor in the oracle.
+~~Still open: **port the object pass**~~ -- **landed with package #3 (2026-11-20)**: the C++
+Kurt now stops at the locked X7DOOR at y = 478.4 like the oracle's
+(`golden/L7_corridor_locked.txt`, the corridor run without the unlock, byte for byte;
+`golden/L7_plat_door.txt` with the slide along the door and the camera's ClipView), and
+`golden/L7_corridor_middle.txt` is unchanged. The corridor probe's `unlock:<step>` is still
+how a probe reaches the corridor in the oracle.
+
+## Package #3: solid objects, platforms, lifts and the keeper (2026-11-20)
+
+Ported from the C# (`Collision/Solids.cs`; `ArenaSpace.Move(..., solids)`/`Touching`;
+`Kurt.Nearby`/`FindPlatform`/`Platform`/`Contact`/`TakeContacts`/`UpdateTouched`/`Carry`;
+`Kurt.Keeper.cs`; `ScriptRuntime.SolidsWithin`/`GetKurtPlatform`/`KeeperAt`/`ClipView`/
+`KurtTouchesGroups` and the object loop's Carry; `MdkObject.Footing`; opcode 114; the VM
+default case). Goldens: `L3_plat_keeper`, `L7_plat_tank`, `L6_plat_gun`, `L7_plat_door`,
+`L4_plat_trigger`, `L7_corridor_locked` (C# `tests/scripts/platform_probe` and
+`corridor_probe`).
+
+Still open, with cause:
+- **The ride parts of the same C# code wait for package #9**: `Kurt.Update`'s `Ride` branch
+  (which also drops the keeper, `_keeper = null`), `Glide`, `Land`'s `Ride == null` test, and
+  the `Touched` consumers in `Rides.cs`/`Snowboard.cs`. `SolidsWithin` already skips
+  `ridesRidden_`, which stays null until then.
+- **`Kurt.Sliding`'s branch of `FallMove`** waits for the slide (package #8), as before.
+- ~~**L6's flying gun diverged from step 68**~~ in its bullets (XBG_B1) and an EXPLODE: that
+  was package #4's combat opcodes. With #4 merged the C# and C++ agree to step 1200, and
+  `golden/L6_plat_gun.txt` pins 600 steps.
+- **The upstream C# (Marek's repo, 1.2.6) moved on**: e1fde55 stands Kurt on the platform
+  parts' TRIANGLES rather than their boxes' tops (damp_platform_floor 0x41d2c4 rays the
+  triangles; on L3's XGS the box top is 2.6 above the deck), and 7f0dfca keeps a kept Kurt
+  over his platform in the air too (0x46634e). This repo's oracle `src/` predates both, so the
+  port follows the oracle in hand; both are candidates when the oracle is next updated.
+- **Cost on the Old 3DS is unmeasured.** `SolidsWithin` runs `worldBounds` (a pose-bounds
+  scan) for every live object of Kurt's arena, and `partBounds` (allocating) for each one his
+  region meets, three to four times a step (walk move, fall's platform ray, `UpdateTouched`,
+  the camera's `Shove`). It is the C#'s algorithm; a per-tick cache of the world boxes is the
+  obvious lever if a profile shows it (AGENTS.md §2: not before a capture says so).
 
 ## The end of a level (2026-11-20, package 1): what landed, what is open
 
