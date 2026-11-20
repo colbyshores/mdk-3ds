@@ -79,6 +79,9 @@
 #include "game/game_settings.h"
 #include "game/pause_menu.h"
 #include "game/screen_view.h"
+#include "game/save_games.h"
+#include "game/save_prompt.h"
+#include "game/viewer_saves.h"
 #include "game/hud_view.h"
 #include "game/input.h"
 #include "game/kurt_sprite.h"
@@ -695,9 +698,18 @@ int main(int argc, char** argv) {
     mdk::log3dsPrintf("main: harness level override LEVEL=%d", (int)(MDK_HW_LEVEL));
 #endif
     mdk::flow::GameFlow flow(options);
+    // THE SAVES (package #19): sdmc:/3ds/mdk/saves, an explicit path (AGENTS.md P5),
+    // the C#'s `<user folder>/saves`. LASTGAME goes at start, as the C#'s Game
+    // constructor deletes it. Every write is whole-to-temporary-then-rename and every
+    // read is size-checked (game/save_games.h): a full or missing card is a logged
+    // `false`, never a retry.
+    const mdk::flow::SaveGames saves("sdmc:/3ds/mdk/saves");
+    saves.remove(mdk::flow::SaveGames::kLastGame);
+    flow.setSaves(saves);
     mdk::flow::Screen screen = flow.handle(flow.firstEvent());
     mdk::log3dsPrintf("flow: screen=%d level=%d", (int)screen, (int)flow.state().level);
-    if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu) {
+    if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
+        screen != mdk::flow::Screen::Briefing) {
         mdk::log3dsPrintf("flow asked for screen %d, which this frontend cannot show; exiting",
                           (int)screen);
         mdk_render_destroy(renderer);
@@ -729,6 +741,8 @@ int main(int argc, char** argv) {
     front.resumePending = &g_resumePending;
     front.frame = &frame;
     front.frameBudget = g_frameBudget;
+    // The main menu's Continue and Saved Game page read the saves (package #19).
+    front.saves = &saves;
     if (screen == mdk::flow::Screen::Menu) {
         firstLevel = false;
     }
@@ -1555,6 +1569,61 @@ int main(int argc, char** argv) {
     if (arena) {
         spawnPlayer();
         playerReady = true;
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_AT) && defined(MDK_HW_ARENA)
+        // `ARENA=NAME` with AT (a harness aid): the arena is entered as a script's
+        // teleport enters it (TeleportKurt: EnterArena, CurrentArena, the second, the
+        // show), and Kurt's own space takes it too (the C#'s ONE ArenaSpace), so an
+        // arena only a teleport reaches is loaded and solid. The first level's only.
+        if (firstLevel && runtime) {
+            const mdk::formats::Arena* into = level.arenaNamed(MDK_HW_ARENA);
+            if (into == nullptr) {
+                mdk::log3dsPrintf("main: harness ARENA=%s: no such arena; AT alone", MDK_HW_ARENA);
+            } else {
+                runtime->teleportKurt(MDK_HW_ARENA, player.feet, player.yaw);
+                space.add(into);
+                space.setSolid({std::string(MDK_HW_ARENA)});
+                startArenaName = MDK_HW_ARENA;
+                mdk::log3dsPrintf("main: harness ARENA=%s: Kurt teleported in at "
+                                  "(%.1f,%.1f,%.1f)", MDK_HW_ARENA, player.feet.x,
+                                  player.feet.y, player.feet.z);
+            }
+        }
+#endif
+        // C# Viewer's constructor: RestoreSnapshot (a full save being loaded, F9's),
+        // then ShowNotice ("Game loaded"). The save's arenas go into Kurt's space too
+        // (the C#'s ONE ArenaSpace; ScriptRuntime::enteredArenas), and his arena is
+        // pinned again where he now stands.
+        bool restored = false;
+        std::string restoreLog;
+        if (!mdk::flow::restoreSnapshot(&flow.state(), runtime.get(), &restored, &restoreLog)) {
+            mdk::log3dsPrintf("save: %s; the level starts plain", restoreLog.c_str());
+            spawnPlayer();
+        } else if (restored) {
+            mdk::log3dsPrintf("save: %s", restoreLog.c_str());
+            const std::vector<std::string> entered = runtime->enteredArenas();
+            for (size_t i = 0; i < entered.size(); i++) {
+                const mdk::formats::Arena* into = level.arenaNamed(entered[i]);
+                if (into != nullptr) {
+                    space.add(into);
+                }
+            }
+            const std::string* here =
+                space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+            if (here) {
+                space.setSolid({*here});
+                startArenaName = *here;
+            }
+            mdk::log3dsPrintf("save: Kurt at (%.1f,%.1f,%.1f) in %s, health %d",
+                              player.feet.x, player.feet.y, player.feet.z,
+                              runtime->currentArena().c_str(), player.health());
+        }
+        const std::string notice = mdk::flow::takeNotice(&flow.state());
+        if (!notice.empty()) {
+            hud.messages().pushText((const uint8_t*)notice.data(), (int32_t)notice.size(),
+                                    mdk::Messages::kFlagZoom | mdk::Messages::kFlagFront,
+                                    mdk::flow::kNoticeSeconds);
+            mdk::log3dsPrintf("%s", notice.c_str());
+        }
     }
     if (playerReady && !runtime) {
         // Said out loud, because a silent half-world is the failure mode: the level
@@ -1657,6 +1726,69 @@ int main(int argc, char** argv) {
     // The EVENT's game time (C# Viewer._time against TestStart), the level's own: a
     // chained run (EVENT_EVERY=1) fires it one second into each level.
     float harnessEventTime = 0.0f;
+#endif
+    // A death or a quick load leaves the level for the flow's next screen, as the
+    // level's end does (C# Viewer._next = KurtDied / Play; package #19).
+    bool leaveLevel = false;
+    mdk::flow::Event leaveEvent = mdk::flow::Event::None;
+    // C# Viewer.Notify: the port's own HUD message, also logged.
+    auto notify = [&hud](const char* text) {
+        hud.messages().pushText((const uint8_t*)text, (int32_t)strlen(text),
+                                mdk::Messages::kFlagZoom | mdk::Messages::kFlagFront,
+                                mdk::flow::kNoticeSeconds);
+        mdk::log3dsPrintf("%s", text);
+    };
+    // F2 then Enter (C# Viewer.OpenSnapshot, then the prompt's Save with the name it
+    // offers): the 3DS has no keyboard, so the pause menu's X saves at once under the
+    // level's number. SYNCHRONOUS, and said: a save is 13-100 KB of text (the goldens'
+    // files: 13 KB on LEVEL4's start, 98 KB with 46 objects on LEVEL3), one fwrite
+    // and a rename while the game is paused in the menu, so no frame waits on it; the
+    // log line carries the measured milliseconds for the hardware run to confirm.
+    auto quickSave = [&]() {
+        if (!runtime || !runtime->canSnapshot() || player.sniping()) {
+            notify("Can't save now");
+            return;
+        }
+        const double t0 = nowSeconds();
+        const std::string json = runtime->capture();
+        mdk::log3dsPrintf("snapshot hash %s, objects %d",
+                          mdk::scripts::ScriptRuntime::snapshotHash(json).c_str(),
+                          (int)runtime->objectCount());
+        const int32_t number = flow.state().level;
+        mdk::flow::SavePrompt prompt(saves,
+                                     mdk::flow::snapshotSave(&flow.state(), number,
+                                                             player.health(), json),
+                                     mdk::flow::snapshotName(number));
+        mdk::flow::SavePrompt::Input enter;
+        enter.accept = true;
+        prompt.update(enter, 0.0f);
+        const double t1 = nowSeconds();
+        if (prompt.saved()) {
+            flow.state().quickSlot = prompt.name();
+            mdk::log3dsPrintf("Saved game %s: level %d (%d bytes, %.1f ms)",
+                              prompt.name().c_str(), (int)number, (int)json.size(),
+                              (t1 - t0) * 1000.0);
+            notify("Game saved");
+        } else {
+            mdk::log3dsPrintf("save: not written (%s)", prompt.error().c_str());
+            notify("Can't save now");
+        }
+    };
+    // F9 (C# Viewer.QuickLoad): the session's save, else the newest; the level reloads.
+    auto quickLoad = [&]() {
+        mdk::flow::Event next = mdk::flow::Event::None;
+        std::string log;
+        if (!mdk::flow::quickLoad(saves, &flow.state(), &next, &log)) {
+            notify("Nothing to load");
+            return;
+        }
+        mdk::log3dsPrintf("%s", log.c_str());
+        leaveLevel = true;
+        leaveEvent = next;
+    };
+#if defined(MDK_AUTOQUIT) && (defined(MDK_HW_DIE) || defined(MDK_HW_SAVETEST))
+    // DIE=1 / SAVETEST=1's game time on the first level (C# Viewer._time).
+    float harnessTestTime = 0.0f;
 #endif
 
     heapProbe("loop");
@@ -1831,6 +1963,19 @@ int main(int argc, char** argv) {
                 if (!pauseOptions.open()) {
                     mdk::log3dsPrintf("menu: options closed");
                 }
+            } else if (menu.open() && (pressed & (KEY_X | KEY_Y))) {
+                // THE SAVES (package #19): X saves the level (F2 + Enter), Y loads the
+                // last save (F9) -- the C#'s quick keys, which the pad has no room for
+                // in play. A load closes the menu: the level reloads.
+                if (pressed & KEY_X) {
+                    quickSave();
+                } else {
+                    quickLoad();
+                    if (leaveLevel) {
+                        menu.setOpen(false);
+                        mdk::log3dsPrintf("menu: closed (load)");
+                    }
+                }
             } else if (menu.open()) {
                 mdk::EnhancedMenu::Input edges;
                 edges.up = (pressed & KEY_DUP) != 0;
@@ -1991,6 +2136,37 @@ int main(int argc, char** argv) {
                     }
                 }
 #endif
+#if defined(MDK_AUTOQUIT) && (defined(MDK_HW_DIE) || defined(MDK_HW_SAVETEST))
+                // `make AUTOQUIT=.. DIE=1` (the C#'s --die: Kurt hurt by FatalDamage
+                // 1000 at TestStart, 1 s) and `SAVETEST=1` (the pause menu's X at 5 s
+                // and Y at 8 s: a full save, then its load into a reloaded level). The
+                // first level's only, as the C#'s test options are.
+                if (firstLevel && !leaveLevel) {
+                    harnessTestTime += step;
+                    const auto crosses = [&](float at) {
+                        return !(harnessTestTime < at || harnessTestTime - step >= at);
+                    };
+#if defined(MDK_HW_DIE)
+                    if (crosses(1.0f)) {
+                        mdk::log3dsPrintf("harness: Kurt hurt by 1000 at frame %lu (DIE)",
+                                          (unsigned long)frame);
+                        player.combat().hurt(1000);
+                    }
+#endif
+#if defined(MDK_HW_SAVETEST)
+                    if (crosses(5.0f)) {
+                        mdk::log3dsPrintf("harness: quick save at frame %lu (SAVETEST)",
+                                          (unsigned long)frame);
+                        quickSave();
+                    }
+                    if (crosses(8.0f)) {
+                        mdk::log3dsPrintf("harness: quick load at frame %lu (SAVETEST)",
+                                          (unsigned long)frame);
+                        quickLoad();
+                    }
+#endif
+                }
+#endif
                 const uint64_t tp0 = mdk::harnessProfileTick();
                 player.update(input, step);
                 const uint64_t tp1 = mdk::harnessProfileTick();
@@ -2145,16 +2321,18 @@ int main(int argc, char** argv) {
             }
             spanSim = mdk::harnessProfileTick() - spanSim0;
 
-            // Death. The C#'s Kurt.Died writes LASTGAME and leaves for the menu
-            // (Game.cs:448-456); the save and the menu are cut, so the frontend
-            // respawns him on the same event, exactly as the Linux frontend does.
-            // The beat itself is the oracle's -- player.died() is the step the
-            // skull crosses SkullEnd, not a wall-clock timer of this frontend's.
-            if (player.died()) {
-                spawnPlayer();
-                mdk::buildFollowCamera(&camera, player.feet, player.facing(),
-                                       mdk::follow_camera::kDefaultPitch,
-                                       mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
+            // Death. The C#'s Kurt.Died (Viewer.OnDied) counts it and leaves for
+            // Game.Handle(KurtDied), which writes LASTGAME and opens the main menu
+            // (package #20a's), whose first item "Continue" reloads the level from
+            // its start (package #19's saves hooks). The beat is the oracle's --
+            // player.died() is the step the skull crosses SkullEnd.
+            if (player.died() && !leaveLevel) {
+                mdk::log3dsPrintf("Kurt died at frame %lu", (unsigned long)frame);
+                mdk::flow::countDeath(&flow.state(), flow.state().level,
+                                      runtime ? runtime->airStrikeUsedUp
+                                              : flow.state().strikeUsed);
+                leaveLevel = true;
+                leaveEvent = mdk::flow::Event::KurtDied;
             }
 
             // The end of a level: special_event <= 50 started it (the log says where),
@@ -2923,6 +3101,47 @@ int main(int argc, char** argv) {
         // the way the C# skips them (GameFlow::skipScreen, pinned against the C# by
         // golden/flow_next_level.txt), each one logged. A level at the end of that
         // walk is loaded by the level loop; anything else (the menu) ends the run.
+        if (leaveLevel) {
+            // C# Game.Handle(KurtDied) -- LASTGAME written, then the main menu with
+            // its splash, whose first item is "Continue" (Game.cs:448-456,
+            // MainMenu.ShowMain) -- or the Play/Briefing a quick load set. The menu
+            // and the briefing are the menus' screens (package #20a); the screens
+            // this port still lacks are skipped the C#'s way, each one logged.
+            screen = flow.handle(leaveEvent);
+            std::string report = flow.takeReport();
+            mdk::flow::GameFlow::SkipTrail trail;
+            if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
+                screen != mdk::flow::Screen::Briefing) {
+                screen = flow.skipUnported(&trail);
+                const std::string more = flow.takeReport();
+                report += report.empty() || more.empty() ? more : "; " + more;
+            }
+            if (!report.empty()) {
+                mdk::log3dsPrintf("flow: %s", report.c_str());
+            }
+            for (int32_t i = 0; i < trail.count; i++) {
+                mdk::log3dsPrintf("flow: skipped %s (package #%d not ported)",
+                                  mdk::flow::GameFlow::screenName(trail.skipped[i]),
+                                  (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
+            }
+            if (screen == mdk::flow::Screen::Level) {
+                nextLevel = true;
+                mdk::log3dsPrintf("flow: level %d again at frame %lu, deaths %d",
+                                  (int)flow.state().level, (unsigned long)frame,
+                                  (int)flow.state().deaths);
+            } else if (screen == mdk::flow::Screen::Menu ||
+                       screen == mdk::flow::Screen::Briefing) {
+                mdk::log3dsPrintf("flow: the %s follows at frame %lu (deaths %d)",
+                                  screen == mdk::flow::Screen::Menu ? "menu" : "briefing",
+                                  (unsigned long)frame, (int)flow.state().deaths);
+                toMenu = true;
+            } else {
+                mdk::log3dsPrintf("flow: %s follows, which this frontend cannot show; exiting",
+                                  mdk::flow::GameFlow::screenName(screen));
+                exitReason = leaveEvent == mdk::flow::Event::KurtDied ? "Kurt died" : "load";
+            }
+            break;
+        }
         if (levelEndedExit) {
             mdk::flow::LevelResult result;
             if (runtime) {

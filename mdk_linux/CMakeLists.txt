@@ -131,6 +131,10 @@ set(SOURCES
     ${CORE}/src/game/frame_blend.cpp
     ${CORE}/src/game/game_flow.cpp
     ${CORE}/src/game/game_state.cpp
+    ${CORE}/src/game/save_games.cpp
+    ${CORE}/src/game/save_prompt.cpp
+    ${CORE}/src/game/viewer_saves.cpp
+    ${CORE}/src/util/json.cpp
     ${CORE}/src/game/hud_view.cpp
     ${CORE}/src/game/kurt.cpp
     ${CORE}/src/game/kurt_sprite.cpp
@@ -185,6 +189,7 @@ set(SOURCES
     ${CORE}/src/scripts/script_runtime.cpp
     ${CORE}/src/scripts/sniper_rounds.cpp
     ${CORE}/src/scripts/bullet_holes.cpp
+    ${CORE}/src/scripts/script_snapshot.cpp
     ${CORE}/src/scripts/items.cpp
     ${CORE}/src/scripts/end_level.cpp
     ${CORE}/src/scripts/hazards.cpp

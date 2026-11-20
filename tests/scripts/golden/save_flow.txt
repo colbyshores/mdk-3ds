@@ -1,0 +1,25 @@
+save 3 {"type":3,"level":4,"health":100,"deaths":2,"strike_used":true,"time":"2026-11-20T12:00:00"}
+save 6 {"type":6,"level":4,"health":100,"deaths":2,"strike_used":true,"time":"2026-11-20T12:00:00"}
+save 1003 {"type":1003,"level":4,"health":100,"deaths":2,"strike_used":true,"time":"2026-11-20T12:00:00"}
+escaped {"type":3,"level":3,"health":100,"deaths":0,"strike_used":false,"time":"a\u003Cb\u003E\u0026\u0027\u0022\u002B\u0060\\/\u00E9\n\u0001"}
+parse null
+parse null
+parse null
+parse null
+parse null
+parse null
+parse null
+parse kind=3 level=5 health=100 deaths=0 strike=False time= state=null -> load level=5 deaths=0 strike=False snapshot=null json={"type":3,"level":5,"health":100,"deaths":0,"strike_used":false,"time":""}
+parse kind=6 level=5 health=40 deaths=-1 strike=True time=x state=null -> load level=5 deaths=-1 strike=True snapshot=null json={"type":6,"level":5,"health":40,"deaths":-1,"strike_used":true,"time":"x"}
+parse kind=3 level=5 health=100 deaths=0 strike=False time= state=null -> load level=5 deaths=0 strike=False snapshot=null json={"type":3,"level":5,"health":100,"deaths":0,"strike_used":false,"time":""}
+parse kind=3 level=5 health=100 deaths=0 strike=False time= state={"a": [1, 2 ], "b":"\u0041"} -> load level=5 deaths=0 strike=False snapshot=null json={"type":3,"level":5,"health":100,"deaths":0,"strike_used":false,"time":"","snapshot":{"a": [1, 2 ], "b":"\u0041"}}
+parse kind=1003 level=7 health=100 deaths=0 strike=False time=é😀 state={} -> load level=7 deaths=0 strike=False snapshot={} json={"type":1003,"level":7,"health":100,"deaths":0,"strike_used":false,"time":"\u00E9\uD83D\uDE00","snapshot":{}}
+parse kind=3 level=8 health=100 deaths=0 strike=False time= state=null -> load level=8 deaths=0 strike=False snapshot=null json={"type":3,"level":8,"health":100,"deaths":0,"strike_used":false,"time":""}
+parse kind=3 level=8 health=100 deaths=0 strike=False time= state=null -> load level=8 deaths=0 strike=False snapshot=null json={"type":3,"level":8,"health":100,"deaths":0,"strike_used":false,"time":""}
+parse null
+list  read null
+write B True write A True
+list A,B,BAD read A {"type":3,"level":4,"health":100,"deaths":2,"strike_used":true,"time":"2026-11-20T12:00:00"} read BAD null read C null
+file A {"type":3,"level":4,"health":100,"deaths":2,"strike_used":true,"time":"2026-11-20T12:00:00"}
+deleted B: list A,BAD quick(A) A
+died LASTGAME {"type":3,"level":6,"health":100,"deaths":1,"strike_used":false,"time":"2026-11-20T12:00:00"} -> level 6 deaths 1 next Play

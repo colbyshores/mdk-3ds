@@ -34,6 +34,11 @@ class Dti;
 struct ArenaEntry;
 } // namespace formats
 
+namespace json {
+class Writer;
+class Document;
+} // namespace json
+
 namespace scripts {
 
 class Fans {
@@ -92,6 +97,11 @@ public:
     // One fan's record, for tests and saves: false when there is none.
     bool fan(const std::string& arena, const std::string& name, int32_t* maskOut,
              float* strengthOut) const;
+
+    // C# Fans.Snapshot / Restore (Fans.cs:102-132, package #19): the fans of a full
+    // save, as an array of {name, arena, param, type, strength, mask, box}, and back.
+    void snapshot(json::Writer* out) const;
+    void restore(const json::Document& doc, int node);
 
 private:
     struct Fan {

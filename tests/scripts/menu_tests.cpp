@@ -3,7 +3,9 @@
 #include "menu_tests.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <string>
 #include <vector>
@@ -18,6 +20,8 @@
 #include "game/main_menu.h"
 #include "game/menu_items.h"
 #include "game/pause_menu.h"
+#include "game/save_games.h"
+#include "game/viewer_saves.h"
 #include "render/render.h"
 
 // The one render seam the menus reach that no other vm_tests source stubs
@@ -55,6 +59,9 @@ const char kPauseSchedule[] =
 const char kBriefingSchedule[] = "-:150,accept:2,fire:60,-:20,back:3,-:4,accept:40";
 // The game's fixed step (C# Viewer.Step), as the probe's `1f / 60f`.
 const float kStep = 1.0f / 60.0f;
+// The saves on the main menu (package #19; the probe's SavesSchedule/ContinueSchedule).
+const char kSavesSchedule[] = "-:4,down:3,down:3,down:3,accept:4,down:3,accept:4";
+const char kContinueSchedule[] = "-:2,accept:4";
 
 // The schedule's frames: the key on a step's first frame (a held one on each),
 // then nothing.
@@ -250,6 +257,70 @@ std::string dumpMain(Fonts* fonts) {
     }
     out += "== main menu: settings after\n";
     out += settings.format();
+    return out;
+}
+
+// The probe's "saves" section: a user folder with LASTGAME, A, B and BAD, read
+// through package #19's hooks (flow::menuListSaves/menuPeekSave/menuLoadSave).
+std::string dumpSaves(Fonts* fonts) {
+    std::string out = "== saves\n";
+    const char* tmp = getenv("TMPDIR");
+    char dir[256];
+    snprintf(dir, sizeof(dir), "%s/menu-saves-%d", (tmp && tmp[0]) ? tmp : "build", (int)getpid());
+    flow::SaveGames saves(dir);
+    const char kTime[] = "2026-11-20T12:00:00";
+    flow::SaveGame save;
+    save.time = kTime;
+    save.level = 6;
+    save.deaths = 1;
+    saves.write(flow::SaveGames::kLastGame, save);
+    save.level = 3;
+    save.deaths = 0;
+    saves.write("A", save);
+    save.kind = (int32_t)flow::SaveKind::BeforeLevel;
+    save.level = 4;
+    save.deaths = 2;
+    save.strikeUsed = true;
+    saves.write("B", save);
+    if (FILE* bad = fopen(saves.pathOf("BAD").c_str(), "wb")) {
+        fputs("{\"level\":1}", bad);
+        fclose(bad);
+    }
+    menu::MenuSaves hooks;
+    hooks.list = flow::menuListSaves;
+    hooks.peek = flow::menuPeekSave;
+    hooks.load = flow::menuLoadSave;
+    hooks.user = &saves;
+    const char* const schedules[2] = {kSavesSchedule, kContinueSchedule};
+    const char* const labels[2] = {"saved game", "continue"};
+    char line[256];
+    for (int s = 0; s < 2; s++) {
+        out += std::string("== saves: ") + labels[s] + "\n";
+        GameSettings settings;
+        flow::GameState state;
+        state.splash = false;
+        std::string printed;
+        menu::MainMenu menu;
+        setUp(&menu.items(), fonts, &settings, &printed);
+        menu.open(&fonts->fti, &state, hooks, false, menu::MenuPage::Main);
+        flush(&printed, &out);
+        std::string last;
+        const std::vector<std::string> frames = schedule(schedules[s]);
+        for (size_t i = 0; i < frames.size(); i++) {
+            const flow::Event next = menu.frame(keysOf(frames[i]), kStep);
+            flush(&printed, &out);
+            printPage(menu.items(), &last, &out);
+            snprintf(line, sizeof(line), "f%d %s page=%s next=%s level=%d deaths=%d strike=%d sel=%d\n",
+                     (int)i, frames[i].c_str(), menu.pageName(), eventName(next), (int)state.level,
+                     (int)state.deaths, state.strikeUsed ? 1 : 0, (int)menu.items().selected());
+            out += line;
+        }
+    }
+    const char* const names[] = {"LASTGAME", "A", "B", "BAD"};
+    for (size_t i = 0; i < 4; i++) {
+        saves.remove(names[i]);
+    }
+    rmdir(dir);
     return out;
 }
 
@@ -469,6 +540,8 @@ std::string menuDump(const formats::MdkData& data, const char* section) {
             out = dumpPause(fonts);
         } else if (strcmp(section, "briefing") == 0) {
             out = dumpBriefing(fonts);
+        } else if (strcmp(section, "saves") == 0) {
+            out = dumpSaves(fonts);
         }
     }
     delete fonts;
@@ -477,7 +550,7 @@ std::string menuDump(const formats::MdkData& data, const char* section) {
 
 int runMenuTests(const formats::MdkData& data) {
     failures = 0;
-    const char* sections[] = {"settings", "typeset", "main", "pause", "briefing"};
+    const char* sections[] = {"settings", "typeset", "main", "pause", "briefing", "saves"};
     for (size_t i = 0; i < sizeof(sections) / sizeof(sections[0]); i++) {
         checkGolden(data, sections[i]);
     }

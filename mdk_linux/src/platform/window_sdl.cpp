@@ -115,6 +115,30 @@ uint32_t nextHeld = 0;  // 1 Tab, 2 ]
 uint32_t zoomInHeld = 0;   // 1 Page Up, 2 =
 uint32_t zoomOutHeld = 0;  // 1 Page Down, 2 -
 
+// The save keys and the typing since the last windowTakeTyping (package #19).
+std::string g_typed;
+uint32_t g_presses = 0;
+
+uint32_t pressFor(SDL_Scancode sc) {
+    switch (sc) {
+        case SDL_SCANCODE_RETURN:
+        case SDL_SCANCODE_KP_ENTER: return kPressEnter;
+        case SDL_SCANCODE_ESCAPE: return kPressEscape;
+        case SDL_SCANCODE_BACKSPACE: return kPressBackspace;
+        case SDL_SCANCODE_DELETE: return kPressDelete;
+        case SDL_SCANCODE_LEFT: return kPressLeft;
+        case SDL_SCANCODE_RIGHT: return kPressRight;
+        case SDL_SCANCODE_HOME: return kPressHome;
+        case SDL_SCANCODE_END: return kPressEnd;
+        case SDL_SCANCODE_UP: return kPressUp;
+        case SDL_SCANCODE_DOWN: return kPressDown;
+        case SDL_SCANCODE_SPACE: return kPressSpace;
+        case SDL_SCANCODE_F2: return kPressQuickSave;
+        case SDL_SCANCODE_F9: return kPressQuickLoad;
+        default: return 0;
+    }
+}
+
 void hold(Input* input, int key, uint32_t* held, uint32_t bit, bool down) {
     *held = down ? (*held | bit) : (*held & ~bit);
     input->down[key] = *held != 0;
@@ -158,6 +182,25 @@ void menuKey(SDL_Scancode sc, bool down, bool repeat) {
 
 } // namespace
 
+void windowTakeTyping(std::string* typed, uint32_t* presses) {
+    typed->swap(g_typed);
+    g_typed.clear();
+    *presses = g_presses;
+    g_presses = 0;
+}
+
+void windowTextInput(Window* window, bool on) {
+    if (!window || !window->handle) {
+        return;
+    }
+    SDL_Window* sdl = static_cast<SDL_Window*>(window->handle);
+    if (on) {
+        SDL_StartTextInput(sdl);
+    } else {
+        SDL_StopTextInput(sdl);
+    }
+}
+
 // Pump the platform's events, translating them into the game's input.
 bool windowPump(Window* window, Input* input) {
     SDL_Event event;
@@ -173,6 +216,13 @@ bool windowPump(Window* window, Input* input) {
                 const bool down = event.type == SDL_EVENT_KEY_DOWN;
                 const SDL_Scancode sc = event.key.scancode;
                 menuKey(sc, down, event.key.repeat);
+                // A press for the save keys and the prompt: the edit keys repeat, F2
+                // and F9 do not (one save, one load per press).
+                const uint32_t press = pressFor(sc);
+                if (down && press != 0 &&
+                    !(event.key.repeat && (press & (kPressQuickSave | kPressQuickLoad)))) {
+                    g_presses |= press;
+                }
                 const int key = keyForScancode(sc);
                 if (key == kKeyFire) {
                     hold(input, kKeyFire, &fireHeld, sc == SDL_SCANCODE_LCTRL ? 1u : 2u, down);
@@ -210,6 +260,9 @@ bool windowPump(Window* window, Input* input) {
                     input->mouseX += event.motion.xrel;
                     input->mouseY += event.motion.yrel;
                 }
+                break;
+            case SDL_EVENT_TEXT_INPUT:
+                g_typed += event.text.text;
                 break;
             case SDL_EVENT_WINDOW_RESIZED:
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:

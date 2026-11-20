@@ -385,3 +385,46 @@ Newest entries are at the bottom. Performance experiments keep their own table i
 - **Emulator check for the parent (not run here):** `make -C mdk_3ds AUTOQUIT=60 FIXED=1 LEVEL=8 AT=20,3360,-427.01,123.8016 WALK='sniper@30-32;forward@40-78;fire@100-110' CAPTURE=200` -- Kurt on GUNT_10's floor facing XGUNTAM, the scope raised ~26 degrees by 38 frames of forward (the oracle hits with 37-39), one round into XGU_BODY; the capture should show the dark hole on the turret's body. Found with the C# probe (`up:160-197` / `-199` both stamp XGU_BODY; `-195` and `-201` miss).
 - **Commit:** this entry.
 - **Still open:** no capture of a hole yet; the Old-3DS cost of the re-expansion is unmeasured; L5's MUSE sites have no golden of their own (the same XGUNTAM model and path). See OPEN_ITEMS.
+### Package #19: save and load
+- **What:** the C#'s saves, byte for byte, and what a death does.
+  - `mdk_core/src/util/json.{h,cpp}`: JSON written as System.Text.Json writes it. Floats are the shortest round-trip decimal in .NET's form (`1E+09`, `1E-05`, `-0`), strings use JavaScriptEncoder.Default's escapes (`\u003C`, `\u002B`...). The reader acts as JsonDocument does: 64 levels deep, the last duplicate name wins, each value's raw span kept.
+  - `game/save_games.{h,cpp}` (Flow/SaveGames.cs): the SaveGame record (ToJson, Parse and its fallbacks) and the `<NAME>.sav` folder (Write, Read, Delete, List, QuickSlot, LASTGAME). A write goes to `.tmp`, is flushed and checked, then renamed over the save. Where rename will not replace a file (the 3DS FS), the old save steps aside to `.bak`, and a read falls back to it. A short read is an error.
+  - `game/game_state` gains Load and Save; `GameFlow` does `--load`, `--save`, KurtDied's LASTGAME write, and the menu's "Continue" as its skip (it loads LASTGAME, MainMenu.Load).
+  - `scripts/script_snapshot.cpp` (ScriptRuntime.Snapshot.cs, Snapshot.cs, Kurt.Snapshot.cs, Fans and TriangleGroups' Snapshot/Restore): `capture()`, `load()`, `canSnapshot()`, `snapshotHash()`. MdkObject's 107 public fields are listed in the C#'s reflection order; one list does both directions. The sniper clip fields are saved (#5's leftover). The runtime keeps its arena states' creation order (the C#'s Dictionary order) and counts TownTicks down (FlattenTown is #15's).
+  - `game/save_prompt.{h,cpp}` (Menu/SavePrompt.cs): the prompt's decisions, with `layout()` giving the C#'s text runs for whoever draws it (#20a).
+  - `game/viewer_saves.{h,cpp}`: the Viewer's OnDied, OpenSnapshot/SnapshotSave, QuickLoad, RestoreSnapshot and ShowNotice.
+  - The one-ArenaSpace hole, for loads: a restore's arenas (`ScriptRuntime::enteredArenas`) go into Kurt's space too.
+  - The harness's start in an arena only a teleport reaches: `ARENA=NAME` with `AT=` (3DS), `--arena=NAME` with `--at` (Linux).
+  - Linux: a death writes LASTGAME and the level reloads from its start. F2 opens the prompt (FONTBIG on black, a typed name, Enter saves); F9 loads. New options: `--save-dir`, `--load`, `--save` and `--die` (the C#'s test death). Saves go to `--save-dir`, else `$MDK_USER_DIR/saves`, else the C#'s Linux folder `~/.local/share/mdk-sdl/saves`.
+  - 3DS: saves go to `sdmc:/3ds/mdk/saves`. A death reloads the level as on Linux. In the pause menu, X saves under the level's number (F2 + Enter) and Y loads (F9). Harness options: `DIE=1` and `SAVETEST=1` (X at 5 s, Y at 8 s).
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C# (and to have #19 back). Before this there were no saves, and a death respawned Kurt in place without reloading the level, so a group a script had hidden stayed hidden.
+- **Evidence:**
+  - `tests/scripts/save_probe` (the C# probe) plays a level, captures it, writes the save file, parses it into a fresh world and runs on, printing a whole-state hash each step. `tick1 dump save` prints the same bytes for six goldens:
+    - `L3_save_box`: 46 objects, a box, a second arena;
+    - `L3_save_teleport`: HMO_7, reached only by teleport;
+    - `L7_save_decoy`: the inventory, the clip, the decoy;
+    - `L7_save_bomb`;
+    - `L4_save_groups`;
+    - `L5_save_idle`;
+    - `L3_save_fan`: HMO_6's fan (after the rebase onto package 8).
+  - The cross-load: each golden's C#-written file, loaded by the C++ (`tick1 dump save-load`), prints the C#'s restore lines. That includes `L3_save_fan` (a fan), a full golden since package 8's updrafts made the port's HMO_6 play match. The other way, the C++'s files (`tick1 dump save-file`) loaded by `Probe load` print the same lines, measured for L3_save_box and L7_save_decoy (98 542 and 20 514 bytes, identical files).
+  - `golden/save_flow.txt` (`Probe flow`) pins the record: the light saves, 15 Parse cases, the folder's list, read and delete, and a death's LASTGAME. `golden/json_floats.txt` holds 20 000 floats as the C# writes them; the formatter matched all 199 589 it was tried on.
+  - `save_tests` also checks the prompt (typing, the cursor, Space vs Enter, the layout) and the death, then the menu's Continue, through GameFlow. It checks the write's safety too (the `.bak` read, a folder under a file refused with a reason).
+  - The goldens bite. Each of these breaks fails a golden:
+    - Yaw and Pitch packed in swapped order fails L3_save_box (line 2);
+    - the groups not restored fails L4_save_groups (line 6);
+    - the arenas' Started not restored fails L5_save_idle (line 6);
+    - the loaded arenas kept out of Kurt's space fails L3_save_teleport: Kurt falls at the first step;
+    - the float exponent switching at 1E+10 fails json_floats;
+    - deaths written before health fails save_flow.
+  - Linux headless: `--die` writes LASTGAME and reloads level 3 at frame 317. `--load` of the C#'s L3_save_box file logs "restored hash cf41a6be998bcfc2, objects 46", the C#'s own hash.
+  - The 3DS release and `DIE=1 SAVETEST=1` harness builds compile. The parent's Mandarine runs: `DIE=1` on L7 ("Kurt died at frame 316", LASTGAME loaded, level 7 again, deaths 1) and `SAVETEST=1` on L3 ("Saved game 3 (30148 bytes, 57.6 ms)", loaded, restored hash 77c80424abe4ca48, 13 objects, Kurt back in HMO_1) pass. `AT=` into HMO_7 fell forever: `AT` moves only the feet, so an arena only a teleport reaches was never entered or loaded. `ARENA=NAME` (3DS, with `AT`) and `--arena=NAME` (Linux, with `--at`) now enter it the way a script's teleport does (`teleportKurt`, the arena added to Kurt's space; the C# console's map does the same). On Linux `--at=677.5,2125,41,96 --arena=HMO_7` stands Kurt at z 0 in HMO_7, and without `--arena` he falls past -1964 by frame 598.
+  - The main menu's save hooks (#20a's `MenuSaves`: list, peek, load) are `flow::menuListSaves/menuPeekSave/menuLoadSave` in `game/viewer_saves`, pinned in `save_tests`.
+  - Not saved, because the C# does not save them: the random stream, voices, Kurt's motion. There are no opcode changes; `docs/OPCODE_COVERAGE.md` notes the load's ArenaSpace fix.
+- **Update (rebased onto the menus, fca4633):**
+  - The menus (#20a) are shown now, so the flow no longer skips the main menu. A death follows the C#: LASTGAME is written and the main menu follows (Game.Handle(KurtDied) -> Handle(Menu)), Continue first. Taking it reloads the level from LASTGAME. Linux headless: `--level=3 --die --press=Menu.Accept@9` shows "Continue | New Game | Level: 3 | Saved Game | Options | Quit", then level 3 again. On the 3DS, `DIE=1` now stops at the menu; add `MENU=Menu.Accept@2` to continue.
+  - The main menu's saves are wired in both frontends (`FrontScreens::saves`, `FrontScreens3ds::saves` -> `flow::menuListSaves/menuPeekSave/menuLoadSave`). `golden/menu_saves.txt` is `menu_probe saves`: a folder with LASTGAME, A, B and an invalid BAD gives Continue first and the Saved Game page "A  (Level 3) | B  (Level 4) | BAD  (Invalid/Corrupt File) | LASTGAME  (Level 2)". B loads into its briefing (level 4, deaths 2, the strike). A second menu's Continue loads LASTGAME into level 6. menu_tests' dumpSaves prints the same bytes; a load hook that drops "before level" fails it.
+  - Linux, menu start: the C#'s L3_save_box file on the Saved Game page restores with "restored hash cf41a6be998bcfc2, objects 46", the C#'s own.
+- **Update (rebased onto bullet holes, 438773e):** the C# saves nothing of a stamped texture (Snapshot has no texture), and its load is a new Viewer over a new LevelData that reads the textures from the archives again, so a loaded game has no bullet holes. The port matches by construction: a load is a level-loop pass with a fresh LevelData (unpinned textures) and a fresh runtime (empty stamped list), and `ScriptRuntime::load` now also refuses a runtime whose stamped list is not empty.
+- **Commit:** this entry's commit.
+

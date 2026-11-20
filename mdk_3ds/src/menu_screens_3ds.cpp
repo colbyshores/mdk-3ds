@@ -22,6 +22,7 @@
 #include "game/font_view.h"
 #include "game/input.h"
 #include "game/main_menu.h"
+#include "game/viewer_saves.h"
 #include "game/menu_presses.h"
 #include "game/screen_view.h"
 #include "platform/controls_3ds.h"
@@ -123,6 +124,19 @@ MenuPresses& harnessPresses() {
 
 } // namespace
 
+// The main menu's view of the saves (package #19): the C#'s SaveGames.In(user)
+// behind MainMenu's List/Read/Load.
+static menu::MenuSaves menuSavesOf(const flow::SaveGames* saves) {
+    menu::MenuSaves hooks;
+    if (saves != nullptr) {
+        hooks.list = flow::menuListSaves;
+        hooks.peek = flow::menuPeekSave;
+        hooks.load = flow::menuLoadSave;
+        hooks.user = const_cast<flow::SaveGames*>(saves);
+    }
+    return hooks;
+}
+
 flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     flow::GameFlow& flow = *front->flow;
     flow::Screen screen = flow.screen();
@@ -149,7 +163,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             items.setSettings(front->settings, applied, front);
             items.setPrint(printLine, nullptr);
             log3dsPrintf("flow: the main menu");
-            mainMenu->open(&ui->fti, &flow.state(), menu::MenuSaves(), false,
+            mainMenu->open(&ui->fti, &flow.state(), menuSavesOf(front->saves), false,
                            menu::MenuPage::Main);
         } else if (shown == flow::Screen::Briefing) {
             briefing.open(&ui->fti, flow.state().level);

@@ -35,6 +35,7 @@
 #include "test_support.h"
 #include "stream_dump.h"
 #include "skydive_dump.h"
+#include "save_dump.h"
 #include "audio/sound_bank.h"
 #include "audio/sound_mixer.h"
 #include "formats/case_insensitive_path.h"
@@ -5531,6 +5532,36 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "save" || what == "save-load" || what == "save-file") {
+            // Package #19, save_dump.h: `tick1 dump save <level> <steps> <after>
+            // <schedule>`, `tick1 dump save-load <file> <level> <after>` (the save probe's
+            // `Probe ...` and `Probe load ...`), and `tick1 dump save-file <level> <steps>
+            // <schedule>` (the C++'s save file alone, for the C# to load).
+            std::string got;
+            std::string why;
+            bool ok = false;
+            if (what == "save") {
+                ok = mdk::test::saveDump(data, spritesArg, level, ticks, argc > 5 ? atoi(argv[5]) : 0,
+                                         argc > 6 ? argv[6] : "", &got, &why);
+            } else if (what == "save-file") {
+                ok = mdk::test::saveFileText(data, spritesArg, level, ticks, argc > 5 ? argv[5] : "",
+                                             &got, &why);
+            } else {
+                std::string file;
+                ok = argc > 5 && readText(argv[3], &file) &&
+                     mdk::test::saveLoadDump(data, spritesArg, file, atoi(argv[4]), atoi(argv[5]),
+                                             &got, &why);
+                if (!ok && why.empty()) {
+                    why = "usage: tick1 dump save-load <file> <level> <after>";
+                }
+            }
+            if (!ok) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "items" || what == "hud" || what == "ribbon") {
             // `tick1 dump items|hud|ribbon <level> <steps> <schedule>`: kurtItemsDump's
             // text, the C++ side of the items probe (`Probe [hud|ribbon] ...`).
@@ -6689,6 +6720,106 @@ int main(int argc, char** argv) {
             } else {
                 printf("FAIL %s: kept=%d trimmed=%d back=%d\n", name, kept ? 1 : 0,
                        trimmed ? 1 : 0, back ? 1 : 0);
+                failures++;
+            }
+        }
+    }
+
+    // Full saves (package #19) against the save probe (tests/scripts/save_probe;
+    // save_dump.h). Each golden is the C#'s whole run: the level played to the save,
+    // the save's text and the save FILE's (line 4), the file parsed back into a fresh
+    // world, and that world run on with every step's whole-state hash. The C++ must
+    // print the same bytes (it writes the same file), and -- the cross-load -- the C#'s
+    // own file (line 4, read as the C# wrote it) loaded by the C++ must print the C#'s
+    // restore lines. A `loadOnly` case pins only the load of the C#'s file, for a
+    // scene whose play the port does not yet match (none today: L3_save_fan was one
+    // until package 8's updrafts landed).
+    {
+        struct SaveCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            int after;
+            const char* schedule;
+            bool loadOnly;
+            const char* pass;
+        };
+        static const SaveCase kSaveCases[] = {
+            {"L3_save_box", "golden/L3_save_box.txt", 3, 120, 30,
+             "tp:1:HMO_3:3:1241:-931,run:5:XG:44160:0:0:0,run:9:XG:8127:10:0:0,"
+             "run:13:XG:52115:-10:0:0",
+             false,
+             "46 objects, a spawn_box object (its \"box\"), a second arena, CMI and arena "
+             "animations, saved, reloaded and run 30 steps"},
+            {"L3_save_teleport", "golden/L3_save_teleport.txt", 3, 120, 60,
+             "tp:1:HMO_7:677.5:2125:41", false,
+             "a save in HMO_7, which only a teleport reaches: the restore enters it into "
+             "Kurt's space too (the C#'s one ArenaSpace), so he stands, not falls"},
+            {"L7_save_decoy", "golden/L7_save_decoy.txt", 7, 200, 60,
+             "yaw:0,clip:2:0.5,give:5:SW_HBOMB,give:6:SW_DUMMY,use:60-62", false,
+             "the inventory, the sniper clip, the decoy (items.decoy) and its walk"},
+            {"L7_save_bomb", "golden/L7_save_bomb.txt", 7, 200, 60,
+             "yaw:0,give:5:SW_INTER,use:60-62", false,
+             "the World's Most Interesting Bomb out (items.bomb)"},
+            {"L4_save_groups", "golden/L4_save_groups.txt", 4, 600, 30, "", false,
+             "MEAT_1's triangle groups' states"},
+            {"L5_save_idle", "golden/L5_save_idle.txt", 5, 600, 30, "", false,
+             "MUSE_1's objects and arena animations"},
+            {"L3_save_fan", "golden/L3_save_fan.txt", 3, 200, 30, "tp:1:HMO_6:1:2310:-370",
+             false, "HMO_6's fan (fan_create's record), saved, reloaded and run 30 steps"},
+        };
+        for (size_t i = 0; i < sizeof(kSaveCases) / sizeof(kSaveCases[0]); i++) {
+            const SaveCase& c = kSaveCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            bool ok = true;
+            if (!c.loadOnly) {
+                if (!mdk::test::saveDump(data, spritesArg, c.level, c.steps, c.after, c.schedule,
+                                         &got, &why)) {
+                    printf("FAIL %s: %s\n", c.name, why.c_str());
+                    ok = false;
+                } else if (got != expected) {
+                    printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                    ok = false;
+                }
+            }
+            // The cross-load: line 4 is the C#'s save file.
+            size_t line = 0;
+            for (int n = 0; n < 3 && line != std::string::npos; n++) {
+                line = expected.find('\n', line) + 1;
+            }
+            const size_t lineEnd = expected.find('\n', line);
+            const size_t parsedAt = expected.find("\nparsed ");
+            if (line == std::string::npos || lineEnd == std::string::npos ||
+                parsedAt == std::string::npos) {
+                printf("FAIL %s: the golden has no save file line\n", c.name);
+                ok = false;
+            } else {
+                const std::string file = expected.substr(line, lineEnd - line);
+                char head[64];
+                snprintf(head, sizeof(head), "save load level=%d after=%d\n", c.level, c.after);
+                const std::string want = head + expected.substr(parsedAt + 1);
+                std::string loaded;
+                if (!mdk::test::saveLoadDump(data, spritesArg, file, c.level, c.after, &loaded,
+                                             &why)) {
+                    printf("FAIL %s (the C#'s file): %s\n", c.name, why.c_str());
+                    ok = false;
+                } else if (loaded != want) {
+                    printf("FAIL %s (the C#'s file): %s\n", c.name,
+                           firstDifference(loaded, want).c_str());
+                    ok = false;
+                }
+            }
+            if (ok) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
                 failures++;
             }
         }

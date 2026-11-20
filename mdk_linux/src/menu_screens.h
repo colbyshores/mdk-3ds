@@ -48,6 +48,10 @@ struct FrontScreens {
     bool headless = false;
     bool fixedStep = false;
     flow::GameFlow* flow = nullptr;
+    // The saves the main menu lists, peeks and loads (package #19's
+    // flow::menuListSaves/menuPeekSave/menuLoadSave); null: none, as the C#'s
+    // menu on an empty user folder.
+    const flow::SaveGames* saves = nullptr;
     GameSettings* settings = nullptr;
     std::string settingsFile;
     MenuPresses* presses = nullptr;

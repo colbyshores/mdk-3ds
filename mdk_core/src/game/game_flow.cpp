@@ -6,6 +6,8 @@
 
 #include "game/game_flow.h"
 
+#include <stdio.h>
+
 namespace mdk {
 namespace flow {
 
@@ -23,8 +25,16 @@ void FlowOptions::setCounts(const int32_t* values, int32_t count) {
 Event GameFlow::firstEvent() {
     applyTestCounts();
 
-    // C# --load: read the save, state().Load(save), and start at its briefing or
-    // the level itself. Deferred with the save subsystem (game_state.h).
+    // C# --load (Game.cs:372-382): read the save, state().Load(save), and start at
+    // its briefing or the level itself; a save that is not there quits.
+    if (!options_.load.empty()) {
+        const Event loaded = loadSave(options_.load);
+        if (loaded == Event::None) {
+            say("No saved game " + options_.load);
+            return Event::Quit;
+        }
+        return loaded;
+    }
 
     state_.level = options_.level;
     switch (options_.start) {
@@ -74,8 +84,14 @@ Screen GameFlow::handle(Event next) {
             break;
         case Event::KurtDied:
             // The level is saved as LASTGAME and the menu's "Continue" starts it
-            // again (not the 1996 demo's). The write takes a SaveGame, so it is
-            // deferred with the save subsystem; the splash and the menu are not.
+            // again (not the 1996 demo's, which this port does not load: every
+            // level here is retail, BetaDemo.IsBeta is false).
+            {
+                std::string why;
+                if (!saves_.write(SaveGames::kLastGame, state_.save(SaveKind::LevelStart), &why)) {
+                    say("LASTGAME not written: " + why);
+                }
+            }
             state_.splash = true;
             shown = handle(Event::Menu);
             break;
@@ -189,6 +205,30 @@ int32_t GameFlow::screenPackage(Screen screen) {
     return 0;
 }
 
+Event GameFlow::loadSave(const std::string& name) {
+    // C# MainMenu.Load (and FirstEvent's): the save's state, then its briefing (a
+    // before-level save) or the level.
+    SaveGame save;
+    if (!saves_.read(name, &save)) {
+        return Event::None;
+    }
+    state_.load(save);
+    char line[96];
+    snprintf(line, sizeof(line), "Loaded game %s: level %d", name.c_str(), (int)save.level);
+    say(line);
+    return save.isKind(SaveKind::BeforeLevel) ? Event::Briefing : Event::Play;
+}
+
+void GameFlow::say(const std::string& line) {
+    report_ += report_.empty() ? line : "\n" + line;
+}
+
+std::string GameFlow::takeReport() {
+    std::string report;
+    report.swap(report_);
+    return report;
+}
+
 void GameFlow::reportLevel(const LevelResult& result) {
     level_ = result;
     hasLevel_ = true;
@@ -219,6 +259,15 @@ Screen GameFlow::play() {
     // The carry's PICKUPS are not collected here: the inventory is cut with the
     // rest of the pickup subsystem (game_state.h), so the health is the half of
     // CarryFromFall this port can honour and the pickups are the half it cannot.
+    // C# Play's --save (Game.cs:488-491): the first level's light save, made as
+    // it starts.
+    if (firstLevel_ && !options_.save.empty() &&
+        saves_.write(options_.save, state_.save(SaveKind::LevelStart))) {
+        char line[96];
+        snprintf(line, sizeof(line), "Saved game %s: level %d", options_.save.c_str(),
+                 (int)state_.level);
+        say(line);
+    }
     level_ = LevelResult();
     if (state_.hasCarry) {
         level_.health = state_.carry.health;

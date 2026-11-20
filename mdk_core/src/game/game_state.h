@@ -14,14 +14,8 @@
 // (3-8) and it starts at kOrder[0] == 7, not at 3. Anything that counts levels
 // counts them in the order of play, so it goes through game/level_flow.h.
 //
-// NOT PORTED, WITH CAUSE: Load(SaveGame) and Save(SaveKind). Both are one-line
-// field copies, but their argument is the C#'s SaveGame record and that belongs
-// to the save subsystem (Flow/SaveGames.cs: the JSON record, the file folder,
-// LASTGAME) which the owner directive of 2026-11-05 cut from this sprint ("boot
-// straight into a level"). The two C# methods are field copies and nothing else,
-// so they land whole with that subsystem rather than as a half record here. The
-// two callers that would use them — Game's --load start and the LASTGAME write on
-// KurtDied — say the same thing in game_flow.cpp.
+// Load(SaveGame) and Save(SaveKind) landed with the save subsystem (package #19,
+// game/save_games.h), which the owner un-cut on 2026-11-20.
 //
 // A null C# string field is an empty std::string here, and a null FallCarry is
 // `hasCarry == false`: the C# tests them with `is {}` / `?? `, which is exactly
@@ -37,6 +31,7 @@
 #include <vector>
 
 #include "game/level_flow.h"
+#include "game/save_games.h"
 #include "scripts/game_stats.h"
 
 namespace mdk {
@@ -84,6 +79,16 @@ struct GameState {
     // Returns false, having changed nothing, for an index outside the order, where
     // the C# throws IndexOutOfRange (this build has no exceptions, AGENTS.md §10).
     bool newGame(int32_t index);
+
+    // The state of a save: its level, deaths and air strike, and a full save's
+    // level state, kept until the level restores it (C# Load).
+    void load(const SaveGame& save);
+
+    // A light save of the level to play (health 100, as the original's), made now
+    // (C# Save: `DateTime.Now.ToString("s")`, the local time).
+    SaveGame save(SaveKind kind) const;
+    // The same with the time given, for the tests.
+    SaveGame saveAt(SaveKind kind, const std::string& time) const;
 
     // LEVEL5 after the Gunter stream: Kurt keeps the stream's health, not the
     // pickups (0x4325b0 clears the inventory) — C# EnterLastLevel.

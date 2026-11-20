@@ -6,6 +6,8 @@
 
 #include "game/game_state.h"
 
+#include <time.h>
+
 namespace mdk {
 namespace flow {
 
@@ -28,6 +30,37 @@ void GameState::enterLastLevel(int32_t health) {
     carry = FallCarry();
     carry.health = health;
     hasCarry = true;
+}
+
+void GameState::load(const SaveGame& save) {
+    // C# Load (GameState.cs:51-56).
+    level = save.level;
+    deaths = save.deaths;
+    strikeUsed = save.strikeUsed;
+    snapshot = save.isKind(SaveKind::Snapshot) && save.hasState ? save.state : std::string();
+}
+
+SaveGame GameState::saveAt(SaveKind kind, const std::string& time) const {
+    // C# Save (GameState.cs:69-70): new(kind, Level, FullHealth, Deaths, StrikeUsed, time).
+    SaveGame light;
+    light.kind = (int32_t)kind;
+    light.level = level;
+    light.health = SaveGame::kFullHealth;
+    light.deaths = deaths;
+    light.strikeUsed = strikeUsed;
+    light.time = time;
+    return light;
+}
+
+SaveGame GameState::save(SaveKind kind) const {
+    // DateTime.Now.ToString("s"): the sortable local time, yyyy-MM-ddTHH:mm:ss.
+    char text[32] = "";
+    const time_t now = time(nullptr);
+    struct tm local;
+    if (localtime_r(&now, &local) != nullptr) {
+        strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%S", &local);
+    }
+    return saveAt(kind, text);
 }
 
 } // namespace flow

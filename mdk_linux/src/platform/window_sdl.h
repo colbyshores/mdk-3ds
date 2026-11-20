@@ -9,6 +9,8 @@
 
 #include <stdint.h>
 
+#include <string>
+
 #include "game/input.h"
 
 namespace mdk {
@@ -61,5 +63,31 @@ struct MenuKeyState {
 // The menu keys pumped since the last call; the presses then clear, the held
 // state stays.
 void windowTakeMenuKeys(MenuKeyState* out);
+// THE SAVE KEYS AND THE TYPING (package #19). F2 (quick save) and F9 (quick load) are
+// the C#'s Key.QuickSave / Key.QuickLoad (Mdk.Engine Input.cs:84-85), and the save
+// prompt reads menu-key presses and the characters typed (Input.WasPressed(MenuKey.*),
+// Input.Typed). They are PRESSES since the last take, not held state, so they live
+// beside the game's Input rather than in its held-key table.
+enum TypingPress : uint32_t {
+    kPressEnter = 1u << 0,      // Return, keypad Enter (MenuKey.Accept)
+    kPressEscape = 1u << 1,     // MenuKey.Back
+    kPressBackspace = 1u << 2,
+    kPressDelete = 1u << 3,
+    kPressLeft = 1u << 4,
+    kPressRight = 1u << 5,
+    kPressHome = 1u << 6,
+    kPressEnd = 1u << 7,
+    kPressUp = 1u << 8,
+    kPressDown = 1u << 9,
+    kPressSpace = 1u << 10,     // also MenuKey.Accept
+    kPressQuickSave = 1u << 11, // F2
+    kPressQuickLoad = 1u << 12, // F9
+};
+
+// The presses and the text typed since the last call, then forgotten.
+void windowTakeTyping(std::string* typed, uint32_t* presses);
+
+// Text input on or off (the prompt's name; SDL delivers typed text only while on).
+void windowTextInput(Window* window, bool on);
 
 } // namespace mdk

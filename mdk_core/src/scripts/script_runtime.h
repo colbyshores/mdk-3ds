@@ -890,6 +890,51 @@ public:
         return vm_.unimplemented();
     }
 
+    // ---- Full saves (package #19; script_snapshot.cpp, C# ScriptRuntime.Snapshot.cs) ----
+    //
+    // The level's state and Kurt's for a full save (F2): the runtime's variables,
+    // the arenas' states and script objects, the objects with every public field
+    // the C#'s MdkObject has (Scripts/Snapshot.cs packs them by reflection; the
+    // port lists them in the same order), the fans, the bomb and the decoy, the
+    // triangle groups and the level's counts. The text is the C#'s byte for byte
+    // (util/json.h), so a C# save loads here and this one loads in the C#.
+    //
+    // C# CanSnapshot (Snapshot.cs:24): no cutscene (#13 is unported, so none), the
+    // level not over, no EndLevel, no air strike out (#14, none), not riding, Kurt
+    // alive, and in an arena. The Viewer also refuses while Kurt snipes; that half
+    // is the frontend's (Player::sniping).
+    bool canSnapshot() const;
+    // C# Capture (Snapshot.cs:29): {"kurt": ..., "level": ...}. Needs the bound
+    // Player (Kurt is saved from it); an empty string without one.
+    std::string capture() const;
+    // C# Load (Snapshot.cs:32-40): the level and Kurt of a full save, BEFORE the
+    // first tick (the objects are created again and their scripts carry on where
+    // they were). False, with `why`, when the text is not a save this runtime can
+    // read; the runtime is then as the restore left it, which is not a level to
+    // play -- the frontend reloads the level.
+    bool load(const std::string& text, std::string* why);
+    // C# Snapshot.Hash: the first 16 hex digits of the SHA-256 of a save's text
+    // (the C#'s log line and the goldens compare a save with its reload by it).
+    static std::string snapshotHash(const std::string& text);
+    // The arenas a restore entered (C# EnterArena at the end of Restore, :119-124):
+    // the C# adds them to the ONE ArenaSpace Kurt and the scripts share. The port
+    // has two (docs/CONTINUATION.md "the two ArenaSpaces"), so a frontend adds
+    // these to Kurt's space after load(), or a save made in an arena only a
+    // teleport reaches would leave Kurt in an arena his collisions do not have.
+    std::vector<std::string> enteredArenas() const;
+
+    // C# TownTicks (ScriptRuntime.cs:255): the town's timer, set from the
+    // difficulty when the runtime is made (not on the last level) and counted down
+    // once a tick. A save carries it. Its consumer at 0, FlattenTown (the shake,
+    // the OOT_L message and the global flag), is package #15's.
+    int32_t townTicks = 0;
+    // C# AirStrike.UsedUp: the one air strike of the last two levels was used. The
+    // air strike is package #14; the flag is here because a save carries it.
+    bool airStrikeUsedUp = false;
+    // The arenas' states in the order they were made (the C#'s Dictionary order,
+    // which the save follows; arenas_ is a map and sorts).
+    const std::vector<std::string>& arenaOrder() const { return arenaOrder_; }
+
 private:
     // FindConnections (ScriptRuntime.cs:856): pair the DTI type-6 connection
     // records of every arena by their id, so (arena, id) names the arena on the
@@ -1291,6 +1336,15 @@ private:
     std::vector<MdkObject*> boxes_;
     // The destructor's half of the box models: the pose caches drop their keys.
     void forgetBoxModels();
+
+    // ---- Full saves (package #19, script_snapshot.cpp) ----
+    std::vector<std::string> arenaOrder_;  // getArenaState's creation order
+    // C# FindAnimationNamed (Snapshot.cs:200): a CMI animation by its "CMI_<hex>"
+    // name, else the arena's, else the items'.
+    const formats::ModelAnimation* findAnimationNamed(MdkObject* obj, const std::string& name);
+    // The group state and its triangles, as TriangleGroups.SetFlags writes them.
+    void applyGroupFlags(const std::string& arena, int32_t group, uint32_t state);
+    friend class SnapshotIo;
 };
 
 } // namespace scripts

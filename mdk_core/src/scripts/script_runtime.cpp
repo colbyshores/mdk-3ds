@@ -16,6 +16,7 @@
 #include "formats/dti.h"
 #include "formats/model_animation.h"
 #include "game/bsp.h"
+#include "game/level_flow.h"
 #include "game/player.h"
 #include "util/math_lut.h"
 #include "util/math_minmax.h"
@@ -343,6 +344,18 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
         updraft.updraft = &ScriptRuntime::kurtUpdraftTrampoline;
         player_->setUpdraftHook(updraft);
     }
+
+    // The town's timer, by the difficulty, except on the last level (Gunter's) and
+    // in the 1996 demo, which this runtime does not load (ScriptRuntime.cs:367-370;
+    // TownTicksByDifficulty :38, LastLevelIndex :40). Package #19 carries it in a
+    // save; its consumer is #15's.
+    static const int32_t kTownTicksByDifficulty[3] = {81000, 54000, 36000};
+    static const int32_t kLastLevelIndex = 5;
+    if (flow::indexOf(level_->number()) != kLastLevelIndex) {
+        const int32_t difficulty = player_ != nullptr ? (int32_t)player_->combat().difficulty()
+                                                      : (int32_t)Kurt::Normal;
+        townTicks = kTownTicksByDifficulty[difficulty];
+    }
 }
 
 ScriptRuntime::~ScriptRuntime() {
@@ -655,6 +668,11 @@ void ScriptRuntime::runTick() {
     shake = 0.0f;
     // The health bar's second runs out, or its object died (ScriptRuntime.cs:900).
     updateBar();
+    // The town's timer (ScriptRuntime.cs:901-908). FlattenTown at 0 is package #15's;
+    // the count is here because a save carries it (package #19).
+    if (townTicks > 0) {
+        townTicks--;
+    }
 
     // The first tick has no movement to observe (ScriptRuntime.cs:911-917,
     // after the decrements above, as in the oracle). A teleport can set the
@@ -1322,6 +1340,9 @@ ArenaState& ScriptRuntime::getArenaState(const std::string& arena) {
     formats::findOffset(&cmi_->arenaScripts(), arena, &script);
     std::pair<std::map<std::string, ArenaState>::iterator, bool> inserted =
         arenas_.emplace(arena, ArenaState(arena, script));
+    // The C#'s Dictionary keeps its insertion order, and a save lists the arenas
+    // in it (package #19).
+    arenaOrder_.push_back(arena);
     return inserted.first->second;
 }
 

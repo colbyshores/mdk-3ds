@@ -41,6 +41,10 @@ struct ControlBindings;
 struct FrontScreens3ds {
     MdkRenderer renderer = nullptr;
     flow::GameFlow* flow = nullptr;
+    // The saves the main menu lists, peeks and loads (package #19's
+    // flow::menuListSaves/menuPeekSave/menuLoadSave); null: none, as the C#'s
+    // menu on an empty user folder.
+    const flow::SaveGames* saves = nullptr;
     GameSettings* settings = nullptr;
     // Writes config.ini (the toggles and the game's lines); the options call it
     // on every change (C# Ui.ApplySettings).

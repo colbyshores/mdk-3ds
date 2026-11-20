@@ -289,6 +289,49 @@ if (section is "all" or "briefing")
     }
 }
 
+// --- the saves on the main menu (package #19) -----------------------------------
+// A user folder with LASTGAME (LEVEL6, one death), A (LEVEL3, a level's start), B (LEVEL4,
+// before a level) and BAD (no valid level): Continue heads the page, Saved Game lists the
+// four (BAD disabled, "Invalid"), B loads into its briefing; a second menu's Continue loads
+// LASTGAME into the level. The C++ twin is menu_tests' dumpSaves over flow::SaveGames and
+// flow::menuListSaves/menuPeekSave/menuLoadSave.
+const string SavesSchedule = "-:4,down:3,down:3,down:3,accept:4,down:3,accept:4";
+const string ContinueSchedule = "-:2,accept:4";
+if (section is "saves")
+{
+    stdout.WriteLine("== saves");
+    var saves = SaveGames.In(user);
+    const string Time = "2026-11-20T12:00:00";
+    saves.Write(SaveGames.LastGame, new SaveGame(SaveKind.LevelStart, 6, 100, 1, false, Time));
+    saves.Write("A", new SaveGame(SaveKind.LevelStart, 3, 100, 0, false, Time));
+    saves.Write("B", new SaveGame(SaveKind.BeforeLevel, 4, 100, 2, true, Time));
+    File.WriteAllText(Path.Combine(saves.Directory, "BAD.sav"), "{\"level\":1}");
+    foreach (var (schedule, label) in new[] { (SavesSchedule, "saved game"), (ContinueSchedule, "continue") })
+    {
+        stdout.WriteLine($"== saves: {label}");
+        var state = new GameState { Splash = false };
+        Console.SetOut(captured);
+        var menu = new MainMenu(ui, state, saves, MenuPage.Main);
+        Flush();
+        var items = Field<MenuItems>(menu, "_items");
+        var last = "";
+        var frame = 0;
+        foreach (var key in Schedule(schedule))
+        {
+            Keys(key);
+            Console.SetOut(captured);
+            var next = menu.Frame(Step, null);
+            Console.SetOut(stdout);
+            Flush();
+            PrintPage(items, ref last);
+            stdout.WriteLine($"f{frame} {key} page={FieldObj(menu, "_page")} next={next} level={state.Level} deaths={state.Deaths} strike={(state.StrikeUsed ? 1 : 0)} sel={Field<int>(items, "_selected")}");
+            frame++;
+        }
+
+        menu.Dispose();
+    }
+}
+
 audio.Dispose();
 renderer.Dispose();
 window.Dispose();

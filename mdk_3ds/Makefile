@@ -152,6 +152,18 @@ $(error AT=$(AT) needs AUTOQUIT: the start override is a harness-build feature)
 endif
 DEFINES += -DMDK_HW_AT='$(AT)'
 endif
+# `make AUTOQUIT=90 AT=x,y,z,yaw ARENA=NAME` starts Kurt in ARENA the way a script's
+# teleport puts him there (ScriptRuntime::teleportKurt, the C#'s TeleportKurt; the
+# C# console's map does the same, Viewer.EnterStartArena): the arena is entered,
+# loaded and made solid for Kurt even when no connection reaches it (LEVEL3's HMO_7).
+# AT alone only moves his feet, so an arena only a teleport reaches is never loaded
+# and he falls. Only main_3ds.cpp reads it: touch it after changing ARENA.
+ifneq ($(strip $(ARENA)),)
+ifeq ($(strip $(AT)),)
+$(error ARENA=$(ARENA) needs AT=x,y,z,yaw: the teleport needs a place in the arena)
+endif
+DEFINES += -DMDK_HW_ARENA='"$(ARENA)"'
+endif
 # `make AUTOQUIT=90 WALK='forward+turbo@60-260;turnright@270-307'` drives Kurt by a
 # script (platform/harness_3ds.h, game/walk_script.h): `<keys>@<first>-<end>`
 # segments, ';' between them, '+' between keys (forward, back, strafeleft,
@@ -200,6 +212,24 @@ DEFINES += -DMDK_HW_EVENT_EVERY=1
 endif
 else ifneq ($(strip $(EVENT_EVERY)),)
 $(error EVENT_EVERY=$(EVENT_EVERY) needs EVENT=N: there is no event to repeat)
+endif
+# `make AUTOQUIT=90 DIE=1` hurts Kurt to death after one second of game time (the C#'s
+# --die): the death writes sdmc:/3ds/mdk/saves/LASTGAME.sav and the main menu follows
+# with "Continue" first, as the C#'s Handle(KurtDied) (package #19); add
+# `MENU=Menu.Accept@2` to take it, which reloads the level. `SAVETEST=1` presses the pause menu's X (a full save) at 5 s
+# and Y (its load) at 8 s, so the level reloads from the save. Only main_3ds.cpp reads
+# them: touch it after changing DIE or SAVETEST.
+ifneq ($(strip $(DIE)),)
+ifndef AUTOQUIT
+$(error DIE=$(DIE) needs AUTOQUIT: the test death is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_DIE=1
+endif
+ifneq ($(strip $(SAVETEST)),)
+ifndef AUTOQUIT
+$(error SAVETEST=$(SAVETEST) needs AUTOQUIT: the save test is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_SAVETEST=1
 endif
 # `make AUTOQUIT=90 TOGGLES='enableGlowBillboards=0;shadowMapSize=128'` applies
 # config.ini lines (';' between them, no spaces, no commas) over the console's own

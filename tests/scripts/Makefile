@@ -29,6 +29,8 @@ COMMON_SOURCES := \
 	$(CORE)/audio/voice_binding.cpp \
 	$(CORE)/util/math_lut.cpp \
 	$(CORE)/util/random.cpp \
+	$(CORE)/util/json.cpp \
+	$(CORE)/util/sha256.cpp \
 	$(CORE)/formats/bin_reader.cpp \
 	$(CORE)/formats/palette.cpp \
 	$(CORE)/formats/texture.cpp \
@@ -68,6 +70,9 @@ COMMON_SOURCES := \
 	$(CORE)/game/frame_blend.cpp \
 	$(CORE)/game/game_flow.cpp \
 	$(CORE)/game/game_state.cpp \
+	$(CORE)/game/save_games.cpp \
+	$(CORE)/game/save_prompt.cpp \
+	$(CORE)/game/viewer_saves.cpp \
 	$(CORE)/game/kurt.cpp \
 	$(CORE)/game/object_view.cpp \
 	$(CORE)/game/effects_view.cpp \
@@ -94,6 +99,7 @@ COMMON_SOURCES := \
 	$(CORE)/scripts/bullet_holes.cpp \
 	$(CORE)/util/system_numerics_inverse.cpp \
 	$(CORE)/scripts/items.cpp \
+	$(CORE)/scripts/script_snapshot.cpp \
 	$(CORE)/scripts/end_level.cpp \
 	$(CORE)/scripts/hazards.cpp \
 	$(CORE)/scripts/platforms.cpp \
@@ -111,6 +117,7 @@ SOURCES := \
 	tick1.cpp \
 	stream_dump.cpp \
 	skydive_dump.cpp \
+	save_dump.cpp \
 	$(CORE)/fall/fall_sim.cpp \
 	$(CORE)/fall/fall_missile.cpp \
 	$(CORE)/formats/fall3d.cpp \
@@ -132,6 +139,7 @@ SOURCES_VM := \
 	$(CORE)/game/briefing.cpp \
 	$(CORE)/game/enhanced_menu.cpp \
 	$(CORE)/game/enhanced_config.cpp \
+	save_tests.cpp \
 	layer_tests.cpp \
 	mve_audio_tests.cpp \
 	sprite_tests.cpp \
@@ -151,7 +159,6 @@ SOURCES_VM := \
 	$(CORE)/formats/kurt_pack.cpp \
 	$(CORE)/game/mod_images.cpp \
 	$(CORE)/game/hd_key.cpp \
-	$(CORE)/util/sha256.cpp \
 	$(COMMON_SOURCES)
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))

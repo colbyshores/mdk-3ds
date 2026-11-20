@@ -70,6 +70,9 @@
 #include "render/material_resolver.h"
 #include "render/surface_cache.h"
 #include "scripts/script_runtime.h"
+#include "game/save_games.h"
+#include "game/save_prompt.h"
+#include "game/viewer_saves.h"
 #include "util/math_lut.h"
 #include "menu_screens.h"
 
@@ -299,6 +302,24 @@ int main(int argc, char** argv) {
     // of the same level must leave the same memory behind, which two different
     // levels cannot show (tests/scripts/level_chain_test.sh).
     bool replayLevel = false;
+    // THE SAVES (package #19). --save-dir=DIR: where the saves go (the C#'s
+    // `<user folder>/saves`); without it $MDK_USER_DIR/saves (the C#'s override), else
+    // the C#'s own Linux user folder, ~/.local/share/mdk-sdl/saves ($XDG_DATA_HOME
+    // first, as .NET's LocalApplicationData), so a C# install and this one share them.
+    // --load=NAME starts from a save; --save=NAME writes a light save of the first
+    // level as it starts (the C#'s GameOptions.Load / Save).
+    std::string saveDir;
+    std::string loadName;
+    std::string saveName;
+    // --die: Kurt is hurt to death at the test start (the C#'s ViewerOptions.Die,
+    // Viewer.RunTests with FatalDamage 1000), the first level only -- how a death's
+    // LASTGAME and the level's reload are run without a console.
+    bool dieTest = false;
+    // --arena=NAME (with --at): Kurt starts in that arena the way a script's teleport
+    // puts him there (ScriptRuntime::teleportKurt; the C# console's map,
+    // Viewer.EnterStartArena), so an arena only a teleport reaches (LEVEL3's HMO_7)
+    // is entered and solid. --at alone only moves his feet.
+    std::string startArenaOverride;
 
     auto optionValue = [](const char* arg, const char* name) -> const char* {
         const size_t length = std::strlen(name);
@@ -470,6 +491,16 @@ int main(int argc, char** argv) {
                 return 1;
             }
             stereo.convergence = parsed;
+        } else if ((value = optionValue(argv[i], "--arena")) != nullptr) {
+            startArenaOverride = value;
+        } else if (std::strcmp(argv[i], "--die") == 0) {
+            dieTest = true;
+        } else if ((value = optionValue(argv[i], "--save-dir")) != nullptr) {
+            saveDir = value;
+        } else if ((value = optionValue(argv[i], "--load")) != nullptr) {
+            loadName = value;
+        } else if ((value = optionValue(argv[i], "--save")) != nullptr) {
+            saveName = value;
         } else if (std::strcmp(argv[i], "--frames") == 0) {
             if (i + 1 >= argc) {
                 std::fprintf(stderr, "[main] --frames needs a value\n");
@@ -668,9 +699,39 @@ int main(int argc, char** argv) {
     if (levelGiven) {
         flowOptions.level = levelNumber;
     }
+    flowOptions.load = loadName;
+    flowOptions.save = saveName;
     mdk::flow::GameFlow flow(flowOptions);
+    if (saveDir.empty()) {
+        const char* user = std::getenv("MDK_USER_DIR");
+        const char* xdg = std::getenv("XDG_DATA_HOME");
+        const char* home = std::getenv("HOME");
+        if (user && user[0]) {
+            saveDir = mdk::flow::SaveGames::in(user).directory();
+        } else if (xdg && xdg[0]) {
+            saveDir = std::string(xdg) + "/mdk-sdl/saves";
+        } else if (home && home[0]) {
+            saveDir = std::string(home) + "/.local/share/mdk-sdl/saves";
+        }
+    }
+    // C# Game's constructor: the saves, and LASTGAME deleted ("the original deletes
+    // LASTGAME.SAV when it quits").
+    const mdk::flow::SaveGames saves(saveDir);
+    saves.remove(mdk::flow::SaveGames::kLastGame);
+    flow.setSaves(saves);
+    std::printf("[main] saves: %s\n", saveDir.empty() ? "(none: no home folder)" : saveDir.c_str());
+    // Prints what the flow's own save work said (C#'s Console lines), once.
+    auto printFlowReport = [&flow]() {
+        const std::string report = flow.takeReport();
+        if (!report.empty()) {
+            std::printf("[main] %s\n", report.c_str());
+        }
+    };
     mdk::flow::Screen screen = flow.handle(flow.firstEvent());
-    if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu) {
+    printFlowReport();
+    // --load of a before-level save starts at its briefing (the menus' screens).
+    if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
+        screen != mdk::flow::Screen::Briefing) {
         std::fprintf(stderr, "[main] the flow did not start in a level or the menu\n");
         mdk_render_destroy(renderer);
         mdk::audioClose();
@@ -688,6 +749,8 @@ int main(int argc, char** argv) {
     front.settings = &settings;
     front.settingsFile = settingsFile;
     front.presses = &presses;
+    // The main menu's Continue and Saved Game page read the saves (package #19).
+    front.saves = &saves;
     front.time = &pressTime;
     front.maxFrames = maxFrames;
     front.captureFrame = captureFrame;
@@ -840,6 +903,9 @@ int main(int argc, char** argv) {
     // FONTSML through SYS_PAL). On the heap: each carries a whole Font.
     std::unique_ptr<mdk::FontView> hudBig(new mdk::FontView());
     std::unique_ptr<mdk::FontView> hudSmall(new mdk::FontView());
+    // The save prompt's texts (MDKFONT.FTI's SV_ASK, ABORT2, ABORT3, SV_TITLE), drawn
+    // in FONTBIG (Menu/SavePrompt.cs Draw).
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> promptTexts;
     mdk::KurtSprite kurtSprite;
     mdk::formats::Cmi cmi;
     mdk::audio::SoundBank bank;
@@ -969,6 +1035,13 @@ int main(int argc, char** argv) {
                                     std::printf("[main] hud: message fonts loaded\n");
                                 }
                                 hud.messages().setTexts(fti);
+                                static const char* const kPromptKeys[] = {"SV_ASK", "ABORT2",
+                                                                          "ABORT3", "SV_TITLE"};
+                                for (size_t k = 0; k < 4; k++) {
+                                    promptTexts.push_back(std::make_pair(
+                                        std::string(kPromptKeys[k]),
+                                        fti.getTextBytes(kPromptKeys[k])));
+                                }
                             } else {
                                 std::printf("[main] hud: MDKFONT.FTI fonts did not load -- no "
                                             "messages\n");
@@ -1231,6 +1304,53 @@ int main(int argc, char** argv) {
         spawnPlayer();
         playerReady = true;
         mdk::windowCaptureMouse(&window, true);
+        if (!startArenaOverride.empty() && hasStartOverride && firstLevel && runtime) {
+            const mdk::formats::Arena* into = level.arenaNamed(startArenaOverride);
+            if (into == nullptr) {
+                std::printf("[main] --arena=%s: no such arena; --at alone\n",
+                            startArenaOverride.c_str());
+            } else {
+                runtime->teleportKurt(startArenaOverride, player.feet, player.yaw);
+                space.add(into);
+                space.setSolid({startArenaOverride});
+                startArenaName = startArenaOverride;
+                std::printf("[main] --arena=%s: Kurt teleported in at (%.1f,%.1f,%.1f)\n",
+                            startArenaOverride.c_str(), player.feet.x, player.feet.y,
+                            player.feet.z);
+            }
+        }
+        // C# Viewer's constructor: RestoreSnapshot (a full save being loaded), then
+        // ShowNotice ("Game loaded"). The restore enters the save's arenas into the
+        // scripts' space; Kurt's is this frontend's, so they go into it too (the C#
+        // has ONE ArenaSpace), and Kurt's arena is pinned again where he now stands.
+        bool restored = false;
+        std::string restoreLog;
+        if (!mdk::flow::restoreSnapshot(&flow.state(), runtime.get(), &restored, &restoreLog)) {
+            std::printf("[main] save: %s; the level starts plain\n", restoreLog.c_str());
+            spawnPlayer();
+        } else if (restored) {
+            std::printf("[main] save: %s\n", restoreLog.c_str());
+            const std::vector<std::string> entered = runtime->enteredArenas();
+            for (size_t i = 0; i < entered.size(); i++) {
+                const mdk::formats::Arena* into = level.arenaNamed(entered[i]);
+                if (into != nullptr) {
+                    space.add(into);
+                }
+            }
+            const std::string* here =
+                space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+            if (here) {
+                space.setSolid({*here});
+                startArenaName = *here;
+            }
+        }
+        const std::string notice = mdk::flow::takeNotice(&flow.state());
+        if (!notice.empty()) {
+            hud.messages().pushText((const uint8_t*)notice.data(), (int32_t)notice.size(),
+                                    mdk::Messages::kFlagZoom | mdk::Messages::kFlagFront,
+                                    mdk::flow::kNoticeSeconds);
+            std::printf("[main] %s\n", notice.c_str());
+        }
     }
 
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
@@ -1244,6 +1364,19 @@ int main(int argc, char** argv) {
     // loop-carried state because it lives as long as the frame loop.
     bool streamFailureLogged = false;
     bool effectsFailureLogged = false;
+    // F2's prompt while it is open (C# Viewer._snapshotPrompt): the game waits.
+    std::unique_ptr<mdk::flow::SavePrompt> prompt;
+    // A death or F9 leaves the level for the flow's next screen, as the level's end
+    // does (C# Viewer._next = KurtDied / Play).
+    bool leaveLevel = false;
+    mdk::flow::Event leaveEvent = mdk::flow::Event::None;
+    // C# Viewer.Notify: the port's own HUD message, also printed.
+    auto notify = [&hud](const char* text) {
+        hud.messages().pushText((const uint8_t*)text, (int32_t)std::strlen(text),
+                                mdk::Messages::kFlagZoom | mdk::Messages::kFlagFront,
+                                mdk::flow::kNoticeSeconds);
+        std::printf("[main] %s\n", text);
+    };
     // Build the camera once up front so the very first frame has a valid matrix
     // even if no simulation step fits in it (a zero camera would collapse every
     // vertex to the clip origin and draw nothing).
@@ -1330,7 +1463,7 @@ int main(int argc, char** argv) {
             if (!pause.open() && !headless) {
                 mdk::windowCaptureMouse(&window, true);
             }
-        } else if (keys.back && playerReady && hudReady && hudBig->ready()) {
+        } else if (keys.back && !prompt && playerReady && hudReady && hudBig->ready()) {
             mdk::menu::MenuItems& items = pause.items();
             items.setFonts(&hudBig->font(), &hudSmall->font());
             items.setHost(mdk::menu::Host::Console);
@@ -1356,6 +1489,72 @@ int main(int argc, char** argv) {
             toMenu = true;
             break;
         }
+        // THE SAVE KEYS (package #19; C# Viewer.Frame :369-445). While F2's prompt is
+        // open the game waits and the prompt takes the keys; otherwise F2 opens it
+        // (OpenSnapshot) and F9 loads (QuickLoad).
+        {
+            std::string typed;
+            uint32_t typing = 0;
+            mdk::windowTakeTyping(&typed, &typing);
+            if (prompt) {
+                mdk::flow::SavePrompt::Input promptKeys;
+                promptKeys.accept = (typing & (mdk::kPressEnter | mdk::kPressSpace)) != 0;
+                promptKeys.back = (typing & mdk::kPressEscape) != 0;
+                promptKeys.up = (typing & mdk::kPressUp) != 0;
+                promptKeys.down = (typing & mdk::kPressDown) != 0;
+                promptKeys.left = (typing & mdk::kPressLeft) != 0;
+                promptKeys.right = (typing & mdk::kPressRight) != 0;
+                promptKeys.home = (typing & mdk::kPressHome) != 0;
+                promptKeys.end = (typing & mdk::kPressEnd) != 0;
+                promptKeys.backspace = (typing & mdk::kPressBackspace) != 0;
+                promptKeys.del = (typing & mdk::kPressDelete) != 0;
+                promptKeys.typed = typed;
+                prompt->update(promptKeys, elapsed);
+                if (!prompt->error().empty() && promptKeys.accept) {
+                    std::printf("[main] save: not written: %s\n", prompt->error().c_str());
+                }
+                if (prompt->closed()) {
+                    // AskSnapshot: a save made is this session's quick slot.
+                    if (prompt->saved()) {
+                        std::printf("[main] Saved game %s: level %d\n", prompt->name().c_str(),
+                                    (int)prompt->save().level);
+                        flow.state().quickSlot = prompt->name();
+                        notify("Game saved");
+                    }
+                    prompt.reset();
+                    mdk::windowTextInput(&window, false);
+                    mdk::windowCaptureMouse(&window, true);
+                    pending = 0.0f;
+                }
+            } else if (playerReady && !pausedFrame && (typing & mdk::kPressQuickSave)) {
+                // OpenSnapshot (:763-776): the game stops and the name is asked, the
+                // level's number offered; the level is captured NOW.
+                if (!runtime || !runtime->canSnapshot() || player.sniping()) {
+                    notify("Can't save now");
+                } else {
+                    const std::string json = runtime->capture();
+                    std::printf("[main] snapshot hash %s, objects %d\n",
+                                mdk::scripts::ScriptRuntime::snapshotHash(json).c_str(),
+                                (int)runtime->objectCount());
+                    prompt.reset(new mdk::flow::SavePrompt(
+                        saves,
+                        mdk::flow::snapshotSave(&flow.state(), levelNumber, player.health(), json),
+                        mdk::flow::snapshotName(levelNumber)));
+                    mdk::windowCaptureMouse(&window, false);
+                    mdk::windowTextInput(&window, true);
+                }
+            } else if (playerReady && !pausedFrame && (typing & mdk::kPressQuickLoad)) {
+                mdk::flow::Event next = mdk::flow::Event::None;
+                std::string log;
+                if (!mdk::flow::quickLoad(saves, &flow.state(), &next, &log)) {
+                    notify("Nothing to load");
+                } else {
+                    std::printf("[main] %s\n", log.c_str());
+                    leaveLevel = true;
+                    leaveEvent = next;
+                }
+            }
+        }
 
         MdkFrameParams params;
         params.elapsed = elapsed;
@@ -1367,7 +1566,7 @@ int main(int argc, char** argv) {
                                      ? capturePath.c_str()
                                      : nullptr;
 
-        if (playerReady && !pausedFrame) {
+        if (playerReady && !pausedFrame && !prompt && !leaveLevel) {
             // The C# frame order (Viewer.Frame): the mouse look is per frame
             // (Kurt's yaw and the camera's look offset), then the simulation runs
             // in fixed steps, and EACH step updates Kurt and then the camera
@@ -1385,6 +1584,11 @@ int main(int argc, char** argv) {
                 // C# Viewer.RunTests (Viewer.cs:664-680), ahead of Kurt's step: the
                 // --event fires on the step whose game time first reaches TestStart.
                 testTime += kStep;
+                if (dieTest && firstLevel &&
+                    !(testTime < kTestStart || testTime - kStep >= kTestStart)) {
+                    std::printf("[main] --die: Kurt hurt by 1000 at frame %u\n", frame);
+                    player.combat().hurt(1000);  // C# Viewer.FatalDamage
+                }
                 if (hasEvent && (firstLevel || eventEveryLevel) && runtime &&
                     !(testTime < kTestStart || testTime - kStep >= kTestStart)) {
                     std::printf("[main] --event: special_event %d at frame %u\n", (int)eventValue,
@@ -1493,7 +1697,7 @@ int main(int argc, char** argv) {
                 pending -= kStep;
             }
             // Death: Player::update stays in updateDeath until the skull has faded in,
-            // and the frontend respawns him at the start when the beat ends.
+            // and when the beat ends the level is left for the flow (below).
             //
             // Scripts keep running during the beat HERE AND IN THE ORACLE: the C#
             // play tick calls _scripts.Update(Step) with no Dead guard
@@ -1502,21 +1706,21 @@ int main(int argc, char** argv) {
             // HurtFlash, rising at SkullFade = 2*Ticks = 60/s from the zero the death
             // transition itself set (Kurt.Combat.cs:238-253 and :375), and when it passes
             // SkullEnd the Died event fires: Game.cs:448-456 writes SaveGames.LastGame and
-            // leaves the level for the menu. This stand-in has no menu, no save and no
-            // level end, so it respawns Kurt in place on the same event -- player.died()
+            // leaves the level for the menu. player.died()
             // is that event, not a copy of its clock: the beat is the oracle's own count,
             // 255 steps of simulation to reach SkullEnd and the next rising step to pass it
             // (256 rising steps total), not a wall-clock timer of the frontend's, so a stalled or a
             // faster-than-real-time frame cannot make it longer or shorter than the C#'s.
-            // The one remaining divergence is the level-end flow the event leads to, and
-            // it stays deferred with the menu and the save system.
-            if (player.died()) {
-                spawnPlayer();
-                // A fresh Player's CameraRoll is level again (the C# respawns with a
-                // new Kurt), so the respawn seed carries no roll either.
-                mdk::buildFollowCamera(&camera, player.feet, player.facing(),
-                                       mdk::follow_camera::kDefaultPitch,
-                                       mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
+            // Package #19 ported that flow: the death is counted (Viewer.OnDied), the
+            // flow writes LASTGAME and goes to the menu, whose "Continue" -- taken for
+            // this frontend, which draws no menu (GameFlow::skipScreen) -- reloads the
+            // level from its start through the level loop, as the C#'s Play does.
+            if (player.died() && !leaveLevel) {
+                std::printf("[main] Kurt died\n");
+                mdk::flow::countDeath(&flow.state(), levelNumber,
+                                      runtime ? runtime->airStrikeUsedUp : flow.state().strikeUsed);
+                leaveLevel = true;
+                leaveEvent = mdk::flow::Event::KurtDied;
             }
             // The end of a level: special_event <= 50 started it (the log says where),
             // EndLevel finished it (levelEnded), and the frontend leaves EndDelay later.
@@ -1848,6 +2052,58 @@ int main(int argc, char** argv) {
                 view.layoutInside(mdk_render_canvas_width(renderer), mdk::kCanvasHeight);
                 pause.draw(renderer, view, *hudBig, *hudSmall);
             }
+            if (prompt && hudBig->ready()) {
+                // AskSnapshot: F2's prompt on black (SavePrompt.Draw through the
+                // prompt's layout), on the 600 x 360 view centred on the canvas.
+                const float canvasWidth = mdk_render_canvas_width(renderer);
+                mdk::CanvasQuad black;
+                black.x0 = 0.0f;
+                black.y0 = 0.0f;
+                black.x1 = canvasWidth;
+                black.y1 = 0.0f;
+                black.x2 = canvasWidth;
+                black.y2 = 360.0f;
+                black.x3 = 0.0f;
+                black.y3 = 360.0f;
+                black.colour = mdk::Colour{0.0f, 0.0f, 0.0f, 1.0f};
+                mdk_render_canvas_quad(renderer, &black);
+                struct PromptFont {
+                    const mdk::FontView* font;
+                    const std::vector<std::pair<std::string, std::vector<uint8_t>>>* texts;
+                    const std::vector<uint8_t>* text(const std::string& key) const {
+                        for (size_t k = 0; k < texts->size(); k++) {
+                            if ((*texts)[k].first == key) {
+                                return &(*texts)[k].second;
+                            }
+                        }
+                        return nullptr;
+                    }
+                };
+                PromptFont font = {hudBig.get(), &promptTexts};
+                std::vector<mdk::flow::SavePrompt::Run> runs;
+                prompt->layout(
+                    [](void* context, const std::string& text, bool key) -> float {
+                        const PromptFont* f = static_cast<const PromptFont*>(context);
+                        const std::vector<uint8_t>* bytes = key ? f->text(text) : nullptr;
+                        return key ? (bytes ? (float)f->font->width(bytes->data(),
+                                                                    (int32_t)bytes->size())
+                                            : 0.0f)
+                                   : (float)f->font->width(text.c_str());
+                    },
+                    &font, &runs);
+                const float originX = (canvasWidth - mdk::flow::SavePrompt::kViewWidth) * 0.5f;
+                const mdk::Colour white{1.0f, 1.0f, 1.0f, 1.0f};
+                for (size_t r = 0; r < runs.size(); r++) {
+                    const std::vector<uint8_t>* bytes = runs[r].key ? font.text(runs[r].text) : nullptr;
+                    if (runs[r].key && bytes) {
+                        hudBig->draw(renderer, bytes->data(), (int32_t)bytes->size(),
+                                     originX + runs[r].x, runs[r].y, runs[r].scale, white);
+                    } else if (!runs[r].key) {
+                        hudBig->draw(renderer, runs[r].text.c_str(), originX + runs[r].x,
+                                     runs[r].y, runs[r].scale, white);
+                    }
+                }
+            }
             mdk_render_canvas_end(renderer);
         }
         mdk_render_end_frame(renderer);
@@ -1866,6 +2122,44 @@ int main(int argc, char** argv) {
         // the way the C# skips them (GameFlow::skipScreen, pinned against the C# by
         // golden/flow_next_level.txt), each one logged. A level at the end of that
         // walk is loaded by the level loop; anything else (the menu) ends the run.
+        if (leaveLevel) {
+            // C# Game.Handle(KurtDied) -- LASTGAME written, then the main menu with
+            // its splash, whose first item is "Continue" (Game.cs:448-456,
+            // MainMenu.ShowMain) -- or the Play/Briefing a quick load set. The menu
+            // and the briefing are the menus' screens (package #20a); the screens
+            // this port still lacks are skipped the C#'s way.
+            mdk::flow::Screen after = flow.handle(leaveEvent);
+            printFlowReport();
+            mdk::flow::GameFlow::SkipTrail trail;
+            if (after != mdk::flow::Screen::Level && after != mdk::flow::Screen::Menu &&
+                after != mdk::flow::Screen::Briefing) {
+                after = flow.skipUnported(&trail);
+                printFlowReport();
+            }
+            for (int32_t i = 0; i < trail.count; i++) {
+                std::printf("[main] flow: skipped %s (package #%d not ported)\n",
+                            mdk::flow::GameFlow::screenName(trail.skipped[i]),
+                            (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
+            }
+            if (after == mdk::flow::Screen::Level) {
+                nextLevel = true;
+                std::printf("[main] flow: level %d (again) at frame %u, deaths %d\n",
+                            (int)flow.state().level, frame, (int)flow.state().deaths);
+            } else if (after == mdk::flow::Screen::Menu ||
+                       after == mdk::flow::Screen::Briefing) {
+                std::printf("[main] flow: the %s follows (deaths %d)\n",
+                            after == mdk::flow::Screen::Menu ? "menu" : "briefing",
+                            (int)flow.state().deaths);
+                screen = after;
+                toMenu = true;
+            } else {
+                std::printf("[main] flow: %s follows, which this frontend cannot show; "
+                            "exiting\n",
+                            mdk::flow::GameFlow::screenName(after));
+                exitReason = leaveEvent == mdk::flow::Event::KurtDied ? "Kurt died" : "load";
+            }
+            break;
+        }
         if (levelEndedExit) {
             mdk::flow::LevelResult result;
             if (runtime) {

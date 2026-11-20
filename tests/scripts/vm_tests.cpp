@@ -34,6 +34,7 @@
 #include "voice_binding_tests.h"
 #include "flow_tests.h"
 #include "menu_tests.h"
+#include "save_tests.h"
 #include "input_3ds_tests.h"
 #include "heap_split_tests.h"
 #include "kurt_stream_tests.h"
@@ -8643,6 +8644,15 @@ int main(int argc, char** argv) {
     failures += flowFailures;
     if (flowFailures == 0) {
         printf("PASS GameFlowMatchesTheOracle\n");
+    }
+
+    // Package #19's saves without game data: the record and the folder against the
+    // C# (golden/save_flow.txt), the JSON float writer (golden/json_floats.txt), the
+    // prompt, a death's LASTGAME and the menu's Continue, the safe write (save_tests.h).
+    const int saveFailures = mdk::test::runSaveTests();
+    failures += saveFailures;
+    if (saveFailures == 0) {
+        printf("PASS SavesMatchTheOracle\n");
     }
 
     // The audio sink seam: how much a frame mixes and where it goes

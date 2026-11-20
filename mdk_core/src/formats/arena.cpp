@@ -458,6 +458,11 @@ void Arena::setGroupMaterial(int32_t group, int32_t material) {
     groupMaterials_[group] = material;
 }
 
+void Arena::clearGroupMaterial(int32_t group) {
+    // A full save's group with no material (TriangleGroups.Restore, package #19).
+    groupMaterials_.erase(group);
+}
+
 bool Arena::groupMaterial(int32_t group, int32_t* out) const {
     std::map<int32_t, int32_t>::const_iterator it = groupMaterials_.find(group);
     if (it == groupMaterials_.end()) {

@@ -1475,6 +1475,9 @@ Still open:
   (#19/#20) show nothing. `GameState.StrikeUsed` and `Deaths` are not carried (the air strike
   is #14; deaths are counted only for the save, #19).
 - **Death still respawns in place**: the C#'s KurtDied goes to the menu; unchanged (see package #20a's section: the menu exists now, the LASTGAME write is #19's).
+- ~~**Death still respawns in place**~~ (closed by package #19, 2026-11-20): a death now writes
+  LASTGAME and the flow's menu skip takes the menu's "Continue", which reloads the level from
+  its start through the level loop, as the C#'s `Handle(KurtDied)` and `MainMenu.Load` do.
 - **The Linux heap after the FIRST teardown** sits ~16 MB above the run's start (the Vulkan
   backend's and lavapipe's pools and compiled pipelines, made once); it is flat from the
   second teardown on (+37 KB, +8 KB, +4 KB over three more), which is what the test pins.
@@ -1760,8 +1763,8 @@ Still open:
 - **The shot gap** (`Scope.ShotGap`, 5 ticks) is not pinned: at the fixed 1/60 step it never
   binds, because a shot adds a quarter second to the clip timer, which already holds the next
   shot back for 15 steps. Breaking it leaves the goldens green (measured).
-- **The demo's beta moves** around the scope (`Kurt.Beta.cs`, the helmet) and the snapshot's
-  clip fields (`Kurt.Snapshot.cs`, the saves) are not ported.
+- **The demo's beta moves** around the scope (`Kurt.Beta.cs`, the helmet) are not ported. The
+  snapshot's clip fields (`Kurt.Snapshot.cs`) landed with package #19's saves.
 - **newlib's `cosf`/`sinf`/`powf`** on the 3DS are unmeasured against the oracle (the same
   libm-leaf gap as the follow camera's `powf`).
 
@@ -1839,3 +1842,42 @@ Still open:
   reaches the kill path).
 - **Exactness rests on yaw 0 or a level-or-up pitch**, as #5's: `Player::facing()` is the LUT,
   and it reaches the sniper eye only while the scope looks down.
+## Save and load (2026-11-20, gap package #19): what landed, what is open
+
+Landed: the C#'s saves, byte for byte. `util/json.{h,cpp}` writes JSON as System.Text.Json does
+(the shortest round-trip float in .NET's shape, JavaScriptEncoder.Default's escapes) and reads
+it as JsonDocument does (64 levels, the last duplicate name wins, raw spans kept).
+`game/save_games.{h,cpp}` is SaveGames.cs (the record, the `<NAME>.sav` folder, LASTGAME,
+QuickSlot), `game/game_state` gained Load/Save, `scripts/script_snapshot.cpp` is
+ScriptRuntime.Snapshot.cs + Snapshot.cs + Kurt.Snapshot.cs + Fans/TriangleGroups' halves,
+`game/save_prompt.{h,cpp}` is SavePrompt.cs's decisions (its drawing is a layout of text runs),
+`game/viewer_saves.{h,cpp}` is the Viewer's OnDied/OpenSnapshot/SnapshotSave/QuickLoad/
+RestoreSnapshot/ShowNotice, and GameFlow does --load, --save, KurtDied's LASTGAME and the menu's
+Continue. Both frontends: a death writes LASTGAME and shows the main menu, whose Continue
+reloads the level (the C#'s Handle(KurtDied)); Linux F2 (the prompt, drawn in
+FONTBIG on black, typed name) and F9, `--save-dir/--load/--save/--die`; the 3DS pause menu's X
+(save under the offered name) and Y (load), `sdmc:/3ds/mdk/saves`, harness `DIE=1` and
+`SAVETEST=1`. A restored save's arenas go into Kurt's ArenaSpace too (`enteredArenas`), which
+closes the "one ArenaSpace" hole for a load (`golden/L3_save_teleport.txt` fails without it).
+
+Still open:
+- **No emulator or console run** of the 3DS saves: the write's time on SD (logged as
+  "Saved game N: level L (B bytes, T ms)") and the FS service's rename over an existing file
+  (the `.bak` path exists for the case it refuses) are unmeasured.
+- **The port's own drift shows in a save**, so the goldens avoid it: Kurt walks along
+  `fastCos/fastSin` (R6), which agree with MathF only at yaw 0, so the goldens that move him
+  walk east (`yaw:0`); LEVEL8's walking XG aliens' `Push` drifts by one ULP from the C#
+  (`objects/N/variables/Push`, 600 idle steps). (LEVEL3 HMO_6's extra objects went with
+  package 8's updrafts, so `L3_save_fan` is now a full golden.) These are the
+  runtime's gaps, not the save's: a save carries them faithfully.
+- **The after-LEVEL8 save prompt and the statistics' before-level prompt** are still skipped
+  (closed with Esc); a later screen draws them from `SavePrompt::layout`. The main menu's
+  Continue and "Saved Game" page read the saves through `flow::menuListSaves/menuPeekSave/
+  menuLoadSave` in both frontends (`golden/menu_saves.txt` vs `menu_probe saves`).
+- **Not saved because the C# does not save them**: the random stream (a load reseeds), sound
+  voices (restarted by name only where an owner does), Kurt's motion state (he comes back
+  standing still). TownTicks is counted and saved; its FlattenTown at 0 is #15's.
+- **Bullet holes are not saved**, as in the C# (its load rereads the textures): a loaded game
+  starts with clean textures and an empty stamped list.
+- **QuickSlot's "newest"** uses stat's seconds; two saves in one second fall back to name order.
+

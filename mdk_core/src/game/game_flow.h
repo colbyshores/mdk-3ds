@@ -30,14 +30,14 @@
 // game, and flow_tests.cpp pins the inner call's view of it.
 //
 // THE MENU IS BACK (package #20a, the owner un-cut 2026-11-20): the frontends
-// show Screen::Menu (game/main_menu.h) and Screen::Briefing (game/briefing.h);
-// the rest below is still the save subsystem (#19) and the other screens
-// (#17b, #18b, #20b, #20c).
+// show Screen::Menu (game/main_menu.h) and Screen::Briefing (game/briefing.h).
 //
-// NOT PORTED, WITH CAUSE — each is the save/menu subsystem the owner directive of
-// 2026-11-05 cut ("boot straight into a level"), not a stub:
-//   * FirstEvent's --load branch and Handle(KurtDied)'s LASTGAME write: both take
-//     a SaveGame, which is Flow/SaveGames.cs (see game_state.h).
+// THE SAVES (package #19, un-cut by the owner 2026-11-20): FirstEvent's --load
+// branch, Handle(KurtDied)'s LASTGAME write and Play's --save write go through the
+// SaveGames the frontend hands over (setSaves); with none, the C#'s writes fail
+// quietly as a full disk's would, and the menu has no "Continue".
+//
+// NOT PORTED, WITH CAUSE — each is the menu subsystem (package #20), not a stub:
 //   * Play's LoadingScreen.Show and the screens' own construction: Menu/ is cut.
 //   * ShowStream's WatcomRandom seed (the C#'s Environment.TickCount for a stream
 //     started from the command line): the stream screen is cut, so there is no
@@ -65,8 +65,11 @@
 
 #include <stdint.h>
 
+#include <string>
+
 #include "game/game_state.h"
 #include "game/level_flow.h"
+#include "game/save_games.h"
 #include "scripts/game_stats.h"
 
 namespace mdk {
@@ -157,6 +160,11 @@ struct FlowOptions {
     // --stream: Kurt's health in a stream started directly.
     bool hasHealth = false;
     int32_t health = 0;
+    // --load NAME: the save to start from (C# GameOptions.Load).
+    std::string load;
+    // --save NAME: a light save of the first level, made as it starts (C#
+    // GameOptions.Save, the tests').
+    std::string save;
 
 private:
     int32_t counts_[7] = {0, 0, 0, 0, 0, 0, 0};
@@ -180,6 +188,17 @@ public:
     GameState& state() { return state_; }
     const GameState& state() const { return state_; }
     const FlowOptions& options() const { return options_; }
+
+    // The saved games (C# Game._saves, `SaveGames.In(userFolder)`). The frontend
+    // sets them before firstEvent, and deletes LASTGAME first, as the C#'s Game
+    // constructor does ("the original deletes LASTGAME.SAV when it quits").
+    void setSaves(const SaveGames& saves) { saves_ = saves; }
+    const SaveGames& saves() const { return saves_; }
+    // What the flow's own save work did last, for the frontends' log: the --load
+    // refusal ("No saved game NAME"), "Loaded game NAME: level N", "Saved game
+    // NAME: level N", the LASTGAME write's failure. Empty when nothing happened.
+    // Cleared by takeReport.
+    std::string takeReport();
 
     // The screen to show. None is the C#'s null screen.
     Screen screen() const { return screen_; }
@@ -219,15 +238,16 @@ public:
     //   Statistics StatsScreen's pages Intermission, Debriefing, Score, Briefing
     //              (StatsScreen.cs:136-138); after the Score page EndPhase moves the
     //              level on, `Order[min(max(IndexOf(level), 0) + 1, 5)]`
-    //              (:263-264); the save prompt (cut, #19) closes; the briefing ends
+    //              (:263-264); the save prompt closes (Esc; #20a draws it); the briefing ends
     //              in Event.Fall (NextPhase, :273-276).
     //   Briefing   StatsPages.Briefing's one page, then Event.Fall.
     //   Fall       FallScreen's Back -> FallSim.Skip (FallSim.cs:203-209): Landed at
     //              once with the sim's starting health (Inventory.MaxHealth, 100)
     //              and nothing collected, so the carry is (100, no pickups) and
     //              Event.Play (FallScreen.Next, :120-124).
-    //   SavePrompt the prompt closed without a save (#19 is cut): Event.Play
-    //              (Game.cs:681).
+    //   SavePrompt the prompt closed without a save (Esc): Event.Play
+    //              (Game.cs:681). A frontend that draws the prompt
+    //              (game/save_prompt.h) shows it instead of skipping it.
     //   EndMovie   skipped: Event.Menu (EndMovie.cs:58).
     // Menu, Level and None are not skipped through (Event::None).
     Event skipScreen();
@@ -303,6 +323,12 @@ private:
     int32_t streamHealth_ = kFullHealth;
     bool hasLevel_ = false;
     LevelResult level_;
+    SaveGames saves_;
+    std::string report_;
+    // C# MainMenu.Load / FirstEvent's load: the state of the save, and the event
+    // that starts it. Event::None when it does not read back.
+    Event loadSave(const std::string& name);
+    void say(const std::string& line);
 };
 
 } // namespace flow

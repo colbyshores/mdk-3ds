@@ -505,7 +505,10 @@ By blocking subsystem (carried grouping, corrected for this batch):
   still do NOT reach is the C#'s ONE ArenaSpace (see `docs/CONTINUATION.md`'s
   open item: the port has a scripts' space and a Player's space, so
   `enterArena` makes an unreachable arena answer the arena RULE and not yet
-  the collision) and `Kurt.Keeper`, whose `_keeper = null` the port cannot do.)
+  the collision) and `Kurt.Keeper`, whose `_keeper = null` the port cannot do.
+  A full save's LOAD closes that hole for itself (package #19): the frontends
+  add `ScriptRuntime::enteredArenas()` to Kurt's space, pinned by
+  `golden/L3_save_teleport.txt`. The opcodes' own teleports still do not.)
 - **Arena/world (needs arena texture/sky/fan/wind state, spawn helpers):**
   133, 142, 143, 190 (130 landed with the bullet holes, package 16: `ScriptRuntime::stampBulletHole`; 28 landed with the sniper rounds, package 6: `SniperRounds::guideLastMortar`; 224 landed with the updraft/wind batch, package 8; 159 landed with the combat and hazard batch; 156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
 - **Effects/combat/partners (needs parts, Items.Bomb,

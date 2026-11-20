@@ -178,6 +178,8 @@ public:
     uint32_t groupState(int32_t group) const;
     void setGroupState(int32_t group, uint32_t state);
     void setGroupMaterial(int32_t group, int32_t material);
+    // The group's material back to none (a full save's null, package #19).
+    void clearGroupMaterial(int32_t group);
     // The group's stored material (the C# Group.Material, an int?): false when
     // the group has none. A negative material is a VALID palette colour
     // (-1 is entry 1), so absence cannot be a sentinel value.

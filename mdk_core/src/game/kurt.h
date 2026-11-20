@@ -275,6 +275,14 @@ public:
     void setAmmo(int32_t type, int32_t count);
     void setSuperChainGun(int32_t ticks);
 
+    // C# Inventory.Restore (Inventory.cs:90-101, package #19): the pickups of a full
+    // save, as they were -- the slots replaced (at most kMaxSlots: the C#'s list has
+    // no cap, but no inventory reaches past five), the ammo copied as far as both
+    // go, the selections and the super chain gun set.
+    void restoreInventory(const Slot* slots, int32_t count, int32_t selected,
+                          const int32_t* ammo, int32_t ammoCount, int32_t selectedAmmo,
+                          int32_t superChainGun);
+
     // Inventory.TickSuperChainGun (Inventory.cs:290): the super chain gun's time runs
     // while it fires (ScriptRuntime::fireChainGun, one tick per script tick); at 0 its
     // slot goes (RemoveSlot, which keeps the selection inside the slots).

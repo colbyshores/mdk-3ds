@@ -1,0 +1,39 @@
+== saves
+== saves: saved game
+Menu: Continue | New Game | Level: 1 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f0 - page=Main next=None level=7 deaths=0 strike=0 sel=0
+f1 - page=Main next=None level=7 deaths=0 strike=0 sel=0
+f2 - page=Main next=None level=7 deaths=0 strike=0 sel=0
+f3 - page=Main next=None level=7 deaths=0 strike=0 sel=0
+f4 down page=Main next=None level=7 deaths=0 strike=0 sel=1
+f5 - page=Main next=None level=7 deaths=0 strike=0 sel=1
+f6 - page=Main next=None level=7 deaths=0 strike=0 sel=1
+f7 down page=Main next=None level=7 deaths=0 strike=0 sel=2
+f8 - page=Main next=None level=7 deaths=0 strike=0 sel=2
+f9 - page=Main next=None level=7 deaths=0 strike=0 sel=2
+f10 down page=Main next=None level=7 deaths=0 strike=0 sel=3
+f11 - page=Main next=None level=7 deaths=0 strike=0 sel=3
+f12 - page=Main next=None level=7 deaths=0 strike=0 sel=3
+Menu: Select Saved Game | A  (Level 3) | B  (Level 4) | BAD  (Invalid/Corrupt File) | LASTGAME  (Level 2) | Back
+  rows x=70 w=460 h=36 y0=5 big=1
+f13 accept page=Other next=None level=7 deaths=0 strike=0 sel=1
+f14 - page=Other next=None level=7 deaths=0 strike=0 sel=1
+f15 - page=Other next=None level=7 deaths=0 strike=0 sel=1
+f16 - page=Other next=None level=7 deaths=0 strike=0 sel=1
+f17 down page=Other next=None level=7 deaths=0 strike=0 sel=2
+f18 - page=Other next=None level=7 deaths=0 strike=0 sel=2
+f19 - page=Other next=None level=7 deaths=0 strike=0 sel=2
+f20 accept page=Other next=Briefing level=4 deaths=2 strike=1 sel=2
+f21 - page=Other next=Briefing level=4 deaths=2 strike=1 sel=2
+f22 - page=Other next=Briefing level=4 deaths=2 strike=1 sel=2
+f23 - page=Other next=Briefing level=4 deaths=2 strike=1 sel=2
+== saves: continue
+Menu: Continue | New Game | Level: 1 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f0 - page=Main next=None level=7 deaths=0 strike=0 sel=0
+f1 - page=Main next=None level=7 deaths=0 strike=0 sel=0
+f2 accept page=Main next=Play level=6 deaths=1 strike=0 sel=0
+f3 - page=Main next=Play level=6 deaths=1 strike=0 sel=0
+f4 - page=Main next=Play level=6 deaths=1 strike=0 sel=0
+f5 - page=Main next=Play level=6 deaths=1 strike=0 sel=0

@@ -115,6 +115,23 @@ int32_t Kurt::superChainGun() const {
     return superChainGun_;
 }
 
+void Kurt::restoreInventory(const Slot* slots, int32_t count, int32_t selected,
+                            const int32_t* ammo, int32_t ammoCount, int32_t selectedAmmo,
+                            int32_t superChainGun) {
+    // C# Inventory.Restore: _slots.Clear(); _slots.AddRange(slots); Selected = selected;
+    // the ammo as far as both arrays go; SelectedAmmo; SuperChainGun.
+    slotCount_ = 0;
+    for (int32_t i = 0; i < count && i < kMaxSlots; i++) {
+        slots_[slotCount_++] = slots[i];
+    }
+    selected_ = selected;
+    for (int32_t i = 0; i < kAmmoTypes && i < ammoCount; i++) {
+        ammo_[i] = ammo[i];
+    }
+    selectedAmmo_ = selectedAmmo;
+    superChainGun_ = superChainGun;
+}
+
 void Kurt::setAmmo(int32_t type, int32_t count) {
     if (type < 1 || type > kAmmoTypes) {
         return;
