@@ -14,12 +14,10 @@
 //   none of these            -> back to 0 by clamp(0.35*|roll|, 0.05, 2.5) deg per
 //                               tick (damp_control)
 //
-// Only the walk writer and the leveller are ported, because those are the only two
-// with a caller in this tree: the C#'s other two writers are Kurt.Slide
-// (Kurt.Slide.cs:193) and the snowboard (Snowboard.cs:428), and neither subsystem
-// exists here, exactly as the C#'s own guards on them take the false side in a
-// build with no slide and no board. When the slide lands, Slide is a normal
-// addition to this class; it is not stubbed today because nothing would call it.
+// The walk writer, the slide writer and the leveller are ported: the slide's caller
+// is Player::updateSlide (Kurt.Slide.cs:193, package 8). The snowboard's writer
+// (Snowboard.cs:428) is not, because the board is not (package 10); the C#'s own
+// guard on it takes the false side in a build with no board.
 //
 // THE HELD STEP IS BEHAVIOUR, NOT BOOKKEEPING. Every writer sets a flag and Settle
 // spends one whole step doing nothing instead of levelling (0x57ff74). A port that
@@ -37,6 +35,8 @@
 // Ordinary concrete class: no virtuals, no templates, no exceptions (AGENTS.md §10).
 // ============================================================================
 
+#include "render/render_types.h"
+
 namespace mdk {
 
 class CameraRoll {
@@ -53,6 +53,12 @@ public:
     // Needs BOTH axes: standing still and turning banks nothing.
     void walk(float right, float forward, float delta);
 
+    // Sliding (C# CameraRoll.Slide, CameraRoll.cs:54-59, called at Kurt.Slide.cs:193):
+    // eases towards 90 - atan2(n.z, n.x*f.y - n.y*f.x) degrees for the smoothed floor
+    // normal and the horizontal facing, keeping 0.9 of the roll per tick. Holds the
+    // leveller like every writer.
+    void slide(const Vec3& normal, const Vec2& facing, float delta);
+
     // The top of every step (C# CameraRoll.Settle, called at Kurt.cs:160, right
     // after FadeFlashes and before every early return below it). Levels out unless
     // a writer ran on the step just ended.
@@ -67,6 +73,8 @@ private:
     static constexpr float kDecayMin = 0.05f;          // degrees per tick
     static constexpr float kDecayMax = 2.5f;           // degrees per tick
     static constexpr float kTicks = 30.0f;             // C# Kurt.Ticks
+    static constexpr float kSlideKeep = 0.9f;          // C# SlideKeep, per tick
+    static constexpr float kSlideLevel = 90.0f;        // C# SlideLevel, degrees
 
     float roll_ = 0.0f;
     // "Something set the roll this step, so it doesn't level out" (0x57ff74).

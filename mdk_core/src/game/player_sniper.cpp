@@ -16,7 +16,6 @@
 //   * The demo's beta moves (Kurt.Beta.cs: the helmet on/off around the scope):
 //     Kurt.BetaMoves is false in the port (the beta moves are not ported), so the
 //     C#'s two BetaMoves branches are taken the way they are false.
-//   * The slide (Kurt.Slide.cs, not ported): CanSnipe's `!Sliding` is true.
 // ============================================================================
 
 #include "game/player.h"
@@ -39,10 +38,10 @@ const char kShotSound[] = "SNIPERSHOT";
 } // namespace
 
 bool Player::canSnipe() const {
-    // C# Kurt.CanSnipe (Kurt.Sniper.cs:61): on a floor, not sliding (no slide in the
-    // port), alive, not knocked down, not dead or throwing.
-    return onFloor && health() != 0 && !combat_.knocked() && state() != Kurt::Dead &&
-           state() != Kurt::Throw;
+    // C# Kurt.CanSnipe (Kurt.Sniper.cs:61): on a floor, not sliding (Kurt.Slide.cs,
+    // package 8), alive, not knocked down, not dead or throwing.
+    return onFloor && !_sliding && health() != 0 && !combat_.knocked() &&
+           state() != Kurt::Dead && state() != Kurt::Throw;
 }
 
 void Player::enterSniper() {

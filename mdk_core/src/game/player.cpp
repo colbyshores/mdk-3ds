@@ -4,11 +4,14 @@
 
 #include "game/player.h"
 
+#include <string.h>
+
 #include <algorithm>
 #include <cmath>
 
 #include "game/follow_camera.h"
 #include "util/math_lut.h"
+#include "util/math_minmax.h"
 
 namespace mdk {
 
@@ -94,6 +97,47 @@ const float kPlatformLift = 0.05f;
 const Vec kNearbyMargin = {1.0f, 1.0f, solids::kPlatformReach};
 const float kKurtHeight = 5.0f;
 
+// The updraft's looped sound (Kurt.Updraft.cs:10).
+const char kFanSound[] = "FAN";
+
+// The slide's constants (Kurt.Slide.cs:20-58), in the C#'s own spelling.
+// The slope pushes by 10 x the smoothed floor normal; pushes within +/-0.1 brake by 2 u/s^2.
+const float kSlideSlope = 10.0f;
+const float kSlidePushDead = 0.1f;
+const float kSlideFriction = 2.0f;
+// The floor normal is smoothed by 0.8*old + 0.2*new horizontally, half and half in z.
+const float kSlideNormalKeep = 0.8f;
+const float kSlideNormalKeepZ = 0.5f;
+// Speed cap: 50, raised by 10/s up to 80 going forward, lowered by 25/s down to 15
+// braking, back towards 50 by 20/s.
+const float kSlideCap = 50.0f;
+const float kSlideCapMin = 15.0f;
+const float kSlideCapMax = 80.0f;
+const float kSlideCapRise = 10.0f;
+const float kSlideCapFall = 25.0f;
+const float kSlideCapRelax = 20.0f;
+// Forward accelerates by 35 u/s^2 (above 15 u/s), back brakes by 15 u/s^2 (down to
+// 15 u/s), turning turns by 45 deg/s; the mouse turns at most 4 x that.
+const float kSlideAcceleration = 35.0f;
+const float kSlideBrake = 15.0f;
+const float kSlideMinSpeed = 15.0f;
+const float kSlideTurn = 45.0f;
+const float kSlideMouseTurn = 4.0f * kSlideTurn;
+// Kurt faces the slide once |vx| + |vy| is above this.
+const float kSlideHeading = 0.5f;
+// A wall stops him when he moved less than half of a move over 0.5 units on an axis.
+const float kSlideWallMove = 0.5f;
+const float kSlideWallShare = 0.5f;
+const float kSlideAirTicks = 20.0f;
+// Ticks of sliding left after entering another arena.
+const float kSlideArenaTicks = 15.0f;
+// At rest: no speed and no push left (within this).
+const float kSlideRest = 1e-5f;
+// BUTSLIDE plays at 11025 Hz, at 15000 Hz going forward; BUTBRAKE while braking.
+const float kSlideFastPitch = 15000.0f / 11025.0f;
+const char kSlideSound[] = "BUTSLIDE";
+const char kBrakeSound[] = "BUTBRAKE";
+
 float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
@@ -124,6 +168,37 @@ float accelerate(float speed, float input, bool turbo, float accelFactor, float 
         speed = 0.0f;
     }
     return clampf(speed + input * acceleration * delta, -max, max);
+}
+
+// C# Kurt.Accel (Kurt.Slide.cs:116-129, slide_accel 0x468be0): a push above 0.1
+// accelerates by its square, below -0.1 it slows the same way, in between the
+// velocity brakes towards 0.
+float slideAxisAccel(float speed, float push, float dt) {
+    if (push > kSlidePushDead) {
+        return speed + push * push * dt;
+    }
+    if (push < -kSlidePushDead) {
+        return speed - push * push * dt;
+    }
+    return moveToward(speed, 0.0f, kSlideFriction * dt);
+}
+
+// C# Kurt.Stopped (Kurt.Slide.cs:255-256): the move over 0.5 on an axis went less
+// than half as far.
+bool slideStopped(float planned, float moved) {
+    return (planned > kSlideWallMove && moved < planned * kSlideWallShare) ||
+           (planned < -kSlideWallMove && moved > planned * kSlideWallShare);
+}
+
+// System.Numerics Vector2.Length: sqrt(x*x + y*y).
+float length2(const Vec2& v) {
+    return sqrtf(v.x * v.x + v.y * v.y);
+}
+
+// System.Numerics Vector2.Normalize: each component divided by the length.
+Vec2 normalize2(const Vec2& v) {
+    const float length = length2(v);
+    return Vec2{v.x / length, v.y / length};
 }
 
 } // namespace
@@ -218,12 +293,13 @@ void Player::update(const Input& input, float delta) {
     // C# Kurt.Update calls UpdateChuteSound before the Hang/HardLand branch, so a
     // crashing Kurt's chute still closes and stops flapping.
     updateChuteSound();
-    // C# Kurt.cs:185: `if (UpdateSniper(input, turbo, delta) || UpdateSlide(...)) return;`
-    // -- after UpdateChuteSound and the beta moves (not ported), BEFORE the Hang/HardLand
-    // branch, so the sniper key can end a crash landing (EnterSniper's CanSnipe does not
-    // refuse HardLand) and a sniper step owns the whole step. The slide is not ported.
-    // game/player_sniper.cpp.
-    if (updateSniper(input, input.isDown(kKeyTurbo), delta)) {
+    // C# Kurt.cs:185: `if (UpdateSniper(input, turbo, delta) || UpdateSlide(input, delta))
+    // return;` -- after UpdateChuteSound and the beta moves (not ported), BEFORE the
+    // Hang/HardLand branch, so the sniper key can end a crash landing (EnterSniper's
+    // CanSnipe does not refuse HardLand) and a sniper step owns the whole step
+    // (game/player_sniper.cpp). The slide (Kurt.Slide.cs, package 8) owns the step the
+    // same way while it runs: no turning, no walk, no items, no gun.
+    if (updateSniper(input, input.isDown(kKeyTurbo), delta) || updateSlide(input, delta)) {
         return;
     }
     if (state() == Kurt::HardLand) {
@@ -608,6 +684,10 @@ void Player::updateDeath(float delta) {
     forwardSpeed = 0.0f;
     strafeSpeed = 0.0f;
     verticalSpeed = onFloor ? 0.0f : std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
+    // Kurt.Combat.cs:246: the updraft runs for a corpse too. Its Health > 0 test makes
+    // it the NaN arm here: the FAN loop stops, the flag clears and an upward speed over
+    // 40 u/s is capped -- a Kurt who dies in a fan's box falls out of it.
+    updateUpdraft(delta);
     // The C# calls Fall() on either branch. It is the complete fall operation,
     // not only FallMove: a zero-length move hits nothing (Bsp.TestPlane bails
     // when the sweep is degenerate), but the fall-out test still runs after it.
@@ -776,6 +856,13 @@ void Player::mouseLook(Input& input) {
         yaw += _scope.look(0.0f, 0.0f, mouseX, mouseY, Scope::TurboOff, 0.0f);
         return;
     }
+    // Sliding, the C#'s MouseLook turns nothing (the slide step left _mouseTurn at
+    // None) and the step's Steer reads the frame's motion instead; see _slideMouseX.
+    if (_sliding) {
+        _slideMouseX = input.takeMouseX();
+        return;
+    }
+    _slideMouseX = 0.0f;
     yaw += -input.takeMouseX() * kMouseDegrees;
 }
 
@@ -942,14 +1029,10 @@ void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
         updateAir(jumpHeld, delta);
     }
 
-    // UpdateUpdraft is not ported (no fans/wind zones yet). When it lands it is
-    // `if (Current != State.Knocked && VerticalSpeed > UpdraftExitSpeed) VerticalSpeed =
-    // UpdraftExitSpeed;` (Kurt.Updraft.cs:29): it caps upward speed at 40 u/s on leaving
-    // an updraft, and it does NOT cap it while Kurt is knocked down -- that exception is
-    // reachable now that K_BANG is (batch 44), so a port that drops the state test would
-    // cap a knocked-down Kurt's upward speed where the oracle leaves it alone. Today
-    // upward speed never exceeds the 40 u/s jump, so the whole omission is inert -- add
-    // the cap and its Knocked exception with the fan subsystem.
+    // C# Kurt.cs:417: the fans' updraft, after the floor/air branch and before the fall
+    // (Kurt.Updraft.cs). Out of every fan it caps the upward speed at 40 u/s -- except
+    // while Kurt is knocked down, which is the oracle's own exception.
+    updateUpdraft(delta);
     fall(delta);
     // health 0 on the floor is death (C# "health 0 --on the floor--> DEAD"). A
     // hard landing lands the same tick and fall-out forces OnFloor, so both die
@@ -967,8 +1050,9 @@ void Player::updateAir(bool jumpHeld, float delta) {
     if (!chuteOpen && jumpHeld && verticalSpeed < kFallStartSpeed) {
         chuteOpen = true;
         playSound("CHUTEOUT");
-    } else if (chuteOpen && !jumpHeld) {
-        // (no updraft to hold the chute open yet)
+    } else if (chuteOpen && !jumpHeld && !_inUpdraft) {
+        // Kurt.cs:435: letting go of jump closes the chute -- unless a fan holds him,
+        // which keeps it open (UpdateUpdraft opened it).
         chuteOpen = false;
     }
 
@@ -1047,12 +1131,21 @@ void Player::fallMove(float delta) {
     }
 
     if (!result.hit()) {
-        // Sliding down a steep face: the real fall rate. (The crouch-slide
-        // branch is false until the slide subsystem lands.)
+        // Sliding down a steep face: the real fall rate.
         if (feet.z < before.z) {
             verticalSpeed = (feet.z - before.z) / delta;
         }
         onFloor = false;
+        return;
+    }
+
+    // C# FallMove's Sliding branch (Kurt.cs:540-546): on his back a hit is not a
+    // landing -- no hard landing, no creep snap -- the vertical speed is what the move
+    // made of it, and the floor it hit is the slide's floor normal.
+    if (_sliding) {
+        verticalSpeed = (feet.z - before.z) / delta;
+        onFloor = true;
+        _floorNormal = fromVec(result.normal());
         return;
     }
 
@@ -1286,5 +1379,256 @@ void Player::stayOnKeeper() {
 }
 
 // ---- end of platforms, solid objects and touches ---------------------------
+// ---- The fans' updrafts: C# Kurt.Updraft.cs ----
+
+void Player::updateUpdraft(float delta) {
+    // C# Kurt.UpdateUpdraft (Kurt.Updraft.cs:21-49), in its order. The hook is the
+    // scripts runtime's KurtUpdraft: his arena's fans, else the second arena's.
+    const float vz = _updraftHook.updraft != nullptr && health() > 0
+                         ? _updraftHook.updraft(_updraftHook.context, verticalSpeed, delta)
+                         : NAN;
+    if (std::isnan(vz)) {
+        if (_mixer != nullptr) {
+            _mixer->stopVoice(_fanVoice);
+        }
+        _fanVoice = 0;
+        _inUpdraft = false;
+        if (state() != Kurt::Knocked && verticalSpeed > kUpdraftExitSpeed) {
+            verticalSpeed = kUpdraftExitSpeed;
+        }
+        return;
+    }
+
+    verticalSpeed = vz;
+    if (!chuteOpen) {
+        chuteOpen = true;
+        playSound("CHUTEOUT");
+    }
+    if (!_inUpdraft) {
+        _inUpdraft = true;
+        _fanVoice = _mixer != nullptr ? _mixer->playLooped(kFanSound) : 0;
+    }
+}
+
+// ---- The wind zones' slide: C# Kurt.Slide.cs ----
+
+/* @vfp-exempt R6 — the slide's heading: cosf/sinf are the oracle's MathF.Cos/Sin
+ * (Kurt.Facing) and the conversion is .NET's left-associative DegreesToRadians. The
+ * slide feeds its own heading back every step (Steer: yaw from atan2 of the velocity,
+ * then the velocity from the yaw), so the fastSin/fastCos LUT's error would compound
+ * into the path golden/L6_wind_*.txt pins. Once a step while sliding, not a loop body.
+ * measured n/a (corpus empty). Verified 2026-11-20. */
+Vec2 Player::slideFacing() const {
+    const float radians = yaw * 3.14159265358979323846f / 180.0f;
+    return Vec2{cosf(radians), sinf(radians)};
+}
+
+void Player::startSlide() {
+    // C# Kurt.StartSlide (Kurt.Slide.cs:77-93).
+    if (_sliding || health() == 0) {
+        return;
+    }
+    _sliding = true;
+    _slideVelocity = Vec2{0.0f, 0.0f};
+    _slideCap = kSlideCap;
+    _slideNormal = Vec3{0.0f, 0.0f, 1.0f};
+    _slidePush = Vec2{0.0f, 0.0f};
+    _slideAir = 0.0f;
+    _slideLeft = 0.0f;
+    stopFiring();
+    chuteOpen = false;
+    setState(Kurt::Slip);
+}
+
+void Player::enterArena() {
+    // C# Kurt.EnterArena (Kurt.Slide.cs:97-105): a slide ends 15 ticks after an arena
+    // change (LEVEL6's slide drops him into OLYM_2 against a wall); a second crossing
+    // inside those ticks does not restart them.
+    if (!_sliding || _slideLeft > 0.0f) {
+        return;
+    }
+    _slideLeft = kSlideArenaTicks;
+}
+
+void Player::stopSlide() {
+    // C# Kurt.StopSlide (Kurt.Slide.cs:107-114).
+    _sliding = false;
+    _slideVelocity = Vec2{0.0f, 0.0f};
+    if (_mixer != nullptr) {
+        _mixer->stopVoice(_slideVoice);
+    }
+    _slideVoice = 0;
+    _slideSound = "";
+}
+
+void Player::slideAccel(const Vec2& push, float dt) {
+    // C# Kurt.SlideAccel (Kurt.Slide.cs:116-119).
+    _slideVelocity = Vec2{slideAxisAccel(_slideVelocity.x, push.x, dt),
+                          slideAxisAccel(_slideVelocity.y, push.y, dt)};
+}
+
+bool Player::updateSlide(const Input& input, float delta) {
+    // C# Kurt.UpdateSlide (Kurt.Slide.cs:138-198), in its order. False: it ended (or
+    // never ran) and the ordinary step goes on.
+    if (!_sliding) {
+        return false;
+    }
+    if (health() == 0) {
+        stopSlide();
+        return false;
+    }
+
+    // 15 ticks after an arena change he falls.
+    if (_slideLeft > 0.0f) {
+        _slideLeft -= kTicks * delta;
+        if (_slideLeft <= 0.0f) {
+            stopSlide();
+            setState(Kurt::Fall);
+            return false;
+        }
+    }
+
+    if (onFloor) {
+        _slideNormal = Vec3{
+            kSlideNormalKeep * _slideNormal.x + (1.0f - kSlideNormalKeep) * _floorNormal.x,
+            kSlideNormalKeep * _slideNormal.y + (1.0f - kSlideNormalKeep) * _floorNormal.y,
+            kSlideNormalKeepZ * _slideNormal.z + (1.0f - kSlideNormalKeepZ) * _floorNormal.z};
+        _slidePush = Vec2{_slideNormal.x * kSlideSlope, _slideNormal.y * kSlideSlope};
+        _slideAir = 0.0f;
+        if (_slidePush.x * _slidePush.x + _slidePush.y * _slidePush.y < kSlideRest &&
+            _slideVelocity.x == 0.0f && _slideVelocity.y == 0.0f) {
+            // At rest he gets up (state 901 from K_BFLIP): K_BANG at its last frame, so
+            // the next step's knock-down arm flips him straight into K_BFLIP.
+            stopSlide();
+            setState(Kurt::Knocked);
+            _animationFrame = (float)frameCount(Kurt::Knocked);
+            return true;
+        }
+    } else {
+        _slideAir += kTicks * delta;
+        if (_slideAir > kSlideAirTicks) {
+            stopSlide();
+            setState(Kurt::Fall);
+            return false;
+        }
+    }
+
+    slideAccel(_slidePush, delta);
+    _cameraRoll.slide(_slideNormal, slideFacing(), delta);
+    const float forward = input.axis(kKeyForward, kKeyBack);
+    const float speed = slideSpeed(forward, delta);
+    steer(input, speed, delta);
+    slideMove(delta);
+    verticalSpeed -= kSlideGravity * delta;
+    verticalSpeed = std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
+    fall(delta);
+    updateTouched();
+    updateSlideState(forward, delta);
+    updateMuzzle(delta);
+    return true;
+}
+
+float Player::slideSpeed(float forward, float delta) {
+    // C# Kurt.SlideSpeed (Kurt.Slide.cs:202-229): the speed within the cap; forward
+    // speeds up and raises the cap, back brakes and lowers it, without input it goes
+    // back to 50.
+    float speed = mathMin(length2(_slideVelocity), _slideCap);
+    if (forward > 0.0f) {
+        if (speed >= kSlideMinSpeed) {
+            speed += kSlideAcceleration * forward * delta;
+        }
+        _slideCap = mathMin(_slideCap + kSlideCapRise * delta, kSlideCapMax);
+    } else if (forward < 0.0f) {
+        if (speed > kSlideMinSpeed) {
+            speed = mathMax(speed + kSlideBrake * forward * delta, kSlideMinSpeed);
+        }
+        _slideCap = mathMax(_slideCap - kSlideCapFall * delta, kSlideCapMin);
+    } else {
+        _slideCap = moveToward(_slideCap, kSlideCap, kSlideCapRelax * delta);
+    }
+    return mathMin(speed, _slideCap);
+}
+
+/* @vfp-exempt R6 — the slide's heading from its velocity: atan2f is the oracle's
+ * MathF.Atan2 and the conversion .NET's left-associative RadiansToDegrees; see
+ * slideFacing for why the LUT would move the pinned path. measured n/a (corpus empty).
+ * Verified 2026-11-20. */
+void Player::steer(const Input& input, float speed, float delta) {
+    // C# Kurt.Steer (Kurt.Slide.cs:232-241): Kurt faces where the slide goes, the turn
+    // keys (or the frame's mouse, clamped) turn it, and the velocity is the new facing
+    // at the speed.
+    if (std::fabs(_slideVelocity.x) + std::fabs(_slideVelocity.y) > kSlideHeading) {
+        yaw = atan2f(_slideVelocity.y, _slideVelocity.x) * 180.0f / 3.14159265358979323846f;
+    }
+    const float mouse = kSlideMouseTurn * delta;
+    yaw += input.axis(kKeyTurnLeft, kKeyTurnRight) * kSlideTurn * delta -
+           clampf(_slideMouseX * kMouseDegrees, -mouse, mouse);
+    const Vec2 f = slideFacing();
+    _slideVelocity = Vec2{f.x * speed, f.y * speed};
+}
+
+void Player::slideMove(float delta) {
+    // C# Kurt.SlideMove (Kurt.Slide.cs:244-262): the slide's walk move; a wall that
+    // stops it on an axis turns it along what Kurt moved, at the mean of the two speeds.
+    const Vec3 planned{_slideVelocity.x * delta, _slideVelocity.y * delta, 0.0f};
+    if (planned.x == 0.0f && planned.y == 0.0f) {
+        return;
+    }
+
+    // Feet = Contact(space.Move(Feet, planned, Walk, WalkSlide, Nearby(Feet + planned))).Feet:
+    // the arena and the solid objects nearby, as the walk move (Kurt.cs:225).
+    const Vec3 start = feet;
+    if (_space) {
+        feet = fromVec(contact(_space->move(toVec(feet), toVec(planned), ArenaSpace::kMotionWalk,
+                                            kWalkSlide,
+                                            nearby(Vec3{feet.x + planned.x, feet.y + planned.y,
+                                                        feet.z + planned.z})))
+                           .feet);
+    } else {
+        feet.x += planned.x;
+        feet.y += planned.y;
+    }
+    const Vec3 moved{feet.x - start.x, feet.y - start.y, feet.z - start.z};
+    if (!slideStopped(planned.x, moved.x) && !slideStopped(planned.y, moved.y)) {
+        return;
+    }
+
+    const Vec2 actual{moved.x, moved.y};
+    const bool still = actual.x == 0.0f && actual.y == 0.0f;
+    const Vec2 direction = still ? normalize2(_slideVelocity) : normalize2(actual);
+    const float speed = length2(_slideVelocity) * kSlideWallShare +
+                        length2(actual) / delta * (1.0f - kSlideWallShare);
+    _slideVelocity = Vec2{direction.x * speed, direction.y * speed};
+}
+
+void Player::updateSlideState(float forward, float delta) {
+    // C# Kurt.UpdateSlideState (Kurt.Slide.cs:265-300): K_SLIP once, then K_SLIDE,
+    // K_FSLIDE or K_BSLIDE by the forward key; BUTBRAKE while braking, BUTSLIDE
+    // otherwise, pitched up going forward.
+    _stateTime += delta;
+    _animationFrame += kTicks * delta;
+    if (state() != Kurt::Slip || _animationFrame >= (float)frameCount(Kurt::Slip)) {
+        const Kurt::State wanted = forward > 0.0f   ? Kurt::SlideFast
+                                   : forward < 0.0f ? Kurt::SlideBrake
+                                                    : Kurt::Slide;
+        if (wanted != state()) {
+            setState(wanted);
+        }
+    }
+
+    const char* sound = state() == Kurt::SlideBrake ? kBrakeSound : kSlideSound;
+    if (strcmp(sound, _slideSound) != 0) {
+        if (_mixer != nullptr) {
+            _mixer->stopVoice(_slideVoice);
+            _slideVoice = _mixer->playLooped(sound);
+        } else {
+            _slideVoice = 0;
+        }
+        _slideSound = sound;
+    }
+    if (_mixer != nullptr) {
+        _mixer->setPitch(_slideVoice, state() == Kurt::SlideFast ? kSlideFastPitch : 1.0f);
+    }
+}
 
 } // namespace mdk

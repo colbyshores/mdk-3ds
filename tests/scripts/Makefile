@@ -95,6 +95,7 @@ COMMON_SOURCES := \
 	$(CORE)/scripts/end_level.cpp \
 	$(CORE)/scripts/hazards.cpp \
 	$(CORE)/scripts/platforms.cpp \
+	$(CORE)/scripts/updraft_wind.cpp \
 	$(CORE)/scripts/debris.cpp \
 	$(CORE)/stream/tube_basis.cpp \
 	$(CORE)/stream/stream_tube.cpp \

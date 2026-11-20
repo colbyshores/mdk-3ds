@@ -3098,6 +3098,146 @@ bool kurtPlatformsDump(int level, int steps, const std::string& schedule, const 
 }
 // ---- end of the platforms dump (package #3) ------------------------------------------
 
+// Kurt in the fans' updrafts and the wind zones' slide, end to end against the oracle probe
+// (tests/scripts/wind_probe): the C++ Player and ScriptRuntime stepped at 1/60 s in the C#
+// Viewer's order (Kurt, the scripts, then ArenaSpace.SetSolid(SolidArenas)) from a placed
+// start, under the probe's key schedule (`key:from-to`). Package 8 (docs/PORT_GAPS.md).
+// Its columns are the probe's, byte for byte:
+//
+//   arena / second   currentArena(), secondArena() and `+` when it is active: the
+//                    crossing that calls Player::enterArena, and the second arena whose
+//                    fans KurtUpdraft falls back to.
+//   state ... vz     Kurt's state, feet (1/64 units), yaw and vertical speed.
+//   floor chute up slide   onFloor, chuteOpen, inUpdraft (Kurt.Updraft.cs), sliding.
+//   sv cap left air  the slide's velocity, its speed cap, the ticks left after an arena
+//                    change and the ticks in the air (Kurt.Slide.cs).
+//   roll             CameraRoll: the slide's bank.
+//   fans wob         the fans' count and their shared wobble (Fans.cs).
+//   debris dsum dvz  the debris pieces (all / sparks): the fans' still sparks (FanSpark)
+//                    and every other piece, the sums of their centres (1/64) and of their
+//                    vertical speeds (1/4096 unit per tick) -- the updraft lifts them.
+//   voices           the mixer's voices: FAN, CHUTEOUT, BUTSLIDE / BUTBRAKE.
+bool kurtWindDump(int level, int steps, const std::string& at, const std::string& schedule,
+                  const MdkData& data, const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    float place[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    int placed = 0;
+    {
+        size_t start = 0;
+        while (placed < 4 && start <= at.size()) {
+            size_t end = at.find(',', start);
+            if (end == std::string::npos) {
+                end = at.size();
+            }
+            place[placed++] = (float)atof(at.substr(start, end - start).c_str());
+            start = end + 1;
+        }
+    }
+    if (placed < 3) {
+        *why = "the start did not parse (want x,y,z[,yaw]): " + at;
+        return false;
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<ItemsPush> pushes;
+    if (!parseItemsSchedule(schedule, &holds, &gives, &pushes) || !gives.empty() ||
+        !pushes.empty()) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    Player player;
+    player.feet = Vec3{place[0], place[1], place[2]};
+    player.yaw = placed > 3 ? place[3] : levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) + " at=" + at +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    char buffer[1024];
+    for (int step = 1; step <= steps; step++) {
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        space.setSolid(runtime.solidArenas());
+
+        long long sx = 0, sy = 0, sz = 0, vz = 0;
+        int sparks = 0;
+        const std::vector<scripts::Debris::Piece*>& pieces = runtime.debris().pieces();
+        for (size_t i = 0; i < pieces.size(); i++) {
+            sparks += pieces[i]->isSpark() ? 1 : 0;
+            sx += p64(pieces[i]->center.x);
+            sy += p64(pieces[i]->center.y);
+            sz += p64(pieces[i]->center.z);
+            vz += (long long)std::floor(pieces[i]->velocity.z * 4096.0f);
+        }
+        const Vec2 sv = player.slideVelocity();
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d arena=%s second=%s%s state=%s feet64=%d,%d,%d yaw=%.4f vz=%.4f floor=%d "
+                 "chute=%d up=%d slide=%d sv=%.4f,%.4f cap=%.4f left=%.4f air=%.4f roll=%.4f "
+                 "hp=%d fans=%d wob=%.4f debris=%d/%d dsum=%lld,%lld,%lld dvz=%lld voices=",
+                 step, runtime.currentArena().empty() ? "-" : runtime.currentArena().c_str(),
+                 runtime.secondArena().empty() ? "-" : runtime.secondArena().c_str(),
+                 runtime.secondActive() ? "+" : "", kurtStateName(player.state()),
+                 p64(player.feet.x), p64(player.feet.y), p64(player.feet.z), player.yaw,
+                 player.verticalSpeed, player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0,
+                 player.inUpdraft() ? 1 : 0, player.sliding() ? 1 : 0, sv.x, sv.y,
+                 player.slideCap(), player.slideLeft(), player.slideAir(),
+                 player.cameraRoll().roll(), player.health(), runtime.fans.count(),
+                 runtime.fans.wobbleNow(), (int)pieces.size(), sparks, sx, sy, sz, vz);
+        *out += buffer;
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& live = runtime.mixer().voices();
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) {
+                voices += ",";
+            }
+            voices += live[i].name;
+        }
+        *out += voices.empty() ? "-" : voices;
+        *out += "\n";
+    }
+    return true;
+}
+
 // Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
 // the ScriptRuntime bound to the Player it drives. Shared by the golden and by
 // `tick1 dump hurt`, so a failing golden diffs the same text it compares.
@@ -4976,6 +5116,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "wind") {
+            // `tick1 dump wind <level> <steps> <x,y,z,yaw> <schedule>`: kurtWindDump's
+            // text, the C++ side of the updraft / wind probe (tests/scripts/wind_probe).
+            std::string got;
+            std::string why;
+            if (!kurtWindDump(level, ticks, argc > 5 ? argv[5] : "", argc > 6 ? argv[6] : "",
+                              data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "end") {
             // `tick1 dump end <level> <steps> <schedule>`: levelEndDump's text, the C++
             // side of the end-of-level probe.
@@ -6325,6 +6478,17 @@ int main(int argc, char** argv) {
             {"L8_hazards_points", "golden/L8_hazards_points.txt", 8, 300,
              "tp:1:GUNT_10:-43:3300:-380,run:5:XBSHIP:137303:0:20:0,watch:XBSHIP",
              "GUNT_10's XBSHIP turret explosion (172) at a reference point of its model"},
+            // Re-pinned with package 8 (the fans' sparks, FanSpark): both were dropped by
+            // package 4 because the C++ fans let out no spark, which moves the scripts'
+            // random and the piece list from the first spark on.
+            {"L4_hazards_fan", "golden/L4_hazards_fan.txt", 4, 700,
+             "tp:1:MEAT_10:-218:23907:-1338,watch:XBN_BOMB",
+             "MEAT_10's XBN_BOMBs beside the arena's fans: the fans' still sparks (FanSpark) "
+             "from s=4, lifted by the updraft, in the scripts' random"},
+            {"L6_hazards_balls", "golden/L6_hazards_balls.txt", 6, 600,
+             "tp:1:OLYM_2:-1574:-47:-708,watch:XBG_B1",
+             "OLYM_2's XBG_B1 balls with COLYM_2 as the second arena: its fan's sparks (from "
+             "s=22) are live there too"},
         };
         for (size_t i = 0; i < sizeof(kHazardsCases) / sizeof(kHazardsCases[0]); i++) {
             const HazardsCase& c = kHazardsCases[i];
@@ -6337,6 +6501,72 @@ int main(int argc, char** argv) {
             std::string got;
             std::string why;
             if (!kurtHazardsDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // Kurt in the fans' updrafts and the wind zones' slide, against the C# probe
+    // tests/scripts/wind_probe (see kurtWindDump for the columns): package 8,
+    // Kurt.Updraft.cs, Kurt.Slide.cs, ScriptRuntime.KurtUpdraft / FanSpark / WindZone and
+    // opcode 224. The schedules are the probe's arguments, byte for byte. Every case also
+    // pins the fans' sparks: FanSpark draws from the scripts' random and the updraft lifts
+    // the sparks (the debris and dvz columns).
+    {
+        struct WindCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* at;
+            const char* schedule;
+            const char* pass;
+        };
+        static const WindCase kWindCases[] = {
+            {"L3_wind_shaft", "golden/L3_wind_shaft.txt", 3, 330, "391,2427,-390,90",
+             "fwd:150-200,jump:240-250",
+             "CHMO_6's shaft fan opens the chute (CHUTEOUT, FAN) and lifts Kurt at 107 u/s "
+             "through the floor doorway into HMO_8, where the second arena's fan holds him "
+             "hovering on the wobble; he drifts out, the chute closes and he lands"},
+            {"L8_wind_fan", "golden/L8_wind_fan.txt", 8, 300, "-505,858,-45,90",
+             "sright:30-90,jump:150-200",
+             "GUNT_3's fan; Kurt strafes out mid-rise at 67 u/s and leaves at the 40 u/s "
+             "UpdraftExitSpeed, the FAN loop stops and the chute closes"},
+            {"L6_wind_tunnel", "golden/L6_wind_tunnel.txt", 6, 450, "-1151,-787,-60,90",
+             "fwd:100-200,back:250-330,left:350-380",
+             "COLYM_1's wind (opcode 224) starts the slide on the floor: K_SLIP, K_SLIDE, "
+             "K_FSLIDE raising the cap, K_BSLIDE and BUTBRAKE lowering it, the turn keys, "
+             "air ticks over the bumps and the slope's roll"},
+            {"L6_wind_arena", "golden/L6_wind_arena.txt", 6, 140, "-1895,2801,-1980,90", "",
+             "COLYM_5's slide carries Kurt into OLYM_6: Kurt.EnterArena gives it 15 ticks, "
+             "then he falls and lands"},
+            {"L6_wind_fan", "golden/L6_wind_fan.txt", 6, 960, "-1987,2602,-2640,90",
+             "fwd:870-920",
+             "COLYM_7's wind slides Kurt down to the fan, wind_zone off stops the slide, the "
+             "fan lifts him up the shaft into OLYM_8 and holds him there from the second "
+             "arena"},
+            {"L6_wind_wall", "golden/L6_wind_wall.txt", 6, 220, "-1709,43,-700,90", "",
+             "COLYM_2's slide runs into a wall at step 103 and SlideMove turns it along what "
+             "Kurt moved, at the mean of the two speeds"},
+        };
+        for (size_t i = 0; i < sizeof(kWindCases) / sizeof(kWindCases[0]); i++) {
+            const WindCase& c = kWindCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!kurtWindDump(c.level, c.steps, c.at, c.schedule, data, spritesArg, &got,
+                              &why)) {
                 printf("FAIL %s: %s\n", c.name, why.c_str());
                 failures++;
             } else if (got == expected) {

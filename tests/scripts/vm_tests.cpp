@@ -5550,6 +5550,70 @@ static float floatFromBits(uint32_t bits) {
     return value;
 }
 
+// The two ends of the wind zones' slide that no retail route reaches inside a golden's
+// length (package 8; the slide's other arms are golden/L6_wind_*.txt against the C#
+// probe). Data-independent: a Player with no space is the C#'s flat-plane stand-in, whose
+// fall move never lands, so OnFloor stays false.
+//   - 20 ticks in the air end it (Kurt.Slide.cs:170-176): StopSlide, then FALL, and the
+//     step goes on as an ordinary one (UpdateSlide returns false).
+//   - At rest on a floor -- no push left within 1e-5 and no speed -- he gets up
+//     (Kurt.Slide.cs:157-164): StopSlide, K_BANG at its LAST frame, and the step ends
+//     there (UpdateSlide returns true), so the next one flips straight into K_BFLIP.
+//   - A dead Kurt's slide stops and does not restart (Kurt.Slide.cs:79, 146-150).
+void testSlideEndsInTheAirAndAtRest() {
+    const float kStep = 1.0f / 60.0f;
+    Player::FrameCounts counts;
+    counts.values[Kurt::Knocked] = 18;
+    counts.values[Kurt::GetUp] = 22;
+    counts.values[Kurt::Slip] = 6;
+    {
+        Player player;
+        player.setFrameCounts(counts);
+        player.startSlide();
+        CHECK(player.sliding());
+        CHECK(player.state() == Kurt::Slip);
+        Input input;
+        // _slideAir grows by Ticks * delta = 0.5 a step and ends the slide once it is
+        // ABOVE 20: still sliding after 40 steps (exactly 20), over on the 41st.
+        for (int step = 0; step < 40; step++) {
+            player.update(input, kStep);
+        }
+        CHECK(player.sliding());
+        CHECK(player.slideAir() == 20.0f);
+        player.update(input, kStep);
+        CHECK(!player.sliding());
+        CHECK(player.state() == Kurt::Fall);
+        CHECK(player.slideVelocity().x == 0.0f && player.slideVelocity().y == 0.0f);
+    }
+    {
+        Player player;
+        player.setFrameCounts(counts);
+        player.startSlide();
+        // A level floor (the default normal, (0, 0, 1)) and no wind: the push is 0 and
+        // the velocity is 0 -- at rest at once.
+        player.onFloor = true;
+        Input input;
+        player.update(input, kStep);
+        CHECK(!player.sliding());
+        CHECK(player.state() == Kurt::Knocked);
+        CHECK(player.animationFrame() == 18.0f);
+        // The next step's knock-down arm: K_BANG is over, so K_BFLIP.
+        player.update(input, kStep);
+        CHECK(player.state() == Kurt::GetUp);
+    }
+    {
+        Player player;
+        player.setFrameCounts(counts);
+        player.startSlide();
+        player.setHealth(0);
+        Input input;
+        player.update(input, kStep);
+        CHECK(!player.sliding());
+        player.startSlide();
+        CHECK(!player.sliding());
+    }
+}
+
 void testMathMinMaxMatchTheOracleOnNaNAndSignedZero() {
     const MinMaxRow rows[] = {
         //  label              a          b          MathF.Min  MathF.Max
@@ -8124,6 +8188,15 @@ int main(int argc, char** argv) {
         testMathMinMaxMatchTheOracleOnNaNAndSignedZero();
         if (failures == beforeMinMax) {
             printf("PASS MathMinMaxMatchTheOracleOnNaNAndSignedZero\n");
+        }
+    }
+
+    // The slide's air and rest endings (package 8), data-independent like the above.
+    {
+        const int beforeSlide = failures;
+        testSlideEndsInTheAirAndAtRest();
+        if (failures == beforeSlide) {
+            printf("PASS SlideEndsInTheAirAndAtRest\n");
         }
     }
 

@@ -403,6 +403,20 @@ public:
     // slice; this records the oracle's per-tick state.
     void raiseShake(float amount);
 
+    // ---- Package 8 (scripts/updraft_wind.cpp): Kurt's updraft, the fans' sparks and
+    // the wind zones ----
+    // C# ScriptRuntime.Wind (ScriptRuntime.cs:2300).
+    enum class Wind { Off, On };
+    // wind_zone (opcode 224, ScriptRuntime.WindZone, ScriptRuntime.cs:2302-2328, 0x4579e0):
+    // while Kurt is inside one of the arena's type-9 boxes, the wind blows him along the
+    // yaw at the speed, sliding him on his back; in the air without sliding it only
+    // pulls him down twice as fast. Off ends the slide.
+    void windZone(const std::string& arena, Wind wind, float yaw, float speed);
+    // C# ScriptRuntime.KurtUpdraft (ScriptRuntime.cs:2234-2243, damp_gravity 0x469efc):
+    // the vertical speed his arena's fans give him at `feet`, else the second arena's,
+    // or NaN outside them. Kurt asks through Player::UpdraftHook (ScriptRuntime.cs:345).
+    float kurtUpdraft(const Vec3& feet, float vz, float dt);
+
     // ---- The end of a level (package 1: ScriptRuntime.cs SpecialEvent/EndTheLevel,
     //      Scripts/EndLevel.cs) ----
     // C# SpecialEvent (ScriptRuntime.cs:1009, opcode 131 special_event, 0x4456d2): 50 and
@@ -1059,6 +1073,11 @@ private:
                                       const std::string& texture);
     // The fans' live-arena test (IsLiveArena, ScriptRuntime.cs:703).
     static bool fanIsLive(void* ctx, const std::string& arena);
+    // Fans.Spark = FanSpark (ScriptRuntime.cs:337, 2222) and Kurt.Updraft =
+    // KurtUpdraft(kurt.Feet, ...) (ScriptRuntime.cs:345), in scripts/updraft_wind.cpp.
+    void fanSpark(const std::string& arena, const Vec3& point);
+    static void fanSparkTrampoline(void* ctx, const std::string& arena, const Vec3& point);
+    static float kurtUpdraftTrampoline(void* ctx, float vz, float dt);
 
     Player* player_ = nullptr;  // borrowed; the live Kurt entity (movement + combat)
     LevelData* level_;

@@ -1140,6 +1140,27 @@ int main(int argc, char** argv) {
         mdk::log3dsPrintf("audio: the level's SNI archives did not load -- no sounds");
     }
     heapProbe("post-audio");
+    // KURT'S LEVEL ANIMATIONS: the level's SNI archives carry the wind tunnels' slide
+    // (K_SLIP, K_SLIDE, K_FSLIDE, K_BSLIDE) and the snowboard's frames (C# Viewer:
+    // KurtSprite.Add over SoundBank.Animation; the Linux frontend's same loop). Without
+    // them a sliding Kurt has no frame to draw, and -- because Player's frame counts come
+    // from this sprite -- K_SLIP would last one step instead of its animation (package 8,
+    // Kurt.Slide.cs). Cold, at level load, before the Player takes the frame counts.
+    if (kurtSpriteReady && bankReady) {
+        int added = 0;
+        int frames = 0;
+        for (int i = 0; i < mdk::KurtSprite::levelAnimationCount(); i++) {
+            const char* name = mdk::KurtSprite::levelAnimationName(i);
+            mdk::formats::SpriteAnimation animation;
+            if (bank.animation(name, &animation) && kurtSprite.add(renderer, name, animation)) {
+                added++;
+                frames += (int)animation.frameCount();
+            }
+        }
+        mdk::log3dsPrintf("sprites: %d level animations (%d frames) from the SNI archives",
+                          added, frames);
+        heapProbe("post-level-animations");
+    }
     mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
     // THE OUTPUT (SPEC.md 8). Release builds mix on the DSP (audio_dsp_3ds.h):
     // every audible voice on its own ndsp channel, the device's sample plane OFF

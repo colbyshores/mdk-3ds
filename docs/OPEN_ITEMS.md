@@ -350,7 +350,7 @@ original's own lookup (0x431590 searches the SNI directory) and none here.
   so the C#'s early return there is the false branch. Sniper mode is ported
   (`Player::sniping()`), but `KurtSprite` does not yet read it: hiding Kurt belongs with the
   frontends' scope view (gap package #7), since until then the follow camera still looks at him. The
-  knock-down, throw, slide, ledge and helmet states have no writer for the same
+  knock-down, throw, ledge and helmet states have no writer for the same
   reason. Whoever ports each one sets `Player`'s state and the frame counts follow.
 - `KurtSprite` (like `HudView`) has no release path for its palette and mesh:
   `load()` re-creates them, and a second `load()` (a level change) leaks both.
@@ -1298,7 +1298,8 @@ Still open:
 - **Opcodes 172, 178, 184** — CLOSED 2026-11-20 by the combat and hazard batch (with 158,
   159, 167 and 164's consumer); they DO fire in the levels (see `docs/OPCODE_COVERAGE.md`),
   and nine `golden/L*_hazards_*.txt` from `tests/scripts/hazards_probe` pin them.
-- **Kurt's own updraft** (`Kurt.Updraft.cs`) is still unported; the objects' is not.
+- ~~**Kurt's own updraft** (`Kurt.Updraft.cs`) is still unported~~ — CLOSED by package 8
+  (2026-11-20): `Player::updateUpdraft` over `ScriptRuntime::kurtUpdraft`.
 
 ## Kurt walks through closed doors; the second arena over a doorway is faithful (2026-11-20)
 
@@ -1413,10 +1414,16 @@ The batch that ported 158/159/167/172/178/184 and `UpdatePathSpeed` (PORT_GAPS p
   projectiles `0x80820`, the boxes' `flags_set 2080`), so narrowing the mask to `0x800`
   changes no golden. Only an object with `0x20` alone (a killed object running its death
   script, an explosion effect, HMO_3's XG generators) touching a `targets 2` toucher can.
-- **Fans lift the debris in the C# and not here** (`Debris.Update`'s `Updraft` hook,
-  `FanSpark`; package 8). Two hazard scenarios were dropped from the goldens for it: an
-  explode beside a victim in GUNT_2 (one piece lived 5 ticks longer in the C++ from s=152) and
-  MEAT_10's XBN_BOMBs (the fan's spark is a piece from s=4). Re-pin both when package 8 lands.
+- ~~**Fans lift the debris in the C# and not here**~~ — CLOSED by package 8 (2026-11-20).
+  The debris' `Updraft` hook was already ported; what was missing was the fans' SPARK
+  (`FanSpark`, never bound), so no fan spark existed to lift. MEAT_10's XBN_BOMBs are
+  re-pinned (`golden/L4_hazards_fan.txt`), and so is OLYM_2's `L6_hazards_balls` (COLYM_2's
+  fan, live as the second arena, sparks from s=22). **The GUNT_2 explode-beside-a-victim
+  scenario is NOT a fan divergence and is still open**: GUNT_2 has no fan (`fans=0` for
+  the whole run), and with package 8 in, the C# hazards probe and `tick1 dump hazards 8
+  400 "tp:1:GUNT_2:-209:480:40,run:3:XBANG:24840:0:105:0,fire:60-300,watch:XBANG,watch:BOLT,
+  watch:BIGBOLT"` still differ by one debris piece over s=152-161 (283 vs 284 pieces), then
+  agree again. Something in the pieces' life or bounce, not the fans.
 - **spawn_box mode 1 and op172_position modes 1/2** are ported but unreachable in the retail
   scripts (they use modes 0/2 and 0/3), so no golden pins them.
 - **The boxes' fire light** (`LightSources`, FIRE boxes as point lights) is the enhanced
@@ -1493,6 +1500,26 @@ Still open:
     successively bigger. That is a bound, not a leak. The test is to replay ONE level on the
     3DS (a harness `--replay-level`, not built) and see whether `used=` holds still after
     the second teardown, as it does on Linux.
+
+## Kurt in updrafts, the slide and the wind: what the goldens cannot see (2026-11-20)
+
+Package 8 (`docs/PORT_GAPS.md`): `Kurt.Updraft.cs` and `Kurt.Slide.cs` in `Player`,
+`KurtUpdraft` / `FanSpark` / `WindZone` and opcode 224 in `scripts/updraft_wind.cpp`,
+pinned by `golden/L*_wind_*.txt`. Left open, each measured:
+
+- **The mouse's slide steering** is not golden-pinned (the probes have no mouse). The C#
+  steers by the step's `input.MouseX` while sliding and its `MouseLook` takes nothing; the
+  port's frontends drain the mouse per frame in `mouseLook`, so `Player` keeps that frame's
+  motion in `_slideMouseX` for the steps. The 3DS's look stick feeds `mouseX`, so on the
+  console the C-stick steers the slide.
+- **The slide's 20-air-tick and at-rest endings** are reached by no retail route within a
+  golden's length; `vm_tests` `SlideEndsInTheAirAndAtRest` pins both on a spaceless
+  Player against the C#'s lines, not against the probe.
+- **The updraft's Knocked exception** (no 40 u/s cap while knocked down) is ported but no
+  golden reaches a knocked-down Kurt leaving a fan.
+- **3DS**: K_SLIP/K_SLIDE/K_FSLIDE/K_BSLIDE are not in Kurt's start sprite set, so their
+  first frames stream (the held frame shows meanwhile). The FAN/BUTSLIDE/BUTBRAKE loops and
+  `setPitch` go through the shared mixer; not yet heard on hardware or Mandarine.
 
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 

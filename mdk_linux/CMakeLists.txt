@@ -179,6 +179,7 @@ set(SOURCES
     ${CORE}/src/scripts/end_level.cpp
     ${CORE}/src/scripts/hazards.cpp
     ${CORE}/src/scripts/platforms.cpp
+    ${CORE}/src/scripts/updraft_wind.cpp
     ${CORE}/src/scripts/script_vm.cpp
     ${CORE}/src/scripts/debris.cpp
     ${CORE}/src/stream/stream_flight.cpp

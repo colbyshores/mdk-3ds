@@ -6,8 +6,11 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   `SniperRounds::guideLastMortar` (scripts/sniper_rounds.cpp), pinned end to end by
   `golden/L7_rounds_mortar.txt` (LEVEL7 DANT_6's group 12 hit script guides a mortar round
   along path 109157). The rounds are also the last writer of 81's `hit_direction` and 195's
-  `hit_type` (weapon types 0-4) that was missing. Recount: C# **238**, C++ **235**, remaining
-  **3** (114, 130, 224).
+  `hit_type` (weapon types 0-4) that was missing. Recount after package 8 too: C# **238**, C++ **237**, remaining
+  **1** (130).
+- **Updrafts, slide and wind (2026-11-20, PORT_GAPS package 8):** 224 (`wind_zone`)
+  ported, after package #3's 114; with package 6 (28): C# **238**, C++ **237**, remaining **1** (130). Details under
+  "Remaining" below.
 - **Combat and hazard batch (2026-11-20, PORT_GAPS package 4):** 158, 159, 167,
   172, 178 and 184 ported, with the consumer of 164's flag; recount (top-level
   `case` labels of both brace-matched spans, set semantics): C# **238**, C++ **234**,
@@ -368,10 +371,22 @@ one-line branch on `Rides.Ridden == obj`, and the runtime already carries that
 state as `ridesRidden_` (the ride slice is unported, so it is null and the branch
 is false for every object — the value the C# reads on foot). It never fires in
 levels 3–8; a synthetic `vm_tests` case pins the dispatch and the false branch.
-Remaining 2 (after the chain-gun batch, the end of a level, the combat and
-hazard batch, package #3 (114) and the sniper rounds (28) below):
-130,
-224
+Remaining 1 (after the chain-gun batch, the end of a level, the combat and
+hazard batch, package #3 (114), the sniper rounds (28) and the updraft/wind batch (224) below):
+130
+
+**Updrafts, slide and wind (2026-11-20, docs/PORT_GAPS.md package 8):** 224
+(`wind_zone`, ScriptVm.cs:1166 -> `ScriptRuntime::windZone`, ScriptRuntime.cs:2302, in
+`scripts/updraft_wind.cpp`): while Kurt's tick position is in one of the arena's DTI
+type-9 boxes, on a floor or already sliding he starts the slide (Kurt.Slide.cs, in
+`Player`), faces the wind and is pushed by it; in the air he only falls faster; off, it
+stops the slide. 142/143/190's fans now reach Kurt too (`Kurt.Updraft.cs`,
+`ScriptRuntime::kurtUpdraft`: his arena's fans, else the second arena's) and let out their
+sparks (`FanSpark`), which the debris' updraft already lifted. 224 is NOT corpus-silent
+(×9 in LEVEL6, every wind tunnel); 142 is in every level. Pinned by six goldens from the
+C# probe `tests/scripts/wind_probe` (`golden/L*_wind_*.txt`, `tick1 dump wind`) and two
+re-pinned hazards goldens (`L4_hazards_fan`, `L6_hazards_balls`); each breaks when the
+piece it names is broken (see docs/WORK_LEDGER.md).
 
 **End of a level (2026-11-20, package 1 of `docs/PORT_GAPS.md`):** 131
 (`special_event`) is dispatched: `ScriptRuntime::specialEvent` (ScriptRuntime.cs:1009).
@@ -470,7 +485,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   `enterArena` makes an unreachable arena answer the arena RULE and not yet
   the collision) and `Kurt.Keeper`, whose `_keeper = null` the port cannot do.)
 - **Arena/world (needs arena texture/sky/fan/wind state, spawn helpers):**
-  130, 133, 142, 143, 190, 224 (28 landed with the sniper rounds, package 6: `SniperRounds::guideLastMortar`; 159 landed with the combat and hazard batch; 156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
+  130, 133, 142, 143, 190 (28 landed with the sniper rounds, package 6: `SniperRounds::guideLastMortar`; 224 landed with the updraft/wind batch, package 8; 159 landed with the combat and hazard batch; 156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 128, 132,
   136 (158, 167, 172 and 184 landed with the combat and hazard batch; 121 landed with the floor-below batch over

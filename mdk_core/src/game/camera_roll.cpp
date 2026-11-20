@@ -71,6 +71,27 @@ void CameraRoll::walk(float right, float forward, float delta) {
     roll_ = mathMax(roll_ > 0.0f ? roll_ - kWalkReverse : roll_, -kWalkLimit);
 }
 
+/* @vfp-exempt R6 — the slide's bank: atan2f and powf are the oracle's MathF.Atan2 and
+ * MathF.Pow (glibc on both sides of the host goldens), and .NET's left-associative
+ * RadiansToDegrees; the fastAtan2 LUT would move the roll golden/L6_wind_*.txt pins. Once
+ * a step while sliding, not a loop body. measured n/a (corpus empty). Verified 2026-11-20. */
+void CameraRoll::slide(const Vec3& normal, const Vec2& facing, float delta) {
+    // C# CameraRoll.Slide (CameraRoll.cs:54-59), in its order: the held flag, the angle
+    // of the slope across the facing, then float.Lerp(SlideLevel - angle, Roll,
+    // Pow(SlideKeep, Ticks * delta)). .NET 10's float.Lerp is
+    // MultiplyAddEstimate(a, 1 - t, b * t): FUSED where the CPU has FMA, which the host
+    // that prints the goldens does -- measured 2026-11-20, 200000 random (a, b, t): float.Lerp
+    // equals MathF.FusedMultiplyAdd(a, 1 - t, b * t) for all of them and the unfused
+    // a * (1 - t) + b * t for 151471. fmaf is that fused form on every target (a library
+    // call on the ARM11's VFPv2, once a step); the unfused spelling put
+    // golden/L6_wind_tunnel.txt's roll a 4th-decimal unit off at step 205.
+    held_ = true;
+    const float radians = atan2f(normal.z, normal.x * facing.y - normal.y * facing.x);
+    const float angle = radians * 180.0f / 3.14159265358979323846f;
+    const float t = powf(kSlideKeep, kTicks * delta);
+    roll_ = fmaf(kSlideLevel - angle, 1.0f - t, roll_ * t);
+}
+
 void CameraRoll::settle(float delta) {
     // C# CameraRoll.Settle (CameraRoll.cs:71-80). The held step is the oracle's, not
     // a smoothing detail: see the header.

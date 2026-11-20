@@ -2150,6 +2150,17 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.fans.enable(obj->arena, strval(op(ins, 1)),
                                  ival(op(ins, 0)) != 0 ? Fans::Power::On : Fans::Power::Off);
             break;
+        case 224: {  // wind_zone: [enable] or [enable, yaw, speed] (ScriptVm.cs:1166-1171)
+            // The C#'s I/F over L(o[0]): the yaw and speed are read only when the list
+            // has more than two entries, else both are 0.
+            const std::vector<ScriptValue>& wind = listval(op(ins, 0));
+            const bool full = wind.size() > 2;
+            runtime_.windZone(obj->arena,
+                              (wind.empty() ? 0 : ival(wind[0])) != 0 ? ScriptRuntime::Wind::On
+                                                                       : ScriptRuntime::Wind::Off,
+                              full ? fval(wind[1]) : 0.0f, full ? fval(wind[2]) : 0.0f);
+            break;
+        }
         case 128:  // attach_effect: [name, point, second point]; "OFF" with
                    // the same point twice stops the bleeding
             if (strval(op(ins, 0)) == "OFF" && ival(op(ins, 1)) == ival(op(ins, 2))) {

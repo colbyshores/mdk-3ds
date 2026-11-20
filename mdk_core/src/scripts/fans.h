@@ -86,6 +86,8 @@ public:
     float query(const std::string& arena, const Vec3& point, float vz, int32_t mask, float dt);
 
     int32_t count() const { return (int32_t)fans_.size(); }
+    // The shared wobble's current value (Fans._wobble), for the goldens.
+    float wobbleNow() const { return wobble_; }
 
     // One fan's record, for tests and saves: false when there is none.
     bool fan(const std::string& arena, const std::string& name, int32_t* maskOut,

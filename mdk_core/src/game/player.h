@@ -14,8 +14,10 @@
 // runtime's ScriptRuntime::fireChainGun), and the items (Kurt.UpdateItems and the
 // THROW state, whose ItemUsed reaches the scripts runtime's Items through
 // ItemHooks). The states whose branches belong to other subsystems (the
-// crouch-slide, the ledges, the ride, the beta moves) are not reachable here, and
-// the C#'s branches on them are taken the way they are false.
+// ledges, the ride, the beta moves) are not reachable here, and the C#'s branches on
+// them are taken the way they are false. The fans' updraft (Kurt.Updraft.cs) and the
+// wind zones' slide (Kurt.Slide.cs) are ported (package 8): the scripts runtime answers
+// the updraft through UpdraftHook and starts, pushes and stops the slide.
 //
 // Units and convention match the C#: world units, Z up; Yaw in degrees,
 // counter-clockwise, Facing = (cos yaw, sin yaw, 0); the follow camera's pitch
@@ -143,9 +145,9 @@ public:
     // frontend with no audio -- or a host harness that only wants the physics --
     // is. The sounds are the ones the ported state machine makes: FOOT1-4, LAND,
     // CHUTEOUT, CHUTEON, CHUTEIN and the chain gun's loop (MULTIFIRE, GATTFIRE with
-    // the super chain gun), and sniper mode's (SNIPERON, SNIPEROFF, the BREATH and ZOOM
-    // loops, SNIPRELD, SNIPERSHOT). The slide, the roll and the updraft fan belong to
-    // subsystems that are not ported (OPEN_ITEMS.md).
+    // the super chain gun), sniper mode's (SNIPERON, SNIPEROFF, the BREATH and ZOOM
+    // loops, SNIPRELD, SNIPERSHOT), the updraft's FAN loop and the slide's BUTSLIDE /
+    // BUTBRAKE loop. The roll belongs to a subsystem that is not ported (OPEN_ITEMS.md).
     void setMixer(audio::SoundMixer* mixer) { _mixer = mixer; }
 
     // Kurt's item events (Kurt.Combat.cs:95-101), which the C# scripts runtime
@@ -324,6 +326,48 @@ public:
     // reason: so the write is pinned by a test instead of looking like dead state.
     int teleports = 0;
 
+    // ---- The fans' updrafts (C# Kurt.Updraft.cs, damp_gravity 0x469efc) ----
+    // C# Kurt.UpdraftExitSpeed: out of an updraft Kurt rises at most this fast.
+    static constexpr float kUpdraftExitSpeed = 40.0f;
+    // C# Kurt.Updraft (Func<float, float, float>), set by the scripts runtime
+    // (ScriptRuntime.cs:345 -> KurtUpdraft): (vertical speed, seconds) -> the new
+    // vertical speed, or NaN outside every fan. §10 forbids the delegate, so it is a
+    // function pointer over a context, the ItemHooks shape. Null is the C#'s null
+    // delegate: no updraft (NaN).
+    struct UpdraftHook {
+        void* context = nullptr;
+        float (*updraft)(void* context, float verticalSpeed, float delta) = nullptr;
+    };
+    void setUpdraftHook(const UpdraftHook& hook) { _updraftHook = hook; }
+    const UpdraftHook& updraftHook() const { return _updraftHook; }
+    // C# Kurt.InUpdraft: whether a fan holds Kurt.
+    bool inUpdraft() const { return _inUpdraft; }
+
+    // ---- The wind zones' slide (C# Kurt.Slide.cs, damp_buttslide 0x468db8) ----
+    // C# Kurt.SlideGravity: extra gravity of the wind zones and the slide (u/s^2).
+    static constexpr float kSlideGravity = 128.0f;
+    // C# Kurt.Sliding (0x573be8).
+    bool sliding() const { return _sliding; }
+    // C# Kurt.SlideVelocity (0x573bf0), u/s.
+    Vec2 slideVelocity() const { return _slideVelocity; }
+    // The slide's private state, for the goldens: the speed cap, the ticks left after an
+    // arena change, the ticks in the air.
+    float slideCap() const { return _slideCap; }
+    float slideLeft() const { return _slideLeft; }
+    float slideAir() const { return _slideAir; }
+    // C# Kurt.StartSlide (0x468b64): the wind zones call it while Kurt is in their box.
+    void startSlide();
+    // C# Kurt.EnterArena (0x41c550): Kurt crossed into another arena; a slide ends 15
+    // ticks later. The scripts runtime calls it at the crossing (ScriptRuntime.cs:926).
+    void enterArena();
+    // C# Kurt.StopSlide: wind_zone off, death, the fall or rest that ends it.
+    void stopSlide();
+    // C# Kurt.SlideAccel (slide_accel 0x468be0): adds a push (u/s per axis) to the
+    // slide velocity over dt seconds.
+    void slideAccel(const Vec2& push, float dt);
+    // C# Kurt.AddVerticalSpeed (Kurt.cs:278): wind zones and push_kurt.
+    void addVerticalSpeed(float speed) { verticalSpeed += speed; }
+
 private:
     // Sniper mode's step (Kurt.Sniper.cs): the sniper key, the ways out, then the
     // controls, the sidestep and the clip. True when the step was a sniper one (the C#'s
@@ -360,6 +404,16 @@ private:
     // ---- end of platforms, solid objects and touches ----
 
     void updateVertical(const Input& input, const Vec3& move, float delta);
+    // C# Kurt.UpdateUpdraft (Kurt.Updraft.cs:21).
+    void updateUpdraft(float delta);
+    // C# Kurt.UpdateSlide and its helpers (Kurt.Slide.cs:138-301).
+    bool updateSlide(const Input& input, float delta);
+    float slideSpeed(float forward, float delta);
+    void steer(const Input& input, float speed, float delta);
+    void slideMove(float delta);
+    void updateSlideState(float forward, float delta);
+    // C# Kurt.Facing's (x, y) in libm, the oracle's MathF.Cos/Sin, for the slide.
+    Vec2 slideFacing() const;
     void updateAir(bool jumpHeld, float delta);
     void glueDownhill(const Vec3& move, float delta);
     void fall(float delta);
@@ -451,6 +505,28 @@ private:
     int32_t _zoomVoice = 0;
     Scope::FireHook _sniperFire;
     bool _mouseTurnScope = false;
+
+    // The updraft (Kurt.Updraft.cs:17-19): the hook, the looped FAN voice, and the flag.
+    UpdraftHook _updraftHook;
+    int32_t _fanVoice = 0;
+    bool _inUpdraft = false;
+    // The slide (Kurt.Slide.cs:59-71), at the C#'s initial values.
+    bool _sliding = false;
+    Vec2 _slideVelocity = {0.0f, 0.0f};
+    float _slideCap = 50.0f;
+    Vec3 _slideNormal = {0.0f, 0.0f, 1.0f};
+    Vec2 _slidePush = {0.0f, 0.0f};
+    float _slideAir = 0.0f;
+    float _slideLeft = 0.0f;
+    int32_t _slideVoice = 0;
+    const char* _slideSound = "";
+    // The frame's mouse X while sliding. The C# slide steers by input.MouseX inside the
+    // step (Steer, Kurt.Slide.cs:217) and its MouseLook takes nothing while sliding (the
+    // step left _mouseTurn at None), so every step of a frame reads the same motion and
+    // the Viewer clears it after the steps. This port's frontends drain the mouse in
+    // mouseLook() and never clear it otherwise, so mouseLook takes it into this field
+    // while sliding and the steps read it: the same per-frame value, cleared per frame.
+    float _slideMouseX = 0.0f;
 };
 
 } // namespace mdk

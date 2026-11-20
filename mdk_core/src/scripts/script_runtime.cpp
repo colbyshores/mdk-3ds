@@ -262,10 +262,13 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
     // (ScriptRuntime.cs:336, TextureFrames via FindTexture).
     animatedTextures = AnimatedTextures(&ScriptRuntime::animatedFrameCount, this);
     // The fans stand on the DTI's records and share the runtime's RNG
-    // (ScriptRuntime.cs:337). Their spark has no consumer yet (the
-    // effects slice owns sparks), so no callback is registered: the
-    // per-tick RNG rolls happen exactly as the oracle's do.
+    // (ScriptRuntime.cs:337: `new Fans(...) { Spark = FanSpark, IsLive = IsLiveArena }`).
+    // The spark is the C#'s FanSpark: a still fire spark in the debris, which the fans'
+    // updraft for effects (the Debris callback above) then lifts. It draws from the
+    // runtime's RNG like every spark, so a fan in a live arena moves the stream exactly
+    // as the oracle's does (golden/L*_wind_*.txt).
     fans = Fans(&level_->dti(), &rng_);
+    fans.setSpark(&ScriptRuntime::fanSparkTrampoline, this);
     fans.setIsLive(&ScriptRuntime::fanIsLive, this);
     // The effects share the RNG, the archives' frame counts and the
     // arena ray (ScriptRuntime.cs:341's neighbours).
@@ -333,6 +336,12 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
         fire.context = this;
         fire.fire = &ScriptRuntime::fireSniperTrampoline;
         player_->setSniperHooks(fire);
+        // Kurt's updraft (ScriptRuntime.cs:345): kurt.Updraft = (vz, dt) =>
+        // KurtUpdraft(kurt.Feet, vz, dt).
+        Player::UpdraftHook updraft;
+        updraft.context = this;
+        updraft.updraft = &ScriptRuntime::kurtUpdraftTrampoline;
+        player_->setUpdraftHook(updraft);
     }
 }
 
@@ -345,6 +354,9 @@ ScriptRuntime::~ScriptRuntime() {
     }
     if (player_ != nullptr && player_->sniperHooks().context == this) {
         player_->setSniperHooks(Scope::FireHook());
+    }
+    if (player_ != nullptr && player_->updraftHook().context == this) {
+        player_->setUpdraftHook(Player::UpdraftHook());
     }
 }
 
@@ -673,12 +685,12 @@ void ScriptRuntime::runTick() {
     if (!arena.empty() && arena != currentArena_) {
         if (!currentArena_.empty()) {
             secondArena_ = currentArena_;
-            // The C# also calls Kurt.EnterArena() here (ScriptRuntime.cs:926). That
-            // is a SLIDE-timer reset (Kurt.Slide.cs:97-105: it returns at once
-            // unless Kurt is sliding with no slide left), and the slide is not
-            // ported (game/player.h), so the call cannot do anything here yet. It
-            // MUST come back with the slide, or a slide that carries Kurt through a
-            // doorway keeps its slide budget in the new arena.
+            // Kurt.EnterArena() (ScriptRuntime.cs:926): a slide that carries him through
+            // a doorway ends 15 ticks later (Kurt.Slide.cs:97-105); it does nothing
+            // unless he is sliding with no slide budget running.
+            if (player_ != nullptr) {
+                player_->enterArena();
+            }
         }
         secondActive_ = true;
         currentArena_ = arena;

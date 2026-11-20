@@ -16,7 +16,7 @@ A scanner decoded every reachable script in LEVEL3–8 using the C++ decoder and
 | 167 | move_to_bomb | 21 | 11 | 6 | 13 | 16 | 17 |
 | 172/178/184 | explosion / explosion_damage / explode | 8/–/5 | 4/36/5 | – | 2/–/– | 2/–/24 | 14/–/4 |
 | 159 | spawn_box | 11 | 2 | 2 | – | – | – |
-| 142 | fan_create (fans exist; Kurt's updraft doesn't) | 2 | 5 | 4 | 6 | 2 | 4 |
+| 142 | fan_create (Kurt's updraft landed with package 8) | 2 | 5 | 4 | 6 | 2 | 4 |
 
 `if_hit_weapon 0` (a sniper bullet) appears in every level. Weapon types 2, 3, 4 and -6 appear in L5 and L7.
 
@@ -31,7 +31,7 @@ A scanner decoded every reachable script in LEVEL3–8 using the C++ decoder and
 | 5 | Sniper A: scope and mode | Kurt.Sniper.cs, Scope.cs, Inventory SelectAmmo/UseAmmo, FollowCamera ScopeView | player.cpp:989 | Sniper can't be entered | – | **done 2026-11-20**: game/player_sniper.cpp, game/scope.{h,cpp}, Kurt ammo, follow_camera buildSniperCamera; kKeyZoomIn/Out; golden/L3_sniper, L7_sniper byte-exact. Seams: Player::setSniperHooks (#6's FireSniper), Scope::zoomLimit/toScreen/locks/lockLimit (#6's UpdateSniperTarget), buildSniperCamera + Scope state (#7) |
 | 6 | Sniper B: rounds | Scripts/SniperRounds.cs; UpdateSniperTarget/FireSniper; opcode 28 | none | Sniper targets, homing and mortar rounds; L7 mortar puzzle | 5 | **done 2026-11-20**: scripts/sniper_rounds.{h,cpp} (the rounds, plus ScriptRuntime's UpdateSniperTarget/FireSniper/Sweep), opcode 28, hooks bound by the runtime; golden/L8_rounds_ship, L8_rounds_kill, L7_rounds_mortar byte-exact. Seams: the strike arm (#14), the round models' draw and round cameras (#7), the wall's bullet hole (#16) |
 | 7 | Sniper frontends and HUD | SniperOverlay, SniperView; zoom keys | sniper bound but not implemented | Sniper unusable on device | 5, 6 | |
-| 8 | Updrafts, slide, wind | Kurt.Updraft.cs, KurtUpdraft/FanSpark; Kurt.Slide.cs, WindZone, opcode 224 | player.cpp:854-880, 940 | Fans don't lift Kurt (all levels); L6 wind tunnels | – | |
+| 8 | Updrafts, slide, wind | Kurt.Updraft.cs, KurtUpdraft/FanSpark; Kurt.Slide.cs, WindZone, opcode 224 | player.cpp:854-880, 940 | Fans don't lift Kurt (all levels); L6 wind tunnels | – | **landed 2026-11-20**: Kurt.Updraft.cs and Kurt.Slide.cs in `Player` (with FallMove's Sliding branch, CameraRoll.Slide, EnterArena), KurtUpdraft / FanSpark / WindZone and opcode 224 (`scripts/updraft_wind.cpp`); goldens `L*_wind_*.txt`, and package 4's fan-dependent hazards goldens re-pinned (`L4_hazards_fan`, `L6_hazards_balls`). There is no crouch-slide in the C#: the slide is the wind tunnels' |
 | 9 | Rides core + XD2 | Scripts/Rides.cs, Kurt.Ride.cs | ridesRidden_/ridesBoard_ always null | L7 DANT_9; foundation for 10 and 11 | 3 | |
 | 10 | Snowboard | Scripts/Snowboard.cs | the board drop is not applied | L4's snowboard run | 9 | |
 | 11 | XE bomber | Scripts/Bomber.cs, BomberOverlay, LookDown | none | L7 DANT_5 bomber ride | 9 | |
