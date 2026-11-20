@@ -1,0 +1,559 @@
+== main menu (beta: 0)
+Menu: New Game | Level: 1 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f0 - page=Main next=None level=7 index=0 sel=0
+  grow 0.685 0.65 0.65 0.65 0.65
+f1 - page=Main next=None level=7 index=0 sel=0
+  grow 0.72 0.65 0.65 0.65 0.65
+f2 - page=Main next=None level=7 index=0 sel=0
+  grow 0.75500005 0.65 0.65 0.65 0.65
+f3 - page=Main next=None level=7 index=0 sel=0
+  grow 0.7900001 0.65 0.65 0.65 0.65
+f4 - page=Main next=None level=7 index=0 sel=0
+  grow 0.8250001 0.65 0.65 0.65 0.65
+f5 - page=Main next=None level=7 index=0 sel=0
+  grow 0.86000013 0.65 0.65 0.65 0.65
+f6 - page=Main next=None level=7 index=0 sel=0
+  grow 0.89500016 0.65 0.65 0.65 0.65
+f7 - page=Main next=None level=7 index=0 sel=0
+  grow 0.9300002 0.65 0.65 0.65 0.65
+f8 - page=Main next=None level=7 index=0 sel=0
+  grow 0.9650002 0.65 0.65 0.65 0.65
+f9 - page=Main next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f10 down page=Main next=None level=7 index=0 sel=1
+  grow 0.965 0.685 0.65 0.65 0.65
+f11 - page=Main next=None level=7 index=0 sel=1
+  grow 0.92999995 0.72 0.65 0.65 0.65
+f12 - page=Main next=None level=7 index=0 sel=1
+  grow 0.8949999 0.75500005 0.65 0.65 0.65
+f13 - page=Main next=None level=7 index=0 sel=1
+  grow 0.8599999 0.7900001 0.65 0.65 0.65
+Menu: New Game | Level: 2 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f14 accept page=Main next=None level=7 index=1 sel=1
+  grow 0.65 0.685 0.65 0.65 0.65
+f15 - page=Main next=None level=7 index=1 sel=1
+  grow 0.65 0.72 0.65 0.65 0.65
+f16 - page=Main next=None level=7 index=1 sel=1
+  grow 0.65 0.75500005 0.65 0.65 0.65
+f17 - page=Main next=None level=7 index=1 sel=1
+  grow 0.65 0.7900001 0.65 0.65 0.65
+Menu: New Game | Level: 3 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f18 accept page=Main next=None level=7 index=2 sel=1
+  grow 0.65 0.685 0.65 0.65 0.65
+f19 - page=Main next=None level=7 index=2 sel=1
+  grow 0.65 0.72 0.65 0.65 0.65
+f20 - page=Main next=None level=7 index=2 sel=1
+  grow 0.65 0.75500005 0.65 0.65 0.65
+Menu: New Game | Level: 4 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f21 accept page=Main next=None level=7 index=3 sel=1
+  grow 0.65 0.685 0.65 0.65 0.65
+f22 - page=Main next=None level=7 index=3 sel=1
+  grow 0.65 0.72 0.65 0.65 0.65
+f23 - page=Main next=None level=7 index=3 sel=1
+  grow 0.65 0.75500005 0.65 0.65 0.65
+Menu: New Game | Level: 5 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f24 accept page=Main next=None level=7 index=4 sel=1
+  grow 0.65 0.685 0.65 0.65 0.65
+f25 - page=Main next=None level=7 index=4 sel=1
+  grow 0.65 0.72 0.65 0.65 0.65
+f26 - page=Main next=None level=7 index=4 sel=1
+  grow 0.65 0.75500005 0.65 0.65 0.65
+Menu: New Game | Level: 6 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f27 accept page=Main next=None level=7 index=5 sel=1
+  grow 0.65 0.685 0.65 0.65 0.65
+f28 - page=Main next=None level=7 index=5 sel=1
+  grow 0.65 0.72 0.65 0.65 0.65
+f29 - page=Main next=None level=7 index=5 sel=1
+  grow 0.65 0.75500005 0.65 0.65 0.65
+Menu: New Game | Level: 1 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f30 accept page=Main next=None level=7 index=0 sel=1
+  grow 0.65 0.685 0.65 0.65 0.65
+f31 - page=Main next=None level=7 index=0 sel=1
+  grow 0.65 0.72 0.65 0.65 0.65
+f32 - page=Main next=None level=7 index=0 sel=1
+  grow 0.65 0.75500005 0.65 0.65 0.65
+f33 down page=Main next=None level=7 index=0 sel=2
+  grow 0.65 0.72 0.685 0.65 0.65
+f34 - page=Main next=None level=7 index=0 sel=2
+  grow 0.65 0.685 0.72 0.65 0.65
+f35 - page=Main next=None level=7 index=0 sel=2
+  grow 0.65 0.65 0.75500005 0.65 0.65
+Menu: No Saved Games Found | Back
+  rows x=93.5 w=413 h=36 y0=5 big=1
+f36 accept page=Other next=None level=7 index=0 sel=1
+  grow 1 0.685
+f37 - page=Other next=None level=7 index=0 sel=1
+  grow 1 0.72
+f38 - page=Other next=None level=7 index=0 sel=1
+  grow 1 0.75500005
+f39 - page=Other next=None level=7 index=0 sel=1
+  grow 1 0.7900001
+f40 back page=Other next=None level=7 index=0 sel=1
+  grow 1 0.8250001
+f41 - page=Other next=None level=7 index=0 sel=1
+  grow 1 0.86000013
+f42 - page=Other next=None level=7 index=0 sel=1
+  grow 1 0.89500016
+Menu: New Game | Level: 1 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f43 accept page=Main next=None level=7 index=0 sel=0
+  grow 0.685 0.65 0.65 0.65 0.65
+f44 - page=Main next=None level=7 index=0 sel=0
+  grow 0.72 0.65 0.65 0.65 0.65
+f45 - page=Main next=None level=7 index=0 sel=0
+  grow 0.75500005 0.65 0.65 0.65 0.65
+f46 - page=Main next=None level=7 index=0 sel=0
+  grow 0.7900001 0.65 0.65 0.65 0.65
+f47 down page=Main next=None level=7 index=0 sel=1
+  grow 0.75500005 0.685 0.65 0.65 0.65
+f48 - page=Main next=None level=7 index=0 sel=1
+  grow 0.72 0.72 0.65 0.65 0.65
+f49 down page=Main next=None level=7 index=0 sel=2
+  grow 0.685 0.685 0.685 0.65 0.65
+f50 - page=Main next=None level=7 index=0 sel=2
+  grow 0.65 0.65 0.72 0.65 0.65
+f51 down page=Main next=None level=7 index=0 sel=3
+  grow 0.65 0.65 0.685 0.685 0.65
+f52 - page=Main next=None level=7 index=0 sel=3
+  grow 0.65 0.65 0.65 0.72 0.65
+Menu: Display | Graphics | 3D Stereo | Audio | Keyboard & mouse | Gamepad | Game | Mods | Back
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f53 accept page=Other next=None level=7 index=0 sel=0
+  grow 0.685 0.65 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f54 - page=Other next=None level=7 index=0 sel=0
+  grow 0.72 0.65 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f55 - page=Other next=None level=7 index=0 sel=0
+  grow 0.75500005 0.65 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f56 - page=Other next=None level=7 index=0 sel=0
+  grow 0.7900001 0.65 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f57 down page=Other next=None level=7 index=0 sel=1
+  grow 0.75500005 0.685 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f58 - page=Other next=None level=7 index=0 sel=1
+  grow 0.72 0.72 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f59 - page=Other next=None level=7 index=0 sel=1
+  grow 0.685 0.75500005 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+Menu: Graphics: Original | Anti-aliasing: Off | Gore: On | Back
+  rows x=142.5 w=315 h=36 y0=5 big=1
+f60 accept page=Other next=None level=7 index=0 sel=0
+  grow 0.685 0.65 0.65 0.65
+f61 - page=Other next=None level=7 index=0 sel=0
+  grow 0.72 0.65 0.65 0.65
+f62 - page=Other next=None level=7 index=0 sel=0
+  grow 0.75500005 0.65 0.65 0.65
+f63 - page=Other next=None level=7 index=0 sel=0
+  grow 0.7900001 0.65 0.65 0.65
+  rows x=124.5 w=351 h=36 y0=5 big=1
+f64 right page=Other next=None level=7 index=0 sel=0
+  grow 0.8250001 0.65 0.65 0.65
+f65 - page=Other next=None level=7 index=0 sel=0
+  grow 0.86000013 0.65 0.65 0.65
+f66 - page=Other next=None level=7 index=0 sel=0
+  grow 0.89500016 0.65 0.65 0.65
+f67 down page=Other next=None level=7 index=0 sel=1
+  grow 0.86000013 0.685 0.65 0.65
+f68 - page=Other next=None level=7 index=0 sel=1
+  grow 0.8250001 0.72 0.65 0.65
+f69 - page=Other next=None level=7 index=0 sel=1
+  grow 0.7900001 0.75500005 0.65 0.65
+  rows x=124.5 w=351 h=36 y0=5 big=1
+f70 right page=Other next=None level=7 index=0 sel=1
+  grow 0.75500005 0.7900001 0.65 0.65
+f71 - page=Other next=None level=7 index=0 sel=1
+  grow 0.72 0.8250001 0.65 0.65
+  rows x=124.5 w=351 h=36 y0=5 big=1
+f72 right page=Other next=None level=7 index=0 sel=1
+  grow 0.685 0.86000013 0.65 0.65
+f73 - page=Other next=None level=7 index=0 sel=1
+  grow 0.65 0.89500016 0.65 0.65
+  rows x=124.5 w=351 h=36 y0=5 big=1
+f74 left page=Other next=None level=7 index=0 sel=1
+  grow 0.65 0.9300002 0.65 0.65
+f75 - page=Other next=None level=7 index=0 sel=1
+  grow 0.65 0.9650002 0.65 0.65
+f76 down page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.9300002 0.685 0.65
+f77 - page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.89500016 0.72 0.65
+f78 - page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.86000013 0.75500005 0.65
+  rows x=124.5 w=351 h=36 y0=5 big=1
+f79 accept page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.8250001 0.7900001 0.65
+f80 - page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.7900001 0.8250001 0.65
+f81 - page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.75500005 0.86000013 0.65
+f82 down page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.72 0.8250001 0.685
+f83 - page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.685 0.7900001 0.72
+Menu: Display | Graphics | 3D Stereo | Audio | Keyboard & mouse | Gamepad | Game | Mods | Back
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f84 back page=Other next=None level=7 index=0 sel=1
+  grow 0.65 0.685 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f85 - page=Other next=None level=7 index=0 sel=1
+  grow 0.65 0.72 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f86 - page=Other next=None level=7 index=0 sel=1
+  grow 0.65 0.75500005 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f87 - page=Other next=None level=7 index=0 sel=1
+  grow 0.65 0.7900001 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f88 down page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.75500005 0.685 0.65 0.65 0.65 0.65 0.65 0.65
+f89 - page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.72 0.72 0.65 0.65 0.65 0.65 0.65 0.65
+f90 down page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.685 0.685 0.685 0.65 0.65 0.65 0.65 0.65
+f91 - page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.65 0.65 0.72 0.65 0.65 0.65 0.65 0.65
+Menu: Master volume: 80 | Music volume: 50 | Effects volume: 70 | Music filter: On | Back
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f92 accept page=Other next=None level=7 index=0 sel=0
+  grow 0.685 0.65 0.65 0.65 0.65
+f93 - page=Other next=None level=7 index=0 sel=0
+  grow 0.72 0.65 0.65 0.65 0.65
+f94 - page=Other next=None level=7 index=0 sel=0
+  grow 0.75500005 0.65 0.65 0.65 0.65
+f95 - page=Other next=None level=7 index=0 sel=0
+  grow 0.7900001 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f96 left page=Other next=None level=7 index=0 sel=0
+  grow 0.8250001 0.65 0.65 0.65 0.65
+f97 - page=Other next=None level=7 index=0 sel=0
+  grow 0.86000013 0.65 0.65 0.65 0.65
+f98 - page=Other next=None level=7 index=0 sel=0
+  grow 0.89500016 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f99 right page=Other next=None level=7 index=0 sel=0
+  grow 0.9300002 0.65 0.65 0.65 0.65
+f100 - page=Other next=None level=7 index=0 sel=0
+  grow 0.9650002 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f101 right page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f102 - page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=129 w=342 h=36 y0=5 big=1
+f103 right page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f104 - page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f105 right page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f106 - page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f107 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f108 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f109 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f110 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f111 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f112 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f113 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f114 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f115 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f116 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f117 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f118 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f119 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f120 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f121 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f122 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f123 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f124 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f125 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f126 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f127 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f128 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f129 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f130 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f131 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f132 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f133 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f134 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f135 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f136 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f137 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f138 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f139 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f140 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f141 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f142 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+  rows x=129 w=342 h=36 y0=5 big=1
+f143 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f144 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f145 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f146 rheld page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65 0.65 0.65 0.65
+f147 down page=Other next=None level=7 index=0 sel=1
+  grow 0.965 0.685 0.65 0.65 0.65
+f148 - page=Other next=None level=7 index=0 sel=1
+  grow 0.92999995 0.72 0.65 0.65 0.65
+  rows x=129 w=342 h=36 y0=5 big=1
+f149 lheld page=Other next=None level=7 index=0 sel=1
+  grow 0.8949999 0.75500005 0.65 0.65 0.65
+f150 lheld page=Other next=None level=7 index=0 sel=1
+  grow 0.8599999 0.7900001 0.65 0.65 0.65
+f151 lheld page=Other next=None level=7 index=0 sel=1
+  grow 0.82499987 0.8250001 0.65 0.65 0.65
+f152 lheld page=Other next=None level=7 index=0 sel=1
+  grow 0.78999984 0.86000013 0.65 0.65 0.65
+  rows x=129 w=342 h=36 y0=5 big=1
+f153 lheld page=Other next=None level=7 index=0 sel=1
+  grow 0.7549998 0.89500016 0.65 0.65 0.65
+f154 lheld page=Other next=None level=7 index=0 sel=1
+  grow 0.7199998 0.9300002 0.65 0.65 0.65
+f155 lheld page=Other next=None level=7 index=0 sel=1
+  grow 0.68499976 0.9650002 0.65 0.65 0.65
+f156 lheld page=Other next=None level=7 index=0 sel=1
+  grow 0.65 1 0.65 0.65 0.65
+f157 down page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.965 0.685 0.65 0.65
+f158 - page=Other next=None level=7 index=0 sel=2
+  grow 0.65 0.92999995 0.72 0.65 0.65
+f159 down page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.8949999 0.685 0.685 0.65
+f160 - page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.8599999 0.65 0.72 0.65
+  rows x=129 w=342 h=36 y0=5 big=1
+f161 accept page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.82499987 0.65 0.75500005 0.65
+f162 - page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.78999984 0.65 0.7900001 0.65
+f163 - page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.7549998 0.65 0.8250001 0.65
+f164 down page=Other next=None level=7 index=0 sel=4
+  grow 0.65 0.7199998 0.65 0.7900001 0.685
+f165 - page=Other next=None level=7 index=0 sel=4
+  grow 0.65 0.68499976 0.65 0.75500005 0.72
+f166 - page=Other next=None level=7 index=0 sel=4
+  grow 0.65 0.65 0.65 0.72 0.75500005
+Menu: Display | Graphics | 3D Stereo | Audio | Keyboard & mouse | Gamepad | Game | Mods | Back
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f167 accept page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.65 0.65 0.685 0.65 0.65 0.65 0.65 0.65
+f168 - page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.65 0.65 0.72 0.65 0.65 0.65 0.65 0.65
+f169 - page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.65 0.65 0.75500005 0.65 0.65 0.65 0.65 0.65
+f170 - page=Other next=None level=7 index=0 sel=3
+  grow 0.65 0.65 0.65 0.7900001 0.65 0.65 0.65 0.65 0.65
+f171 down page=Other next=None level=7 index=0 sel=4
+  grow 0.65 0.65 0.65 0.75500005 0.685 0.65 0.65 0.65 0.65
+f172 - page=Other next=None level=7 index=0 sel=4
+  grow 0.65 0.65 0.65 0.72 0.72 0.65 0.65 0.65 0.65
+f173 down page=Other next=None level=7 index=0 sel=5
+  grow 0.65 0.65 0.65 0.685 0.685 0.685 0.65 0.65 0.65
+f174 - page=Other next=None level=7 index=0 sel=5
+  grow 0.65 0.65 0.65 0.65 0.65 0.72 0.65 0.65 0.65
+f175 down page=Other next=None level=7 index=0 sel=6
+  grow 0.65 0.65 0.65 0.65 0.65 0.685 0.685 0.65 0.65
+f176 - page=Other next=None level=7 index=0 sel=6
+  grow 0.65 0.65 0.65 0.65 0.65 0.65 0.72 0.65 0.65
+Menu: Difficulty: Normal | Back
+  rows x=144.5 w=311 h=36 y0=5 big=1
+f177 accept page=Other next=None level=7 index=0 sel=0
+  grow 0.685 0.65
+f178 - page=Other next=None level=7 index=0 sel=0
+  grow 0.72 0.65
+f179 - page=Other next=None level=7 index=0 sel=0
+  grow 0.75500005 0.65
+f180 - page=Other next=None level=7 index=0 sel=0
+  grow 0.7900001 0.65
+  rows x=165 w=270 h=36 y0=5 big=1
+f181 right page=Other next=None level=7 index=0 sel=0
+  grow 0.8250001 0.65
+f182 - page=Other next=None level=7 index=0 sel=0
+  grow 0.86000013 0.65
+  rows x=165 w=270 h=36 y0=5 big=1
+f183 right page=Other next=None level=7 index=0 sel=0
+  grow 0.89500016 0.65
+f184 - page=Other next=None level=7 index=0 sel=0
+  grow 0.9300002 0.65
+  rows x=165 w=270 h=36 y0=5 big=1
+f185 left page=Other next=None level=7 index=0 sel=0
+  grow 0.9650002 0.65
+f186 - page=Other next=None level=7 index=0 sel=0
+  grow 1 0.65
+Menu: Display | Graphics | 3D Stereo | Audio | Keyboard & mouse | Gamepad | Game | Mods | Back
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f187 back page=Other next=None level=7 index=0 sel=6
+  grow 0.65 0.65 0.65 0.65 0.65 0.65 0.685 0.65 0.65
+f188 - page=Other next=None level=7 index=0 sel=6
+  grow 0.65 0.65 0.65 0.65 0.65 0.65 0.72 0.65 0.65
+f189 - page=Other next=None level=7 index=0 sel=6
+  grow 0.65 0.65 0.65 0.65 0.65 0.65 0.75500005 0.65 0.65
+f190 - page=Other next=None level=7 index=0 sel=6
+  grow 0.65 0.65 0.65 0.65 0.65 0.65 0.7900001 0.65 0.65
+Menu: New Game | Level: 1 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f191 back page=Main next=None level=7 index=0 sel=0
+  grow 0.685 0.65 0.65 0.65 0.65
+f192 - page=Main next=None level=7 index=0 sel=0
+  grow 0.72 0.65 0.65 0.65 0.65
+f193 - page=Main next=None level=7 index=0 sel=0
+  grow 0.75500005 0.65 0.65 0.65 0.65
+f194 - page=Main next=None level=7 index=0 sel=0
+  grow 0.7900001 0.65 0.65 0.65 0.65
+Menu: Really Quit? | Yes | No
+  rows x=193 w=214 h=36 y0=113 big=1
+f195 back page=Quit next=None level=7 index=0 sel=1
+  grow 1 0.685 0.65
+f196 - page=Quit next=None level=7 index=0 sel=1
+  grow 1 0.72 0.65
+f197 - page=Quit next=None level=7 index=0 sel=1
+  grow 1 0.75500005 0.65
+f198 - page=Quit next=None level=7 index=0 sel=1
+  grow 1 0.7900001 0.65
+f199 down page=Quit next=None level=7 index=0 sel=2
+  grow 1 0.75500005 0.685
+f200 - page=Quit next=None level=7 index=0 sel=2
+  grow 1 0.72 0.72
+f201 - page=Quit next=None level=7 index=0 sel=2
+  grow 1 0.685 0.75500005
+Menu: New Game | Level: 1 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f202 accept page=Main next=None level=7 index=0 sel=0
+  grow 0.685 0.65 0.65 0.65 0.65
+f203 - page=Main next=None level=7 index=0 sel=0
+  grow 0.72 0.65 0.65 0.65 0.65
+f204 - page=Main next=None level=7 index=0 sel=0
+  grow 0.75500005 0.65 0.65 0.65 0.65
+f205 - page=Main next=None level=7 index=0 sel=0
+  grow 0.7900001 0.65 0.65 0.65 0.65
+Menu: Really Quit? | Yes | No
+  rows x=193 w=214 h=36 y0=113 big=1
+f206 back page=Quit next=None level=7 index=0 sel=1
+  grow 1 0.685 0.65
+f207 - page=Quit next=None level=7 index=0 sel=1
+  grow 1 0.72 0.65
+f208 - page=Quit next=None level=7 index=0 sel=1
+  grow 1 0.75500005 0.65
+f209 - page=Quit next=None level=7 index=0 sel=1
+  grow 1 0.7900001 0.65
+Menu: New Game | Level: 1 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f210 back page=Main next=None level=7 index=0 sel=0
+  grow 0.685 0.65 0.65 0.65 0.65
+f211 - page=Main next=None level=7 index=0 sel=0
+  grow 0.72 0.65 0.65 0.65 0.65
+f212 - page=Main next=None level=7 index=0 sel=0
+  grow 0.75500005 0.65 0.65 0.65 0.65
+f213 - page=Main next=None level=7 index=0 sel=0
+  grow 0.7900001 0.65 0.65 0.65 0.65
+f214 down page=Main next=None level=7 index=0 sel=1
+  grow 0.75500005 0.685 0.65 0.65 0.65
+f215 - page=Main next=None level=7 index=0 sel=1
+  grow 0.72 0.72 0.65 0.65 0.65
+f216 - page=Main next=None level=7 index=0 sel=1
+  grow 0.685 0.75500005 0.65 0.65 0.65
+Menu: New Game | Level: 2 | Saved Game | Options | Quit
+  rows x=0 w=224 h=36 y0=5 big=1
+f217 accept page=Main next=None level=7 index=1 sel=1
+  grow 0.65 0.685 0.65 0.65 0.65
+f218 - page=Main next=None level=7 index=1 sel=1
+  grow 0.65 0.72 0.65 0.65 0.65
+f219 - page=Main next=None level=7 index=1 sel=1
+  grow 0.65 0.75500005 0.65 0.65 0.65
+f220 - page=Main next=None level=7 index=1 sel=1
+  grow 0.65 0.7900001 0.65 0.65 0.65
+f221 up page=Main next=None level=7 index=1 sel=0
+  grow 0.685 0.75500005 0.65 0.65 0.65
+f222 - page=Main next=None level=7 index=1 sel=0
+  grow 0.72 0.72 0.65 0.65 0.65
+f223 - page=Main next=None level=7 index=1 sel=0
+  grow 0.75500005 0.685 0.65 0.65 0.65
+f224 accept page=Main next=Briefing level=6 index=1 sel=0
+  grow 0.7900001 0.65 0.65 0.65 0.65
+f225 - page=Main next=Briefing level=6 index=1 sel=0
+  grow 0.8250001 0.65 0.65 0.65 0.65
+f226 - page=Main next=Briefing level=6 index=1 sel=0
+  grow 0.86000013 0.65 0.65 0.65 0.65
+f227 - page=Main next=Briefing level=6 index=1 sel=0
+  grow 0.89500016 0.65 0.65 0.65 0.65
+f228 - page=Main next=Briefing level=6 index=1 sel=0
+  grow 0.9300002 0.65 0.65 0.65 0.65
+f229 - page=Main next=Briefing level=6 index=1 sel=0
+  grow 0.9650002 0.65 0.65 0.65 0.65
+== main menu: settings after
+master_volume=100
+music_volume=30
+effects_volume=70
+music_filter=False
+mouse_sensitivity=1
+invert_mouse=False
+pad_sensitivity=1
+invert_pad=False
+touch_controls=Auto
+fullscreen=Off
+window_size=1280x960
+exclusive_size=
+render_scale=100
+vsync=On
+frame_limit=0
+gpu_backend=Auto
+gamma=1
+difficulty=Hard
+gore=False
+graphics=Enhanced
+antialiasing=X2
+stereo=Off
+stereo_separation=0.25
+stereo_convergence=10
+head_tracking=Off
+upscaler_url=
+upscaler_sha256=

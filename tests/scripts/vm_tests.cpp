@@ -33,6 +33,7 @@
 #include "audio_stream_tests.h"
 #include "voice_binding_tests.h"
 #include "flow_tests.h"
+#include "menu_tests.h"
 #include "input_3ds_tests.h"
 #include "heap_split_tests.h"
 #include "kurt_stream_tests.h"
@@ -8119,6 +8120,18 @@ int main(int argc, char** argv) {
     // The formats library reaches the filesystem through this seam.
     mdk::formats::setFileSystem(mdk::test::host::fileSystem());
 
+    // `vm_tests dump-menu <section>`: the menus (menu_tests.h), the C++ side of
+    // tests/scripts/menu_probe -- how golden/menu_<section>.txt is diffed.
+    if (argc > 2 && strcmp(argv[1], "dump-menu") == 0) {
+        const MdkData menuData = locateData();
+        if (!menuData.found()) {
+            fprintf(stderr, "dump-menu: no MDK data (set MDK_DATA_DIR)\n");
+            return 1;
+        }
+        fputs(mdk::test::menuDump(menuData, argv[2]).c_str(), stdout);
+        return 0;
+    }
+
     // The sky inverse's exact .NET reduction order, independent of game data.
     const int numericsFailures = mdk::test::runSystemNumericsTests();
     failures += numericsFailures;
@@ -8238,6 +8251,14 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    // The menus, the settings file and the briefing against the C# probe
+    // (menu_tests.h): MDKFONT.FTI's fonts and texts, so after the data check.
+    const int menuFailures = mdk::test::runMenuTests(data);
+    failures += menuFailures;
+    if (menuFailures == 0) {
+        printf("PASS MenusMatchTheOracle\n");
+    }
+
     const int32_t kLevel = 7;
     LevelData levelData;
     if (!LevelData::load(&levelData, &data, kLevel)) {

@@ -43,6 +43,9 @@
 #include "game/level_view.h"
 #include "game/follow_camera.h"
 #include "game/game_flow.h"
+#include "game/game_settings.h"
+#include "game/pause_menu.h"
+#include "game/screen_view.h"
 #include "game/font_view.h"
 #include "game/hud_view.h"
 #include "game/kurt_sprite.h"
@@ -67,6 +70,7 @@
 #include "render/surface_cache.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
+#include "menu_screens.h"
 
 namespace {
 
@@ -253,6 +257,12 @@ int main(int argc, char** argv) {
     bool trueAspect = false;
     int hiddenHeight = 960;
     int levelNumber = 3;
+    // --level names the first level: the run starts in it (the C#'s Start.Level).
+    // Without it the run starts at the main menu (the C#'s Start.Menu, package
+    // #20a), so every test and harness run that passes --level is unchanged.
+    bool levelGiven = false;
+    // --press: menu keys at game times (the C#'s TestPresses, game/menu_presses.h).
+    mdk::MenuPresses presses;
     bool fixedStep = false;
     bool hasStartOverride = false;
     mdk::Vec3 startOverride{};
@@ -336,6 +346,13 @@ int main(int argc, char** argv) {
             }
             if (levelNumber < 3 || levelNumber > 8) {
                 std::fprintf(stderr, "[main] --level must be 3-8\n");
+                return 1;
+            }
+            levelGiven = true;
+        } else if ((value = optionValue(argv[i], "--press")) != nullptr) {
+            std::string error;
+            if (!presses.parse(value, &error)) {
+                std::fprintf(stderr, "[main] invalid --press: %s\n", error.c_str());
                 return 1;
             }
         } else if ((value = optionValue(argv[i], "--at")) != nullptr) {
@@ -630,22 +647,65 @@ int main(int argc, char** argv) {
     // oracle's own shape, and the capture path runs exactly as it did before.
     mdk::audioOpen();
 
+    // THE SETTINGS (C# Flow/Settings.cs): the C#'s settings.cfg in the user
+    // folder (menu_screens.h). The volumes reach the level's mixer, the difficulty
+    // Kurt and the gore the scripts as each level starts (Viewer.cs:231-235); the
+    // menus' options change them and save the file.
+    const std::string settingsFile = mdk::settingsPath();
+    mdk::GameSettings settings = mdk::loadSettings(settingsFile);
+
     // ---------------------------------------------------------------------
     // THE FLOW (game/game_flow.h, the C#'s Game): it decides which level plays,
     // and after a level's end which screen follows. The run starts in a level
-    // (Start::Level, --level), as the C#'s `--level` does; the menu is cut.
+    // with --level (Start::Level), as the C#'s `--level` does, and at the main
+    // menu without it (Start::Menu, package #20a).
     // ---------------------------------------------------------------------
     mdk::flow::FlowOptions flowOptions;
-    flowOptions.start = mdk::flow::Start::Level;
-    flowOptions.level = levelNumber;
+    flowOptions.start = levelGiven ? mdk::flow::Start::Level : mdk::flow::Start::Menu;
+    // Without --level the C#'s default first level (ViewerOptions, the order's
+    // first: LEVEL7), which is where the menu's "Level: 1" starts.
+    if (levelGiven) {
+        flowOptions.level = levelNumber;
+    }
     mdk::flow::GameFlow flow(flowOptions);
-    if (flow.handle(flow.firstEvent()) != mdk::flow::Screen::Level) {
-        std::fprintf(stderr, "[main] the flow did not start in a level\n");
+    mdk::flow::Screen screen = flow.handle(flow.firstEvent());
+    if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu) {
+        std::fprintf(stderr, "[main] the flow did not start in a level or the menu\n");
         mdk_render_destroy(renderer);
         mdk::audioClose();
         mdk::windowDestroy(&window);
         return 1;
     }
+    // The menus' screens and the presses' clock (the C#'s Game.Run `time`).
+    float pressTime = 0.0f;
+    mdk::FrontScreens front;
+    front.renderer = renderer;
+    front.window = &window;
+    front.headless = headless;
+    front.fixedStep = fixedStep;
+    front.flow = &flow;
+    front.settings = &settings;
+    front.settingsFile = settingsFile;
+    front.presses = &presses;
+    front.time = &pressTime;
+    front.maxFrames = maxFrames;
+    front.captureFrame = captureFrame;
+    front.capturePath = capturePath.empty() ? nullptr : capturePath.c_str();
+    // THE PAUSE MENU (C# PauseMenu: Esc in a level). It outlives the levels; its
+    // options change `settings` and save them, and the volumes reach the live
+    // mixer at once (C# Settings.Apply), through `pauseDevice`.
+    mdk::menu::PauseMenu pause;
+    struct PauseApply {
+        mdk::GameSettings* settings;
+        const std::string* file;
+        mdk::audio::SoundDevice* device;
+        static void applied(void* user) {
+            PauseApply* self = static_cast<PauseApply*>(user);
+            self->settings->applyAudio(self->device);
+            mdk::saveSettings(*self->settings, *self->file);
+        }
+    };
+    PauseApply pauseApply{&settings, &settingsFile, nullptr};
     // The run's frame count and its end: run-scoped, so --frames, --capture-frame
     // and the log count frames across every level the run plays.
     uint32_t frame = 0;
@@ -654,6 +714,11 @@ int main(int argc, char** argv) {
     // (--event; --at), later ones do not (Game.cs:487).
     bool firstLevel = true;
     printMemory("run-start", levelNumber, memorySample(renderer));
+    // A run that starts at the menu hands no test option to a level (C#
+    // Handle(Menu) clears _firstLevel before any level is played).
+    if (screen == mdk::flow::Screen::Menu) {
+        firstLevel = false;
+    }
 
     // =====================================================================
     // THE LEVEL LOOP (package 2, the next-level transition). One pass per level:
@@ -670,7 +735,24 @@ int main(int argc, char** argv) {
     // marked "END OF THE LEVEL".
     // =====================================================================
     for (;;) {
+    // THE MENU AND THE BRIEFING (package #20a): the screens before a level, until
+    // the flow names one (menu_screens.h). The first pass of a --level run, and
+    // every level that ends into a level, skip straight past.
+    if (screen != mdk::flow::Screen::Level) {
+        front.frame = &frame;
+        screen = mdk::runFrontScreens(&front);
+        if (screen != mdk::flow::Screen::Level) {
+            exitReason = front.exitReason;
+            break;
+        }
+        if (maxFrames > 0 && (int)frame >= maxFrames) {
+            break;
+        }
+    }
     levelNumber = flow.state().level;
+    // Set when the level is left for the main menu (the pause menu's "Main
+    // menu", or a level that ends into the menu).
+    bool toMenu = false;
     // Everything the renderer makes from here on is the level's.
     const MdkScope levelScope = mdk_render_mark(renderer);
     bool nextLevel = false;
@@ -1023,6 +1105,9 @@ int main(int argc, char** argv) {
     auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
         player = mdk::Player();
+        // The difficulty decides the town's timer: before the scripts (Viewer.cs:231,
+        // `_kurt.Inventory.Difficulty = ui.Settings.Difficulty`).
+        player.combat().setDifficulty((mdk::Kurt::Difficulty)settings.difficulty);
         if (firstSpawn) {
             player.setHealth(entryHealth);
             firstSpawn = false;
@@ -1098,12 +1183,18 @@ int main(int argc, char** argv) {
             const int32_t runtimeSeed = scriptSeedSet ? scriptSeed : freshScriptSeed();
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, runtimeSeed, &bank, &player,
                                                           &sprites));
-            // The gore setting, and therefore the oracle's DEFAULT (ScriptRuntime.cs:214
-            // initialises Option to 1 and Settings.Gore defaults to true, Settings.cs:75).
-            // This frontend has no settings UI, so it ships the default; the 3DS frontend
-            // uses the same value. Review-6 F2: this used to be 0 under a comment calling
-            // that "the oracle's Option", which is the opposite of the oracle's default.
-            runtime->option = 1;
+            // The gore setting (Viewer.cs:234, `Option = ui.Settings.Gore ? 1 : 0`),
+            // on by default as the oracle's (ScriptRuntime.cs:214 initialises Option to 1
+            // and Settings.Gore defaults to true, Settings.cs:75). Review-6 F2: this used
+            // to be 0 under a comment calling that "the oracle's Option", which is the
+            // opposite of the oracle's default. The menus' Gore option sets it since
+            // package #20a, for the next level as in the C#.
+            runtime->option = settings.gore ? 1 : 0;
+            // The volumes and the music filter (C# Settings.Apply onto its AudioDevice;
+            // here the runtime's mixer owns the device), and the pause menu's changes
+            // reach this one live.
+            settings.applyAudio(&runtime->mixer().device());
+            pauseApply.device = &runtime->mixer().device();
             // hud_message reaches the HUD (Viewer.cs:245, `_scripts.Messages`).
             runtime->hudMessages = &hud.messages();
             // Kurt's own sounds (footsteps, the chute, the guns) go through his
@@ -1205,6 +1296,60 @@ int main(int argc, char** argv) {
             }
         }
 
+        // THE PAUSE MENU (C# Viewer.Frame, Viewer.cs:367-394): while it is open the
+        // game waits (no simulation, no look), and Esc opens it -- that frame waits
+        // too. Its keys are the menus' (menu_screens.h); --press reaches it as well.
+        mdk::MenuKeyState menuKeyState;
+        mdk::windowTakeMenuKeys(&menuKeyState);
+        mdk::menu::Keys keys;
+        keys.up = menuKeyState.up;
+        keys.down = menuKeyState.down;
+        keys.left = menuKeyState.left;
+        keys.right = menuKeyState.right;
+        keys.accept = menuKeyState.accept;
+        keys.back = menuKeyState.back;
+        keys.leftHeld = menuKeyState.leftHeld;
+        keys.rightHeld = menuKeyState.rightHeld;
+        keys.any = menuKeyState.any;
+        pressTime += elapsed;
+        presses.apply(pressTime, &keys);
+        bool pausedFrame = false;
+        mdk::flow::Event pauseNext = mdk::flow::Event::None;
+        if (pause.open()) {
+            pauseNext = pause.update(keys, elapsed);
+            pausedFrame = true;
+            input.takeMouseX();
+            input.takeMouseY();
+            if (!pause.open() && !headless) {
+                mdk::windowCaptureMouse(&window, true);
+            }
+        } else if (keys.back && playerReady && hudReady && hudBig->ready()) {
+            mdk::menu::MenuItems& items = pause.items();
+            items.setFonts(&hudBig->font(), &hudSmall->font());
+            items.setHost(mdk::menu::Host::Console);
+            items.setSettings(&settings, PauseApply::applied, &pauseApply);
+            items.setPrint([](void*, const char* line) { std::printf("%s\n", line); }, nullptr);
+            pause.show();
+            pausedFrame = true;
+            input.takeMouseX();
+            input.takeMouseY();
+            if (!headless) {
+                mdk::windowCaptureMouse(&window, false);
+            }
+        }
+        if (pauseNext == mdk::flow::Event::Quit) {
+            flow.handle(pauseNext);
+            exitReason = "pause menu Quit";
+            break;
+        }
+        if (pauseNext == mdk::flow::Event::Menu) {
+            // C# Game.Handle(Event.Menu): the level is left for a new main menu.
+            screen = flow.handle(pauseNext);
+            std::printf("[main] flow: pause menu: the main menu\n");
+            toMenu = true;
+            break;
+        }
+
         MdkFrameParams params;
         params.elapsed = elapsed;
         params.frame_index = frame;
@@ -1215,7 +1360,7 @@ int main(int argc, char** argv) {
                                      ? capturePath.c_str()
                                      : nullptr;
 
-        if (playerReady) {
+        if (playerReady && !pausedFrame) {
             // The C# frame order (Viewer.Frame): the mouse look is per frame
             // (Kurt's yaw and the camera's look offset), then the simulation runs
             // in fixed steps, and EACH step updates Kurt and then the camera
@@ -1657,6 +1802,12 @@ int main(int argc, char** argv) {
             hud.messages().update(elapsed);
             mdk_render_canvas_begin(renderer);
             hud.draw(renderer, state);
+            if (pause.open()) {
+                // The menu over the dimmed game (C# PauseMenu.Update's drawing).
+                mdk::ScreenView view;
+                view.layoutInside(mdk_render_canvas_width(renderer), mdk::kCanvasHeight);
+                pause.draw(renderer, view, *hudBig, *hudSmall);
+            }
             mdk_render_canvas_end(renderer);
         }
         mdk_render_end_frame(renderer);
@@ -1702,6 +1853,12 @@ int main(int argc, char** argv) {
                 nextLevel = true;
                 std::printf("[main] flow: next level %d at frame %u, entered at health %d\n",
                             (int)flow.state().level, frame, (int)flow.levelHealth());
+            } else if (after == mdk::flow::Screen::Menu) {
+                // The main menu follows (package #20a): after LEVEL5, a game over, a
+                // level outside the order.
+                std::printf("[main] flow: the menu follows\n");
+                screen = after;
+                toMenu = true;
             } else {
                 std::printf("[main] flow: %s follows, which this frontend cannot show; "
                             "exiting\n",
@@ -1723,6 +1880,8 @@ int main(int argc, char** argv) {
     // its frame-completion boundary (AGENTS.md P3).
     arenaViews.clear();
     music.reset();
+    pauseApply.device = nullptr;   // the runtime's mixer goes next
+    pause = mdk::menu::PauseMenu();
     runtime.reset();
     // The shared pose caches key on the runtime's Model addresses, which the reset
     // above freed (scripts/pose_cache.h; the C#'s next Viewer calls ForgetPoses,
@@ -1753,6 +1912,13 @@ int main(int argc, char** argv) {
             mdk_render_begin_frame(renderer, &blank);
             mdk_render_end_frame(renderer);
         }
+    }
+    if (toMenu) {
+        // The menu's own frames are the completion boundaries for what the level
+        // retired (menu_screens.cpp); the next pass of the loop runs it.
+        printMemory("level-teardown", levelNumber, memorySample(renderer));
+        firstLevel = false;
+        continue;
     }
     if (!nextLevel) {
         // The last level: no frames follow, so what it retired is still waiting for

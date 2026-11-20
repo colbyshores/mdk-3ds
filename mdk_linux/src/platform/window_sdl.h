@@ -41,4 +41,25 @@ bool windowPump(Window* window, Input* input);
 // Grab or release the mouse (relative mode) for look controls.
 void windowCaptureMouse(Window* window, bool on);
 
+// The menus' keys (the C# MenuKey, Input.cs:121-130: the arrows, Return /
+// keypad Enter / Space to accept, Escape to go back): pressed since the last
+// take (a key repeat is a press, as the C#'s), Left/Right held, and `any` --
+// the C#'s AnyPressed: any key or mouse button pressed, repeats not counted.
+// windowPump records them; the menus, the briefing and the pause menu read them.
+struct MenuKeyState {
+    bool up = false;
+    bool down = false;
+    bool left = false;
+    bool right = false;
+    bool accept = false;
+    bool back = false;
+    bool leftHeld = false;
+    bool rightHeld = false;
+    bool any = false;
+};
+
+// The menu keys pumped since the last call; the presses then clear, the held
+// state stays.
+void windowTakeMenuKeys(MenuKeyState* out);
+
 } // namespace mdk

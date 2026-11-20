@@ -441,7 +441,8 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(1), "SKY SHADOWS");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(10), "EDGE SMOOTHING");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kQuitRow), "QUIT");
-    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 20);
+    // + OPTIONS and MAIN MENU, the C# PauseMenu's rows (package #20a).
+    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 22);
     // Left/right on RESUME flip nothing.
     mdk::EnhancedMenu::Input left;
     left.left = true;

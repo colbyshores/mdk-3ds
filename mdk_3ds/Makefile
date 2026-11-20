@@ -166,6 +166,18 @@ $(error WALK=$(WALK) needs AUTOQUIT: the scripted walk is a harness-build featur
 endif
 DEFINES += -DMDK_HW_WALK='"$(WALK)"'
 endif
+# `make AUTOQUIT=90 MENU=Menu.Accept@2,Menu.Back@4,Menu.Accept@5` presses the
+# menus' keys at those seconds of the menus' game time (game/menu_presses.h, the
+# C#'s TestPresses spelling: Menu.Up/Down/Left/Right/Accept/Back), for a build
+# WITHOUT LEVEL=, which boots into the main menu (menu_screens_3ds.h). The example
+# is New Game, the briefing's typing skipped, the briefing closed: the first
+# level. Only menu_screens_3ds.cpp reads it: `make clean` after changing MENU.
+ifneq ($(strip $(MENU)),)
+ifndef AUTOQUIT
+$(error MENU=$(MENU) needs AUTOQUIT: the menu presses are a harness-build feature)
+endif
+DEFINES += -DMDK_HW_MENU='"$(MENU)"'
+endif
 # `make AUTOQUIT=90 EVENT=1` runs special_event 1 after one second of game time, the
 # C#'s --event test option (Program.cs:53, Viewer.RunTests): 50 and below end the level
 # (the arena breaks up, Kurt rises, the screen goes white). Since package 2 the flow

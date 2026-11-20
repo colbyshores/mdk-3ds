@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsRidAgnostic>false</IsRidAgnostic>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\src\Mdk.Formats\Mdk.Formats.csproj" />
+    <ProjectReference Include="..\src\Mdk.Engine\Mdk.Engine.csproj" />
+    <ProjectReference Include="..\src\Mdk.Game\Mdk.Game.csproj" />
+  </ItemGroup>
+</Project>

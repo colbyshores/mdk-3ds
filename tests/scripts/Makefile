@@ -121,6 +121,15 @@ SOURCES_VM := \
 	voice_binding_tests.cpp \
 	archive_guard_tests.cpp \
 	flow_tests.cpp \
+	menu_tests.cpp \
+	$(CORE)/game/game_settings.cpp \
+	$(CORE)/game/screen_view.cpp \
+	$(CORE)/game/menu_items.cpp \
+	$(CORE)/game/main_menu.cpp \
+	$(CORE)/game/pause_menu.cpp \
+	$(CORE)/game/briefing.cpp \
+	$(CORE)/game/enhanced_menu.cpp \
+	$(CORE)/game/enhanced_config.cpp \
 	layer_tests.cpp \
 	mve_audio_tests.cpp \
 	sprite_tests.cpp \
@@ -176,6 +185,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh linux_refusal_report_test.sh
 	@sh linux_arg_parse_test.sh
 	@sh level_chain_test.sh
+	@sh menu_frontend_test.sh
 	@sh panel_geom_test.sh
 	@bash emurun_harness_test.sh
 	@bash frame_gate_test.sh

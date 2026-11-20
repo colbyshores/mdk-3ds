@@ -15,6 +15,14 @@
 // shadow map's two choices; there are more rows than the top screen holds, so
 // the panel shows a scrolling window of them.
 //
+// THE C# PAUSE MENU'S ROWS (package #20a, owner un-cut 2026-11-20). The C#
+// PauseMenu (src/Mdk.Game/Menu/PauseMenu.cs) is Resume, Options, Main menu and
+// Quit; Resume and Quit were already here, so OPTIONS and MAIN MENU sit just
+// above QUIT (which stays the last row, one up from RESUME). OPTIONS opens the
+// C#'s options pages (game/pause_menu.h's openOptions: volumes, gore,
+// difficulty), MAIN MENU leaves the level for the main menu; both are A on the
+// row, never a single press from where the menu opens.
+//
 // This class is the menu's LOGIC and its canvas drawing. It owns no
 // platform input and no file: the frontend translates its buttons into
 // the edge struct below, calls handle(), and acts on its answer: a setting
@@ -52,6 +60,8 @@ public:
         Changed,   // a setting's value changed (the caller applies and persists)
         Closed,    // the menu closed (RESUME, or a close edge): play resumes
         Quit,      // QUIT confirmed with A: the caller ends the run
+        Options,   // OPTIONS with A: the caller opens the options pages
+        MainMenu,  // MAIN MENU with A: the caller leaves for the main menu
     };
 
     // THE SETTING ROWS, t2k's menu kinds (t2k_core/src/ui/menu.cpp TOG / SLD /
@@ -71,11 +81,13 @@ public:
         int32_t choiceCount;
     };
 
-    // The rows: RESUME, the settings, QUIT.
+    // The rows: RESUME, the settings, OPTIONS, MAIN MENU, QUIT.
     static const int32_t kItemCount = 18;
     static const int32_t kResumeRow = 0;
-    static const int32_t kQuitRow = kItemCount + 1;
-    static const int32_t kRowCount = kItemCount + 2;
+    static const int32_t kOptionsRow = kItemCount + 1;
+    static const int32_t kMainMenuRow = kItemCount + 2;
+    static const int32_t kQuitRow = kItemCount + 3;
+    static const int32_t kRowCount = kItemCount + 4;
     // The rows the panel shows at once (the 240-line top screen holds twelve at
     // the small font's 1.5x); the window scrolls to keep the selection in it.
     static const int32_t kVisibleRows = 12;
@@ -98,13 +110,15 @@ public:
     // SLIDER left/right step it (A does nothing); on a CHOICE left/right cycle
     // it backwards/forwards and A forwards. Changed only when a value really
     // moved: a slider at its end answers None, so nothing is written. A on
-    // RESUME closes; A on QUIT is Quit (the menu stays open: the caller is
-    // leaving).
+    // RESUME closes; A on QUIT is Quit and on MAIN MENU MainMenu (the menu
+    // stays open: the caller is leaving); A on OPTIONS is Options (the menu stays
+    // open under the options pages).
     Action handle(const Input& input, EnhancedToggles* toggles);
 
-    // The label of a row ("RESUME", "HAZE", "QUIT").
+    // The label of a row ("RESUME", "HAZE", "OPTIONS", "MAIN MENU", "QUIT").
     static const char* rowLabel(int32_t row);
-    // The setting a row edits, or null for RESUME / QUIT / out of range.
+    // The setting a row edits, or null for RESUME / OPTIONS / MAIN MENU / QUIT /
+    // out of range.
     static const Item* rowItem(int32_t row);
     // A row's value as the panel shows it ("ON", "125%", "AUTO"); empty for
     // RESUME and QUIT. `out` holds at least 16 bytes.

@@ -1474,7 +1474,7 @@ Still open:
   gets after LEVEL8. The statistics' Score-O-matic, the save prompt and the briefing
   (#19/#20) show nothing. `GameState.StrikeUsed` and `Deaths` are not carried (the air strike
   is #14; deaths are counted only for the save, #19).
-- **Death still respawns in place**: the C#'s KurtDied goes to the menu (cut); unchanged.
+- **Death still respawns in place**: the C#'s KurtDied goes to the menu; unchanged (see package #20a's section: the menu exists now, the LASTGAME write is #19's).
 - **The Linux heap after the FIRST teardown** sits ~16 MB above the run's start (the Vulkan
   backend's and lavapipe's pools and compiled pipelines, made once); it is flat from the
   second teardown on (+37 KB, +8 KB, +4 KB over three more), which is what the test pins.
@@ -1520,6 +1520,41 @@ pinned by `golden/L*_wind_*.txt`. Left open, each measured:
 - **3DS**: K_SLIP/K_SLIDE/K_FSLIDE/K_BSLIDE are not in Kurt's start sprite set, so their
   first frames stream (the held frame shows meanwhile). The FAN/BUTSLIDE/BUTBRAKE loops and
   `setPitch` go through the shared mixer; not yet heard on hardware or Mandarine.
+
+## The menus, the briefing and the settings (2026-11-20, package #20a): what landed, what is open
+
+Landed: the main menu is both frontends' entry screen (`--level` / harness `LEVEL=` still start
+in a level), with the C#'s options pages (per host: Graphics/Gore, Audio, Game/Difficulty),
+"Really Quit?", New Game -> the briefing -> (fall skipped) -> the level; the C#'s pause menu on
+Linux (Esc), and its OPTIONS and MAIN MENU as rows of the 3DS START menu; the C#'s settings
+file (Linux `settings.cfg`, 3DS config.ini's game lines), applied as each level starts.
+Pinned by `golden/menu_*.txt` (the C# probe `tests/scripts/menu_probe`) and
+`tests/scripts/menu_frontend_test.sh`; the Linux menu and briefing frames are byte-identical
+to the C#'s (with the C#'s video hidden).
+
+Still open:
+- **No emulator or console run yet** of the 3DS menus (the parent's Mandarine check): the
+  MDKOPT and L<n>_MAP pages are 600 x 360 index textures, padded to 1024 x 512 RGBA8 by the
+  C3D backend (2 MB of linear memory each, loaded in the menus' own scope and released before
+  the level loads); the menu's look on the 400 x 240 panel (FONTBIG at 0.67 px a unit) is
+  unjudged.
+- **The 3DS's volumes are now the C#'s defaults** (master 80, music 50, effects 70: the mix
+  at 0.8 x 0.5 and 0.8 x 0.7 of what it was). It is the oracle's behaviour and the Audio page
+  raises it; the owner should hear it on the console.
+- **The menus are silent**: SND_PUSH on a move, OPTSONG under the options, OPTBUTT on a change,
+  MAINSONG under the menu, TELETYPE in the briefing.
+- **Not drawn behind the menu**: MDK12.FLC and the slideshow (#20b/#20c: VideoPlayer,
+  Slideshow); the INTRO1A splash after a death or the end movies (#20c). The C#'s own fallback
+  without the video, MDKOPT, is what is drawn.
+- **The saves are #19's**: `menu::MenuSaves` (list, peek, load) is null on both frontends, so
+  there is no Continue and Saved Game lists nothing; the pause menu's quick-save hint is not
+  drawn.
+- **Not ported**: the pointer (hover and clicks), the typed keys (Y/N on "Really Quit?",
+  SEETHEWHOLEGAME's debug keys: #21), the desktop's Display, 3D Stereo, Keyboard & mouse,
+  Gamepad and Mods pages (the frontends cannot apply them; `GameSettings` keeps and writes
+  their values), and the menus' MenuPage start options (--options/--controls).
+- **Death still respawns in place** (the C# goes to the menu with the splash): #19's LASTGAME
+  belongs with it.
 
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 

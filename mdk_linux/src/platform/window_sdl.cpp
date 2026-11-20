@@ -120,6 +120,42 @@ void hold(Input* input, int key, uint32_t* held, uint32_t bit, bool down) {
     input->down[key] = *held != 0;
 }
 
+// The menu keys since the last windowTakeMenuKeys (C# Input.SetKey's MenuKeys).
+MenuKeyState menuKeys;
+
+void menuKey(SDL_Scancode sc, bool down, bool repeat) {
+    if (down && !repeat) {
+        menuKeys.any = true;
+    }
+    switch (sc) {
+        case SDL_SCANCODE_UP:
+            menuKeys.up = menuKeys.up || down;
+            break;
+        case SDL_SCANCODE_DOWN:
+            menuKeys.down = menuKeys.down || down;
+            break;
+        case SDL_SCANCODE_LEFT:
+            menuKeys.left = menuKeys.left || down;
+            menuKeys.leftHeld = down;
+            break;
+        case SDL_SCANCODE_RIGHT:
+            menuKeys.right = menuKeys.right || down;
+            menuKeys.rightHeld = down;
+            break;
+        case SDL_SCANCODE_RETURN:
+        case SDL_SCANCODE_KP_ENTER:
+        case SDL_SCANCODE_SPACE:
+            menuKeys.accept = menuKeys.accept || down;
+            break;
+        case SDL_SCANCODE_ESCAPE:
+        case SDL_SCANCODE_AC_BACK:
+            menuKeys.back = menuKeys.back || down;
+            break;
+        default:
+            break;
+    }
+}
+
 } // namespace
 
 // Pump the platform's events, translating them into the game's input.
@@ -136,6 +172,7 @@ bool windowPump(Window* window, Input* input) {
                 }
                 const bool down = event.type == SDL_EVENT_KEY_DOWN;
                 const SDL_Scancode sc = event.key.scancode;
+                menuKey(sc, down, event.key.repeat);
                 const int key = keyForScancode(sc);
                 if (key == kKeyFire) {
                     hold(input, kKeyFire, &fireHeld, sc == SDL_SCANCODE_LCTRL ? 1u : 2u, down);
@@ -155,6 +192,9 @@ bool windowPump(Window* window, Input* input) {
             }
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                    menuKeys.any = true;
+                }
                 // The C# Input.DefaultButtons: the left button fires, the right one is
                 // the sniper key. (The wheel -- the item keys, and the scope's zoom in
                 // sniper mode -- is not ported: Input::wheel stays 0.)
@@ -183,6 +223,15 @@ bool windowPump(Window* window, Input* input) {
         }
     }
     return true;
+}
+
+void windowTakeMenuKeys(MenuKeyState* out) {
+    *out = menuKeys;
+    const bool leftHeld = menuKeys.leftHeld;
+    const bool rightHeld = menuKeys.rightHeld;
+    menuKeys = MenuKeyState();
+    menuKeys.leftHeld = leftHeld;
+    menuKeys.rightHeld = rightHeld;
 }
 
 } // namespace mdk

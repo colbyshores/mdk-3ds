@@ -29,6 +29,8 @@ public:
               const uint8_t* paletteRgba);
 
     bool ready() const { return texture_ >= 0; }
+    // The font the atlas was built from (the menus measure their rows in it).
+    const formats::Font& font() const { return font_; }
 
     // Width of a text in pixels, at scale 1.
     int32_t width(const char* text) const { return font_.width(std::string(text)); }

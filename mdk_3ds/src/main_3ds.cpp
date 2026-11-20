@@ -14,11 +14,11 @@
 // draw once — with the camera placed by the LAST step, not by the frame.
 //
 // WHAT IS NOT HERE, EACH WITH ITS CAUSE:
-//   * The screens the flow can ask for other than the level (menu, briefing,
-//     statistics, stream, fall, end movies). Menu/ is cut (owner directive
-//     2026-11-05: boot straight into a level), so the frontend starts with
-//     Start::Level and treats any other screen as the end of the run rather than
-//     pretending to show one.
+//   * The screens the flow can ask for other than the level, the menu and the
+//     briefing (statistics, stream, fall, end movies): skipped the C#'s way
+//     (GameFlow::skipUnported). The main menu and the briefing are package #20a's
+//     (menu_screens_3ds.h): a release build boots into the menu, a harness LEVEL=
+//     straight into its level.
 //   * The HUD is HERE, AND IT IS NOT YET ON SCREEN. hud_view.cpp was ported long
 //     before this backend could draw it, because mdk_render_canvas_quad was a
 //     no-op on the Citro3D backend. The canvas is now a record in the frame's
@@ -75,6 +75,9 @@
 #include "game/font_view.h"
 #include "game/follow_camera.h"
 #include "game/game_flow.h"
+#include "game/game_settings.h"
+#include "game/pause_menu.h"
+#include "game/screen_view.h"
 #include "game/hud_view.h"
 #include "game/input.h"
 #include "game/kurt_sprite.h"
@@ -98,6 +101,7 @@
 #include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
+#include "menu_screens_3ds.h"
 
 namespace {
 
@@ -139,6 +143,15 @@ constexpr float kAspect = 400.0f / 240.0f;
 // The Enhanced Mode toggles' persistence (SPEC.md 7.9): the whole
 // config.ini, rewritten whenever a toggle changes. The directory is
 // the log's (log_3ds.cpp makes sdmc:/3ds/mdk before this can run).
+// THE GAME'S SETTINGS (C# Flow/Settings.cs, package #20a): the volumes, the music
+// filter, the difficulty and gore, kept in the same config.ini after the toggles
+// (game/game_settings.h's formatConsole; each parser skips the other's keys).
+// File-scope because the menus' option changes save the file from the screens
+// (menu_screens_3ds.cpp) as well as from the level's START menu.
+static mdk::GameSettings g_gameSettings;
+// The toggles the file is written with (main's own), for saveConfigNow.
+static const mdk::EnhancedToggles* g_toggles = nullptr;
+
 bool saveEnhancedConfig(const mdk::EnhancedToggles& toggles) {
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_TOGGLES)
     // A TOGGLES harness build runs a config the card does not hold: writing it
@@ -151,10 +164,16 @@ bool saveEnhancedConfig(const mdk::EnhancedToggles& toggles) {
     if (!config) {
         return false;
     }
-    const std::string text = mdk::writeEnhancedConfig(toggles);
+    const std::string text = mdk::writeEnhancedConfig(toggles) + g_gameSettings.formatConsole();
     const bool written = fwrite(text.c_str(), 1, text.size(), config) == text.size();
     fclose(config);
     return written;
+}
+
+// config.ini with the current toggles and settings (the options' save, C#
+// Ui.ApplySettings).
+bool saveConfigNow() {
+    return g_toggles != nullptr && saveEnhancedConfig(*g_toggles);
 }
 
 // PHASE 0 HEAP PROBE (arena streaming). The number that matters is the
@@ -484,7 +503,8 @@ int main(int argc, char** argv) {
     // defaults too, and says so in the boot log.
     mdk::EnhancedToggles enhancedToggles;
     {
-        char configText[1024];
+        // Static, and 2 KB: the toggles' lines and the game's (package #20a).
+        static char configText[2048];
         bool read = false;
         if (FILE* config = fopen("sdmc:/3ds/mdk/config.ini", "rb")) {
             const size_t got = fread(configText, 1, sizeof(configText) - 1, config);
@@ -492,8 +512,16 @@ int main(int argc, char** argv) {
             fclose(config);
             read = true;
         }
+        if (read) {
+            g_gameSettings.parseOver(configText);
+        }
         if (read && mdk::parseEnhancedConfig(configText, &enhancedToggles)) {
-            mdk::log3dsPrintf("config: sdmc:/3ds/mdk/config.ini loaded");
+            mdk::log3dsPrintf("config: sdmc:/3ds/mdk/config.ini loaded (game: master=%d music=%d "
+                              "effects=%d filter=%d difficulty=%s gore=%d)",
+                              (int)g_gameSettings.masterVolume, (int)g_gameSettings.musicVolume,
+                              (int)g_gameSettings.effectsVolume, (int)g_gameSettings.musicFilter,
+                              mdk::GameSettings::difficultyName(g_gameSettings.difficulty),
+                              (int)g_gameSettings.gore);
         } else {
             if (read) {
                 mdk::log3dsPrintf("config: config.ini did not parse; defaults kept");
@@ -571,6 +599,7 @@ int main(int argc, char** argv) {
                 }
             }
             mdk::parseEnhancedConfig(overrides, &enhancedToggles);
+            g_gameSettings.parseOver(overrides);
             mdk::log3dsPrintf("main: harness config override TOGGLES=%s", MDK_HW_STR(MDK_HW_TOGGLES));
             mdk::log3dsPrintf("main: resolved config shadows=%d lights=%d haze=%d mirrors=%d glow=%d "
                               "filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
@@ -645,17 +674,18 @@ int main(int argc, char** argv) {
     // ---------------------------------------------------------------------
     // The flow, BEFORE the level: the flow is what decides which level plays
     // (C# Game owns _state.Level and hands it to the Viewer), so the frontend
-    // asks it rather than naming a level of its own.
-    //
-    // Start::Level is the cut the owner directive of 2026-11-05 made: Menu/ is
-    // not ported, so there is no menu to show and the run boots straight into a
-    // level. Everything else the flow can ask for is a screen this frontend does
-    // not have, and it says so and stops instead of showing the level again under
-    // a different name.
+    // asks it rather than naming a level of its own. It starts at the main menu
+    // (package #20a), or in the harness's LEVEL=.
     // ---------------------------------------------------------------------
+    // THE ENTRY SCREEN (package #20a, the owner un-cut 2026-11-20): the main menu,
+    // as the C#'s game starts (Start.Menu). A harness LEVEL= still starts in that
+    // level (Start.Level, the C#'s --level), so every hardware and emulator run
+    // that names one is unchanged (menu_screens_3ds.h).
+    g_toggles = &enhancedToggles;
     mdk::flow::FlowOptions options;
-    options.start = mdk::flow::Start::Level;
+    options.start = mdk::flow::Start::Menu;
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_LEVEL)
+    options.start = mdk::flow::Start::Level;
     // The hardware loop's level choice (`make AUTOQUIT=90 LEVEL=<n>`): the
     // console has no command line, so the arena-streaming spec's Phase 0
     // "baseline numbers for every level on hardware" needs the first level
@@ -666,9 +696,9 @@ int main(int argc, char** argv) {
     mdk::flow::GameFlow flow(options);
     mdk::flow::Screen screen = flow.handle(flow.firstEvent());
     mdk::log3dsPrintf("flow: screen=%d level=%d", (int)screen, (int)flow.state().level);
-    if (screen != mdk::flow::Screen::Level) {
-        mdk::log3dsPrintf("flow asked for screen %d, which this frontend cannot show "
-                          "(the menu and its screens are cut); exiting", (int)screen);
+    if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu) {
+        mdk::log3dsPrintf("flow asked for screen %d, which this frontend cannot show; exiting",
+                          (int)screen);
         mdk_render_destroy(renderer);
         mdk::romfsFileSystemExit();
         mdk::log3dsClose();
@@ -686,6 +716,25 @@ int main(int argc, char** argv) {
     // harness's level-to-level chain (package 2).
     bool firstLevel = true;
     heapProbe("run-start");
+    // The menus' screens (menu_screens_3ds.h). A run that starts there hands no
+    // test option to a level (C# Handle(Menu) clears _firstLevel first).
+    mdk::FrontScreens3ds front;
+    front.renderer = renderer;
+    front.flow = &flow;
+    front.settings = &g_gameSettings;
+    front.save = saveConfigNow;
+    front.controls = &controls;
+    front.now = nowSeconds;
+    front.resumePending = &g_resumePending;
+    front.frame = &frame;
+    front.frameBudget = g_frameBudget;
+    if (screen == mdk::flow::Screen::Menu) {
+        firstLevel = false;
+    }
+    // The START menu's OPTIONS row opens the C# PauseMenu's options pages
+    // (pause_menu.h's openOptions). Static: it outlives the levels, as the menu
+    // and its fonts do.
+    static mdk::menu::PauseMenu pauseOptions;
 
     // =====================================================================
     // THE LEVEL LOOP (package 2, the next-level transition). One pass per level:
@@ -712,6 +761,18 @@ int main(int argc, char** argv) {
     // packages edit).
     // =====================================================================
     for (;;) {
+    // THE MENU AND THE BRIEFING (package #20a), until the flow names a level.
+    if (screen != mdk::flow::Screen::Level) {
+        screen = mdk::runFrontScreens3ds(&front);
+        if (screen != mdk::flow::Screen::Level) {
+            exitReason = front.exitReason;
+            break;
+        }
+        heapProbe("menus-done");
+    }
+    // Set when the level is left for the main menu (the START menu's MAIN MENU,
+    // or a level that ends into the menu).
+    bool toMenu = false;
     mdk::log3dsPrintf("level loop: level %d%s", (int)flow.state().level,
                       firstLevel ? " (the run's first: the harness's test options apply)" : "");
     const MdkScope levelScope = mdk_render_mark(renderer);
@@ -1319,7 +1380,9 @@ int main(int argc, char** argv) {
     // 32x4 RNG draws that half consumes, and the random stream is unchanged either
     // way. Review-6 F2: the port used to write 0 and call it "the oracle's Option",
     // which is the opposite of the oracle's default.
-    static const int32_t kScriptOption = 1;  // 1 = gore on, the Settings.Gore default
+    // Since package #20a the menus' Gore option (C# Viewer.cs:234, `Option =
+    // ui.Settings.Gore ? 1 : 0`), read as the level starts; on by default.
+    const int32_t kScriptOption = g_gameSettings.gore ? 1 : 0;
     // THE ONE MIXER, and which one it is depends on the runtime: the C# gives the
     // runtime and Kurt the same SoundMixer, and ScriptRuntime OWNS its mixer, so
     // when there is a runtime the frontend mixes that one and the sink is attached
@@ -1328,6 +1391,8 @@ int main(int argc, char** argv) {
     // it is reset to the standalone mixer before every rebuild, and the runtime's
     // address is stable because the mixer is a member of the object pointed at.
     mdk::audio::SoundMixer* mix = &mixer;
+    // The volumes and the music filter (C# Settings.Apply onto its AudioDevice).
+    g_gameSettings.applyAudio(&mixer.device());
     // THE ONE HEALTH, taken once. The C#'s fresh Viewer seeds Kurt from the fall's
     // carry and CONSUMES it (Viewer.cs:246 -> CarryFromFall, :347-361, which does
     // `_kurt.SetHealth(carry.Health)` and then `state.Carry = null`), so the carry
@@ -1340,6 +1405,8 @@ int main(int argc, char** argv) {
     auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
         player = mdk::Player();
+        // The difficulty decides the town's timer: before the scripts (Viewer.cs:231).
+        player.combat().setDifficulty((mdk::Kurt::Difficulty)g_gameSettings.difficulty);
         player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
         player.yaw = level.dti().startAngle();
         // Pickups show their names (Viewer.cs:249). A respawn is a fresh C# Viewer,
@@ -1426,6 +1493,7 @@ int main(int argc, char** argv) {
             follow.clipView.clip = &mdk::scripts::ScriptRuntime::clipViewTrampoline;
             player.setMixer(&runtime->mixer());
             mix = &runtime->mixer();
+            g_gameSettings.applyAudio(&mix->device());
             // The new mixer owns a new SoundDevice, so the output has to be handed
             // to it: a respawn without this would be a silent level (and, on the
             // DSP path, a device mixing samples nobody hears).
@@ -1732,11 +1800,30 @@ int main(int argc, char** argv) {
         // back to config.ini in the same frame, so a hardware A/B is one press.
         // QUIT is a row, confirmed with A: never a single press.
         bool menuQuit = false;
+        bool menuMainMenu = false;
         if (menuReady) {
             if (!menu.open() && (pressed & (KEY_START | KEY_SELECT))) {
                 menu.setOpen(true);
                 mdk::log3dsPrintf("menu: paused (%s)",
                                   (pressed & KEY_START) ? "START" : "SELECT");
+            } else if (menu.open() && pauseOptions.open()) {
+                // THE OPTIONS PAGES (the C# PauseMenu's Options, package #20a):
+                // the D-pad moves and steps, A chooses, B or START goes up a page
+                // (the C#'s Esc), and Back on the options returns here.
+                mdk::menu::Keys keys;
+                keys.up = (pressed & KEY_DUP) != 0;
+                keys.down = (pressed & KEY_DDOWN) != 0;
+                keys.left = (pressed & KEY_DLEFT) != 0;
+                keys.right = (pressed & KEY_DRIGHT) != 0;
+                keys.accept = (pressed & KEY_A) != 0;
+                keys.back = (pressed & (KEY_B | KEY_START)) != 0;
+                keys.leftHeld = (held & KEY_DLEFT) != 0;
+                keys.rightHeld = (held & KEY_DRIGHT) != 0;
+                keys.any = pressed != 0;
+                pauseOptions.update(keys, elapsed);
+                if (!pauseOptions.open()) {
+                    mdk::log3dsPrintf("menu: options closed");
+                }
             } else if (menu.open()) {
                 mdk::EnhancedMenu::Input edges;
                 edges.up = (pressed & KEY_DUP) != 0;
@@ -1775,6 +1862,41 @@ int main(int argc, char** argv) {
                 } else if (action == mdk::EnhancedMenu::Action::Quit) {
                     menuQuit = true;
                     mdk::log3dsPrintf("menu: QUIT chosen");
+                } else if (action == mdk::EnhancedMenu::Action::MainMenu) {
+                    menuMainMenu = true;
+                    mdk::log3dsPrintf("menu: MAIN MENU chosen");
+                } else if (action == mdk::EnhancedMenu::Action::Options) {
+                    // The C# options pages, over the paused game, in the fonts the
+                    // START menu draws with; their changes apply and save at once.
+                    mdk::menu::MenuItems& items = pauseOptions.items();
+                    items.setFonts(&menuBig.font(), &menuSmall.font());
+                    items.setHost(mdk::menu::Host::Console);
+                    struct Applied {
+                        static void changed(void* user) {
+                            mdk::audio::SoundMixer* const* live =
+                                static_cast<mdk::audio::SoundMixer* const*>(user);
+                            if (*live) {
+                                g_gameSettings.applyAudio(&(*live)->device());
+                            }
+                            const bool saved = saveConfigNow();
+                            mdk::log3dsPrintf("menu: options changed: master=%d music=%d "
+                                              "effects=%d filter=%d difficulty=%s gore=%d "
+                                              "(saved=%d)",
+                                              (int)g_gameSettings.masterVolume,
+                                              (int)g_gameSettings.musicVolume,
+                                              (int)g_gameSettings.effectsVolume,
+                                              (int)g_gameSettings.musicFilter,
+                                              mdk::GameSettings::difficultyName(
+                                                  g_gameSettings.difficulty),
+                                              (int)g_gameSettings.gore, (int)saved);
+                        }
+                        static void print(void*, const char* line) {
+                            mdk::log3dsPrintf("%s", line);
+                        }
+                    };
+                    items.setSettings(&g_gameSettings, Applied::changed, &mix);
+                    items.setPrint(Applied::print, nullptr);
+                    pauseOptions.openOptions();
                 }
                 if (!menu.open()) {
                     mdk::log3dsPrintf("menu: closed (resumed)");
@@ -1798,6 +1920,8 @@ int main(int argc, char** argv) {
         const char* quitReason = "menu Quit";
         if (menuQuit) {
             next = mdk::flow::Event::Quit;
+        } else if (menuMainMenu) {
+            next = mdk::flow::Event::Menu;
         } else if (!menuReady && (held & KEY_START) && (held & KEY_SELECT)) {
             next = mdk::flow::Event::Quit;
             quitReason = "START+SELECT held (no pause menu)";
@@ -1809,6 +1933,12 @@ int main(int argc, char** argv) {
                 break;
             }
             mdk::log3dsPrintf("flow: screen=%d", (int)screen);
+            if (screen == mdk::flow::Screen::Menu) {
+                // C# Game.Handle(Event.Menu): the level is left for a new main menu.
+                menu.setOpen(false);
+                toMenu = true;
+                break;
+            }
             if (screen != mdk::flow::Screen::Level) {
                 exitReason = "the flow asked for a screen this frontend cannot show";
                 break;
@@ -2565,7 +2695,13 @@ int main(int argc, char** argv) {
                 hud.messages().update(elapsed);
                 hud.draw(renderer, state);
             }
-            if (menu.open()) {
+            if (menu.open() && pauseOptions.open()) {
+                // The options pages over the dimmed game (C# PauseMenu.Update's
+                // drawing), on the 600 x 360 view: the top screen's canvas.
+                mdk::ScreenView view;
+                view.layoutInside(mdk_render_canvas_width(renderer), mdk::kCanvasHeight);
+                pauseOptions.draw(renderer, view, menuBig, menuSmall);
+            } else if (menu.open()) {
                 menu.draw(renderer, menuBig, menuSmall, mdk_render_canvas_width(renderer),
                           enhancedToggles);
             }
@@ -2768,6 +2904,11 @@ int main(int argc, char** argv) {
                 mdk::log3dsPrintf("flow: next level %d at frame %lu, entered at health %d",
                                   (int)flow.state().level, (unsigned long)frame,
                                   (int)flow.levelHealth());
+            } else if (screen == mdk::flow::Screen::Menu) {
+                // The main menu follows (package #20a): after LEVEL5, a game over.
+                mdk::log3dsPrintf("flow: the menu follows");
+                menu.setOpen(false);
+                toMenu = true;
             } else {
                 mdk::log3dsPrintf("flow: %s follows, which this frontend cannot show; exiting",
                                   mdk::flow::GameFlow::screenName(screen));
@@ -2829,7 +2970,7 @@ int main(int argc, char** argv) {
     // 5. What the level made through the renderer and no object released, newest
     //    first (the deferred release: freed at the next frame boundary).
     mdk_render_release(renderer, levelScope);
-    if (nextLevel) {
+    if (nextLevel || toMenu) {
         // 6. THE LOADING SCREEN'S FRAMES (C# Play: Show(null), LoadingScreen.Show,
         //    Show(null), Game.cs:480-483): two empty frames, the clear colour, not
         //    game frames (`frame` does not count them). C3D_FrameBegin waits for the

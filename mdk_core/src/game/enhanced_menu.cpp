@@ -60,7 +60,7 @@ const Item kItems[EnhancedMenu::kItemCount] = {
 };
 
 bool isItemRow(int32_t row) {
-    return row > EnhancedMenu::kResumeRow && row < EnhancedMenu::kQuitRow;
+    return row > EnhancedMenu::kResumeRow && row <= EnhancedMenu::kItemCount;
 }
 
 // The index of a choice's current value in its list; -1 when it is none of
@@ -159,6 +159,12 @@ const char* EnhancedMenu::rowLabel(int32_t row) {
     if (row == kQuitRow) {
         return "QUIT";
     }
+    if (row == kOptionsRow) {
+        return "OPTIONS";
+    }
+    if (row == kMainMenuRow) {
+        return "MAIN MENU";
+    }
     return isItemRow(row) ? kItems[row - 1].label : "";
 }
 
@@ -214,6 +220,12 @@ EnhancedMenu::Action EnhancedMenu::handle(const Input& input, EnhancedToggles* t
     }
     if (input.confirm && selected_ == kQuitRow) {
         return Action::Quit;
+    }
+    if (input.confirm && selected_ == kOptionsRow) {
+        return Action::Options;
+    }
+    if (input.confirm && selected_ == kMainMenuRow) {
+        return Action::MainMenu;
     }
     const Item* item = rowItem(selected_);
     if (!item) {
@@ -279,7 +291,8 @@ void EnhancedMenu::draw(MdkRenderer renderer, FontView& big, FontView& small,
             small.draw(renderer, ">", px + 14.0f, baseline, 1.5f, kMark);
         }
         const Colour& labelColour =
-            isSelected ? kSelected : (row == kQuitRow ? kQuit : kRow);
+            isSelected ? kSelected
+                       : ((row == kQuitRow || row == kMainMenuRow) ? kQuit : kRow);
         small.draw(renderer, rowLabel(row), px + 30.0f, baseline, 1.5f, labelColour);
         const Item* item = rowItem(row);
         if (!item) {

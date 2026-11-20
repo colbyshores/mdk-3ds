@@ -68,6 +68,7 @@ find_package(ZLIB REQUIRED)
 set(SOURCES
     # ---- platform layer (this tree) ----
     src/main.cpp
+    src/menu_screens.cpp
     src/audio/audio_sdl.cpp
     src/platform/window_sdl.cpp
     src/platform/filesystem_posix.cpp
@@ -139,6 +140,13 @@ set(SOURCES
     ${CORE}/src/game/messages.cpp
     ${CORE}/src/game/enhanced_config.cpp
     ${CORE}/src/game/enhanced_menu.cpp
+    ${CORE}/src/game/game_settings.cpp
+    ${CORE}/src/game/screen_view.cpp
+    ${CORE}/src/game/menu_items.cpp
+    ${CORE}/src/game/main_menu.cpp
+    ${CORE}/src/game/pause_menu.cpp
+    ${CORE}/src/game/briefing.cpp
+    ${CORE}/src/game/menu_presses.cpp
     ${CORE}/src/game/font_view.cpp
     ${CORE}/src/game/hd_key.cpp
     ${CORE}/src/game/mod_catalog.cpp

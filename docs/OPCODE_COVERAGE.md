@@ -11,6 +11,13 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 - **Updrafts, slide and wind (2026-11-20, PORT_GAPS package 8):** 224 (`wind_zone`)
   ported, after package #3's 114; with package 6 (28): C# **238**, C++ **237**, remaining **1** (130). Details under
   "Remaining" below.
+
+- **Menus and settings (2026-11-20, PORT_GAPS package 20a):** no opcode added or
+  changed; the counts below stand. What changed is an INPUT the opcodes read:
+  `ScriptRuntime::option` (if_option and opcode 129's gore arm) is now the settings'
+  Gore (`Option = ui.Settings.Gore ? 1 : 0`, Viewer.cs:234) on both frontends, still on
+  by default, and Kurt's difficulty (the town timer the scripts read) has its writer
+  (`Kurt::setDifficulty` from the settings, Viewer.cs:231).
 - **Combat and hazard batch (2026-11-20, PORT_GAPS package 4):** 158, 159, 167,
   172, 178 and 184 ported, with the consumer of 164's flag; recount (top-level
   `case` labels of both brace-matched spans, set semantics): C# **238**, C++ **234**,

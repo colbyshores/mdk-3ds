@@ -6,7 +6,8 @@
 #
 #   1. THE CHAIN. `--level=3 --event=1 --event-every-level`: special_event 1 one
 #      second into EVERY level ends it, so the run plays 3 -> 4 -> 8 -> 5 (the C#'s
-#      order, GameState.Order) and stops at the menu after 5. The log must name each
+#      order, GameState.Order) and goes to the main menu after 5 (since package
+#      #20a it is shown, until the frame budget ends the run). The log must name each
 #      skipped screen ("flow: skipped Stream (package #18 not ported)", Statistics,
 #      Fall; after 8 the Gunter stream and the save prompt) and each next level.
 #
@@ -83,8 +84,10 @@ for line in \
     "flow: skipped SavePrompt (package #19 not ported)" \
     "flow: next level 5 at frame 1467, entered at health 100" \
     "flow: level 5 ended (health 100); the flow shows Menu" \
-    "flow: Menu follows, which this frontend cannot show; exiting" \
-    "exit reason: level ended" \
+    "flow: the menu follows" \
+    "flow: the main menu" \
+    "Menu: New Game | Level: 6 | Saved Game | Options | Quit" \
+    "exit reason: frame budget reached" \
     "arena: MEAT_1" \
     "arena: GUNT_1" \
     "arena: MUSE_1"; do

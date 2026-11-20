@@ -1,0 +1,113 @@
+== pause menu
+Menu: Resume | Options | Main menu | Quit
+  rows x=207.5 w=185 h=36 y0=5 big=1
+f0 - open=1 next=None sel=0
+  grow 0.685 0.65 0.65 0.65
+f1 - open=1 next=None sel=0
+  grow 0.72 0.65 0.65 0.65
+f2 - open=1 next=None sel=0
+  grow 0.75500005 0.65 0.65 0.65
+f3 down open=1 next=None sel=1
+  grow 0.72 0.685 0.65 0.65
+f4 - open=1 next=None sel=1
+  grow 0.685 0.72 0.65 0.65
+f5 - open=1 next=None sel=1
+  grow 0.65 0.75500005 0.65 0.65
+Menu: Display | Graphics | 3D Stereo | Audio | Keyboard & mouse | Gamepad | Game | Mods | Back
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f6 accept open=1 next=None sel=0
+  grow 0.685 0.65 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f7 - open=1 next=None sel=0
+  grow 0.72 0.65 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f8 - open=1 next=None sel=0
+  grow 0.75500005 0.65 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f9 - open=1 next=None sel=0
+  grow 0.7900001 0.65 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f10 down open=1 next=None sel=1
+  grow 0.75500005 0.685 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f11 - open=1 next=None sel=1
+  grow 0.72 0.72 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f12 - open=1 next=None sel=1
+  grow 0.685 0.75500005 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+Menu: Graphics: Original | Anti-aliasing: Off | Gore: On | Back
+  rows x=142.5 w=315 h=36 y0=5 big=1
+f13 accept open=1 next=None sel=0
+  grow 0.685 0.65 0.65 0.65
+f14 - open=1 next=None sel=0
+  grow 0.72 0.65 0.65 0.65
+f15 - open=1 next=None sel=0
+  grow 0.75500005 0.65 0.65 0.65
+f16 - open=1 next=None sel=0
+  grow 0.7900001 0.65 0.65 0.65
+Menu: Display | Graphics | 3D Stereo | Audio | Keyboard & mouse | Gamepad | Game | Mods | Back
+  rows x=134.5 w=331 h=36 y0=5 big=1
+f17 back open=1 next=None sel=1
+  grow 0.65 0.685 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f18 - open=1 next=None sel=1
+  grow 0.65 0.72 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+f19 - open=1 next=None sel=1
+  grow 0.65 0.75500005 0.65 0.65 0.65 0.65 0.65 0.65 0.65
+Menu: Resume | Options | Main menu | Quit
+  rows x=207.5 w=185 h=36 y0=5 big=1
+f20 back open=1 next=None sel=0
+  grow 0.685 0.65 0.65 0.65
+f21 - open=1 next=None sel=0
+  grow 0.72 0.65 0.65 0.65
+f22 - open=1 next=None sel=0
+  grow 0.75500005 0.65 0.65 0.65
+f23 down open=1 next=None sel=1
+  grow 0.72 0.685 0.65 0.65
+f24 - open=1 next=None sel=1
+  grow 0.685 0.72 0.65 0.65
+f25 down open=1 next=None sel=2
+  grow 0.65 0.685 0.685 0.65
+f26 - open=1 next=None sel=2
+  grow 0.65 0.65 0.72 0.65
+f27 accept open=1 next=Menu sel=2
+  grow 0.65 0.65 0.75500005 0.65
+f28 - open=1 next=Menu sel=2
+  grow 0.65 0.65 0.7900001 0.65
+f29 - open=1 next=Menu sel=2
+  grow 0.65 0.65 0.8250001 0.65
+Menu: Resume | Options | Main menu | Quit
+f30 new open=1 next=None sel=0
+  grow 0.685 0.65 0.65 0.65
+f31 - open=1 next=None sel=0
+  grow 0.72 0.65 0.65 0.65
+f32 - open=1 next=None sel=0
+  grow 0.75500005 0.65 0.65 0.65
+f33 back open=0 next=None sel=-1
+  grow 
+f34 - open=0 next=None sel=-1
+  grow 
+f35 - open=0 next=None sel=-1
+  grow 
+Menu: Resume | Options | Main menu | Quit
+f36 new open=1 next=None sel=0
+  grow 0.685 0.65 0.65 0.65
+f37 - open=1 next=None sel=0
+  grow 0.72 0.65 0.65 0.65
+f38 - open=1 next=None sel=0
+  grow 0.75500005 0.65 0.65 0.65
+f39 up open=1 next=None sel=0
+  grow 0.7900001 0.65 0.65 0.65
+f40 - open=1 next=None sel=0
+  grow 0.8250001 0.65 0.65 0.65
+f41 down open=1 next=None sel=1
+  grow 0.7900001 0.685 0.65 0.65
+f42 - open=1 next=None sel=1
+  grow 0.75500005 0.72 0.65 0.65
+f43 down open=1 next=None sel=2
+  grow 0.72 0.685 0.685 0.65
+f44 - open=1 next=None sel=2
+  grow 0.685 0.65 0.72 0.65
+f45 down open=1 next=None sel=3
+  grow 0.65 0.65 0.685 0.685
+f46 - open=1 next=None sel=3
+  grow 0.65 0.65 0.65 0.72
+f47 accept open=1 next=Quit sel=3
+  grow 0.65 0.65 0.65 0.75500005
+f48 - open=1 next=Quit sel=3
+  grow 0.65 0.65 0.65 0.7900001
+f49 - open=1 next=Quit sel=3
+  grow 0.65 0.65 0.65 0.8250001

@@ -29,6 +29,11 @@
 // A flattened loop that cleared firstLevel_ before dispatching is a different
 // game, and flow_tests.cpp pins the inner call's view of it.
 //
+// THE MENU IS BACK (package #20a, the owner un-cut 2026-11-20): the frontends
+// show Screen::Menu (game/main_menu.h) and Screen::Briefing (game/briefing.h);
+// the rest below is still the save subsystem (#19) and the other screens
+// (#17b, #18b, #20b, #20c).
+//
 // NOT PORTED, WITH CAUSE — each is the save/menu subsystem the owner directive of
 // 2026-11-05 cut ("boot straight into a level"), not a stub:
 //   * FirstEvent's --load branch and Handle(KurtDied)'s LASTGAME write: both take
@@ -224,12 +229,14 @@ public:
     //   SavePrompt the prompt closed without a save (#19 is cut): Event.Play
     //              (Game.cs:681).
     //   EndMovie   skipped: Event.Menu (EndMovie.cs:58).
-    // Menu, Level and None are not skipped through (Event::None): the menu is the
-    // owner's 2026-11-05 cut, and a frontend shown it stops.
+    // Menu, Level and None are not skipped through (Event::None).
     Event skipScreen();
     // The skip for the screen shown, handled: handle(skipScreen()) until a screen
-    // that is not skipped through (a Level, the Menu, None), at most kMaxSkips
-    // times. `trail`, when given, receives the screens skipped in order (up to
+    // that is not skipped through, at most kMaxSkips times. Since package #20a
+    // the frontends SHOW the Menu and the Briefing (game/main_menu.h,
+    // game/briefing.h), so the walk stops at those as at a Level or None;
+    // skipScreen keeps the Briefing's arm, which is the C#'s skip of it (Esc,
+    // then a key: Event.Fall). `trail`, when given, receives the screens skipped in order (up to
     // kMaxSkips of them), so the frontend can log each one.
     static constexpr int32_t kMaxSkips = 8;
     struct SkipTrail {
@@ -238,7 +245,9 @@ public:
     };
     Screen skipUnported(SkipTrail* trail);
     // The screen's name and, for one this port does not have, the gap package
-    // that ports it (docs/PORT_GAPS.md), for the frontends' "flow: skipped" lines.
+    // that ports it (docs/PORT_GAPS.md), for the frontends' "flow: skipped" lines:
+    // 0 for the ones the frontends show (the Level; the Menu and the Briefing
+    // since #20a).
     static const char* screenName(Screen screen);
     static int32_t screenPackage(Screen screen);
 

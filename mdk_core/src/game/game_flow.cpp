@@ -143,6 +143,10 @@ Screen GameFlow::skipUnported(SkipTrail* trail) {
     }
     for (int32_t i = 0; i < kMaxSkips; i++) {
         const Screen skipped = screen_;
+        // The Briefing is shown since package #20a; skipScreen keeps its arm.
+        if (skipped == Screen::Briefing) {
+            break;
+        }
         const Event next = skipScreen();
         if (next == Event::None) {
             break;
@@ -175,10 +179,10 @@ int32_t GameFlow::screenPackage(Screen screen) {
         case Screen::Stream: return 18;
         case Screen::Fall: return 17;
         case Screen::SavePrompt: return 19;
-        case Screen::Menu:
-        case Screen::Briefing:
         case Screen::Statistics:
         case Screen::EndMovie: return 20;
+        case Screen::Menu:
+        case Screen::Briefing:
         case Screen::None:
         case Screen::Level: break;
     }
