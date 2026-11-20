@@ -434,14 +434,14 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
     down.down = true;
     MDK_CHECK(menu.handle(down, &toggles) == Action::None);
     MDK_CHECK(!menu.open());
-    // It opens on RESUME (row 0); the toggles are rows 1..10, QUIT row 11.
+    // It opens on RESUME (row 0); the toggles are rows 1..10, QUIT the last row.
     menu.setOpen(true);
     MDK_CHECK_EQ(menu.selected(), mdk::EnhancedMenu::kResumeRow);
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(0), "RESUME");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(1), "SKY SHADOWS");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(10), "EDGE SMOOTHING");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kQuitRow), "QUIT");
-    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 12);
+    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 20);
     // Left/right on RESUME flip nothing.
     mdk::EnhancedMenu::Input left;
     left.left = true;
@@ -461,7 +461,7 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
     // Confirm flips the selected toggle only, and reports the change.
     mdk::EnhancedMenu::Input confirm;
     confirm.confirm = true;
-    MDK_CHECK(menu.handle(confirm, &toggles) == Action::Toggled);
+    MDK_CHECK(menu.handle(confirm, &toggles) == Action::Changed);
     MDK_CHECK(!toggles.enableSkyShadows);
     MDK_CHECK(toggles.enableFragmentLights && toggles.enableHaze && toggles.enableMirrors &&
               toggles.enableGlowBillboards);
@@ -472,29 +472,29 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
         menu.handle(down, &toggles);
     }
     MDK_CHECK_EQ(menu.selected(), 10);
-    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
     MDK_CHECK(!toggles.enableEdgeSmoothing);
     MDK_CHECK(toggles.enableLighting);
     menu.handle(up, &toggles);
     MDK_CHECK_EQ(menu.selected(), 9);
-    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
     MDK_CHECK(!toggles.enableLighting);
     MDK_CHECK(toggles.enableHdTextures);
     menu.handle(up, &toggles);
-    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
     MDK_CHECK(!toggles.enableHdTextures);
     MDK_CHECK(toggles.enableMipmaps);
     menu.handle(up, &toggles);
-    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
     MDK_CHECK(!toggles.enableMipmaps);
     MDK_CHECK(toggles.enableFiltering);
     menu.handle(up, &toggles);
-    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
     MDK_CHECK(!toggles.enableFiltering);
     MDK_CHECK(toggles.enableGlowBillboards);
     menu.handle(up, &toggles);
     MDK_CHECK_EQ(menu.selected(), 5);
-    MDK_CHECK(menu.handle(left, &toggles) == Action::Toggled);
+    MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
     MDK_CHECK(!toggles.enableGlowBillboards);
     // Close (START, B or SELECT) leaves the toggles alone and resumes.
     mdk::EnhancedMenu::Input close;
@@ -541,4 +541,335 @@ MDK_TEST(PauseMenuQuitNeedsTheRowAndA) {
     both.close = true;
     MDK_CHECK(menu.handle(both, &toggles) == Action::Closed);
     MDK_CHECK(!menu.open());
+}
+
+namespace {
+
+// The row a label sits on, or -1.
+int32_t menuRowOf(const char* label) {
+    for (int32_t row = 0; row < mdk::EnhancedMenu::kRowCount; row++) {
+        if (strcmp(mdk::EnhancedMenu::rowLabel(row), label) == 0) {
+            return row;
+        }
+    }
+    return -1;
+}
+
+// Open the menu and walk down to `row` (each step through handle(), so the
+// window scrolls as it would on the console).
+void menuSelect(mdk::EnhancedMenu* menu, mdk::EnhancedToggles* toggles, int32_t row) {
+    menu->setOpen(true);
+    mdk::EnhancedMenu::Input down;
+    down.down = true;
+    for (int32_t i = 0; i < row; i++) {
+        menu->handle(down, toggles);
+    }
+}
+
+std::string menuValue(int32_t row, const mdk::EnhancedToggles& toggles) {
+    char value[16];
+    mdk::EnhancedMenu::rowValue(row, toggles, value, (int32_t)sizeof(value));
+    return value;
+}
+
+} // namespace
+
+// t2k's SLD / CHO items (t2k_core/src/ui/menu.cpp) in the pause menu: a slider
+// steps by its step and stops at its ends (and says nothing changed there, so
+// nothing is written); a choice wraps both ways; A does nothing on a slider and
+// steps a choice forward; the 30 fps cap is a plain toggle.
+MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
+    using Action = mdk::EnhancedMenu::Action;
+    using Menu = mdk::EnhancedMenu;
+    MDK_CHECK_EQ(Menu::kItemCount, 18);
+    MDK_CHECK_EQ(Menu::kQuitRow, Menu::kRowCount - 1);
+    // The rows after the ten toggles, in order.
+    MDK_CHECK_EQ(menuRowOf("30 FPS CAP"), 11);
+    MDK_CHECK_EQ(menuRowOf("HAZE DENSITY"), 12);
+    MDK_CHECK_EQ(menuRowOf("GLOW STRENGTH"), 13);
+    MDK_CHECK_EQ(menuRowOf("SHADOW DARKNESS"), 14);
+    MDK_CHECK_EQ(menuRowOf("EXPOSURE"), 15);
+    MDK_CHECK_EQ(menuRowOf("TINT SATURATION"), 16);
+    MDK_CHECK_EQ(menuRowOf("SHADOW MAP"), 17);
+    MDK_CHECK_EQ(menuRowOf("SHADOW REFRESH"), 18);
+    // No AA-mode row: edge smoothing stays on/off (owner, 2026-11-19).
+    MDK_CHECK(Menu::rowItem(menuRowOf("EDGE SMOOTHING"))->kind == Menu::Kind::Toggle);
+    for (int32_t row = 0; row < Menu::kRowCount; row++) {
+        MDK_CHECK(strstr(Menu::rowLabel(row), "2X2") == nullptr);
+    }
+    MDK_CHECK(Menu::rowItem(Menu::kResumeRow) == nullptr);
+    MDK_CHECK(Menu::rowItem(Menu::kQuitRow) == nullptr);
+
+    mdk::EnhancedMenu::Input left;
+    left.left = true;
+    mdk::EnhancedMenu::Input right;
+    right.right = true;
+    mdk::EnhancedMenu::Input confirm;
+    confirm.confirm = true;
+    mdk::EnhancedMenu::Input both;
+    both.left = true;
+    both.right = true;
+
+    // THE SLIDER: haze density, 0..400 by 25, from 100.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        const mdk::EnhancedToggles shipped;
+        menuSelect(&menu, &toggles, 12);
+        MDK_CHECK_EQ(menu.selected(), 12);
+        MDK_CHECK(menuValue(12, toggles) == "100%");
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.hazeDensity, 125);
+        MDK_CHECK(menuValue(12, toggles) == "125%");
+        MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
+        MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.hazeDensity, 75);
+        // A and left+right do nothing to a slider.
+        MDK_CHECK(menu.handle(confirm, &toggles) == Action::None);
+        MDK_CHECK(menu.handle(both, &toggles) == Action::None);
+        MDK_CHECK_EQ(toggles.hazeDensity, 75);
+        // To the bottom: 3 more steps reach 0, then it stays and says None.
+        for (int32_t i = 0; i < 3; i++) {
+            MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
+        }
+        MDK_CHECK_EQ(toggles.hazeDensity, 0);
+        MDK_CHECK(menu.handle(left, &toggles) == Action::None);
+        MDK_CHECK_EQ(toggles.hazeDensity, 0);
+        // To the top: 16 steps reach 400, the 17th is refused.
+        for (int32_t i = 0; i < 16; i++) {
+            MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        }
+        MDK_CHECK_EQ(toggles.hazeDensity, 400);
+        MDK_CHECK(menu.handle(right, &toggles) == Action::None);
+        MDK_CHECK_EQ(toggles.hazeDensity, 400);
+        // Only its own field moved.
+        MDK_CHECK_EQ(toggles.glowStrength, shipped.glowStrength);
+        MDK_CHECK_EQ(toggles.exposure, shipped.exposure);
+        MDK_CHECK(toggles.enableHaze == shipped.enableHaze);
+    }
+    // A slider whose shipped value is its top: the darkness stops at 100.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        menuSelect(&menu, &toggles, 14);
+        MDK_CHECK(menu.handle(right, &toggles) == Action::None);
+        MDK_CHECK_EQ(toggles.shadowDarkness, 100);
+        MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.shadowDarkness, 90);
+        // A hand-set value out of range clamps on the next step.
+        toggles.shadowDarkness = 140;
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.shadowDarkness, 100);
+    }
+    // Exposure's floor is 50.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        menuSelect(&menu, &toggles, 15);
+        for (int32_t i = 0; i < 5; i++) {
+            MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
+        }
+        MDK_CHECK_EQ(toggles.exposure, 50);
+        MDK_CHECK(menu.handle(left, &toggles) == Action::None);
+    }
+    // THE CHOICE: the shadow map's side, AUTO -> 128 -> 256 -> 512 -> AUTO, and
+    // left from AUTO wraps to 512. A steps it forward.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        menuSelect(&menu, &toggles, 17);
+        MDK_CHECK(menuValue(17, toggles) == "AUTO");
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.shadowMapSize, 128);
+        MDK_CHECK(menu.handle(confirm, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.shadowMapSize, 256);
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.shadowMapSize, 512);
+        MDK_CHECK(menuValue(17, toggles) == "512");
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.shadowMapSize, 0);
+        MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.shadowMapSize, 512);
+        MDK_CHECK(menu.handle(both, &toggles) == Action::None);
+        MDK_CHECK_EQ(toggles.shadowMapRefresh, 0);
+    }
+    // The refresh choice, from a value off its list: right goes to the first,
+    // left to the last.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        menuSelect(&menu, &toggles, 18);
+        toggles.shadowMapRefresh = 7;
+        MDK_CHECK(menuValue(18, toggles) == "7");
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.shadowMapRefresh, 0);
+        toggles.shadowMapRefresh = 7;
+        MDK_CHECK(menu.handle(left, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.shadowMapRefresh, 4);
+        MDK_CHECK(menuValue(18, toggles) == "4");
+    }
+    // THE 30 FPS CAP: off by default, a toggle like the others.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        MDK_CHECK(!toggles.cap30Fps);
+        menuSelect(&menu, &toggles, 11);
+        MDK_CHECK(menuValue(11, toggles) == "OFF");
+        MDK_CHECK(menu.handle(confirm, &toggles) == Action::Changed);
+        MDK_CHECK(toggles.cap30Fps);
+        MDK_CHECK(menuValue(11, toggles) == "ON");
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK(!toggles.cap30Fps);
+    }
+}
+
+// Twenty rows do not fit the top screen's twelve: the window follows the
+// selection, both ways and across the wrap.
+MDK_TEST(PauseMenuScrollsToKeepTheSelectionInView) {
+    using Menu = mdk::EnhancedMenu;
+    MDK_CHECK(Menu::kRowCount > Menu::kVisibleRows);
+    Menu menu;
+    mdk::EnhancedToggles toggles;
+    mdk::EnhancedMenu::Input down;
+    down.down = true;
+    mdk::EnhancedMenu::Input up;
+    up.up = true;
+    menu.setOpen(true);
+    MDK_CHECK_EQ(menu.top(), 0);
+    for (int32_t i = 0; i < Menu::kVisibleRows - 1; i++) {
+        menu.handle(down, &toggles);
+    }
+    MDK_CHECK_EQ(menu.selected(), Menu::kVisibleRows - 1);
+    MDK_CHECK_EQ(menu.top(), 0);   // the last visible row, no scroll yet
+    menu.handle(down, &toggles);
+    MDK_CHECK_EQ(menu.selected(), Menu::kVisibleRows);
+    MDK_CHECK_EQ(menu.top(), 1);
+    // Up inside the window does not scroll; up past its top does.
+    menu.handle(up, &toggles);
+    MDK_CHECK_EQ(menu.top(), 1);
+    for (int32_t i = 0; i < Menu::kVisibleRows - 1; i++) {
+        menu.handle(up, &toggles);
+    }
+    MDK_CHECK_EQ(menu.selected(), 0);
+    MDK_CHECK_EQ(menu.top(), 0);
+    // Up from RESUME wraps to QUIT, which is shown as the window's last row.
+    menu.handle(up, &toggles);
+    MDK_CHECK_EQ(menu.selected(), Menu::kQuitRow);
+    MDK_CHECK_EQ(menu.top(), Menu::kRowCount - Menu::kVisibleRows);
+    // ... and down from QUIT back to RESUME, at the top.
+    menu.handle(down, &toggles);
+    MDK_CHECK_EQ(menu.selected(), 0);
+    MDK_CHECK_EQ(menu.top(), 0);
+    // Reopening starts at the top whatever the window was.
+    menu.handle(up, &toggles);
+    menu.setOpen(false);
+    menu.setOpen(true);
+    MDK_CHECK_EQ(menu.top(), 0);
+    MDK_CHECK_EQ(menu.selected(), 0);
+}
+
+// The look dials and the cap in config.ini: today's values by default (the
+// shipped look), written, read back, and a hand-edited value clamped into the
+// slider's range so the file and the menu never disagree.
+MDK_TEST(EnhancedConfigLookDialsRoundTrip) {
+    const mdk::EnhancedToggles shipped;
+    for (int32_t i = 0; i < mdk::kLookDialCount; i++) {
+        const mdk::LookDial& dial = mdk::kLookDials[i];
+        // 100 is the default, inside the range and on the step grid, so the
+        // slider can always come back to the shipped look exactly.
+        MDK_CHECK_EQ(shipped.*(dial.field), 100);
+        MDK_CHECK(dial.lo <= 100 && dial.hi >= 100 && dial.step > 0);
+        MDK_CHECK_EQ((100 - dial.lo) % dial.step, 0);
+        MDK_CHECK_EQ((dial.hi - dial.lo) % dial.step, 0);
+    }
+    const std::string text = mdk::writeEnhancedConfig(shipped);
+    MDK_CHECK(text.find("cap30Fps=0\n") != std::string::npos);
+    MDK_CHECK(text.find("hazeDensity=100\n") != std::string::npos);
+    MDK_CHECK(text.find("glowStrength=100\n") != std::string::npos);
+    MDK_CHECK(text.find("shadowDarkness=100\n") != std::string::npos);
+    MDK_CHECK(text.find("exposure=100\n") != std::string::npos);
+    MDK_CHECK(text.find("tintSaturation=100\n") != std::string::npos);
+    // The 3DS reads config.ini into a 1024-byte buffer (main_3ds.cpp): a file
+    // that outgrew it would lose its last keys -- these -- to the truncation.
+    MDK_CHECK(text.size() < 1023u);
+
+    mdk::EnhancedToggles moved;
+    moved.cap30Fps = true;
+    moved.hazeDensity = 250;
+    moved.glowStrength = 0;
+    moved.shadowDarkness = 60;
+    moved.exposure = 140;
+    moved.tintSaturation = 175;
+    moved.shadowMapSize = 256;
+    moved.shadowMapRefresh = 3;
+    const std::string movedText = mdk::writeEnhancedConfig(moved);
+    MDK_CHECK(movedText.size() < 1023u);
+    mdk::EnhancedToggles back;
+    MDK_CHECK(mdk::parseEnhancedConfig(movedText.c_str(), &back));
+    MDK_CHECK(back.cap30Fps);
+    MDK_CHECK_EQ(back.hazeDensity, 250);
+    MDK_CHECK_EQ(back.glowStrength, 0);
+    MDK_CHECK_EQ(back.shadowDarkness, 60);
+    MDK_CHECK_EQ(back.exposure, 140);
+    MDK_CHECK_EQ(back.tintSaturation, 175);
+    MDK_CHECK_EQ(back.shadowMapSize, 256);
+    MDK_CHECK_EQ(back.shadowMapRefresh, 3);
+    MDK_CHECK(mdk::writeEnhancedConfig(back) == movedText);
+
+    // Hand edits: clamped into range; junk leaves the value alone.
+    mdk::EnhancedToggles edited;
+    MDK_CHECK(mdk::parseEnhancedConfig("hazeDensity=9999\nexposure = 10\r\n"
+                                       "shadowDarkness=250\nglowStrength=abc\n"
+                                       "tintSaturation=-5\ncap30Fps=on\n",
+                                       &edited));
+    MDK_CHECK_EQ(edited.hazeDensity, 400);
+    MDK_CHECK_EQ(edited.exposure, 50);
+    MDK_CHECK_EQ(edited.shadowDarkness, 100);
+    MDK_CHECK_EQ(edited.glowStrength, 100);
+    MDK_CHECK_EQ(edited.tintSaturation, 100);   // not a whole number: ignored
+    MDK_CHECK(edited.cap30Fps);
+    // An old file without the new keys keeps the shipped look.
+    mdk::EnhancedToggles old;
+    MDK_CHECK(mdk::parseEnhancedConfig("enableHaze=1\nshadowMapSize=0\n", &old));
+    MDK_CHECK(!old.cap30Fps && old.hazeDensity == 100 && old.exposure == 100);
+}
+
+// Every character the pause menu draws has a glyph in FONTSML: a missing one is
+// drawn as a space, which would turn "125%" into "125 " with nothing failing.
+MDK_TEST(PauseMenuTextHasGlyphs) {
+    std::vector<uint8_t> ftiBytes;
+    MDK_CHECK(readDataFile("MISC/MDKFONT.FTI", &ftiBytes));
+    mdk::formats::Fti fti;
+    MDK_CHECK(mdk::formats::Fti::parse(&fti, ftiBytes.data(), (int32_t)ftiBytes.size()));
+    std::vector<uint8_t> smallBytes;
+    MDK_CHECK(fti.getBytes("FONTSML", &smallBytes));
+    mdk::formats::Font small;
+    MDK_CHECK(mdk::formats::Font::parse(smallBytes.data(), (int32_t)smallBytes.size(), 4,
+                                        &small));
+    std::vector<std::string> texts;
+    texts.push_back(mdk::EnhancedMenu::kHint);
+    texts.push_back(">");
+    mdk::EnhancedToggles states[3];
+    states[1].cap30Fps = true;
+    states[1].hazeDensity = 0;
+    states[1].shadowMapSize = 128;
+    states[1].shadowMapRefresh = 1;
+    states[2].shadowMapSize = 512;
+    states[2].shadowMapRefresh = 4;
+    states[2].exposure = 50;
+    for (int32_t row = 0; row < mdk::EnhancedMenu::kRowCount; row++) {
+        texts.push_back(mdk::EnhancedMenu::rowLabel(row));
+        for (int32_t s = 0; s < 3; s++) {
+            texts.push_back(menuValue(row, states[s]));
+        }
+    }
+    for (size_t t = 0; t < texts.size(); t++) {
+        for (size_t c = 0; c < texts[t].size(); c++) {
+            const char ch = texts[t][c];
+            if (ch != ' ' && !small.glyph((uint8_t)ch)) {
+                fprintf(stderr, "  no FONTSML glyph for '%c' in \"%s\"\n", ch, texts[t].c_str());
+                MDK_CHECK(false);
+            }
+        }
+    }
 }

@@ -11,9 +11,13 @@
 // a row of its own, reached with the D-pad (up from RESUME wraps to it) and
 // confirmed with A -- never a single press.
 //
+// The settings are the Enhanced Mode toggles, the look dials (sliders) and the
+// shadow map's two choices; there are more rows than the top screen holds, so
+// the panel shows a scrolling window of them.
+//
 // This class is the menu's LOGIC and its canvas drawing. It owns no
 // platform input and no file: the frontend translates its buttons into
-// the edge struct below, calls handle(), and acts on its answer: a toggle
+// the edge struct below, calls handle(), and acts on its answer: a setting
 // changed (apply with mdk_render_set_enhanced_toggles, persist with
 // writeEnhancedConfig to the platform's config.ini), the menu closed, or
 // QUIT chosen. The gameplay is paused by the frontend while the menu is
@@ -28,6 +32,7 @@
 namespace mdk {
 
 class FontView;
+struct LookDial;
 
 class EnhancedMenu {
 public:
@@ -37,23 +42,43 @@ public:
         bool down = false;
         bool left = false;
         bool right = false;
-        bool confirm = false;  // A: flip the selected toggle, or take RESUME / QUIT
+        bool confirm = false;  // A: flip a toggle, cycle a choice, or take RESUME / QUIT
         bool close = false;    // START, B or SELECT: leave the menu (resume)
     };
 
     // What one frame's edges did.
     enum class Action : uint8_t {
         None,
-        Toggled,   // a toggle's value changed (the caller applies and persists)
+        Changed,   // a setting's value changed (the caller applies and persists)
         Closed,    // the menu closed (RESUME, or a close edge): play resumes
         Quit,      // QUIT confirmed with A: the caller ends the run
     };
 
-    // The rows: RESUME, the toggles, QUIT.
-    static const int32_t kToggleCount = 10;
+    // THE SETTING ROWS, t2k's menu kinds (t2k_core/src/ui/menu.cpp TOG / SLD /
+    // CHO) bound straight to EnhancedToggles fields: a TOGGLE flips a bool; a
+    // SLIDER moves an int by its step within [lo, hi] (the look dials, ranges
+    // from enhanced_config.h kLookDials) and shows it as a percent; a CHOICE
+    // cycles an int through a fixed list of values, each with its own label.
+    enum class Kind : uint8_t { Toggle, Slider, Choice };
+    struct Item {
+        const char* label;
+        Kind kind;
+        bool EnhancedToggles::*flag;      // Toggle
+        const LookDial* dial;             // Slider: its field, range and step
+        int32_t EnhancedToggles::*value;  // Choice: its field,
+        const int32_t* choices;           // ... the values, in order
+        const char* const* choiceLabels;  // ... and what each is shown as
+        int32_t choiceCount;
+    };
+
+    // The rows: RESUME, the settings, QUIT.
+    static const int32_t kItemCount = 18;
     static const int32_t kResumeRow = 0;
-    static const int32_t kQuitRow = kToggleCount + 1;
-    static const int32_t kRowCount = kToggleCount + 2;
+    static const int32_t kQuitRow = kItemCount + 1;
+    static const int32_t kRowCount = kItemCount + 2;
+    // The rows the panel shows at once (the 240-line top screen holds twelve at
+    // the small font's 1.5x); the window scrolls to keep the selection in it.
+    static const int32_t kVisibleRows = 12;
 
     bool open() const { return open_; }
     // Opening always starts on RESUME.
@@ -61,17 +86,32 @@ public:
         open_ = open;
         if (open) {
             selected_ = kResumeRow;
+            top_ = 0;
         }
     }
     int32_t selected() const { return selected_; }
+    // The first row the panel shows.
+    int32_t top() const { return top_; }
 
     // Advance the menu by one frame's edges over `toggles`. Up and down wrap
-    // (up from RESUME is QUIT). Left/right/A flip a toggle row; A on RESUME
-    // closes; A on QUIT is Quit (the menu stays open: the caller is leaving).
+    // (up from RESUME is QUIT). On a TOGGLE row left/right/A flip it; on a
+    // SLIDER left/right step it (A does nothing); on a CHOICE left/right cycle
+    // it backwards/forwards and A forwards. Changed only when a value really
+    // moved: a slider at its end answers None, so nothing is written. A on
+    // RESUME closes; A on QUIT is Quit (the menu stays open: the caller is
+    // leaving).
     Action handle(const Input& input, EnhancedToggles* toggles);
 
     // The label of a row ("RESUME", "HAZE", "QUIT").
     static const char* rowLabel(int32_t row);
+    // The setting a row edits, or null for RESUME / QUIT / out of range.
+    static const Item* rowItem(int32_t row);
+    // A row's value as the panel shows it ("ON", "125%", "AUTO"); empty for
+    // RESUME and QUIT. `out` holds at least 16 bytes.
+    static void rowValue(int32_t row, const EnhancedToggles& toggles, char* out, int32_t size);
+
+    // The panel's footer line.
+    static const char* const kHint;
 
     // Draw the panel and its rows on the canvas (between
     // mdk_render_canvas_begin/end): the title in the big font, the
@@ -84,6 +124,7 @@ public:
 private:
     bool open_ = false;
     int32_t selected_ = kResumeRow;
+    int32_t top_ = 0;
 };
 
 } // namespace mdk

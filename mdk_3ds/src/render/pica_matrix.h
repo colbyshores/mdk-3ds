@@ -1138,6 +1138,30 @@ uint8_t sunShadowTintAlpha(int32_t y);
 // v = survive * out[2] + out[3] land on the texel CENTRES of the end columns and
 // rows, so t = 0 and t = 1 read exactly the first and last column.
 void sunShadowTintMap(float out[4]);
+// The edge fade's alpha with the shadowDarkness dial (EnhancedToggles, percent):
+// how much of the shadow lands is the stage-0 product (1 - shadow) * alpha, so
+// scaling the alpha scales the shadow's weight, mix(F_lit, F_shadow, A * d).
+// 100 and above is sunShadowTintAlpha(y) itself, to the byte; 0 is no shadow.
+uint8_t sunShadowTintAlphaDialled(int32_t y, int32_t darknessPercent);
+
+// ---------------------------------------------------------------------------
+// THE LOOK DIALS (EnhancedToggles hazeDensity / exposure / tintSaturation, in
+// percent; the pause menu's sliders): the game's rig with each scaled, which
+// the renderer makes once a frame and uploads as it always has (the haze
+// exponent, the lit and shadow programs' uniforms, the shadow tint).
+//
+//   haze_density  x hazeDensity / 100
+//   exposure      x exposure / 100
+//   sun, sky, ground: each channel moved about the colour's Rec. 709 luminance
+//                 L by tintSaturation / 100, max(L + (c - L) * s, 0). The rig's
+//                 colours are skyTint(hue, k) scaled, and skyTint keeps the
+//                 luminance (white and the hue are both 1), so this IS the rig
+//                 with level_light's three k*Saturation constants scaled by s.
+//
+// A dial at 100 leaves its numbers untouched (not multiplied: the copy is the
+// shipped look to the bit). Alpha channels are never touched.
+// ---------------------------------------------------------------------------
+void dialledLighting(const Lighting& rig, const EnhancedToggles& dials, Lighting* out);
 
 } // namespace pica
 } // namespace mdk

@@ -1443,6 +1443,11 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // The diagnostic is drawn INSIDE the loop, once per eye, so each eye gets
     // its own copy in its own target: drawn once after the loop it would be a
     // triangle in one eye and a hole in the other.
+    // THE LOOK DIALS (config / the pause menu's sliders) over the game's rig,
+    // every frame before anything reads it: the haze exponent, the lit and
+    // shadow programs' uniforms and the shadow tint below all take the dialled
+    // rig. At the defaults (100) it is the rig, copied.
+    mdk::pica::dialledLighting(r->rig, r->toggles, &r->lighting);
     prepareHaze(r);
     prepareLighting(r);
     // The sun's shadow map (Enhanced Mode enableSkyShadows), once per frame and
@@ -1707,7 +1712,8 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     if (!r || !light) {
         return;
     }
-    r->lighting = *light;
+    r->rig = *light;
+    mdk::pica::dialledLighting(r->rig, r->toggles, &r->lighting);
     // The rig, once per change (the game hands it over per arena): the numbers
     // the lit program's light is made of.
     mdk::log3dsPrintf("light rig: sun dir (%.2f,%.2f,%.2f) rgb (%.2f,%.2f,%.2f) sky (%.2f,%.2f,%.2f) "
@@ -1933,9 +1939,10 @@ static bool ensureShadowMap(RendererC3D* r) {
 }
 
 // THE SHADOW TINT, made on first use (linear heap, 2 KB) and refilled when the
-// rig's sky, ground or exposure differ from what it holds: inside a frame,
+// rig's sky, ground or exposure, or the shadowDarkness dial, differ from what
+// it holds (the dial scales the alpha, pica::sunShadowTintAlphaDialled): inside a frame,
 // after C3D_FrameBegin has waited for the last frame's queue, so nothing still
-// reads it. Seven float compares a frame, not in any loop.
+// reads it. Eight float compares a frame, not in any loop.
 static bool ensureShadowTint(RendererC3D* r) {
     if (!r->shadowTintReady) {
         r->shadowTintReady = C3D_TexInit(&r->shadowTint, (u16)mdk::pica::kShadowTintWidth,
@@ -1950,8 +1957,8 @@ static bool ensureShadowTint(RendererC3D* r) {
         r->shadowTintRig[0] = -1.0f;   // filled below
     }
     const mdk::Lighting& l = r->lighting;
-    const float rig[7] = {l.sky.r, l.sky.g, l.sky.b, l.ground.r, l.ground.g, l.ground.b,
-                          l.exposure};
+    const float rig[8] = {l.sky.r, l.sky.g, l.sky.b, l.ground.r, l.ground.g, l.ground.b,
+                          l.exposure, (float)r->toggles.shadowDarkness};
     if (memcmp(rig, r->shadowTintRig, sizeof(rig)) != 0) {
         // One colour per column (the powf), then down the rows (the alpha).
         uint8_t* texels = static_cast<uint8_t*>(r->shadowTint.data);
@@ -1959,7 +1966,7 @@ static bool ensureShadowTint(RendererC3D* r) {
             uint8_t rgba[4];
             mdk::pica::sunShadowTintColumn(x, &rig[0], &rig[3], rig[6], rgba);
             for (int y = 0; y < mdk::pica::kShadowTintHeight; y++) {
-                rgba[3] = mdk::pica::sunShadowTintAlpha(y);
+                rgba[3] = mdk::pica::sunShadowTintAlphaDialled(y, r->toggles.shadowDarkness);
                 const size_t slot = mdk::pica::textureTexelIndex(
                     (uint32_t)x, (uint32_t)y, (uint32_t)mdk::pica::kShadowTintWidth);
                 mdk::pica::texelBytes(texels + slot * 4u, rgba[0], rgba[1], rgba[2], rgba[3]);
@@ -2261,6 +2268,27 @@ void mdk_render_set_enhanced_toggles(MdkRenderer rr, const mdk::EnhancedToggles*
         return;
     }
     r->toggles = *toggles;
+    mdk::pica::dialledLighting(r->rig, r->toggles, &r->lighting);
+    applyFramePacing(r);
+}
+
+// THE 30 FPS CAP (Enhanced Mode cap30Fps): citro3d's OWN frame pacing, not a
+// wait of ours. C3D_FrameRate(fps) sets how many vblanks make one tick of the
+// frame counters that C3D_FrameBegin(C3D_FRAME_SYNCDRAW) -- this renderer's
+// begin -- already waits on (libcitro3d's onVBlank0/1 subtract fps from a
+// 60-per-vblank budget; C3D_FrameSync waits for both counters to move). At 30
+// a frame is presented every second vblank; at 60, every one, as before. No
+// VBlank wait, swap or flush is added (AGENTS.md P3). The game's clock is the
+// wall clock (main_3ds.cpp nowSeconds), so the fixed-step accumulator runs two
+// 1/60 s steps a 30 fps frame and the game keeps its speed. Called at create
+// and on every toggles change; C3D_FrameRate only when the rate changes.
+static void applyFramePacing(RendererC3D* r) {
+    const float want = r->toggles.cap30Fps ? 30.0f : 60.0f;
+    if (want != r->pacedFps) {
+        C3D_FrameRate(want);
+        r->pacedFps = want;
+        mdk::log3dsPrintf("pacing: %d fps (cap30Fps=%d)", (int)want, (int)r->toggles.cap30Fps);
+    }
 }
 
  void mdk_render_set_glow_quads(MdkRenderer rr, const mdk::GlowQuad* quads, int32_t count) {

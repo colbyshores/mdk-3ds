@@ -1,6 +1,9 @@
 // Defined in 03_frame.inc; called from mdk_render_destroy below, which the
 // translation unit reaches first.
 static void logDedupeWindow(RendererC3D* r);
+// Defined in 03_frame.inc beside mdk_render_set_enhanced_toggles; called from
+// mdk_render_create below.
+static void applyFramePacing(RendererC3D* r);
 
 // 02_lifecycle.inc -- create/destroy, the backend name and capabilities.
 // Part of renderer_c3d.cpp's single translation unit (see its header).
@@ -433,6 +436,7 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     if (desc) {
         r->toggles = desc->enhanced_toggles;
     }
+    applyFramePacing(r);
 
     r->ready = true;
     r->hdReader.start();

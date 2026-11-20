@@ -303,6 +303,28 @@ struct EnhancedToggles {
     // camera has moved its box on, the sun has turned or the map is new. The PC
     // ignores it.
     int32_t shadowMapRefresh = 0;
+
+    // THE LOOK DIALS (the pause menu's sliders; the owner's t2k-style dial-in):
+    // each scales, in PERCENT of today's value, a number the 3DS renderer already
+    // uploads every frame, so 100 -- the default -- is the shipped look to the
+    // byte (x * 1.0f is x). Ranges and steps: enhanced_config.h kLookDials. The
+    // PC ignores them.
+    int32_t hazeDensity = 100;     // the rig's haze density (level_light kHazeDensity)
+                                   // before the vertex shader's exponent
+    int32_t glowStrength = 100;    // the glow billboards' halo colour (the tint
+                                   // uniform; the bloom's fitted curve is not scaled)
+    int32_t shadowDarkness = 100;  // how much of the sun's shadow lands: the shadow
+                                   // tint's alpha (the receive combiner's stage 0)
+    int32_t exposure = 100;        // the rig's exposure (lit and shadow programs,
+                                   // the shadow tint)
+    int32_t tintSaturation = 100;  // the rig's sun / sky / ground saturation about
+                                   // their luminance (level_light's k*Saturation)
+
+    // 3DS: present every second vblank (citro3d's own frame pacing,
+    // C3D_FrameRate(30)) instead of every one. The simulation still runs the
+    // fixed steps the wall clock owes, so the game does not slow down. Off by
+    // default. The PC ignores it.
+    bool cap30Fps = false;
 };
 
 // ---------------------------------------------------------------------------

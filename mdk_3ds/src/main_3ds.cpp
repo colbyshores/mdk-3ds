@@ -592,6 +592,13 @@ int main(int argc, char** argv) {
                               (int)enhancedToggles.shadowMapRefresh,
                               (int)enhancedToggles.texture16,
                               (int)enhancedToggles.kurtCompressed);
+            mdk::log3dsPrintf("main: resolved config cap30=%d hazeDensity=%d glowStrength=%d "
+                              "shadowDarkness=%d exposure=%d tintSaturation=%d",
+                              (int)enhancedToggles.cap30Fps, (int)enhancedToggles.hazeDensity,
+                              (int)enhancedToggles.glowStrength,
+                              (int)enhancedToggles.shadowDarkness,
+                              (int)enhancedToggles.exposure,
+                              (int)enhancedToggles.tintSaturation);
         }
 #undef MDK_HW_STR
 #undef MDK_HW_STR2
@@ -1637,8 +1644,9 @@ int main(int argc, char** argv) {
         // on one press -- and SELECT opens the same menu. It opens on RESUME;
         // while it is open the simulation below is paused and the frame's
         // edges drive the menu instead: the D-pad moves (and wraps), A flips a
-        // toggle or takes RESUME / QUIT, and START, B or SELECT close it. A
-        // flip applies at once (mdk_render_set_enhanced_toggles) and is written
+        // toggle or takes RESUME / QUIT, left/right step a slider or cycle a
+        // choice, and START, B or SELECT close it. A
+        // change applies at once (mdk_render_set_enhanced_toggles) and is written
         // back to config.ini in the same frame, so a hardware A/B is one press.
         // QUIT is a row, confirmed with A: never a single press.
         bool menuQuit = false;
@@ -1656,12 +1664,14 @@ int main(int argc, char** argv) {
                 edges.confirm = (pressed & KEY_A) != 0;
                 edges.close = (pressed & (KEY_START | KEY_B | KEY_SELECT)) != 0;
                 const mdk::EnhancedMenu::Action action = menu.handle(edges, &enhancedToggles);
-                if (action == mdk::EnhancedMenu::Action::Toggled) {
+                if (action == mdk::EnhancedMenu::Action::Changed) {
                     mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
                     const bool saved = saveEnhancedConfig(enhancedToggles);
                     mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
                                       "glow=%d filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
-                                      "(saved=%d)",
+                                      "cap30=%d hazeDensity=%d glowStrength=%d shadowDarkness=%d "
+                                      "exposure=%d tintSaturation=%d shadowMapSize=%d "
+                                      "shadowMapRefresh=%d (saved=%d)",
                                       (int)enhancedToggles.enableSkyShadows,
                                       (int)enhancedToggles.enableFragmentLights,
                                       (int)enhancedToggles.enableHaze,
@@ -1671,7 +1681,15 @@ int main(int argc, char** argv) {
                                       (int)enhancedToggles.enableMipmaps,
                                       (int)enhancedToggles.enableHdTextures,
                                       (int)enhancedToggles.enableLighting,
-                                      (int)enhancedToggles.enableEdgeSmoothing, (int)saved);
+                                      (int)enhancedToggles.enableEdgeSmoothing,
+                                      (int)enhancedToggles.cap30Fps,
+                                      (int)enhancedToggles.hazeDensity,
+                                      (int)enhancedToggles.glowStrength,
+                                      (int)enhancedToggles.shadowDarkness,
+                                      (int)enhancedToggles.exposure,
+                                      (int)enhancedToggles.tintSaturation,
+                                      (int)enhancedToggles.shadowMapSize,
+                                      (int)enhancedToggles.shadowMapRefresh, (int)saved);
                 } else if (action == mdk::EnhancedMenu::Action::Quit) {
                     menuQuit = true;
                     mdk::log3dsPrintf("menu: QUIT chosen");

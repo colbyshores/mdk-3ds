@@ -1999,8 +1999,92 @@ void testTheSunsShadow() {
     PICA_CHECK(mdk::pica::kGlowVramBytes >= glowTexels * 4u);
 }
 
+// THE LOOK DIALS (EnhancedToggles hazeDensity / exposure / tintSaturation /
+// shadowDarkness, the pause menu's sliders). At the defaults the renderer's
+// numbers must be the rig's to the bit -- that is the claim that the dials
+// cost the shipped look nothing -- and off the defaults each must scale only
+// its own number.
+void testTheLookDials() {
+    mdk::Lighting rig;
+    rig.enabled = true;
+    rig.sun = mdk::Colour{0.7f, 0.55f, 0.3f, 1.0f};
+    rig.sky = mdk::Colour{0.31f, 0.42f, 0.6f, 0.6f};   // .a: the knee rides here
+    rig.ground = mdk::Colour{0.2f, 0.18f, 0.11f, 1.0f};
+    rig.exposure = 1.37f;
+    rig.haze_density = 0.0002f;
+    rig.haze_colour = mdk::Colour{0.5f, 0.4f, 0.3f, 1.0f};
+    rig.shadow_distance = 300.0f;
+
+    // Defaults: a byte-identical copy (memcmp: padding and all fields).
+    const mdk::EnhancedToggles defaults;
+    PICA_CHECK(defaults.hazeDensity == 100 && defaults.exposure == 100 &&
+               defaults.tintSaturation == 100 && defaults.glowStrength == 100 &&
+               defaults.shadowDarkness == 100 && !defaults.cap30Fps);
+    mdk::Lighting out;   // stale values, so a field the call forgets shows
+    out.enabled = false;
+    out.sun = mdk::Colour{9.0f, 9.0f, 9.0f, 9.0f};
+    out.sky = out.sun;
+    out.ground = out.sun;
+    out.exposure = -7.0f;
+    out.haze_density = -7.0f;
+    out.shadow_distance = -7.0f;
+    mdk::pica::dialledLighting(rig, defaults, &out);
+    PICA_CHECK(memcmp(&out.sun, &rig.sun, sizeof(rig.sun)) == 0);
+    PICA_CHECK(memcmp(&out.sky, &rig.sky, sizeof(rig.sky)) == 0);
+    PICA_CHECK(memcmp(&out.ground, &rig.ground, sizeof(rig.ground)) == 0);
+    PICA_CHECK(out.exposure == rig.exposure && out.haze_density == rig.haze_density);
+    PICA_CHECK(out.enabled && out.shadow_distance == rig.shadow_distance);
+
+    // Each dial moves only its own number.
+    mdk::EnhancedToggles dials;
+    dials.hazeDensity = 200;
+    mdk::pica::dialledLighting(rig, dials, &out);
+    PICA_CHECK(out.haze_density == rig.haze_density * 2.0f);
+    PICA_CHECK(out.exposure == rig.exposure);
+    PICA_CHECK(memcmp(&out.sky, &rig.sky, sizeof(rig.sky)) == 0);
+    dials.hazeDensity = 0;   // no haze: hazeApplies then refuses every draw
+    mdk::pica::dialledLighting(rig, dials, &out);
+    PICA_CHECK(!mdk::pica::hazeApplies(true, out, mdk::Shading::Lit, mdk::Pass::Solid));
+    dials = defaults;
+    dials.exposure = 150;
+    mdk::pica::dialledLighting(rig, dials, &out);
+    PICA_CHECK(fabsf(out.exposure - rig.exposure * 1.5f) < 1e-6f);
+    PICA_CHECK(out.haze_density == rig.haze_density);
+
+    // Saturation: the Rec. 709 luminance is kept, the chroma scales, the alpha
+    // is untouched; 0 is grey, and nothing goes below black.
+    dials = defaults;
+    dials.tintSaturation = 0;
+    mdk::pica::dialledLighting(rig, dials, &out);
+    const float lumSky = rig.sky.r * 0.2126f + rig.sky.g * 0.7152f + rig.sky.b * 0.0722f;
+    PICA_CHECK(fabsf(out.sky.r - lumSky) < 1e-6f && fabsf(out.sky.g - lumSky) < 1e-6f &&
+               fabsf(out.sky.b - lumSky) < 1e-6f);
+    PICA_CHECK(out.sky.a == rig.sky.a);
+    dials.tintSaturation = 200;
+    mdk::pica::dialledLighting(rig, dials, &out);
+    const float lumOut = out.sky.r * 0.2126f + out.sky.g * 0.7152f + out.sky.b * 0.0722f;
+    PICA_CHECK(fabsf(lumOut - lumSky) < 1e-5f);
+    PICA_CHECK(fabsf((out.sky.b - lumSky) - 2.0f * (rig.sky.b - lumSky)) < 1e-5f);
+    dials.tintSaturation = 300;
+    mdk::pica::dialledLighting(rig, dials, &out);
+    PICA_CHECK(out.sun.r >= 0.0f && out.sun.g >= 0.0f && out.sun.b >= 0.0f);
+    PICA_CHECK(out.ground.b >= 0.0f);
+
+    // THE SHADOW'S DARKNESS: the tint's alpha (stage 0's weight). 100 (and
+    // above) is the shipped fade to the byte; 0 is no shadow; 50 halves it.
+    for (int32_t y = 0; y < mdk::pica::kShadowTintHeight; y++) {
+        const uint8_t full = mdk::pica::sunShadowTintAlpha(y);
+        PICA_CHECK(mdk::pica::sunShadowTintAlphaDialled(y, 100) == full);
+        PICA_CHECK(mdk::pica::sunShadowTintAlphaDialled(y, 150) == full);
+        PICA_CHECK(mdk::pica::sunShadowTintAlphaDialled(y, 0) == 0);
+        PICA_CHECK(mdk::pica::sunShadowTintAlphaDialled(y, 50) == (uint8_t)((full * 50 + 50) / 100));
+    }
+    PICA_CHECK(mdk::pica::sunShadowTintAlphaDialled(0, 50) == 128);   // 255 -> 127.5, rounded
+}
+
 int runPicaMatrixTests() {
     testIdentityRecognition();
+    testTheLookDials();
     testTheGlowQuadMapsThePanelOntoThePicture();
     testTheGlowCurveIsReachableByTheCombiner();
     testTheGlowLevelPassIsTheIdentity();

@@ -590,6 +590,14 @@ struct RendererC3D {
     // combiner stage 2 currently haze (the same discipline as cullMode: the cache
     // describes the context, and installEye resets both every eye).
     mdk::Lighting lighting;
+    // The rig as the game handed it over; `lighting` is this with the look
+    // dials applied (pica::dialledLighting, toggles' hazeDensity / exposure /
+    // tintSaturation), made again every frame before the eye loop, so a dial
+    // moved in the menu shows at the next frame. All dials at 100: a copy.
+    mdk::Lighting rig;
+    // The frame rate citro3d paces C3D_FrameBegin(SYNCDRAW) to (toggles'
+    // cap30Fps: 30 or 60), as last set with C3D_FrameRate.
+    float pacedFps = 60.0f;
     int hazeLocation = 0;
     // THE LIT PROGRAM (Enhanced Mode enableLighting): the same vertex
     // shader plus mdk_c3d.g.pica, bound for a Lit draw while the light is live.
@@ -635,7 +643,7 @@ struct RendererC3D {
     // lit draws; refilled when the rig's sky, ground or exposure change.
     C3D_Tex shadowTint;
     bool shadowTintReady = false;
-    float shadowTintRig[7] = {-1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+    float shadowTintRig[8] = {-1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
     // The frame's shadowed lit draws may run (prepareShadows): the map was made
     // for this frame, the program and the tint are ready.
     bool shadowLitLive = false;

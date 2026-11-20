@@ -747,5 +747,50 @@ void sunShadowTintMap(float out[4]) {
     out[3] = 0.5f / (float)kShadowTintHeight;
 }
 
+uint8_t sunShadowTintAlphaDialled(int32_t y, int32_t darknessPercent) {
+    const uint8_t alpha = sunShadowTintAlpha(y);
+    if (darknessPercent >= 100) {
+        return alpha;
+    }
+    if (darknessPercent <= 0) {
+        return 0;
+    }
+    // Integer, rounded: alpha * percent / 100 (constant divisor; cold, a
+    // refill of the 1024-texel tint when the dial moves).
+    return (uint8_t)(((int32_t)alpha * darknessPercent + 50) / 100);
+}
+
+namespace {
+
+// One colour's channels about its Rec. 709 luminance (level_light.cpp
+// skyLuminance's weights), by `saturation`; never below 0.
+void saturate(Colour* colour, float saturation) {
+    const float l = colour->r * 0.2126f + colour->g * 0.7152f + colour->b * 0.0722f;
+    const float r = l + (colour->r - l) * saturation;
+    const float g = l + (colour->g - l) * saturation;
+    const float b = l + (colour->b - l) * saturation;
+    colour->r = r > 0.0f ? r : 0.0f;
+    colour->g = g > 0.0f ? g : 0.0f;
+    colour->b = b > 0.0f ? b : 0.0f;
+}
+
+} // namespace
+
+void dialledLighting(const Lighting& rig, const EnhancedToggles& dials, Lighting* out) {
+    *out = rig;
+    if (dials.hazeDensity != 100) {
+        out->haze_density = rig.haze_density * ((float)dials.hazeDensity / 100.0f);
+    }
+    if (dials.exposure != 100) {
+        out->exposure = rig.exposure * ((float)dials.exposure / 100.0f);
+    }
+    if (dials.tintSaturation != 100) {
+        const float s = (float)dials.tintSaturation / 100.0f;
+        saturate(&out->sun, s);
+        saturate(&out->sky, s);
+        saturate(&out->ground, s);
+    }
+}
+
 } // namespace pica
 } // namespace mdk

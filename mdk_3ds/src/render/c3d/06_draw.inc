@@ -1504,9 +1504,14 @@ static void drawGlowBillboards(RendererC3D* r) {
         r->cullMode = GPU_CULL_NONE;
     }
     bindVertexBuffer(r, r->glowQuadMesh);
+    // The glowStrength dial (config / the pause menu): the halo's colour scaled
+    // in the tint uniform it is already drawn with. 100 is 1.0f exactly, and
+    // x * 1.0f is x: the shipped halos to the bit.
+    const float strength = (float)r->toggles.glowStrength / 100.0f;
     for (int32_t q = 0; q < r->glowQuadCount; q++) {
         const float* c = r->glowQuads[q].colour;
-        setVsUniform(r, kDedupeTint, r->tintLocation, c[0], c[1], c[2], 1.0f);
+        setVsUniform(r, kDedupeTint, r->tintLocation, c[0] * strength, c[1] * strength,
+                     c[2] * strength, 1.0f);
         if (r->boundProgram && r->boundProgram->geometryShader) {
             C3D_DrawArrays(GPU_GEOMETRY_PRIM, q * 6, 6);
         } else {

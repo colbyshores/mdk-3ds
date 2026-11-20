@@ -143,3 +143,25 @@ Newest entries are at the bottom. Performance experiments keep their own table i
 - **Commit:** 74d9b8f on the agent's branch, cherry-picked here.
 - **Merge fix:** the corridor dump in `tick1.cpp` (d02e8ca) still called `parseItemsSchedule` with three arguments, but this port added a fourth (pushes). The dump now passes it and refuses a schedule that uses it.
 - **Still open:** the town-flattened message (FlattenTown). Watch the 3DS `main()` stack, which grew about 540 bytes.
+
+### Pause menu: sliders, choices, five look dials and a 30 fps cap
+- **What:** `EnhancedMenu` gained t2k-style toggle, slider and choice items, bound to config fields in one table (no templates). The list scrolls: 20 rows, 12 visible.
+  - **Five dials,** each a percent of today's value, default 100. Each scales a number the 3DS renderer already uploads.
+    - haze density
+    - glow strength
+    - shadow darkness
+    - exposure
+    - tint saturation
+  - **Shadow map choices:** its size, and how often it refreshes.
+  - **30 FPS CAP toggle,** off by default. It uses `C3D_FrameRate(30)`, citro3d's own pacing, with no extra vblank waits. Gameplay keeps its speed because the fixed-step loop runs two steps per frame.
+  - **Edge smoothing** stays on/off (owner: t2k's 2x1 only).
+- **Why:**
+  - The owner's dial-in workflow from t2k: tune live on hardware, fix the defaults, then cut what hurts.
+  - The 30 fps cap: the owner wanted it "if it is part of the toggles and the change is meaningful".
+  - Merged now, ahead of the gameplay ports: it touches none of their files, so waiting would only invite conflicts.
+- **Evidence:**
+  - `tests/formats`: sliders step and clamp, choices wrap, the list scrolls, the config round-trips and clamps, and every glyph the menu draws exists in the font.
+  - PicaMatrix: with every dial at 100 the output is byte-identical, and each dial moves only its own number.
+  - `gates_frames` is unchanged, so the default look is unchanged.
+  - No hardware run yet. Owner checks are listed in the agent's report: the menu fits, each dial moves its effect live, and the cap holds a steady 33.3 ms.
+- **Commit:** 5e8d9c9 on the agent's branch, cherry-picked here.

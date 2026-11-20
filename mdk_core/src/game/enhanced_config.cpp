@@ -7,6 +7,19 @@
 #include <string.h>
 
 namespace mdk {
+
+const LookDial kLookDials[kLookDialCount] = {
+    {"hazeDensity", &EnhancedToggles::hazeDensity, 0, 400, 25},
+    {"glowStrength", &EnhancedToggles::glowStrength, 0, 300, 25},
+    {"shadowDarkness", &EnhancedToggles::shadowDarkness, 0, 100, 10},
+    {"exposure", &EnhancedToggles::exposure, 50, 200, 10},
+    {"tintSaturation", &EnhancedToggles::tintSaturation, 0, 300, 25},
+};
+
+int32_t clampLookDial(const LookDial& dial, int32_t value) {
+    return value < dial.lo ? dial.lo : (value > dial.hi ? dial.hi : value);
+}
+
 namespace {
 
 bool keyIs(const char* begin, const char* end, const char* name) {
@@ -109,6 +122,16 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         }
         return;
     }
+    // The look dials (render_types.h), clamped into their range.
+    for (int32_t i = 0; i < kLookDialCount; i++) {
+        if (keyIs(begin, keyEnd, kLookDials[i].key)) {
+            int32_t percent = 0;
+            if (readNumber(equals + 1, end, &percent)) {
+                toggles->*(kLookDials[i].field) = clampLookDial(kLookDials[i], percent);
+            }
+            return;
+        }
+    }
     bool value = false;
     if (!readValue(equals + 1, end, &value)) {
         return;
@@ -143,6 +166,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->texture16 = value;
     } else if (keyIs(begin, keyEnd, "kurtCompressed")) {
         toggles->kurtCompressed = value;
+    } else if (keyIs(begin, keyEnd, "cap30Fps")) {
+        toggles->cap30Fps = value;
     }
 }
 
@@ -197,6 +222,14 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     out.append(size);
     snprintf(size, sizeof(size), "shadowMapRefresh=%d\n", (int)toggles.shadowMapRefresh);
     out.append(size);
+    // 3DS: present at 30 fps (render_types.h).
+    appendToggle(&out, "cap30Fps", toggles.cap30Fps);
+    // The look dials, percent of the shipped value (render_types.h).
+    for (int32_t i = 0; i < kLookDialCount; i++) {
+        snprintf(size, sizeof(size), "%s=%d\n", kLookDials[i].key,
+                 (int)(toggles.*(kLookDials[i].field)));
+        out.append(size);
+    }
     return out;
 }
 
