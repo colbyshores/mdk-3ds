@@ -168,6 +168,7 @@ set(SOURCES
     ${CORE}/src/scripts/fans.cpp
     ${CORE}/src/scripts/pose_cache.cpp
     ${CORE}/src/scripts/script_runtime.cpp
+    ${CORE}/src/scripts/items.cpp
     ${CORE}/src/scripts/script_vm.cpp
     ${CORE}/src/scripts/debris.cpp
     ${CORE}/src/util/math_lut.cpp

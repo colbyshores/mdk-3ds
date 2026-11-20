@@ -39,8 +39,12 @@ struct HudState {
     float hurtFlash = 0.0f;
     float whiteFlash = 0.0f;
     bool dead = false;
-    // The inventory: (item number, count), 1-based item numbers.
-    std::vector<std::pair<int32_t, int32_t>> slots;
+    // The inventory: (item number, count), 1-based item numbers. A fixed array of the
+    // inventory's 5 slots (Inventory.MaxSlots), so a frontend filling it every frame does
+    // not allocate (the C# reuses one list, Viewer._hudSlots, for the same reason).
+    static const int32_t kMaxSlots = 5;
+    std::pair<int32_t, int32_t> slots[kMaxSlots] = {};
+    int32_t slotCount = 0;
     int32_t selected = 0;
     int32_t superChainGun = 0;
     int32_t barHealth = 0;

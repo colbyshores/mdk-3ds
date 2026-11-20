@@ -310,6 +310,23 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
     // the C# does (ScriptRuntime.cs:364). Every crossing test in a tick reads this
     // table, so a runtime without it is a level with no doors.
     findConnections();
+
+    // Kurt's item events (ScriptRuntime.cs:331-333): ItemUsed += Items.UseItem,
+    // BombTriggered += Items.TriggerBomb, CanUseItem = Items.CanUse.
+    if (player_ != nullptr) {
+        Player::ItemHooks hooks;
+        hooks.context = this;
+        hooks.itemUsed = &ScriptRuntime::itemUsedTrampoline;
+        hooks.bombTriggered = &ScriptRuntime::bombTriggeredTrampoline;
+        hooks.canUseItem = &ScriptRuntime::canUseItemTrampoline;
+        player_->setItemHooks(hooks);
+    }
+}
+
+ScriptRuntime::~ScriptRuntime() {
+    if (player_ != nullptr && player_->itemHooks().context == this) {
+        player_->setItemHooks(Player::ItemHooks());
+    }
 }
 
 Vec3 ScriptRuntime::kurtLiveVelocity() const {
@@ -676,6 +693,12 @@ void ScriptRuntime::runTick() {
     // resets the previous position (ScriptRuntime.Snapshot.cs:37-39), so the
     // first tick after a load observes no movement. The snapshot slice must
     // reset previousKurtPosition_ the same way.
+    // CollectPickups (ScriptRuntime.cs:940-943): from the second tick on, after
+    // KurtTouchesGroups and Rides.Update (neither ported) and BEFORE the velocity
+    // write below, because it reads the segment from the previous position.
+    if (tickCount_ > 0) {
+        collectPickups();
+    }
     kurtVelocity.x = (kurtPosition_.x - previousKurtPosition_.x) * kTicksPerSecond;
     kurtVelocity.y = (kurtPosition_.y - previousKurtPosition_.y) * kTicksPerSecond;
     kurtVelocity.z = (kurtPosition_.z - previousKurtPosition_.z) * kTicksPerSecond;
@@ -687,9 +710,11 @@ void ScriptRuntime::runTick() {
         fireChainGun();
     }
 
-    // Effects.Update(1f), Fans.Update(), Debris.Update(1f)
-    // (ScriptRuntime.cs:953-955): effects, fan sparks, then the pieces
-    // move, all before the object loop, as in the C#.
+    // Items.UpdateTwisters (ScriptRuntime.cs:952), then Effects.Update(1f),
+    // Fans.Update(), Debris.Update(1f) (ScriptRuntime.cs:953-955): the twisters,
+    // effects, fan sparks, then the pieces move, all before the object loop, as in
+    // the C#.
+    updateTwisters();
     effects.update(1.0f);
     fans.update();
     debris_.update(1.0f);
@@ -758,13 +783,26 @@ void ScriptRuntime::runTick() {
                 (obj->flags & MdkObject::FlagChangesArena) != 0) {
                 followArenas(obj);
             }
-            // UpdatePickup runs after ApplyVelocity (ObjectMotion.cs:118), only if the
-            // object survived the velocity step (the C# returns on Dead before it). The
-            // C# dispatch gives ThrownKind>0 precedence over FlagPickup (UpdateThrown,
-            // not UpdatePickup), and returns for effect objects before this section.
-            if (!obj->dead && obj->effect_frames <= 0 && obj->thrown_kind <= 0 &&
-                (obj->flags & MdkObject::FlagPickup) != 0) {
+            // Kurt's items (ObjectMotion.cs:110-118): a thrown item (ThrownKind > 0) goes
+            // to Items.UpdateThrown, and the C# returns when that removed it -- no
+            // animation, roll, bank or previous position for it this tick; otherwise
+            // UpdatePickup for a pickup. Both only if the object survived the velocity
+            // step (the C# returns on Dead before them), and never for an effect object.
+            if (!obj->dead && obj->effect_frames <= 0 && obj->thrown_kind > 0) {
+                itemsUpdateThrown(obj);
+                if (obj->dead) {
+                    continue;
+                }
+            } else if (!obj->dead && obj->effect_frames <= 0 &&
+                       (obj->flags & MdkObject::FlagPickup) != 0) {
                 motionPickup(obj);
+            } else if (!obj->dead && obj->effect_frames <= 0 &&
+                       (obj->flags & MdkObject::FlagCow) != 0) {
+                // SW_EWJ's holy cow (ObjectMotion.cs:120-127): it may be killed by its fuse.
+                updateCow(obj);
+                if (obj->dead) {
+                    continue;
+                }
             }
             // AdvanceAnimation (ObjectMotion.cs:132), after ApplyVelocity and the
             // pickup dispatch. An effect object returned from Update before this
@@ -816,10 +854,46 @@ void ScriptRuntime::updateDrawnArenas() {
     // goes in only while it is BOTH active and named (:661-664). Both rooms being in
     // the list is the whole point of it: move() sweeps element 0 as Kurt's own arena
     // and the rest as the free pass (arena_space.cpp), so the room behind the door he
-    // came through keeps its floor. The loaded-arena bookkeeping of UpdateArenas
-    // (:666-692: an arena that left the loaded pair has its loop sounds stopped and
-    // Kurt's thrown items removed) is unported with the items; when it lands it
-    // belongs in this same call, ahead of the two statements below.
+    // came through keeps its floor.
+    //
+    // First the loaded half (:650-692, 0x419cb0): the current arena (named or not) and
+    // the second (named, active or not) are loaded; when that pair changes, an arena
+    // that left it is put away -- Kurt's thrown items and effects there (flags 0x1000 or
+    // 0x4000, so a collected pickup too) go, the other objects' loop sounds stop -- and
+    // one that came back restarts its objects' loop sounds (arena_activate 0x43f8e0).
+    // The comparison is the C#'s Same: ordered, element by element.
+    std::vector<std::string> loaded;
+    loaded.push_back(currentArena_);
+    if (!secondArena_.empty()) {
+        loaded.push_back(secondArena_);
+    }
+    if (loaded != loadedArenas_) {
+        std::vector<MdkObject*> snapshot;
+        for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+            if (!it->dead) {
+                snapshot.push_back(&(*it));
+            }
+        }
+        for (size_t i = 0; i < snapshot.size(); i++) {
+            MdkObject* obj = snapshot[i];
+            const bool wasLoaded = std::find(loadedArenas_.begin(), loadedArenas_.end(),
+                                             obj->arena) != loadedArenas_.end();
+            const bool isLoaded = std::find(loaded.begin(), loaded.end(), obj->arena) != loaded.end();
+            if (wasLoaded && !isLoaded) {
+                if ((obj->flags & (kItemFlagThrown | kItemFlagActive)) != 0) {
+                    itemsForget(obj);
+                    remove(obj);
+                    continue;
+                }
+                mixer_.stopVoice(obj->loop_sound);
+                obj->loop_sound = 0;
+            } else if (isLoaded && !wasLoaded && !obj->loop_sound_name.empty()) {
+                obj->loop_sound = playOn(obj, obj->loop_sound_name, audio::SoundMixer::New, Vec3());
+            }
+        }
+        loadedArenas_ = loaded;
+    }
+
     drawnArenas_.clear();
     drawnArenas_.push_back(currentArena_);
     if (secondActive_ && !secondArena_.empty()) {
@@ -1462,14 +1536,11 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
     // before the snapshot) once arena crossings land; footing holds those instead.
     bool gravity = (obj->flags & MdkObject::FlagGravity) != 0;
     if (gravity) {
+        // ObjectMotion.cs:91-96, in the C#'s order: gravity, the fans' updraft, then the
+        // terminal clamp (MathF.Max, so a NaN stays NaN as there).
         obj->velocity.z -= obj->gravity * kTick;
-        // Updraft (Fans.Query) is not ported; no fan reaches these free-fall cases
-        // (the oracle's velocity.Z is exactly -gravity*Dt here). When Fans lands, the
-        // terminal clamp MUST move after the fan query (C# order: gravity, Updraft,
-        // clamp — ObjectMotion.cs:93-95), or a fan updraft will clamp differently.
-        if (obj->velocity.z < -220.0f) {
-            obj->velocity.z = -220.0f;  // TerminalVelocity
-        }
+        motionUpdraft(obj);
+        obj->velocity.z = mathMax(obj->velocity.z, -220.0f);  // TerminalVelocity
     }
 
     // ApplyVelocity (0x45e810). Friction acts on the horizontal only for a gravity
@@ -1551,6 +1622,29 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
 // returns early for a FlagCollected object — nothing in this port sets that flag
 // yet, and where the C# shrinks before returning, this returns without shrinking.
 
+// ObjectMotion.Updraft (ObjectMotion.cs:162-181, 0x45e74c): the fans lift objects with
+// gravity (not LEVEL6's rolling ones); Kurt's thrown items in flight -- flag 0x1000 without
+// 0x4000 (active), 0x40000 (collected) -- but the mortar also lose most of their
+// horizontal speed in them. Fans::query answers NaN where no fan of the arena holds it.
+void ScriptRuntime::motionUpdraft(MdkObject* obj) {
+    const int32_t kLevelSix = 6;
+    const int32_t kThrownFlagsMask = 0x45000;
+    const int32_t kMortarItem = 4;
+    const float kUpdraftBrake = 0.1f;
+    if (level_->number() == kLevelSix && (obj->flags & MdkObject::FlagRolling) != 0) {
+        return;
+    }
+    const float vz = fans.query(obj->arena, obj->position, obj->velocity.z, Fans::kMaskObjects, kTick);
+    if (vz != vz) {
+        return;
+    }
+    obj->velocity.z = vz;
+    if ((obj->flags & kThrownFlagsMask) == kItemFlagThrown && obj->thrown_kind != kMortarItem) {
+        obj->velocity.x *= kUpdraftBrake;
+        obj->velocity.y *= kUpdraftBrake;
+    }
+}
+
 // ObjectMotion.Bank (0x43b65c): an object leans into its turn. The turn counted is
 // the yaw change since the LAST call, at most 2 degrees of it per tick; the roll is
 // the old roll minus that turn, damped by 0.95 and kept inside +/-10 degrees.
@@ -1584,7 +1678,17 @@ void ScriptRuntime::motionPickup(MdkObject* obj) {
     const float kPickupHover = 1.5f;
     const float kPickupTurnSpeed = 180.0f;
     if ((obj->flags & MdkObject::FlagCollected) != 0) {
-        return;  // collected shrink/remove: later slice
+        // A pickup Kurt took (ObjectBehaviors.cs:207-217): it shrinks over ShrinkTicks
+        // (30), spinning 4 times as fast, and goes.
+        const float kShrinkTicks = 30.0f;
+        const float kCollectedSpin = 4.0f;
+        obj->parameter_timer -= 1.0f;
+        obj->scale = mathMax(obj->parameter_timer / kShrinkTicks, 0.0f);
+        obj->yaw = wrap360(obj->yaw + kTick * kPickupTurnSpeed * kCollectedSpin);
+        if (obj->parameter_timer <= 0.0f) {
+            remove(obj);
+        }
+        return;
     }
     bool gravity = (obj->flags & MdkObject::FlagGravity) != 0;
     bool landed = (obj->flags & MdkObject::FlagLanded) != 0;
@@ -4057,8 +4161,11 @@ void ScriptRuntime::selectTarget(MdkObject* obj) {
     if (obj->target_mode == alwaysKurt) {
         return;
     }
+    // The decoy while it walks (Items.Decoy), else the aliens' target (opcode 251).
     MdkObject* other = nullptr;
-    if (alienTarget_ != nullptr && !alienTarget_->dead) {
+    if (itemsDecoy != nullptr && !itemsDecoy->dead) {
+        other = itemsDecoy;
+    } else if (alienTarget_ != nullptr && !alienTarget_->dead) {
         other = alienTarget_;
     }
     if (other != nullptr) {

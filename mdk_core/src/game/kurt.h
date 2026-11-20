@@ -11,9 +11,10 @@
 // class; this port splits the movement half from the combat half). The chain
 // gun's state (Firing, the muzzle flash) lives here too, written by the
 // movement half's updateFiring/updateMuzzle and read by the scripts runtime.
-// The pickup collection and the sniper are later slices: until they land, the
-// slots, ammo and super-chain-gun timer stay empty — which is exactly what the
-// C# reads in a world where Kurt never collects.
+// The inventory is Inventory.cs whole but for Restore (the saves) and the sniper's
+// round selection (SelectAmmo/UseAmmo/NextAmmo, with the unported sniper mode):
+// Collect fills the slots, the ammo and the super chain gun's time, the item keys
+// select a slot, and a thrown item is consumed.
 //
 // The addresses are the original's: health 0x574324, the invulnerability
 // 0x573bd4, the knock damage 0x573b20, the slots 0x57432c, the super-chain-
@@ -30,6 +31,9 @@
 // ============================================================================
 
 #include <stdint.h>
+
+#include <string>
+#include <vector>
 
 namespace mdk {
 
@@ -199,10 +203,40 @@ public:
     // with the trigger first and this tail second.
     void declineKnockDamage(float delta);
 
-    // Inventory.Slots: filled by pickup collection (a later slice), read by
-    // if_inventory (opcode 175).
+    // ---- The inventory (Inventory.cs, 0x57432c) ----
+    // Inventory.Slots, filled by Collect (the pickups Kurt runs through,
+    // ScriptRuntime::collectPickups, and the console's give), emptied by Consume
+    // (an item thrown) and the super chain gun's time; read by if_inventory (opcode
+    // 175) and the HUD.
     int32_t slotCount() const { return slotCount_; }
     const Slot* slots() const { return slots_; }
+    // Inventory.Selected: the slot the item keys chose (a new item is selected when
+    // it comes in). Inventory.SelectedItem is that slot's item, None when empty.
+    int32_t selected() const { return selected_; }
+    Item selectedItem() const { return slotCount_ == 0 ? None : slots_[selected_].item; }
+    // Inventory.SelectedAmmo: the sniper round type the last ammo pickup chose (1-5,
+    // 0 normal bullets). The sniper mode that reads it is not ported.
+    int32_t selectedAmmo() const { return selectedAmmo_; }
+
+    // Inventory.IsPickup: whether a model name is a pickup (SW_HBOMB, SW_H50...).
+    static bool isPickup(const std::string& model);
+    // Kurt.Collect + Inventory.Collect (Kurt.Combat.cs:160, Inventory.cs:107): takes a
+    // pickup by model name. Returns the sound to play, or "" when Kurt cannot take it
+    // (a full inventory, not a pickup). Health pickups change health_; every pickup
+    // but SW_H01 and BONEFLC queues its name for the HUD's message (PickedUp).
+    const char* collect(const std::string& pickup);
+    // Inventory.Select (the item keys 1-5): slot `index`, if there is one.
+    void select(int32_t index);
+    // Inventory.SelectNext: the next (step 1) or previous (-1) slot, wrapping around.
+    void selectNext(int32_t step);
+    // Inventory.Consume: one of the selected item is used up; an empty slot goes.
+    void consume();
+    // Inventory.PickedUp, the C#'s event (§10 forbids the delegate): the names of the
+    // pickups taken since the consumer last took them. The C#'s subscriber is the
+    // viewer's (Viewer.cs:249: the HUD's message stream, 2 s, zoomed), which is not
+    // ported; the harness reads it to pin which pickups raise a message.
+    const std::vector<std::string>& pickedUp() const { return pickedUp_; }
+    void clearPickedUp() { pickedUp_.clear(); }
     // The C# if_inventory's count: the total Count of every slot of this Item.
     int32_t countItem(Item item) const;
 
@@ -221,8 +255,7 @@ public:
 
     // Inventory.TickSuperChainGun (Inventory.cs:290): the super chain gun's time runs
     // while it fires (ScriptRuntime::fireChainGun, one tick per script tick); at 0 its
-    // slot goes. Nothing in this port fills the slots yet (pickup collection is a later
-    // slice), so the slot removal is the oracle's and inert today.
+    // slot goes (RemoveSlot, which keeps the selection inside the slots).
     void tickSuperChainGun(int32_t ticks);
 
     // ---- The chain gun (Kurt.Combat.cs:86-88) ----
@@ -256,6 +289,11 @@ public:
 private:
     // Scaled: easy takes 2/3 (at least 1), hard takes double, normal as-is.
     int32_t scaled(int32_t damage) const;
+    // Inventory.CollectItem / Add / UseInstant / RemoveSlot (Inventory.cs:134-232, 310).
+    const char* collectItem(Item item);
+    Slot add(const Slot& slot, Item item);
+    const char* useInstant(int32_t index);
+    void removeSlot(int32_t index);
 
     int32_t health_ = kMaxHealth;
     float hurtFlash_ = 0.0f;
@@ -271,8 +309,11 @@ private:
     // of uninitialised memory even with slotCount() == 0 gating every reader.
     Slot slots_[kMaxSlots]{};
     int32_t slotCount_ = 0;
+    int32_t selected_ = 0;
     int32_t ammo_[kAmmoTypes]{};
+    int32_t selectedAmmo_ = 0;
     int32_t superChainGun_ = 0;
+    std::vector<std::string> pickedUp_;
     bool firing_ = false;
     bool hasMuzzle_ = false;
     MuzzleFlash muzzle_{0, 0, 0};

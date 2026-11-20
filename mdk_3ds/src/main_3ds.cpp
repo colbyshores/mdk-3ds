@@ -2369,6 +2369,16 @@ int main(int argc, char** argv) {
                 state.dead = player.dead;
                 state.hurtFlash = player.combat().hurtFlash();
                 state.whiteFlash = player.combat().whiteFlash();
+                // The inventory (Viewer.HudStateOf, Viewer.cs:905-914): the slots as (item, count),
+                // the selected slot and the super chain gun's ticks left.
+                const mdk::Kurt& inventory = player.combat();
+                for (int32_t i = 0; i < inventory.slotCount() && i < mdk::HudState::kMaxSlots; i++) {
+                    state.slots[i] = std::make_pair((int32_t)inventory.slots()[i].item,
+                                                    inventory.slots()[i].count);
+                    state.slotCount = i + 1;
+                }
+                state.selected = inventory.selected();
+                state.superChainGun = inventory.superChainGun();
                 // The target's health bar while the chain gun hits it (Viewer.cs:912, GetBar).
                 if (runtime) {
                     const mdk::scripts::ScriptRuntime::BarValues bar = runtime->bar();

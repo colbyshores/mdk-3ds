@@ -1237,10 +1237,7 @@ the middle of a deque of values, which moved the elements behind the hole, so th
 pass skipped the effect after every removal and a wound's pointer named its neighbour.
 
 Still open:
-- **Items** (`Kurt.UpdateItems`, the THROW state, `ItemUsed` -> `Items.UseItem`, `Items.cs`,
-  `Twister.cs`, the bomb): unreachable until pickups are collected (`CollectPickups` and
-  `Inventory.Collect` are not ported, so the inventory is always empty and the C#'s
-  `item is None` return is the only path). A slice of its own.
+- ~~**Items**~~: landed on branch `port/pickups-items` (next section).
 - **Opcode 209's platform half** waits for `Kurt.Platform` (the platform footing).
 - **The sniper half of `StopFiring`** (`LeaveSniper`) and the ride's K_SURF muzzle offset
   wait for the sniper and the ride.
@@ -1248,6 +1245,48 @@ Still open:
   above) leaves a running Kurt ~1e-5 off the oracle, and the sum of the pieces' centres
   straddles a printed decimal on four lines of 480; with `cosf`/`sinf` it matches byte for
   byte (measured). `life=` pins the random stream there instead.
+
+## Kurt's pickups and items (2026-11-20, branch port/pickups-items): what landed, what is open
+
+Kurt could not collect a pickup or use an item: `CollectPickups` and `Inventory.Collect`
+were unported, so the inventory was always empty and `UpdateItems`/THROW/`ItemUsed` were
+unreachable. Landed, operation for operation, all pinned by the eleven
+`golden/L*_items_*.txt` (byte-identical to the C# probe `tests/scripts/items_probe/`,
+`tick1 dump items <level> <steps> <schedule>`):
+
+- `Inventory.cs` whole but `Restore` and the sniper's round selection -> `Kurt`
+  (`game/kurt.{h,cpp}`): `Collect`/`CollectItem`/`Add`/`UseInstant` (ammo, health, the easter
+  eggs, the stacking grenades and super chain gun), `Select`, `SelectNext`, `Consume`,
+  `RemoveSlot` (now also under `TickSuperChainGun`), `IsPickup`, and `PickedUp` as a drained
+  list of names.
+- `Kurt.UpdateItems`, `Pressed` and the THROW arm of `UpdateCombatState` (frame 8 of K_SPWEP;
+  at once in the air) -> `Player`; `ItemUsed`/`BombTriggered`/`CanUseItem` are plain function
+  pointers (`Player::ItemHooks`) that `ScriptRuntime` binds and unbinds.
+- `ScriptRuntime.CollectPickups` at its tick position, the collected pickup's shrink
+  (`UpdatePickup`'s first branch), `DropCow`/`CowTarget`/`UpdateCow`/`CowHits` for SW_EWJ (no
+  retail arena has SW_EWJ's model, so the cow golden drops a pickup renamed to it), and
+  `UpdateArenas`' loaded-arena half (an arena put away loses Kurt's thrown items and its loop
+  sounds; one that comes back restarts them).
+- `Items.cs` whole -> `scripts/items.cpp`: `UseItem`, `UpdateThrown`, `HitsObject`, `Activate`,
+  the grenade, decoy (and `SelectTarget`'s decoy), bomb (`TriggerBomb`, `CanUse`), tornado,
+  mortar, nuke, seal and bone, `Blast` (objects, Kurt, triangle groups via `GroupCenters`),
+  `SparkFire`, `FindArenaAnimation`; `Twister.cs` and the ring of `Ribbon.cs` ->
+  `scripts/twister.h`; `ObjectMotion.Updraft` for objects (fans lift them, thrown items brake).
+- The HUD's inventory is fed in both frontends (`HudState::slots` is now a fixed array of 5,
+  no per-frame allocation); Linux binds Tab/`]` and `[` (the C#'s item keys).
+
+Still open:
+- **The twisters are not drawn**: `Ribbon.Triangles` (WMIBTEX quads, 0x439690) has no
+  renderer; the ring it reads is kept.
+- **The pickup message** (`PickedUp` -> the HUD's message stream, 2 s, zoomed): the Messages
+  subsystem is unported; `Kurt::pickedUp()` holds the names for it.
+- **The slot keys 1-5** (`Key.Item1-5`) have no action in `input.h`; the mouse wheel's item
+  keys are not bound on Linux; the 3DS bindings are the input owner's.
+- **The sniper's ammo selection** (`SelectAmmo`/`UseAmmo`/`NextAmmo`) waits for the sniper.
+- **Opcodes 172, 178, 184** (explosion, explosion_damage, explode) are now unblocked:
+  `ScriptRuntime::blast` is their dependency, but none fires in the corpus, so they wait for a
+  `vm_tests` case each (the rule in `docs/OPCODE_COVERAGE.md`).
+- **Kurt's own updraft** (`Kurt.Updraft.cs`) is still unported; the objects' is not.
 
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 

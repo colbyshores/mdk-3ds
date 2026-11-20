@@ -243,7 +243,7 @@ void HudView::drawNumber(int32_t value, float centreX, float y) {
 }
 
 void HudView::drawInventory(const HudState& state) {
-    if (state.selected < (int32_t)state.slots.size() &&
+    if (state.selected < state.slotCount &&
         state.slots[state.selected].first != kSuperChainGun) {
         const float bx = kSelectionX + (float)state.selected * kSlotStep;
         fillRect(bx + 1.0f, kSelectionY + 1.0f, kSelectionW - 2.0f, kSelectionH - 2.0f,
@@ -252,7 +252,7 @@ void HudView::drawInventory(const HudState& state) {
                   Colour{0.75f, 0.75f, 0.75f, 1.0f});
     }
 
-    for (size_t i = 0; i < state.slots.size(); i++) {
+    for (int32_t i = 0; i < state.slotCount; i++) {
         const int32_t item = state.slots[i].first;
         const int32_t count = state.slots[i].second;
         const int32_t frame = item - 1;

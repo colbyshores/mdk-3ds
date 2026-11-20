@@ -1,0 +1,5 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-20T14:51:20Z at c775e92
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/claude-1000/-mnt-nas-Development-mdk-sdl/60c8a7b7-6018-4bf7-8dd6-949041120aa4/scratchpad/tmp/mdk-frame-reference/L3_f1.bmp)
+why the picture did not move: the pinned frame is level 3's first frame with no input and an empty inventory; this batch changes what happens when Kurt runs through a pickup or presses the item keys (the inventory, THROW/K_SPWEP, the thrown items, blasts, twisters, the cow) and the HUD's inventory row, which an empty inventory leaves undrawn. gates_frames reports the pinned frame unchanged (L3_f1.bmp sha=58615fc85d02e009). The items are pinned by tests/scripts/golden/L*_items_*.txt (eleven goldens, byte-identical to tests/scripts/items_probe).

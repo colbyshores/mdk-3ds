@@ -1254,6 +1254,281 @@ bool kurtFireDump(int level, int steps, const FireSchedule& plan, const MdkData&
     return true;
 }
 
+// KURT'S ITEMS, end to end (golden/L*_items_*.txt). Kurt and the scripts runtime stepped
+// together at 1/60 s as kurtFireDump does, under a schedule the oracle probe
+// (tests/scripts/items_probe, `Probe <level> <steps> <schedule>`) reads the same way:
+// comma-separated `key:from-to` holds (fwd back left right sleft sright jump turbo fire
+// use next prev) over steps [from, to), `give:step:MODEL` hands Kurt a pickup before
+// that step (the console's give, LevelCommands.Give -> Kurt.Collect), and
+// `drop:step:MODEL:dx:dy:dz` spawns a pickup (Spawning.Flagged) in his arena at the
+// level's start plus that offset, for him to run through. What each column pins:
+//
+//   state / frame    UpdateItems and the throw: THROW (K_SPWEP) on the floor, the item
+//                    leaving his hand on frame 8; in the air ItemUsed at once.
+//   hp / kd          Collect's health pickups; the blasts on Kurt (Kurt.Hurt, the knock
+//                    damage doubled) and the mortar's knock-down.
+//   inv / sel / sgun the inventory: Collect, the item keys (SelectNext), Consume, the
+//   ammo / picked    super chain gun's time, the sniper ammo, the PickedUp messages.
+//   objs / ohp /     the pickups' removal and shrink (collected=), the thrown items in
+//   kills / thrown / flight and active (kind, 0x1000/0x4000 flags, ticks, model,
+//   collected        position x64, yaw, scale, animation frame), the blasts' damage.
+//   bomb / decoy     Items.Bomb and Items.Decoy.
+//   tw               the twisters: how many, and the sum of their positions x64.
+//   pieces / effects the explosions' break-ups, sparks and gore.
+//   white / shake    the nuke's and the explosions' white flash, the screen shake.
+//   voices           COLLECT/APPLE/WMIB..., the item sounds, the explosions.
+//
+// The world is kurtFireDump's (the reachable arenas; Kurt's sounds on the runtime's
+// mixer, the oracle's one mixer). The probe registers every arena's triangle groups, as
+// the C# Viewer does through LevelView, which the runtime's constructor does here.
+struct ItemsHold {
+    Key key;
+    int from;
+    int to;
+};
+struct ItemsGive {
+    int step;
+    std::string model;
+    bool drop;      // `drop:`: spawned (Spawning.Flagged) at the start + offset, not given
+    Vec3 offset;
+};
+
+bool parseItemsSchedule(const std::string& schedule, std::vector<ItemsHold>* holds,
+                        std::vector<ItemsGive>* gives) {
+    static const struct {
+        const char* name;
+        Key key;
+    } kKeys[] = {{"fwd", kKeyForward},      {"back", kKeyBack},       {"left", kKeyTurnLeft},
+                 {"right", kKeyTurnRight},  {"sleft", kKeyStrafeLeft}, {"sright", kKeyStrafeRight},
+                 {"jump", kKeyJump},        {"turbo", kKeyTurbo},     {"fire", kKeyFire},
+                 {"use", kKeyUseItem},      {"next", kKeyItemNext},   {"prev", kKeyItemPrevious}};
+    size_t start = 0;
+    while (start < schedule.size()) {
+        size_t end = schedule.find(',', start);
+        if (end == std::string::npos) {
+            end = schedule.size();
+        }
+        const std::string token = schedule.substr(start, end - start);
+        start = end + 1;
+        if (token.empty()) {
+            continue;
+        }
+        const size_t colon = token.find(':');
+        if (colon == std::string::npos) {
+            return false;
+        }
+        const std::string head = token.substr(0, colon);
+        const std::string rest = token.substr(colon + 1);
+        if (head == "give" || head == "drop") {
+            std::vector<std::string> fields;
+            size_t at = 0;
+            while (true) {
+                const size_t next = rest.find(':', at);
+                fields.push_back(rest.substr(at, next == std::string::npos ? std::string::npos
+                                                                         : next - at));
+                if (next == std::string::npos) {
+                    break;
+                }
+                at = next + 1;
+            }
+            const bool drop = head == "drop";
+            if (fields.size() != (drop ? 5u : 2u)) {
+                return false;
+            }
+            ItemsGive give;
+            give.step = atoi(fields[0].c_str());
+            give.model = fields[1];
+            give.drop = drop;
+            give.offset = drop ? Vec3{(float)atof(fields[2].c_str()), (float)atof(fields[3].c_str()),
+                                      (float)atof(fields[4].c_str())}
+                               : Vec3{0.0f, 0.0f, 0.0f};
+            gives->push_back(give);
+            continue;
+        }
+        const size_t dash = rest.find('-');
+        if (dash == std::string::npos) {
+            return false;
+        }
+        bool found = false;
+        for (size_t i = 0; i < sizeof(kKeys) / sizeof(kKeys[0]); i++) {
+            if (head == kKeys[i].name) {
+                ItemsHold hold;
+                hold.key = kKeys[i].key;
+                hold.from = atoi(rest.substr(0, dash).c_str());
+                hold.to = atoi(rest.substr(dash + 1).c_str());
+                holds->push_back(hold);
+                found = true;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool kurtItemsDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                   const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<ItemsGive> gives;
+    if (!parseItemsSchedule(schedule, &holds, &gives)) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    char buffer[512];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < gives.size(); i++) {
+            if (gives[i].step == step && !gives[i].drop) {
+                player.collect(gives[i].model);
+            }
+        }
+        for (size_t i = 0; i < gives.size(); i++) {
+            if (gives[i].step == step && gives[i].drop) {
+                const Vec3 at{start[0] + gives[i].offset.x, start[1] + gives[i].offset.y,
+                              start[2] + gives[i].offset.z};
+                // MODEL>NAME spawns MODEL and names it NAME: no retail arena has SW_EWJ's
+                // model, so the cow it drops is reached through a pickup renamed to it.
+                const std::string& spec = gives[i].model;
+                const size_t arrow = spec.find('>');
+                scripts::MdkObject* dropped = runtime.spawn(
+                    &runtime.getArenaState(runtime.currentArena()).controller,
+                    spec.substr(0, arrow), at, 0.0f, -1, 0, true);
+                if (dropped != nullptr && arrow != std::string::npos) {
+                    dropped->type_name = spec.substr(arrow + 1);
+                }
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+
+        const Kurt& combat = player.combat();
+        std::string slots;
+        for (int32_t i = 0; i < combat.slotCount(); i++) {
+            snprintf(buffer, sizeof(buffer), "%s%d:%d", i ? "|" : "", (int)combat.slots()[i].item,
+                     combat.slots()[i].count);
+            slots += buffer;
+        }
+        std::string picked;
+        for (size_t i = 0; i < combat.pickedUp().size(); i++) {
+            picked += (i ? "|" : "") + combat.pickedUp()[i];
+        }
+        player.combat().clearPickedUp();
+        int32_t ohp = 0;
+        std::string thrown;
+        std::string collected;
+        const std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            const scripts::MdkObject& o = objects[i];
+            if (o.dead) {
+                continue;
+            }
+            ohp += o.health;
+            if (o.thrown_kind > 0) {
+                snprintf(buffer, sizeof(buffer), "%s%d/%X/%d/%s@%d,%d,%d/y%.4f/s%.4f/f%d",
+                         thrown.empty() ? "" : ";", o.thrown_kind, o.flags & 0x5000, o.item_ticks,
+                         o.type_name.c_str(), p64(o.position.x), p64(o.position.y),
+                         p64(o.position.z), o.yaw, o.scale, o.animation_frame);
+                thrown += buffer;
+            } else if ((o.flags & scripts::MdkObject::FlagCollected) != 0) {
+                snprintf(buffer, sizeof(buffer), "%s%s/%.4f", collected.empty() ? "" : ";",
+                         o.type_name.c_str(), o.scale);
+                collected += buffer;
+            }
+        }
+        Vec3 tw{0.0f, 0.0f, 0.0f};
+        const std::vector<scripts::Twister>& twisters = runtime.twisters();
+        for (size_t i = 0; i < twisters.size(); i++) {
+            tw.x += twisters[i].position().x;
+            tw.y += twisters[i].position().y;
+            tw.z += twisters[i].position().z;
+        }
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& live = runtime.mixer().voices();
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) {
+                voices += ",";
+            }
+            voices += live[i].name;
+        }
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d state=%s feet64=%d,%d,%d yaw=%.4f frame=%.4f hp=%d kd=%.4f inv=%s sel=%d "
+                 "sgun=%d ammo=%d:%d:%d:%d:%d/%d picked=%s objs=%d ohp=%d kills=%d thrown=",
+                 step, kurtStateName(player.state()), p64(player.feet.x), p64(player.feet.y),
+                 p64(player.feet.z), player.yaw, player.animationFrame(), player.health(),
+                 combat.knockDamage(), slots.empty() ? "-" : slots.c_str(), combat.selected(),
+                 combat.superChainGun(), combat.ammo(1), combat.ammo(2), combat.ammo(3),
+                 combat.ammo(4), combat.ammo(5), combat.selectedAmmo(),
+                 picked.empty() ? "-" : picked.c_str(), runtime.objectCount(), ohp,
+                 runtime.stats.kills);
+        *out += buffer;
+        *out += thrown.empty() ? "-" : thrown;
+        *out += " collected=";
+        *out += collected.empty() ? "-" : collected;
+        snprintf(buffer, sizeof(buffer),
+                 " bomb=%d decoy=%d tw=%d@%d,%d,%d pieces=%d effects=%d white=%.4f shake=%.4f "
+                 "voices=",
+                 runtime.itemsBomb != nullptr && !runtime.itemsBomb->dead ? 1 : 0,
+                 runtime.itemsDecoy != nullptr && !runtime.itemsDecoy->dead ? 1 : 0,
+                 (int)twisters.size(), p64(tw.x), p64(tw.y), p64(tw.z),
+                 runtime.debris().pieceCount(), runtime.effects.count(), combat.whiteFlash(),
+                 runtime.shake);
+        *out += buffer;
+        *out += voices.empty() ? "-" : voices;
+        *out += "\n";
+    }
+    return true;
+}
+
 // Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
 // the ScriptRuntime bound to the Player it drives. Shared by the golden and by
 // `tick1 dump hurt`, so a failing golden diffs the same text it compares.
@@ -3026,6 +3301,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "items") {
+            // `tick1 dump items <level> <steps> <schedule>`: kurtItemsDump's text, the
+            // C++ side of the items probe.
+            std::string got;
+            std::string why;
+            if (!kurtItemsDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                               &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "fire" || what == "firerun") {
             std::string got;
             std::string why;
@@ -3791,6 +4079,78 @@ int main(int argc, char** argv) {
             std::string got;
             std::string why;
             if (!kurtFireDump(c.level, c.steps, *c.plan, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // Kurt's pickups and items, end to end against the oracle probe (tests/scripts/
+    // items_probe; see kurtItemsDump for the columns). The schedules are the probe's
+    // arguments, byte for byte: each golden's first line repeats its schedule.
+    {
+        struct ItemsCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const ItemsCase kItemsCases[] = {
+            {"L7_items_collect", "golden/L7_items_collect.txt", 7, 520,
+             "left:10-88,fwd:110-200,turbo:110-200,give:210:SW_TWIST,give:211:SW_HBOMB,"
+             "prev:220-222,use:230-232",
+             "Kurt runs the hamster down (CollectPickups, SW_H150 to 150 health, APPLE, the "
+             "pickup's shrink and removal), then a tornado among walls"},
+            {"L8_items_grenade", "golden/L8_items_grenade.txt", 8, 400,
+             "give:5:SW_HBOMB,give:6:SW_TWIST,give:7:SW_DUMMY,next:20-22,prev:30-32,next:40-42,"
+             "next:44-46,prev:48-50,use:60-62,use:200-202",
+             "the item keys' wrap both ways, THROW and frame 8, two grenades (75 u/s) and their "
+             "blasts"},
+            {"L8_items_air", "golden/L8_items_air.txt", 8, 300,
+             "give:5:SW_HBOMB,jump:30-40,use:40-42", "a grenade used at once in the air"},
+            {"L8_items_tornado", "golden/L8_items_tornado.txt", 8, 600,
+             "give:5:SW_TWIST,use:30-32",
+             "the tornado's spin and twisters: the spiral, the split, the chase, the hurt"},
+            {"L8_items_mortar", "golden/L8_items_mortar.txt", 8, 400,
+             "give:5:SW_THUMP,use:30-32",
+             "the mortar's thumps (damage, lift, shake) and Kurt knocked down from the fourth"},
+            {"L8_items_bomb", "golden/L8_items_bomb.txt", 8, 400,
+             "give:5:SW_HBOMB,give:6:SW_INTER,use:30-32,use:150-152",
+             "the World's Most Interesting Bomb spun, set off by use (CanUse, TriggerBomb), its "
+             "blast on Kurt"},
+            {"L8_items_decoy", "golden/L8_items_decoy.txt", 8, 500,
+             "give:5:SW_DUMMY,use:30-32", "the decoy walks and the aliens aim at it"},
+            {"L8_items_nuke", "golden/L8_items_nuke.txt", 8, 600, "give:5:SW_KEY,use:30-32",
+             "the key becomes the nuke: its white, its shake, its doors, its blast"},
+            {"L8_items_gatt", "golden/L8_items_gatt.txt", 8, 600,
+             "give:5:SW_GATT,give:7:SW_DUMMY,fire:20-580,use:30-32",
+             "the super chain gun's time runs out: GATTFIRE to MULTIFIRE, its slot goes"},
+            {"L5_items_seal", "golden/L5_items_seal.txt", 5, 800,
+             "give:5:SW_SEAL,give:6:SW_SBONE,use:30-32,prev:60-62,use:70-72,fwd:400-640",
+             "the seal and the bone out together, landing (XMT_LAND), and taken back"},
+            {"L8_items_cow", "golden/L8_items_cow.txt", 8, 300,
+             "drop:5:SW_H01>SW_EWJ:0:20:3,fwd:20-120",
+             "a pickup named SW_EWJ run through: COLLECT, then DropCow (COW, CowTarget) and the "
+             "holy cow's fall, drift and fuse (UpdateCow, CowHits)"},
+        };
+        for (size_t i = 0; i < sizeof(kItemsCases) / sizeof(kItemsCases[0]); i++) {
+            const ItemsCase& c = kItemsCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!kurtItemsDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
                 printf("FAIL %s: %s\n", c.name, why.c_str());
                 failures++;
             } else if (got == expected) {

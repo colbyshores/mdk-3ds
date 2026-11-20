@@ -11,10 +11,11 @@
 // knock-down too (Kurt.KnockDown and the Knocked/GetUp arms of
 // Kurt.UpdateCombatState), and the chain gun (Kurt.UpdateFiring, StopFiring,
 // UpdateMuzzle and the SHOT / RUN_FIRE states; the hits are the scripts
-// runtime's ScriptRuntime::fireChainGun). The states whose branches belong to
-// other subsystems (throwing an item, the crouch-slide, the ledges, the ride,
-// the beta moves) are not reachable here, and the C#'s branches on them are
-// taken the way they are false.
+// runtime's ScriptRuntime::fireChainGun), and the items (Kurt.UpdateItems and the
+// THROW state, whose ItemUsed reaches the scripts runtime's Items through
+// ItemHooks). The states whose branches belong to other subsystems (the
+// crouch-slide, the ledges, the ride, the beta moves) are not reachable here, and
+// the C#'s branches on them are taken the way they are false.
 //
 // Units and convention match the C#: world units, Z up; Yaw in degrees,
 // counter-clockwise, Facing = (cos yaw, sin yaw, 0); the follow camera's pitch
@@ -129,6 +130,29 @@ public:
     // belong to subsystems that are not ported (OPEN_ITEMS.md).
     void setMixer(audio::SoundMixer* mixer) { _mixer = mixer; }
 
+    // Kurt's item events (Kurt.Combat.cs:95-101), which the C# scripts runtime
+    // subscribes to (ScriptRuntime.cs:331-333: ItemUsed += Items.UseItem,
+    // BombTriggered += Items.TriggerBomb, CanUseItem = Items.CanUse). §10 forbids the
+    // delegates, so they are plain function pointers over a context, the shape the
+    // Debris callbacks already have. They are called synchronously from update(), where
+    // the C# invokes them, because Items.UseItem reads Kurt's feet, yaw and state at
+    // that moment and spawns into the object list before the scripts' tick. A hook left
+    // null is the C#'s event with no subscriber: nothing happens (CanUseItem null:
+    // every item may be used). ScriptRuntime binds them when it is built with a Player
+    // and unbinds them when it goes.
+    struct ItemHooks {
+        void* context = nullptr;
+        void (*itemUsed)(void* context) = nullptr;
+        void (*bombTriggered)(void* context) = nullptr;
+        bool (*canUseItem)(void* context, Kurt::Item item) = nullptr;
+    };
+    void setItemHooks(const ItemHooks& hooks) { _itemHooks = hooks; }
+    const ItemHooks& itemHooks() const { return _itemHooks; }
+
+    // C# Kurt.Collect (Kurt.Combat.cs:160): takes a pickup by model name, returning its
+    // sound or "" (the console's `give`, LevelCommands.Give, and the scripts' pickups).
+    const char* collect(const std::string& pickup) { return combat_.collect(pickup); }
+
     // C# Kurt.StopFiring (Kurt.Combat.cs:183): the gun stops, its looped voice is
     // stopped and the muzzle flash goes. Public as in the C#: the knock-down, the hard
     // landing and the death call it here, and the cutscene, the level's end and the
@@ -220,6 +244,14 @@ private:
     // and Kurt::declineKnockDamage as its tail on every other step.
     void updateKnockDamage(float delta);
     void updateState(float forward, float strafe, float delta);
+    // C# Kurt.Pressed (Kurt.Combat.cs:257): whether a key went down since the last call
+    // for it (the C#'s _held set, one flag per key here).
+    bool pressed(const Input& input, Key key);
+    // C# Kurt.UpdateItems (Kurt.Combat.cs:271): the item keys select a slot or use the
+    // selected item -- on the floor Kurt throws it (THROW, K_SPWEP), in the air it is
+    // used at once. The slot keys 1-5 (Key.Item1-5) have no action in input.h yet.
+    void updateItems(const Input& input);
+    void itemUsed();
     // C# Kurt.UpdateFiring (Kurt.Combat.cs:345): holding fire fires the chain gun and
     // loops its sound; a change of gun (the super chain gun's time) restarts the loop.
     void updateFiring(const Input& input);
@@ -262,6 +294,9 @@ private:
     // gun it is, and the muzzle flash's tick clock, last tick and frame.
     int32_t _gunVoice = 0;
     bool _gunSuper = false;
+    // C# Kurt._held (Kurt.Combat.cs:117): the keys held at the previous Pressed call.
+    bool _held[kKeyCount] = {};
+    ItemHooks _itemHooks;
     float _muzzleTicks = 0.0f;
     int32_t _muzzleTick = -1;
     int32_t _muzzleFrame = 0;

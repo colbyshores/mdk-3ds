@@ -83,6 +83,13 @@ int keyForScancode(SDL_Scancode sc) {
         case SDL_SCANCODE_RETURN:
         case SDL_SCANCODE_E:
             return kKeyUseItem;
+        // The C# Input.DefaultKeys' item keys: Tab and ] select the next item, [ the
+        // previous one. (Its 1-5 slot keys have no action in input.h yet.)
+        case SDL_SCANCODE_TAB:
+        case SDL_SCANCODE_RIGHTBRACKET:
+            return kKeyItemNext;
+        case SDL_SCANCODE_LEFTBRACKET:
+            return kKeyItemPrevious;
         case SDL_SCANCODE_ESCAPE:
             return kKeyEscape;
         default:
@@ -96,6 +103,7 @@ int keyForScancode(SDL_Scancode sc) {
 // LCtrl is held). One bit per control.
 uint32_t fireHeld = 0;  // 1 LCtrl, 2 RCtrl, 4 left mouse button
 uint32_t useHeld = 0;   // 1 Return, 2 E
+uint32_t nextHeld = 0;  // 1 Tab, 2 ]
 
 void hold(Input* input, int key, uint32_t* held, uint32_t bit, bool down) {
     *held = down ? (*held | bit) : (*held & ~bit);
@@ -123,6 +131,8 @@ bool windowPump(Window* window, Input* input) {
                     hold(input, kKeyFire, &fireHeld, sc == SDL_SCANCODE_LCTRL ? 1u : 2u, down);
                 } else if (key == kKeyUseItem) {
                     hold(input, kKeyUseItem, &useHeld, sc == SDL_SCANCODE_RETURN ? 1u : 2u, down);
+                } else if (key == kKeyItemNext) {
+                    hold(input, kKeyItemNext, &nextHeld, sc == SDL_SCANCODE_TAB ? 1u : 2u, down);
                 } else if (key >= 0) {
                     input->down[key] = down;
                 }

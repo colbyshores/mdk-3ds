@@ -262,13 +262,69 @@ void Player::update(const Input& input, float delta) {
     if (state() == Kurt::HardLand) {
         return;
     }
-    // C# Kurt.cs:242-245, in that order: UpdateItems (the item slice, not ported --
-    // nothing fills the inventory, so the C#'s `item is None` return is the only path),
-    // then UpdateFiring, the state machine (which reads Firing for SHOT and RUN_FIRE),
-    // and UpdateMuzzle, which reads the state the machine just chose.
+    // C# Kurt.cs:242-245, in that order: UpdateItems (which may start THROW, or use an
+    // item at once in the air), then UpdateFiring (refused while throwing), the state
+    // machine (which reads Firing for SHOT and RUN_FIRE, and runs the throw), and
+    // UpdateMuzzle, which reads the state the machine just chose.
+    updateItems(input);
     updateFiring(input);
     updateState(forward, strafe, delta);
     updateMuzzle(delta);
+}
+
+bool Player::pressed(const Input& input, Key key) {
+    // C# Kurt.Pressed (Kurt.Combat.cs:257-267): a key that is up leaves the held set; a
+    // key that is down is a press only when it was not there (HashSet.Add's answer).
+    if (!input.isDown(key)) {
+        _held[key] = false;
+        return false;
+    }
+    const bool press = !_held[key];
+    _held[key] = true;
+    return press;
+}
+
+void Player::updateItems(const Input& input) {
+    // C# Kurt.UpdateItems (Kurt.Combat.cs:271-311), in its order: next, previous, the slot
+    // keys (Key.Item1-5, which input.h has no action for: never pressed here, and the C#
+    // loop over them changes nothing when none is), then use. The use test's Pressed comes
+    // first in its || chain, so the key's held flag is updated on every step this runs,
+    // whatever the state -- a key held through a throw is not a second press after it.
+    if (pressed(input, kKeyItemNext)) {
+        combat_.selectNext(1);
+    }
+    if (pressed(input, kKeyItemPrevious)) {
+        combat_.selectNext(-1);
+    }
+
+    const Kurt::Item item = combat_.selectedItem();
+    if (!pressed(input, kKeyUseItem) || state() == Kurt::Throw || state() == Kurt::Dead ||
+        combat_.knocked() || item == Kurt::None || item == Kurt::SuperChainGun) {
+        return;
+    }
+
+    // The bomb is out (or another item is): "use" sets the bomb off.
+    if (_itemHooks.canUseItem != nullptr &&
+        !_itemHooks.canUseItem(_itemHooks.context, item)) {
+        if (_itemHooks.bombTriggered != nullptr) {
+            _itemHooks.bombTriggered(_itemHooks.context);
+        }
+        return;
+    }
+
+    if (onFloor) {
+        setState(Kurt::Throw);
+    } else if (state() == Kurt::Jump || state() == Kurt::RunJump || state() == Kurt::Fall ||
+               state() == Kurt::Chute) {
+        itemUsed();
+    }
+}
+
+void Player::itemUsed() {
+    // C# `ItemUsed?.Invoke()` (Kurt.Combat.cs:310, 422).
+    if (_itemHooks.itemUsed != nullptr) {
+        _itemHooks.itemUsed(_itemHooks.context);
+    }
 }
 
 void Player::updateFiring(const Input& input) {
@@ -365,10 +421,8 @@ void Player::updateState(float forward, float strafe, float delta) {
     _stateTime += delta;
 
     // C# UpdateCombatState's first arm (Kurt.Combat.cs:371): health zero on a floor is
-    // the death state. The knock-down and get-up arms below are the C#'s next two. The
-    // Throw arm after them is unreachable here because nothing gives Kurt an item, and
-    // the C#'s version of it returns false -- falls through to the ordinary selection --
-    // whenever it does not apply, which is the same behaviour as not having it.
+    // the death state. The knock-down, get-up and throw arms below are the C#'s next
+    // three.
     if (health() == 0 && onFloor) {
         // C# UpdateCombatState's first arm (Kurt.Combat.cs:371-377): StopFiring, the
         // flash zeroed, State.Dead. updateFiring has already refused a corpse the gun
@@ -414,6 +468,22 @@ void Player::updateState(float forward, float strafe, float delta) {
         // running when he went down has his run frame again at once, and one who was
         // standing goes through the Still/Idle test like anyone else.
         setState(Kurt::Still);
+    } else if (state() == Kurt::Throw && onFloor &&
+               _animationFrame < (float)(frameCount(Kurt::Throw) - 1)) {
+        // C# UpdateCombatState's throw arm (Kurt.Combat.cs:410-423): Kurt stands still while
+        // throwing (update() zeroed his walk) and the item leaves his hand on the step
+        // K_SPWEP's frame clock crosses frame 8 (ThrowFrame, damp_animate). The arm owns the
+        // step until the last frame; in the air, or on the last frame, the C# returns false
+        // and the ordinary selection below takes him out of THROW. The GetUp arm above
+        // returns false in the C# without reaching this test, which the else keeps.
+        // Truncations, not floors: AnimationFrame only grows here from 0.
+        const int32_t kThrowFrame = 8;
+        const int32_t previous = (int32_t)_animationFrame;
+        _animationFrame += kTicks * delta;
+        if (previous < kThrowFrame && (int32_t)_animationFrame >= kThrowFrame) {
+            itemUsed();
+        }
+        return;
     }
 
     // The C# has no missing-animation guard: a missing animation has count 0,

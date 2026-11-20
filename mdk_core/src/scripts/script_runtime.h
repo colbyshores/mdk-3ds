@@ -52,6 +52,7 @@
 #include "scripts/game_stats.h"
 #include "scripts/object.h"
 #include "scripts/script_vm.h"
+#include "scripts/twister.h"
 #include "util/random.h"
 
 namespace mdk {
@@ -126,6 +127,12 @@ public:
     ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
                   audio::SoundBank* bank, Player* player,
                   const formats::Bni* sprites);
+    // Unbinds Kurt's item hooks (ScriptRuntime.cs:331-333 subscribes them for the
+    // runtime's life) when they still point here: a frontend that replaces its runtime
+    // with `reset(new ...)` builds the new one first, and must keep ITS hooks.
+    ~ScriptRuntime();
+    ScriptRuntime(const ScriptRuntime&) = delete;
+    ScriptRuntime& operator=(const ScriptRuntime&) = delete;
 
     // Advance the world by the elapsed time. ScriptRuntime.cs:378-390 keeps
     // its own 1/30-second tick clock: a 1/60-second frontend step completes a
@@ -552,10 +559,44 @@ public:
     // The strongest screen shake requested during this tick (opcode 135). It
     // is cleared at the start of every simulation tick, as in the oracle.
     float shake = 0.0f;
-    // Items.Bomb: the World's Most Interesting Bomb Kurt threw. The Items
-    // subsystem is a later slice, so this stays null until it lands, which is
-    // what the C# reads when no bomb is in play (if_no_bomb / if_bomb_visible).
+    // Items.Bomb / Items.Decoy (0x573c24, 0x573c20): the World's Most Interesting
+    // Bomb and the decoy Kurt threw, while they are out. if_no_bomb / if_bomb_visible
+    // read the bomb; selectTarget aims the aliens at the walking decoy.
     MdkObject* itemsBomb = nullptr;
+    MdkObject* itemsDecoy = nullptr;
+
+    // ---- Kurt's items (Items.cs, 0x46ce78 throws, 0x43deac updates) ----
+    //   use ──► thrown (pickup model, 25 u/s forward, 15 up) ──lands, hits, times out──► active:
+    //     grenade: blast │ decoy: walks, aliens aim at it │ bomb: spins, then blast │ tornado: twisters
+    //     mortar: thumps │ key: the nuke │ seal, bone: pickups again
+    // Thrown items' flags (0x1000) and active ones' (0x4000); the XE's bombs' kind.
+    static const int32_t kItemFlagThrown = 0x1000;
+    static const int32_t kItemFlagActive = 0x4000;
+    static const int32_t kItemKindBomb = 0x81;
+    // C# CollectPickups (ScriptRuntime.cs:2573, damp_collect_pickups 0x46c448): Kurt takes
+    // the pickups his tick's move crossed (their bounds grown by 1, and 5 downwards).
+    void collectPickups();
+    // Items.CanUse / TriggerBomb / UseItem (Items.cs:155-210), Kurt's ItemHooks.
+    bool itemsCanUse(Kurt::Item item);
+    void itemsTriggerBomb();
+    void itemsUseItem();
+    // Items.Blast (Items.cs:614, 0x463a94): `targets` 1 Kurt, 2 objects, 4 triangle groups.
+    // `counted` is Kills.Counted (Kurt's blasts: KurtDamage, the kill counted).
+    static const int32_t kBlastKurt = 1;
+    static const int32_t kBlastObjects = 2;
+    static const int32_t kBlastGroups = 4;
+    void blast(const Vec3& center, int32_t damage, float radius, int32_t targets, int32_t hitType,
+               MdkObject* source, bool counted = true);
+    // Items.Twisters: the tornado's twisters, in the C#'s list order.
+    const std::vector<Twister>& twisters() const { return twisters_; }
+    // C# GroupCenters (ScriptRuntime.cs:1963): the centres of a group's triangles, none
+    // while the group is not solid.
+    void groupCenters(const std::string& arena, int32_t group, std::vector<Vec3>* out);
+    // C# SparkFire (ScriptRuntime.cs:2215): a burst of fire sparks (the nuke's blast).
+    void sparkFire(const std::string& arena, const Vec3& point);
+    // C# FindArenaAnimation (ScriptRuntime.cs:3208): an arena's animation by name.
+    const formats::ModelAnimation* findArenaAnimation(const std::string& arena,
+                                                      const std::string& name);
     // C# ScriptRuntime.ShatterPoint / ShatterDirection (ScriptRuntime.cs:193):
     // the shatter origin the last 138/139 set; 137 reuses them. The direction
     // starts straight up (Vector3.UnitZ in MDK's Z-up world).
@@ -849,6 +890,35 @@ private:
     // the Still list spins in place, and SW_H150 runs away (motionRunner). The
     // Collected shrink is a later slice.
     void motionPickup(MdkObject* obj);
+    void motionUpdraft(MdkObject* obj);
+    // Items.cs's private half (see items.cpp).
+    friend class Twister;
+    void itemsForget(MdkObject* obj);
+    void dropCow();
+    MdkObject* cowTarget();
+    void updateCow(MdkObject* obj);
+    void cowHits(MdkObject* obj);
+    void itemsUpdateThrown(MdkObject* obj);
+    bool itemsHitsObject(MdkObject* obj);
+    void itemsActivate(MdkObject* obj);
+    void itemsExplode(MdkObject* obj, int32_t damage, int32_t kurtDamage, float radius,
+                      int32_t hitType, MdkObject* source, float scale);
+    void itemsStartNuke(MdkObject* obj);
+    void itemsUpdateActive(MdkObject* obj);
+    void itemsUpdateTornado(MdkObject* obj);
+    void itemsUpdateBomb(MdkObject* obj);
+    void itemsUpdateMortar(MdkObject* obj);
+    void itemsUpdateNuke(MdkObject* obj);
+    void itemsUpdateSeal(MdkObject* obj);
+    void updateTwisters();
+    void blastObjects(const Vec3& center, int32_t damage, float radius, int32_t hitType,
+                      MdkObject* source, bool counted);
+    void blastKurt(const Vec3& center, int32_t damage, float radius);
+    void blastGroups(const Vec3& center, int32_t damage, float radius, int32_t hitType,
+                     bool counted);
+    static void itemUsedTrampoline(void* ctx);
+    static void bombTriggeredTrampoline(void* ctx);
+    static bool canUseItemTrampoline(void* ctx, Kurt::Item item);
 
     // The Runner (ObjectBehaviors.UpdateRunner, 0x43daf4's SW_H150 branch): idle it
     // replays H150_I on a 72-in-32768 chance a tick, and it runs for H150_R when Kurt
@@ -993,6 +1063,10 @@ private:
     float kurtYaw_ = 0.0f;
     float targetYaw_ = 0.0f;
     MdkObject* alienTarget_ = nullptr;  // C# ScriptRuntime.AlienTarget (opcode 251)
+    std::vector<Twister> twisters_;     // C# Items._twisters
+    std::vector<Twister> twisterScratch_;
+    std::vector<Vec3> groupCentres_;    // blastGroups' scratch
+    std::vector<std::string> loadedArenas_;  // C# _loadedArenas (UpdateArenas)
     int32_t tickCount_ = 0;
     float tickAccumulator_ = 0.0f;  // C# ScriptRuntime._time
 };
