@@ -15,6 +15,7 @@
 #include "audio/voice_binding.h"
 #include "platform/log_3ds.h"
 #include "platform/vfp_fpscr.h"
+#include "platform/worker_core.h"
 
 namespace mdk {
 namespace {
@@ -637,22 +638,34 @@ bool audioDspOpen(audio::SoundBank* bank) {
     aptHook(&g_aptCookie, onAptHook, nullptr);
     s32 priority = 0x30;
     svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-    // One ABOVE the main thread (a smaller number is a higher priority), on the
-    // application core: the worker sleeps 25 ms at a time and must not wait for a
-    // busy frame to yield, which is Forsaken's 0x28 against its 0x30 main.
+    // One ABOVE the main thread (a smaller number is a higher priority), which is
+    // Forsaken's 0x28 against its 0x30 main -- and so above the async file reader
+    // (main + 1), which shares core 1 with it: the 25 ms music refill preempts an
+    // SD read, never waits behind one. On kWorkerCore (core 1, the owner decision
+    // in worker_core.h, as t2k's audio does), off the main thread's core, so the
+    // tick no longer interrupts a frame at all; if threadCreate refuses it, on the
+    // process's default core as before, where the priority keeps it from waiting
+    // for a busy frame to yield.
     const s32 workerPriority = priority > 0x18 ? priority - 1 : priority;
-    g_thread = threadCreate(audioDspWorker, nullptr, kWorkerStackBytes, workerPriority, -2, false);
+    int core = kWorkerCore;
+    g_thread = threadCreate(audioDspWorker, nullptr, kWorkerStackBytes, workerPriority, core, false);
+    if (g_thread == nullptr && core != kWorkerCoreFallback) {
+        core = kWorkerCoreFallback;
+        g_thread = threadCreate(audioDspWorker, nullptr, kWorkerStackBytes, workerPriority, core,
+                                false);
+    }
     g_live = true;
     log3dsPrintf("audio: dsp voices=%d music=ch%d+ch%d (crossfade) effects=ndsp 0-%d; arena %u B "
                  "linear (samples, PCM8 for 8-bit), music %d x %d x %d frames = %u B linear; "
-                 "worker %s prio 0x%X stack %u tick 25 ms; music low-pass biquad %.0f Hz "
+                 "worker %s prio 0x%X stack %u core %d%s tick 25 ms; music low-pass biquad %.0f Hz "
                  "(e=%.6f at %.1f Hz); no limiter; linear free after %u B. The `audio: frame=` "
                  "sink ledger counts the software sink and reads 0 in this mode: read `audio: dsp`",
                  (int)VoiceBinder::kEffectChannels, (int)kMusicNdsp[0], (int)kMusicNdsp[1],
                  (int)VoiceBinder::kEffectChannels - 1, (unsigned)kSampleArenaBytes,
                  (int)VoiceBinder::kMusicChannels, (int)kMusicBuffers, (int)kMusicBufFrames,
                  (unsigned)kMusicBytes, g_thread ? "started" : "FAILED (music will stop)",
-                 (unsigned)workerPriority, (unsigned)kWorkerStackBytes, (double)kMusicCutoff,
+                 (unsigned)workerPriority, (unsigned)kWorkerStackBytes, core,
+                 core != kWorkerCore ? " (kWorkerCore refused)" : "", (double)kMusicCutoff,
                  (double)g_lowPassE, (double)NDSP_SAMPLE_RATE, (unsigned)linearSpaceFree());
     return true;
 }
