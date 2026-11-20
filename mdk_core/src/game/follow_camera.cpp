@@ -14,6 +14,7 @@
 #include "render/camera_builder.h"
 #include "util/math_lut.h"
 #include "util/math_minmax.h"
+#include "game/scope.h"
 
 namespace mdk {
 
@@ -166,9 +167,10 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
 Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera) {
     // C# calls Clear only when space != null && !Sniping && !Frozen && !Dead
     // (FollowCamera.cs:132). Frozen is ported (the end of a level: no clearance, so
-    // the camera does not shove a lifted Kurt); the sniper is not, and the Dead arm
-    // is still open (docs/OPEN_ITEMS.md), so the guard is space and Frozen here.
-    if (space == nullptr || player.frozen) {
+    // the camera does not shove a lifted Kurt), and so is Sniping (a sniping Kurt is
+    // not shoved off a wall by a camera nobody is looking through); the Dead arm is
+    // still open (docs/OPEN_ITEMS.md), so the guard is space, Frozen and Sniping here.
+    if (space == nullptr || player.frozen || player.sniping()) {
         return camera;
     }
     const Vec head = vAdd(toVec(player.feet), Vec{0.0f, 0.0f, kHeadHeight});
@@ -225,6 +227,93 @@ bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
     camera->forward = forward;
     camera->up = up;
     return true;
+}
+
+Vec3 followCameraUpOf(const Vec3& forward) {
+    // C# FollowCamera.UpOf (FollowCamera.cs:386-387):
+    // Normalize(Cross(Cross(forward, Z), forward)).
+    const Vec3 z{0.0f, 0.0f, 1.0f};
+    return numerics::normalize(numerics::cross(numerics::cross(forward, z), forward));
+}
+
+void scopeProjection(float zoom, float aspect, float nearPlane, float farPlane, float out[16]) {
+    // C# CameraMath.ScopeProjection (FollowCamera.cs:423-430), then .NET 10's
+    // Matrix4x4.CreatePerspectiveOffCenter(left, right, bottom, top, near, far), which
+    // multiplies by the RECIPROCALS of the width and height rather than dividing:
+    // M11 = 2n · 1/(r - l), M22 = 2n · 1/(t - b), M31 = (l + r) · 1/(r - l),
+    // M32 = (t + b) · 1/(t - b), M33 = range = f / (n - f), M34 = -1, M43 = range · n.
+    // Measured: the divided M32 is 0x3E266666 where the oracle's is 0x3E266667 at every
+    // zoom (golden/L*_sniper.txt's proj= lines).
+    const float unit = nearPlane * zoom / Scope::kFocal;
+    const float halfWidth = Scope::kScreenHeight / 2.0f * aspect * unit;
+    const float top = Scope::kCentreY * unit;
+    const float bottom = -(Scope::kScreenHeight - Scope::kCentreY) * unit;
+    const float left = -halfWidth;
+    const float right = halfWidth;
+    const float range = farPlane / (nearPlane - farPlane);
+    for (int i = 0; i < 16; i++) {
+        out[i] = 0.0f;
+    }
+    const float reciprocalWidth = 1.0f / (right - left);
+    const float reciprocalHeight = 1.0f / (top - bottom);
+    out[0] = 2.0f * nearPlane * reciprocalWidth;
+    out[5] = 2.0f * nearPlane * reciprocalHeight;
+    out[8] = (left + right) * reciprocalWidth;
+    out[9] = (top + bottom) * reciprocalHeight;
+    out[10] = range;
+    out[11] = -1.0f;
+    out[14] = range * nearPlane;
+}
+
+bool buildScopeCamera(Camera* camera, const Vec3& eye, const Vec3& forward, float zoom,
+                      float aspect, float nearPlane, float farPlane) {
+    // C# CameraMath.ScopeView (FollowCamera.cs:412-420). The look-at is .NET 10's
+    // Matrix4x4.CreateLookAt(eye, eye + forward, up) = CreateLookTo(eye, target - eye,
+    // up): z = Normalize(-direction), x = Normalize(Cross(up, z)), y = Cross(z, x), the
+    // axes in the columns and Dot(axis, -eye) in the last row. The direction is the
+    // ROUNDED (eye + forward) - eye, as the oracle's is, not `forward` itself.
+    if (camera == nullptr) {
+        return false;
+    }
+    const Vec3 up = followCameraUpOf(forward);
+    const Vec3 target{eye.x + forward.x, eye.y + forward.y, eye.z + forward.z};
+    const Vec3 back{-(target.x - eye.x), -(target.y - eye.y), -(target.z - eye.z)};
+    const Vec3 zaxis = numerics::normalize(back);
+    const Vec3 xaxis = numerics::normalize(numerics::cross(up, zaxis));
+    const Vec3 yaxis = numerics::cross(zaxis, xaxis);
+    if (!(xaxis.x == xaxis.x) || !(zaxis.x == zaxis.x)) {
+        return false;  // a NaN axis: a zero line of sight, or one straight up or down
+    }
+    const Vec3 negEye{-eye.x, -eye.y, -eye.z};
+    float* view = camera->view;
+    view[0] = xaxis.x;  view[1] = yaxis.x;  view[2] = zaxis.x;   view[3] = 0.0f;
+    view[4] = xaxis.y;  view[5] = yaxis.y;  view[6] = zaxis.y;   view[7] = 0.0f;
+    view[8] = xaxis.z;  view[9] = yaxis.z;  view[10] = zaxis.z;  view[11] = 0.0f;
+    view[12] = numerics::dot(xaxis, negEye);
+    view[13] = numerics::dot(yaxis, negEye);
+    view[14] = numerics::dot(zaxis, negEye);
+    view[15] = 1.0f;
+    scopeProjection(zoom, aspect, nearPlane, farPlane, camera->projection);
+    camera->position = eye;
+    camera->forward = forward;
+    camera->up = up;
+    camera->near_plane = nearPlane;
+    camera->far_plane = farPlane;
+    return true;
+}
+
+bool buildSniperCamera(Camera* camera, const Player& player, float aspect) {
+    // C# FollowCamera.SniperView (FollowCamera.cs:382-383).
+    return buildScopeCamera(camera, player.sniperEye(), player.sniperForward(), player.scope().zoom,
+                            aspect, follow_camera::kNear, follow_camera::kFar);
+}
+
+void FollowCamera::mouseLook(const Player& player, Input& input) {
+    // C# FollowCamera.MouseLook (FollowCamera.cs:156-164): nothing through the scope.
+    if (player.sniping()) {
+        return;
+    }
+    mouseLook(input);
 }
 
 void FollowCamera::mouseLook(Input& input) {

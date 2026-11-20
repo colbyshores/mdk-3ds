@@ -116,19 +116,59 @@ bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect,
                               float rollDegrees);
 
+// ---- Sniper mode's view (FollowCamera.cs:381-430) ----
+// The frontends draw the world through these while Player::sniping() (C#
+// Viewer.SceneView); the scope's overlay over it is gap package #7's. The
+// matrices are the oracle's to the bit (golden/L*_sniper.txt): the axes and the
+// look-at are built with System.Numerics' arithmetic (game/scope.h numerics::),
+// not buildLookAtCamera's reciprocal normalize, and the trig is libm's (Scope).
+//
+// C# FollowCamera.UpOf: the camera's up for a line of sight (no roll).
+Vec3 followCameraUpOf(const Vec3& forward);
+
+// C# CameraMath.ScopeProjection (0x57428c): the scope's off-centre perspective for
+// a window of `aspect` -- the focal length is 384 / zoom pixels of the 480-high
+// screen, and the frustum is shifted down so the scope's centre (y 279) is on the
+// line of sight:
+//
+//   y 0   ┌───────────┐  top    =  279 · near / focal
+//         │     +     │  ◄── line of sight, y 279
+//   y 480 └───────────┘  bottom = -201 · near / focal
+//
+// `out` is row-major, row-vector (Matrix4x4.CreatePerspectiveOffCenter's layout).
+void scopeProjection(float zoom, float aspect, float nearPlane, float farPlane, float out[16]);
+
+// C# CameraMath.ScopeView: the view from `eye` along `forward` through the scope.
+// Fills the camera's view (CreateLookAt(eye, eye + forward, UpOf(forward))), its
+// projection (scopeProjection), position, forward, up and planes. The C#'s View also
+// carries the product and the sky's ClipToDirection; the port's renderers form
+// those from these fields, as they do for the follow camera. False when the line of
+// sight is degenerate (no up).
+bool buildScopeCamera(Camera* camera, const Vec3& eye, const Vec3& forward, float zoom,
+                      float aspect, float nearPlane, float farPlane);
+
+// C# FollowCamera.SniperView: Kurt's scope view (his sniper eye and line of sight,
+// the scope's zoom) at the follow camera's near and far planes.
+bool buildSniperCamera(Camera* camera, const Player& player, float aspect);
+
 // The follow camera's smoothing state (C# FollowCamera). It owns the eased arena
 // pitch, the mouse's look offset, the air tilt and the climb, and places the
 // view each step. Kurt's roll is applied here too, read off the Player the way the
 // C# reads it off Kurt. The between-step blend is ported for the camera's own
-// Aim triple; wiring it to a frontend still needs FrameBlend's Kurt pose. The
-// shake, the sniper scope and the top-down view are not ported (they need the
-// scripts and the moves); where the C# branches on them this takes the false
-// side.
+// Aim triple; wiring it to a frontend still needs FrameBlend's Kurt pose. Its
+// sniper guards are ported (no clearance and no mouse look while Kurt snipes; the
+// scope's own view is buildSniperCamera above). The shake and the top-down view
+// are not ported (they need the scripts and the moves); where the C# branches on
+// them this takes the false side.
 class FollowCamera {
 public:
     // The per-frame mouse look up/down (C# FollowCamera.MouseLook): the look
     // offset, clamped against the eased arena pitch and the air tilt.
     void mouseLook(Input& input);
+    // C# FollowCamera.MouseLook(kurt, input) whole: in sniper mode the mouse turns the
+    // scope instead (Player::mouseLook took it), so the look offset is left alone.
+    // (The top-down guard is not ported.)
+    void mouseLook(const Player& player, Input& input);
 
     // A frame between two steps (C# FollowCamera.Blend): place the camera for
     // Kurt as drawn (`feet`, `yaw`) and blend the camera's pitch, pivot and roll

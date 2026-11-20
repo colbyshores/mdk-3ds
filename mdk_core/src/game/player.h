@@ -27,6 +27,7 @@
 #include "game/camera_roll.h"
 #include "game/input.h"
 #include "game/kurt.h"
+#include "game/scope.h"
 #include "render/render_types.h"
 #include "util/random.h"
 
@@ -141,8 +142,9 @@ public:
     // frontend with no audio -- or a host harness that only wants the physics --
     // is. The sounds are the ones the ported state machine makes: FOOT1-4, LAND,
     // CHUTEOUT, CHUTEON, CHUTEIN and the chain gun's loop (MULTIFIRE, GATTFIRE with
-    // the super chain gun). The slide, the sniper, the roll and the updraft fan
-    // belong to subsystems that are not ported (OPEN_ITEMS.md).
+    // the super chain gun), and sniper mode's (SNIPERON, SNIPEROFF, the BREATH and ZOOM
+    // loops, SNIPRELD, SNIPERSHOT). The slide, the roll and the updraft fan belong to
+    // subsystems that are not ported (OPEN_ITEMS.md).
     void setMixer(audio::SoundMixer* mixer) { _mixer = mixer; }
 
     // Kurt's item events (Kurt.Combat.cs:95-101), which the C# scripts runtime
@@ -168,12 +170,47 @@ public:
     // sound or "" (the console's `give`, LevelCommands.Give, and the scripts' pickups).
     const char* collect(const std::string& pickup) { return combat_.collect(pickup); }
 
-    // C# Kurt.StopFiring (Kurt.Combat.cs:183): the gun stops, its looped voice is
-    // stopped and the muzzle flash goes. Public as in the C#: the knock-down, the hard
-    // landing and the death call it here, and the cutscene, the level's end and the
-    // rides call it from the scripts runtime when those slices land. The C#'s first
-    // statement, LeaveSniper(), belongs to the sniper mode, which is not ported.
+    // C# Kurt.StopFiring (Kurt.Combat.cs:183): sniper mode ends (silently), the gun
+    // stops, its looped voice is stopped and the muzzle flash goes. Public as in the C#:
+    // the knock-down, the hard landing and the death call it here, and the cutscene, the
+    // level's end and the rides call it from the scripts runtime when those slices land.
     void stopFiring();
+
+    // ---- Sniper mode (src/Mdk.Game/Kurt/Kurt.Sniper.cs; game/player_sniper.cpp) ----
+    // The sniper key on the floor enters it (SNIPERON, the BREATH loop); Kurt stands,
+    // sidesteps at a quarter of the speed, looks and zooms through the scope (Scope
+    // above), loads and fires its clip and picks the ammo with the item keys. The
+    // sniper key again (SNIPEROFF), falling, death and StopFiring (knock-down, hard
+    // landing; cutscenes and rides when they land) leave it.
+    //
+    //   sniper key ──on the floor──► SNIPERON, BREATH ──► look, zoom, sidestep, clip, fire
+    //        ▲                                                │
+    //        └── sniper key (SNIPEROFF), falling, knock-down, death, cutscenes (StopFiring)
+    //
+    // C# Kurt.MouseDegrees (Kurt.cs:45): degrees per mouse count, for the walk's turn
+    // and the scope's look alike.
+    static constexpr float kMouseDegrees = 0.15f;
+    // Kurt.SniperExit: whether leaving plays SNIPEROFF.
+    enum SniperExit { SniperSilent, SniperWithSound };
+    // C# Kurt.Sniping (0x573a60): sniper mode is on; Kurt isn't drawn (the frontends'
+    // part, gap package #7).
+    bool sniping() const { return _sniping; }
+    // C# Kurt.Scope.
+    Scope& scope() { return _scope; }
+    const Scope& scope() const { return _scope; }
+    // C# Kurt.SniperEye / SniperForward: the eye and the line of sight in sniper mode
+    // (FollowCamera's scope view, the listener, and #6's rounds and target lock).
+    Vec3 sniperEye() const { return _scope.eye(feet, facing()); }
+    Vec3 sniperForward() const { return _scope.forward(yaw); }
+    // C# Kurt.EnterSniper (damp_move 0x46883c): only standing on a floor, alive, not
+    // knocked down or throwing. Kurt stops firing and stands; the scope resets.
+    void enterSniper();
+    // C# Kurt.LeaveSniper (0x4645c8).
+    void leaveSniper(SniperExit exit = SniperSilent);
+    // C# Kurt.SniperFire, the scripts runtime's round-slot test (ScriptRuntime.cs:330
+    // binds FireSniper, gap package #6). Null is the C#'s `SniperFire ?? (_ => true)`.
+    void setSniperHooks(const Scope::FireHook& hook) { _sniperFire = hook; }
+    const Scope::FireHook& sniperHooks() const { return _sniperFire; }
 
     Vec3 facing() const;
     Vec3 right() const;
@@ -239,6 +276,15 @@ public:
     int teleports = 0;
 
 private:
+    // Sniper mode's step (Kurt.Sniper.cs): the sniper key, the ways out, then the
+    // controls, the sidestep and the clip. True when the step was a sniper one (the C#'s
+    // Update returns after it).
+    bool updateSniper(const Input& input, bool turbo, float delta);
+    bool canSnipe() const;
+    void sniperControls(const Input& input, bool turbo, float delta);
+    // Kurt.SniperMove: the sidestep and the fall. In player.cpp, beside the walk it
+    // shares the movement constants with.
+    void sniperMove(const Input& input, bool turbo, float delta);
     void updateVertical(const Input& input, const Vec3& move, float delta);
     void updateAir(bool jumpHeld, float delta);
     void glueDownhill(const Vec3& move, float delta);
@@ -322,6 +368,15 @@ private:
     // frame and jitter are not, which is why the fire golden prints only whether a
     // flash is up.
     Random _muzzleRandom{0x4D555A};
+    // Sniper mode's state (Kurt.Sniper.cs:28-34): the mode, the scope, the two looped
+    // voices, the rounds' hook, and C# Kurt._mouseTurn's Scope value (the last step
+    // looked through the scope, so the frame's mouse look turns the scope).
+    bool _sniping = false;
+    Scope _scope;
+    int32_t _breathVoice = 0;
+    int32_t _zoomVoice = 0;
+    Scope::FireHook _sniperFire;
+    bool _mouseTurnScope = false;
 };
 
 } // namespace mdk

@@ -92,6 +92,14 @@ int keyForScancode(SDL_Scancode sc) {
             return kKeyItemPrevious;
         case SDL_SCANCODE_ESCAPE:
             return kKeyEscape;
+        // The C# Input.DefaultKeys' scope zoom: Page Up and = zoom in, Page Down and -
+        // zoom out (read in sniper mode only).
+        case SDL_SCANCODE_PAGEUP:
+        case SDL_SCANCODE_EQUALS:
+            return kKeyZoomIn;
+        case SDL_SCANCODE_PAGEDOWN:
+        case SDL_SCANCODE_MINUS:
+            return kKeyZoomOut;
         default:
             return -1;
     }
@@ -104,6 +112,8 @@ int keyForScancode(SDL_Scancode sc) {
 uint32_t fireHeld = 0;  // 1 LCtrl, 2 RCtrl, 4 left mouse button
 uint32_t useHeld = 0;   // 1 Return, 2 E
 uint32_t nextHeld = 0;  // 1 Tab, 2 ]
+uint32_t zoomInHeld = 0;   // 1 Page Up, 2 =
+uint32_t zoomOutHeld = 0;  // 1 Page Down, 2 -
 
 void hold(Input* input, int key, uint32_t* held, uint32_t bit, bool down) {
     *held = down ? (*held | bit) : (*held & ~bit);
@@ -133,6 +143,11 @@ bool windowPump(Window* window, Input* input) {
                     hold(input, kKeyUseItem, &useHeld, sc == SDL_SCANCODE_RETURN ? 1u : 2u, down);
                 } else if (key == kKeyItemNext) {
                     hold(input, kKeyItemNext, &nextHeld, sc == SDL_SCANCODE_TAB ? 1u : 2u, down);
+                } else if (key == kKeyZoomIn) {
+                    hold(input, kKeyZoomIn, &zoomInHeld, sc == SDL_SCANCODE_PAGEUP ? 1u : 2u, down);
+                } else if (key == kKeyZoomOut) {
+                    hold(input, kKeyZoomOut, &zoomOutHeld, sc == SDL_SCANCODE_PAGEDOWN ? 1u : 2u,
+                         down);
                 } else if (key >= 0) {
                     input->down[key] = down;
                 }
@@ -140,11 +155,14 @@ bool windowPump(Window* window, Input* input) {
             }
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP:
-                // The C# Input.DefaultButtons: the left button fires. (Right is the
-                // sniper and the wheel the item keys, which are not ported.)
+                // The C# Input.DefaultButtons: the left button fires, the right one is
+                // the sniper key. (The wheel -- the item keys, and the scope's zoom in
+                // sniper mode -- is not ported: Input::wheel stays 0.)
                 if (input && event.button.button == SDL_BUTTON_LEFT) {
                     hold(input, kKeyFire, &fireHeld, 4u,
                          event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                } else if (input && event.button.button == SDL_BUTTON_RIGHT) {
+                    input->down[kKeySniper] = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
                 }
                 break;
             case SDL_EVENT_MOUSE_MOTION:

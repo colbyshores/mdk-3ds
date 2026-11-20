@@ -28,6 +28,8 @@ const Action kActions[] = {
     {kKeyItemPrevious, "item_previous"},
     {kKeyItemNext, "item_next"},
     {kKeySniper, "sniper"},
+    {kKeyZoomIn, "zoom_in"},
+    {kKeyZoomOut, "zoom_out"},
     {kKeyUseItem, "use_item"},
     {kKeyTurbo, "turbo"},
 };
@@ -104,6 +106,10 @@ ControlBindings defaultControlBindings() {
     bindings.buttons[kKeySniper] = kHidDUp;
     bindings.buttons[kKeyUseItem] = kHidDDown;
     bindings.buttons[kKeyTurbo] = kHidZL;
+    // The scope's zoom keys are unbound until the owner picks their buttons (gap
+    // package #5): zoom_in and zoom_out are written as `none`.
+    bindings.buttons[kKeyZoomIn] = 0;
+    bindings.buttons[kKeyZoomOut] = 0;
     return bindings;
 }
 
@@ -242,7 +248,8 @@ std::string writeControls(const ControlBindings& bindings) {
         "# unassigned), so an original 3DS has no turbo unless you bind it here.\n"
         "# The circle pad looks. START opens the pause menu and SELECT the\n"
         "# effects menu, whatever is bound.\n"
-        "# sniper is bound but not implemented yet (the sniper view is cut).\n"
+        "# sniper enters and leaves sniper mode; the scope's view and overlay are\n"
+        "# not drawn yet. zoom_in and zoom_out zoom the scope (unbound by default).\n"
         "# Delete this file to get the defaults back.\n";
     for (size_t i = 0; i < kActionCount; i++) {
         out += kActions[i].name;

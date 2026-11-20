@@ -104,7 +104,7 @@ void testDigitalMap() {
         {kHidZR, kKeyFire, "ZR fires too (New 3DS)"},
         {kHidDLeft, kKeyItemPrevious, "D-pad left is the previous item"},
         {kHidDRight, kKeyItemNext, "D-pad right is the next item"},
-        {kHidDUp, kKeySniper, "D-pad up is the sniper (bound, not implemented)"},
+        {kHidDUp, kKeySniper, "D-pad up is the sniper key"},
         {kHidDDown, kKeyUseItem, "D-pad down uses the item"},
         {kHidZL, kKeyTurbo, "ZL is turbo (New 3DS; unassigned by the owner)"},
         {kHidStart, -1, "Start is the frontend's pause menu, no game action"},
@@ -308,6 +308,8 @@ void testTheDefaults() {
     expect("sniper = D-pad up", d.buttons[kKeySniper], kHidDUp);
     expect("use item = D-pad down", d.buttons[kKeyUseItem], kHidDDown);
     expect("turbo = ZL", d.buttons[kKeyTurbo], kHidZL);
+    expect("the zoom keys are unbound (the owner picks them)",
+           d.buttons[kKeyZoomIn] | d.buttons[kKeyZoomOut], 0);
     expect("the turn axes have no buttons", d.buttons[kKeyTurnLeft] | d.buttons[kKeyTurnRight], 0);
     expect("escape has none (START is the pause menu)", d.buttons[kKeyEscape], 0);
     // No default uses START or SELECT: those are the frontend's menus.
@@ -318,7 +320,8 @@ void testTheDefaults() {
     expect("no default binds START or SELECT", all & (kHidStart | kHidSelect), 0);
     expectText("the boot log's line", describeControls(d),
                "forward=X back=B strafe_left=Y strafe_right=A jump=L fire=R+ZR "
-               "item_previous=DLEFT item_next=DRIGHT sniper=DUP use_item=DDOWN turbo=ZL");
+               "item_previous=DLEFT item_next=DRIGHT sniper=DUP zoom_in=none zoom_out=none "
+               "use_item=DDOWN turbo=ZL");
 }
 
 // The default file, written and read back, is the defaults; a file of only
@@ -336,7 +339,7 @@ void testTheRoundTrip() {
             failures++;
         }
     }
-    expect("eleven action lines taken", report.applied, 11);
+    expect("thirteen action lines taken", report.applied, 13);
     expect("none bad", report.bad, 0);
     expect("none unknown", report.unknown, 0);
     expect("every line a line: the text ends with a newline", text.empty() ? 0 : text.back(), '\n');

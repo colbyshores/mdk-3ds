@@ -1102,7 +1102,7 @@ int main(int argc, char** argv) {
             // A frame faster than the step runs no step and reuses the camera the
             // last step placed (the C# blends between steps; that is not ported).
             player.mouseLook(input);
-            follow.mouseLook(input);
+            follow.mouseLook(player, input);
             pending += elapsed;
             if (pending > kStep * 10.0f) {
                 pending = kStep * 10.0f; // never spiral after a stall

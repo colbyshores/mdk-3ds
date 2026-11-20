@@ -296,7 +296,9 @@ live object list, `yawTo` seam and the same observed `KurtVelocity` field.
 
 The ammo-condition batch adds: 174 (`if_ammo`), over `Kurt`'s super-chain-gun
 timer and five sniper-ammo entries; its pickup and combat writers remain
-deferred.
+deferred. (2026-11-20: the pickups write the ammo since the items port, and
+sniper mode's clip now spends it -- `Kurt::useAmmo` -- so 174 sees a sniper
+round fired; no dispatch changes.)
 
 The movement-command batch adds no dispatch: it lands the two arms
 `ScriptRuntime::updateCommand` was still missing, so **6 (`move_to_target`) is
@@ -551,7 +553,7 @@ portable with no new subsystem, and it is ported.)**
 | 81 | push_hit_dir | reads `hit_direction`; the chain gun, the blast, the mortar, Twister and touch_damage write it now, but the sniper rounds' writer (SniperRounds.cs:610, PORT_GAPS package 6) is unported |
 | 135 | raise_573aa8 | writes the runtime's per-tick maximum, but the C# `ShakeRaised` follow-camera consumer is not ported |
 | 140 | group_set_texture | sets the group material VM state; the renderer ignores it (open item 1, dynamic scene updates) |
-| 174 | if_ammo | reads `Kurt`'s super-chain-gun timer and five sniper-ammo entries, but their pickup writers and chain-gun/sniper combat writers are not ported; integrated play therefore sees zero |
+| 174 | if_ammo | reads `Kurt`'s super-chain-gun timer and five sniper-ammo entries; the pickups write them and sniper mode's clip spends them (`Kurt::useAmmo`, 2026-11-20) |
 | 202 | set_574304 | writes the runtime's shared `skyMode`, but the renderer's `SkyModes.BackdropOf` and save/load snapshot consumers are not ported |
 | 203 | camera_track | writes the runtime's `cameraTrackPitch`/`cameraTrackTicks`, and the Linux follow camera consumes them, but the save/load snapshot's `camera_track_*` fields are not ported |
 | 131 | special_event | the <= 50 arm (the end of a level) is ported; the arms above 50 (the strike, the cutscenes, Gunter, the end of the game) are package 13 and still count as unimplemented |

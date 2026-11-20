@@ -33,11 +33,14 @@ enum Key {
     kKeyItemNext,
     kKeyItemPrevious,
     kKeyEscape,
-    // The sniper view (the C# pad's trigger). The overlay is cut from this port
-    // (docs/OWNER_DIRECTIVE_2026-11-05.md), so NOTHING reads this action yet: it
-    // exists so the 3DS controls file (mdk_3ds/src/platform/controls_3ds.h) and
-    // a future mapping screen can bind it.
+    // Sniper mode on and off (the C#'s Key.Sniper: the pad's left trigger, the right
+    // mouse button). Player's sniper step reads it (game/player_sniper.cpp); the scope's
+    // overlay and view are the frontends' (gap package #7).
     kKeySniper,
+    // The scope's zoom (the C#'s Key.ZoomIn / Key.ZoomOut: Page Up / =, Page Down / -,
+    // the pad's d-pad up/down). Read in sniper mode only.
+    kKeyZoomIn,
+    kKeyZoomOut,
     kKeyCount
 };
 
@@ -46,6 +49,10 @@ struct Input {
     bool down[kKeyCount] = {false};
     float mouseX = 0.0f;   // accumulated relative motion, raw counts
     float mouseY = 0.0f;
+    // The C# Input.Wheel: wheel notches since the last game step (positive away from
+    // the user), which zoom the scope in sniper mode (Scope::wheel). The frontend that
+    // fills it clears it after each step, as the C#'s ClearMouse does.
+    float wheel = 0.0f;
 
     bool isDown(Key key) const { return down[key]; }
 

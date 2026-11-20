@@ -343,6 +343,43 @@ void Kurt::selectNext(int32_t step) {
     selected_ = next;
 }
 
+void Kurt::selectAmmo(int32_t type) {
+    // C# Inventory.SelectAmmo (Inventory.cs:243): Math.Clamp(type, 0, AmmoTypes).
+    selectedAmmo_ = type < 0 ? 0 : (type > kAmmoTypes ? kAmmoTypes : type);
+}
+
+void Kurt::useAmmo(int32_t type) {
+    // C# Inventory.UseAmmo (Inventory.cs:246-252). Its only caller is Scope::updateClip,
+    // whose type is SelectedAmmo, which every writer keeps in [0, AmmoTypes].
+    if (type > 0 && type <= kAmmoTypes) {
+        ammo_[type - 1] = ammo_[type - 1] - 1 > 0 ? ammo_[type - 1] - 1 : 0;
+    }
+}
+
+int32_t Kurt::nextAmmo(int32_t step) const {
+    // C# Inventory.NextAmmo (Inventory.cs:256-271): ((type + step) % Types + Types) %
+    // Types over the six types (bullets and 1-5). The double remainder is written as
+    // the exact wrap AGENTS.md R11 gives for a value in [-Types, 2 Types): type is in
+    // [0, Types) (SelectAmmo clamps, Collect writes 1-5) and step is +1 or -1 (the two
+    // ammo keys), so type + step is in [-1, Types], and one add or subtract of Types is
+    // the C#'s result for each. The loop is the C#'s bounded scan: at most Types tries,
+    // bullets (0) always stop it.
+    const int32_t types = kAmmoTypes + 1;
+    int32_t type = selectedAmmo_;
+    for (int32_t i = 0; i < types; i++) {
+        type += step;
+        if (type < 0) {
+            type += types;
+        } else if (type >= types) {
+            type -= types;
+        }
+        if (type == 0 || ammo_[type - 1] > 0) {
+            break;
+        }
+    }
+    return type;
+}
+
 void Kurt::consume() {
     // C# Inventory.Consume (Inventory.cs:274-288).
     if (slotCount_ == 0) {

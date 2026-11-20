@@ -48,6 +48,7 @@
 #include "formats/palette.h"
 #include "formats/sprite_animation.h"
 #include "game/arena_space.h"
+#include "game/follow_camera.h"
 #include "game/font_view.h"
 #include "game/follow_camera.h"
 #include "game/level_data.h"
@@ -1276,6 +1277,224 @@ bool kurtFireDump(int level, int steps, const FireSchedule& plan, const MdkData&
         *out += head;
         *out += voices.empty() ? "-" : voices;
         *out += "\n";
+    }
+    return true;
+}
+
+// SNIPER MODE, end to end (golden/L3_sniper.txt, L7_sniper.txt): Kurt alone -- no scripts
+// runtime -- stepped at 1/60 s under kSniperHolds, against the oracle probe
+// (tests/scripts/sniper_probe, `Probe <level> <steps>`), which runs the same table. It
+// pins Player's sniper step (game/player_sniper.cpp: the key, entering and leaving, the
+// controls; player.cpp's sniperMove), the scope (game/scope.h: the look, the zoom by keys
+// and wheel, the clip, the ammo keys, the eye and line of sight, ToScreen and Locks),
+// Kurt's ammo (SelectAmmo/UseAmmo/NextAmmo) and the scope's view (follow_camera.h's
+// buildSniperCamera, the C#'s FollowCamera.SniperView) for the 3DS top screen's aspect.
+// Every float is its exact bits. What each part of the line is:
+//
+//   state floor snipe   the state machine (STILL while sniping, IDLE after), OnFloor, Sniping
+//   feet yaw vz strafe  the sidestep and the fall, the scope's turn
+//   pitch zoom limit    the scope; limit is ZoomMin (#6's lock writes it)
+//   clip sel ammo       the clip's rounds and timer, the selected type, the five counts
+//   eye fwd             Kurt.SniperEye / SniperForward
+//   cam                 the view's position / forward / up / near
+//   scr                 Scope.ToScreen of two fixed points (the start + (60, 4, 5), and
+//                       the start - (60, 0, 0)) and whether a 16-pixel box there Locks;
+//                       `-` behind the eye
+//   m                   an FNV-1a hash of the view-projection and projection matrices'
+//                       bits (printed whole every 20th sniping step: vp=, proj=)
+//   voices              the mixer's voice count, its newest voice, and the BREATH/ZOOM loops
+//
+// The view-projection is view x projection with System.Numerics' multiply (an fmaf
+// chain per element, render/post_params.cpp's), formed here because the port's Camera
+// keeps the two apart and the renderers multiply them.
+//
+// WHY YAW 0. The run starts facing +X, not the level's start angle, and does all of its
+// looking down and sidestepping before its first turn: Player::facing() is the trig LUT
+// (docs/OPEN_ITEMS.md, owner-gated), and it enters only the sidestep and the eye while
+// looking down, where at yaw 0 the LUT's cos/sin are exactly 1 and 0.
+struct SniperHold {
+    Key key;
+    int from;
+    int to;
+};
+const SniperHold kSniperHolds[] = {
+    {kKeySniper, 40, 42},         {kKeyBack, 50, 80},          {kKeyStrafeRight, 60, 90},
+    {kKeyZoomIn, 90, 150},        {kKeyFire, 110, 125},        {kKeyForward, 160, 290},
+    {kKeyFire, 200, 262},         {kKeyTurnRight, 300, 330},   {kKeyTurbo, 310, 320},
+    {kKeyZoomOut, 320, 360},      {kKeyTurnLeft, 340, 360},    {kKeyItemNext, 390, 392},
+    {kKeyItemPrevious, 410, 412}, {kKeyItemNext, 430, 432},    {kKeyFire, 450, 530},
+    {kKeySniper, 540, 542},       {kKeyJump, 560, 566},        {kKeySniper, 564, 566},
+};
+const struct {
+    int step;
+    float notches;
+} kSniperWheels[] = {{140, 1.0f}, {365, -2.0f}, {375, 1.0f}};
+const struct {
+    int step;
+    const char* model;
+} kSniperGives[] = {{5, "SW_HGREN"}, {6, "SW_BONES"}};
+
+std::string sniperBits(float v) {
+    uint32_t bits;
+    memcpy(&bits, &v, sizeof(bits));
+    char text[16];
+    snprintf(text, sizeof(text), "%08X", (unsigned)bits);
+    return text;
+}
+
+std::string sniperVec(const Vec3& v) {
+    return sniperBits(v.x) + "," + sniperBits(v.y) + "," + sniperBits(v.z);
+}
+
+// System.Numerics' Matrix4x4 multiply on the oracle's host: each element an fmaf chain
+// over the row and the column (render/post_params.cpp's measured shape).
+void sniperMultiply(const float a[16], const float b[16], float out[16]) {
+    for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+            out[row * 4 + col] =
+                std::fmaf(a[row * 4 + 3], b[12 + col],
+                          std::fmaf(a[row * 4 + 2], b[8 + col],
+                                    std::fmaf(a[row * 4 + 1], b[4 + col], a[row * 4] * b[col])));
+        }
+    }
+}
+
+uint32_t sniperFnv(uint32_t hash, float v) {
+    uint32_t bits;
+    memcpy(&bits, &v, sizeof(bits));
+    for (int i = 0; i < 4; i++) {
+        hash = (hash ^ ((bits >> (8 * i)) & 0xFFu)) * 16777619u;
+    }
+    return hash;
+}
+
+bool kurtSniperDump(int level, int steps, const MdkData& data, const Bni* sprites, std::string* out,
+                    std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    audio::SoundMixer mixer(&bank);
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = 0.0f;
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    player.setMixer(&mixer);
+
+    const float aspect = 400.0f / 240.0f;
+    // The probe's two ToScreen points: ahead and a little to the side (it locks at zoom
+    // 1 and leaves the lock square zoomed in), and behind the eye.
+    const Vec3 probes[2] = {Vec3{start[0] + 60.0f, start[1] + 4.0f, start[2] + 5.0f},
+                            Vec3{start[0] - 60.0f, start[1] - 0.0f, start[2] - 0.0f}};
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " aspect=" + sniperBits(aspect) + " lock=" + sniperBits(Scope::lockLimit(12.0f, 80.0f)) +
+           "," + sniperBits(Scope::lockLimit(4.0f, 0.5f)) + "\n";
+    for (int step = 1; step <= steps; step++) {
+        for (size_t g = 0; g < sizeof(kSniperGives) / sizeof(kSniperGives[0]); g++) {
+            if (kSniperGives[g].step == step) {
+                player.collect(kSniperGives[g].model);
+            }
+        }
+        Input input;
+        for (size_t h = 0; h < sizeof(kSniperHolds) / sizeof(kSniperHolds[0]); h++) {
+            if (step >= kSniperHolds[h].from && step < kSniperHolds[h].to) {
+                input.down[kSniperHolds[h].key] = true;
+            }
+        }
+        for (size_t w = 0; w < sizeof(kSniperWheels) / sizeof(kSniperWheels[0]); w++) {
+            if (kSniperWheels[w].step == step) {
+                input.wheel = kSniperWheels[w].notches;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+
+        const Scope& scope = player.scope();
+        Camera camera;
+        if (!buildSniperCamera(&camera, player, aspect)) {
+            *why = "step " + std::to_string(step) + ": the scope view is degenerate";
+            return false;
+        }
+        float vp[16];
+        sniperMultiply(camera.view, camera.projection, vp);
+        uint32_t hash = 2166136261u;
+        for (int i = 0; i < 16; i++) {
+            hash = sniperFnv(hash, vp[i]);
+        }
+        for (int i = 0; i < 16; i++) {
+            hash = sniperFnv(hash, camera.projection[i]);
+        }
+        const Vec3 eye = player.sniperEye();
+        const Vec3 forward = player.sniperForward();
+        std::string scr;
+        for (int p = 0; p < 2; p++) {
+            Vec2 screen;
+            scr += p ? ";" : "";
+            if (!Scope::toScreen(eye, forward, scope.zoom, probes[p], &screen)) {
+                scr += "-";
+                continue;
+            }
+            const bool locked = Scope::locks(Vec2{screen.x - 8.0f, screen.y - 8.0f},
+                                             Vec2{screen.x + 8.0f, screen.y + 8.0f});
+            scr += sniperBits(screen.x) + "," + sniperBits(screen.y) + ":" + (locked ? "1" : "0");
+        }
+        const Kurt& kurt = player.combat();
+        std::string ammo;
+        for (int32_t t = 1; t <= Kurt::kAmmoTypes; t++) {
+            ammo += (t > 1 ? "," : "") + std::to_string(kurt.ammo(t));
+        }
+        const std::vector<audio::SoundMixer::Voice>& live = mixer.voices();
+        bool breath = false;
+        bool zoom = false;
+        for (size_t i = 0; i < live.size(); i++) {
+            breath = breath || live[i].name == "BREATH";
+            zoom = zoom || live[i].name == "ZOOM";
+        }
+        char hashText[16];
+        snprintf(hashText, sizeof(hashText), "%08X", (unsigned)hash);
+        *out += "s=" + std::to_string(step) + " state=" + kurtStateName(player.state()) +
+                " floor=" + (player.onFloor ? "1" : "0") + " snipe=" + (player.sniping() ? "1" : "0") +
+                " feet=" + sniperVec(player.feet) + " yaw=" + sniperBits(player.yaw) +
+                " vz=" + sniperBits(player.verticalSpeed) + " strafe=" + sniperBits(player.strafeSpeed) +
+                " pitch=" + sniperBits(scope.pitch) + " zoom=" + sniperBits(scope.zoom) +
+                " limit=" + sniperBits(scope.zoomLimit) + " clip=" + std::to_string(scope.clipRounds) +
+                "/" + sniperBits(scope.clipTime) + " sel=" + std::to_string(kurt.selectedAmmo()) +
+                " ammo=" + ammo + " eye=" + sniperVec(eye) + " fwd=" + sniperVec(forward) +
+                " cam=" + sniperVec(camera.position) + "/" + sniperVec(camera.forward) + "/" +
+                sniperVec(camera.up) + "/" + sniperBits(camera.near_plane) + " scr=" + scr +
+                " m=" + hashText + " voices=" + std::to_string(live.size()) + ":" +
+                (live.empty() ? std::string("-") : live.back().name) +
+                " breath=" + (breath ? "1" : "0") + " zoom=" + (zoom ? "1" : "0") + "\n";
+        if (player.sniping() && step % 20 == 0) {
+            *out += "  vp=";
+            for (int i = 0; i < 16; i++) {
+                *out += (i ? "," : "") + sniperBits(vp[i]);
+            }
+            *out += "\n  proj=";
+            for (int i = 0; i < 16; i++) {
+                *out += (i ? "," : "") + sniperBits(camera.projection[i]);
+            }
+            *out += "\n";
+        }
     }
     return true;
 }
@@ -4200,6 +4419,18 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "sniper") {
+            // `tick1 dump sniper <level> <steps>`: kurtSniperDump's text, the C++ side of
+            // the sniper probe.
+            std::string got;
+            std::string why;
+            if (!kurtSniperDump(level, ticks, data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "fire" || what == "firerun") {
             std::string got;
             std::string why;
@@ -4969,6 +5200,43 @@ int main(int argc, char** argv) {
                 failures++;
             } else if (got == expected) {
                 printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // Sniper mode, end to end against the oracle probe (tests/scripts/sniper_probe; see
+    // kurtSniperDump for the columns): one schedule on two levels -- L3 starts on the
+    // floor, L7 lands first (LAND, then the scope).
+    {
+        struct SniperCase {
+            const char* name;
+            const char* path;
+            int level;
+        };
+        static const SniperCase kSniperCases[] = {
+            {"L3_sniper", "golden/L3_sniper.txt", 3},
+            {"L7_sniper", "golden/L7_sniper.txt", 7},
+        };
+        for (size_t i = 0; i < sizeof(kSniperCases) / sizeof(kSniperCases[0]); i++) {
+            const SniperCase& c = kSniperCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!kurtSniperDump(c.level, 600, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: sniper mode in and out, the scope's look, zoom (keys and "
+                       "wheel), clip and ammo keys, the sidestep, and the scope view's "
+                       "matrices to the bit\n", c.name);
             } else {
                 printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
                 failures++;

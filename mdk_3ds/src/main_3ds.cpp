@@ -541,8 +541,8 @@ int main(int argc, char** argv) {
         }
         mdk::log3dsPrintf("controls: %s", mdk::describeControls(controls).c_str());
         if (controls.buttons[mdk::kKeySniper] != 0) {
-            mdk::log3dsPrintf("controls: sniper is bound but not implemented (the sniper view "
-                              "is cut); its button does nothing yet");
+            mdk::log3dsPrintf("controls: sniper mode is gameplay-only (the scope's view and "
+                              "overlay are not drawn yet)");
         }
     }
 
@@ -1752,7 +1752,7 @@ int main(int argc, char** argv) {
             // then UpdateCamera) -- so the pitch smoothing and the clearance run
             // once per step, not once per frame.
             player.mouseLook(input);
-            follow.mouseLook(input);
+            follow.mouseLook(player, input);
 
             pending += elapsed;
             if (pending > maxPending) pending = maxPending;

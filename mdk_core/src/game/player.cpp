@@ -33,7 +33,7 @@ const float kTurnAcceleration = 0.9f * kTicks * kTicks;   // 810 deg/s^2
 const float kTurnAccelerationTurbo = 1.3f * kTicks * kTicks;  // 1170 deg/s^2
 const float kTurnFrictionFast = 1.6f * kTicks * kTicks;   // 1440 deg/s^2
 const float kTurnFrictionSlow = 0.55f * kTicks * kTicks;  // 495 deg/s^2
-const float kMouseDegrees = 0.15f;                        // degrees per mouse count
+const float kMouseDegrees = Player::kMouseDegrees;        // degrees per mouse count
 
 // The C# Kurt state machine's constants (Kurt.cs:81-88).
 const float kIdleDelay = 6.0f;
@@ -148,6 +148,9 @@ void Player::addKnockdownPush(const Vec2& push) {
 }
 
 void Player::update(const Input& input, float delta) {
+    // C# Kurt.Update's first statement (Kurt.cs:137): no mouse turn until a step says
+    // which (the scope's half of it, _mouseTurn = Scope, is the sniper step's).
+    _mouseTurnScope = false;
     // C# Kurt.Update decays the invulnerability timer as its second statement
     // (Kurt.cs:139), ahead of the ChuteClosing clear and of every early return below.
     // Opcode 244 (set_global_573bd4) is the only writer this port has, so without this
@@ -209,6 +212,14 @@ void Player::update(const Input& input, float delta) {
     // C# Kurt.Update calls UpdateChuteSound before the Hang/HardLand branch, so a
     // crashing Kurt's chute still closes and stops flapping.
     updateChuteSound();
+    // C# Kurt.cs:185: `if (UpdateSniper(input, turbo, delta) || UpdateSlide(...)) return;`
+    // -- after UpdateChuteSound and the beta moves (not ported), BEFORE the Hang/HardLand
+    // branch, so the sniper key can end a crash landing (EnterSniper's CanSnipe does not
+    // refuse HardLand) and a sniper step owns the whole step. The slide is not ported.
+    // game/player_sniper.cpp.
+    if (updateSniper(input, input.isDown(kKeyTurbo), delta)) {
+        return;
+    }
     if (state() == Kurt::HardLand) {
         // A hard landing owns the step until K_CRASHL is done (C#
         // UpdateSpecial). It also stops the ordinary walk state machine.
@@ -361,8 +372,10 @@ void Player::updateFiring(const Input& input) {
 }
 
 void Player::stopFiring() {
-    // C# Kurt.StopFiring (Kurt.Combat.cs:183-190). LeaveSniper() comes first there and
-    // belongs to the unported sniper mode. StopVoice(0) is a no-op on both sides.
+    // C# Kurt.StopFiring (Kurt.Combat.cs:183-190): sniper mode ends first, silently (the
+    // knock-down, the hard landing; the cutscenes and rides when they land). StopVoice(0)
+    // is a no-op on both sides.
+    leaveSniper();
     combat_.setFiring(false);
     if (_mixer != nullptr) {
         _mixer->stopVoice(_gunVoice);
@@ -737,6 +750,16 @@ void Player::mouseLook(Input& input) {
         input.takeMouseX();
         return;
     }
+    if (_mouseTurnScope) {
+        // C# Kurt.MouseLook's scope arm (Kurt.cs:349-357): the last step looked through
+        // the scope, so the frame's mouse turns and tilts it -- the mouse's share of
+        // Scope.Look, with no keys and no time -- and both axes are taken (the follow
+        // camera's MouseLook leaves the tilt alone in sniper mode).
+        const float mouseX = input.takeMouseX() * kMouseDegrees;
+        const float mouseY = input.takeMouseY() * kMouseDegrees;
+        yaw += _scope.look(0.0f, 0.0f, mouseX, mouseY, Scope::TurboOff, 0.0f);
+        return;
+    }
     yaw += -input.takeMouseX() * kMouseDegrees;
 }
 
@@ -841,6 +864,35 @@ void Player::drainKnockdownPush(float delta) {
     const float step = kPushDrain * delta;
     _knockdownPush.x = moveToward(_knockdownPush.x, 0.0f, step);
     _knockdownPush.y = moveToward(_knockdownPush.y, 0.0f, step);
+}
+
+void Player::sniperMove(const Input& input, bool turbo, float delta) {
+    // C# Kurt.SniperMove (Kurt.Sniper.cs:178-192): Kurt sidesteps at a quarter of the
+    // running speed and still falls. It lives here rather than in player_sniper.cpp
+    // because it is the walk's arithmetic: the same Accelerate, speeds, slide and
+    // gravity. The move is the C#'s `(Right * StrafeSpeed + (push, 0)) * delta`, taken
+    // before the push drains, as the walk's; the C#'s move passes Nearby (the solid
+    // objects), which the walk here does not either.
+    const float max = (turbo ? kMaxSpeedTurbo : kMaxSpeed) * 0.25f;  // SniperStrafe
+    forwardSpeed = 0.0f;
+    strafeSpeed = clampf(accelerate(strafeSpeed, input.axis(kKeyStrafeRight, kKeyStrafeLeft), turbo,
+                                    1.0f, 1.0f, delta),
+                         -max, max);
+    const Vec3 r = right();
+    const Vec3 move{(r.x * strafeSpeed + _knockdownPush.x) * delta,
+                    (r.y * strafeSpeed + _knockdownPush.y) * delta, 0.0f};
+    drainKnockdownPush(delta);
+    if (move.x != 0.0f || move.y != 0.0f) {
+        if (_space) {
+            feet = fromVec(
+                _space->move(toVec(feet), toVec(move), ArenaSpace::kMotionWalk, kWalkSlide).feet);
+        } else {
+            feet.x += move.x;
+            feet.y += move.y;
+        }
+    }
+    verticalSpeed = std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
+    fall(delta);
 }
 
 void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
@@ -1000,9 +1052,8 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         // writer yet -- the same deferral Player::damage records -- and it moves with
         // that, not with this.
         //
-        // Kurt.cs:589 also calls StopFiring() (stop the chain-gun voice, drop the
-        // muzzle flash) inside the same guard, below; the sniper half of it is not
-        // ported.
+        // Kurt.cs:589 also calls StopFiring() (leave sniper mode, stop the chain-gun
+        // voice, drop the muzzle flash) inside the same guard, below.
         if (health() > 0) {
             damage(kHardLandingDamage);
         }

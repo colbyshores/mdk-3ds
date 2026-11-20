@@ -11,10 +11,10 @@
 // class; this port splits the movement half from the combat half). The chain
 // gun's state (Firing, the muzzle flash) lives here too, written by the
 // movement half's updateFiring/updateMuzzle and read by the scripts runtime.
-// The inventory is Inventory.cs whole but for Restore (the saves) and the sniper's
-// round selection (SelectAmmo/UseAmmo/NextAmmo, with the unported sniper mode):
-// Collect fills the slots, the ammo and the super chain gun's time, the item keys
-// select a slot, and a thrown item is consumed.
+// The inventory is Inventory.cs whole but for Restore (the saves): Collect fills
+// the slots, the ammo and the super chain gun's time, the item keys select a slot,
+// a thrown item is consumed, and sniper mode (game/scope.h) picks, spends and
+// falls back from the round types (SelectAmmo/UseAmmo/NextAmmo).
 //
 // The addresses are the original's: health 0x574324, the invulnerability
 // 0x573bd4, the knock damage 0x573b20, the slots 0x57432c, the super-chain-
@@ -214,9 +214,18 @@ public:
     // it comes in). Inventory.SelectedItem is that slot's item, None when empty.
     int32_t selected() const { return selected_; }
     Item selectedItem() const { return slotCount_ == 0 ? None : slots_[selected_].item; }
-    // Inventory.SelectedAmmo: the sniper round type the last ammo pickup chose (1-5,
-    // 0 normal bullets). The sniper mode that reads it is not ported.
+    // Inventory.SelectedAmmo: the sniper round type (1-5, 0 normal bullets) the last
+    // ammo pickup chose, or the scope's ammo keys (Scope::selectAmmo); the scope's
+    // clip loads and fires it (Scope::updateClip).
     int32_t selectedAmmo() const { return selectedAmmo_; }
+    // ---- Sniper ammo (Inventory.cs:242-271) ----
+    // Inventory.SelectAmmo: selects a round type, clamped into [0, kAmmoTypes].
+    void selectAmmo(int32_t type);
+    // Inventory.UseAmmo: a round of `type` was fired; normal bullets never run out.
+    void useAmmo(int32_t type);
+    // Inventory.NextAmmo (0x46c900): the next (step 1) or previous (-1) round type
+    // with rounds, wrapping around; normal bullets always have some.
+    int32_t nextAmmo(int32_t step) const;
 
     // Inventory.IsPickup: whether a model name is a pickup (SW_HBOMB, SW_H50...).
     static bool isPickup(const std::string& model);

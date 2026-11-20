@@ -75,6 +75,8 @@ COMMON_SOURCES := \
 	$(CORE)/formats/glb.cpp \
 	$(CORE)/formats/png.cpp \
 	$(CORE)/game/player.cpp \
+	$(CORE)/game/player_sniper.cpp \
+	$(CORE)/game/scope.cpp \
 	$(CORE)/render/arena_scene.cpp \
 	$(CORE)/render/camera_builder.cpp \
 	$(CORE)/render/depth_pull.cpp \

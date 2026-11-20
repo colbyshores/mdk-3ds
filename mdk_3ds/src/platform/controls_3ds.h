@@ -25,10 +25,12 @@
 //                  and while a menu is open the game is paused and these
 //                  bindings are not consulted)
 //
-// SNIPER is bound but consumed by nothing: the sniper overlay is cut
-// (docs/OWNER_DIRECTIVE_2026-11-05.md). The binding exists so the file and a
-// future mapping screen have the row; the frontend logs once that it is bound
-// but not implemented.
+//   zoom_in, zoom_out  unbound (the scope's zoom; the owner picks the buttons)
+//
+// SNIPER enters and leaves sniper mode (Player's sniper step, gap package #5):
+// Kurt stands, looks and zooms through the scope and fires its clip. The
+// scope's view and overlay are not drawn yet (package #7), so the frontend logs
+// once that the mode is gameplay-only.
 //
 // THE FILE. key=value lines, as config.ini (game/enhanced_config.cpp): '#' or
 // ';' starts a comment, blank lines pass, spaces around the key and value are

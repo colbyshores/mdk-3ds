@@ -346,8 +346,10 @@ original's own lookup (0x431590 searches the SNI directory) and none here.
   two are the same pixel, and sub-step blending is not ported.
 - `KurtSprite` cannot reach the states another subsystem owns: the ride's pose
   (`Kurt.Pose`, which loops past its last frame), the beta back-up (`K_BCKUP`) and
-  muzzle flash (`K_MUZZF`) are loaded but never selected, and `Kurt.Visible` and
-  sniper mode are absent so the C#'s early returns there are the false branch. The
+  muzzle flash (`K_MUZZF`) are loaded but never selected, and `Kurt.Visible` is absent
+  so the C#'s early return there is the false branch. Sniper mode is ported
+  (`Player::sniping()`), but `KurtSprite` does not yet read it: hiding Kurt belongs with the
+  frontends' scope view (gap package #7), since until then the follow camera still looks at him. The
   knock-down, throw, slide, ledge and helmet states have no writer for the same
   reason. Whoever ports each one sets `Player`'s state and the frame counts follow.
 - `KurtSprite` (like `HudView`) has no release path for its palette and mesh:
@@ -1239,8 +1241,8 @@ pass skipped the effect after every removal and a wound's pointer named its neig
 Still open:
 - ~~**Items**~~: landed on branch `port/pickups-items` (next section).
 - **Opcode 209's platform half** waits for `Kurt.Platform` (the platform footing).
-- **The sniper half of `StopFiring`** (`LeaveSniper`) and the ride's K_SURF muzzle offset
-  wait for the sniper and the ride.
+- ~~**The sniper half of `StopFiring`** (`LeaveSniper`)~~: landed with sniper mode
+  (2026-11-20, section below). The ride's K_SURF muzzle offset waits for the ride.
 - **The run goldens print no `pc=`**: `Player::facing()`'s trig LUT (the owner-gated item
   above) leaves a running Kurt ~1e-5 off the oracle, and the sum of the pieces' centres
   straddles a printed decimal on four lines of 480; with `cosf`/`sinf` it matches byte for
@@ -1291,7 +1293,8 @@ Still open:
 - **The town message** (`ScriptRuntime.FlattenTown`'s OOT_L* push) waits for FlattenTown.
 - **The slot keys 1-5** (`Key.Item1-5`) have no action in `input.h`; the mouse wheel's item
   keys are not bound on Linux; the 3DS bindings are the input owner's.
-- **The sniper's ammo selection** (`SelectAmmo`/`UseAmmo`/`NextAmmo`) waits for the sniper.
+- ~~**The sniper's ammo selection** (`SelectAmmo`/`UseAmmo`/`NextAmmo`)~~: landed with sniper
+  mode (2026-11-20, section below).
 - **Opcodes 172, 178, 184** — CLOSED 2026-11-20 by the combat and hazard batch (with 158,
   159, 167 and 164's consumer); they DO fire in the levels (see `docs/OPCODE_COVERAGE.md`),
   and nine `golden/L*_hazards_*.txt` from `tests/scripts/hazards_probe` pin them.
@@ -1516,3 +1519,47 @@ The simulation is in `mdk_core/src/stream/` and pinned by `golden/stream_*.txt`;
 - **StreamView** (C# `Stream/StreamView.cs`): the tube from `StreamTube::addTriangles`/`rgba` far to near, the sprites and Kurt/Bones/Other by `Flight::transform`/`kurtTransform` and the `*Frame()` helpers, the scrolling background (`backgroundOffset`), and the fade (`Flight::fade`).
 - **The flow** (`game_flow.cpp` `showStream`/`afterStream`): seed `StreamRun` with `kStreamDefaultSeed` for `--stream`, the tick count otherwise. Pass `levelHealth`/the level's report in, and read `Flight::health()` back for LEVEL5. A `StreamRun` is about 25 KB of fixed arrays, so heap-allocate it on the 3DS.
 - **Not checked by the goldens:** the 3DS's newlib `sinf`/`cosf`/`fmaf` are not glibc's. The tube there is the same game, but not bit-identical to the host's.
+
+## Sniper mode: the scope and the mode (2026-11-20, gap package #5): what landed, what is open
+
+Kurt could not enter sniper mode: `kKeySniper` was bound on the 3DS and read by nothing.
+Landed, operation for operation, pinned by `golden/L3_sniper.txt` and `golden/L7_sniper.txt`
+(byte-identical to the C# probe `tests/scripts/sniper_probe/`, `tick1 dump sniper <level> 600`;
+every float printed as its bits, the scope view's matrices included):
+
+- `Kurt.Sniper.cs` -> `game/player_sniper.cpp` (`UpdateSniper`, `EnterSniper`, `LeaveSniper`,
+  `CanSnipe`, `SniperControls`) and `player.cpp` (`SniperMove`, beside the walk); the call sits
+  where `Kurt.Update` makes it (after `UpdateChuteSound`, before the Hang/HardLand branch);
+  `StopFiring` leaves the mode; `MouseLook`'s scope arm.
+- `Scope.cs` whole -> `game/scope.{h,cpp}` (look, wheel, zoom, clip, ammo keys, eye, direction,
+  `ToScreen`, `Locks`, `LockLimit`), with System.Numerics' `Dot`/`Cross`/`Normalize` twins.
+- `Inventory.SelectAmmo`/`UseAmmo`/`NextAmmo` -> `Kurt`.
+- `FollowCamera.SniperView`, `CameraMath.ScopeView`/`ScopeProjection`, `FollowCamera.UpOf` ->
+  `follow_camera.{h,cpp}` (`buildSniperCamera`, `buildScopeCamera`, `scopeProjection`,
+  `followCameraUpOf`), and the camera's two sniper guards (no clearance, no mouse look).
+- `Key.ZoomIn`/`ZoomOut` -> `kKeyZoomIn`/`kKeyZoomOut`; Linux binds Page Up/= and Page Down/-
+  and the right mouse button (the C#'s sniper button); the 3DS writes them `none`.
+
+Two measured System.Numerics facts the goldens rest on: `Vector3.Dot` is a plain, unfused sum
+(the fmaf chain is one ULP off the oracle's view translation), and
+`CreatePerspectiveOffCenter` multiplies by the reciprocal width and height (dividing is one ULP
+off its M32 at every zoom).
+
+Still open:
+- **The rounds** (gap package #6): `Scripts/SniperRounds.cs`, `FireSniper` (bind it with
+  `Player::setSniperHooks`; null fires every shot, the C#'s `SniperFire ?? (_ => true)`) and
+  `UpdateSniperTarget` (writes `Scope::zoomLimit` through `toScreen`/`locks`/`lockLimit`).
+  Until then a shot spends ammo and plays SNIPERSHOT but hits nothing.
+- **The frontends' scope view and overlay** (#7): neither frontend draws through
+  `buildSniperCamera` yet, sets `SoundMixer::scopeZoom`/the listener from the scope, hides Kurt
+  (`KurtSprite`'s `Sniping` return), or fills `Input::wheel` (the Linux wheel also presses the
+  item keys in the C#). So on device, D-pad up stops Kurt and turns the look and the zoom over to
+  the scope, but the picture stays the follow camera's.
+- **The 3DS zoom buttons**: unbound (`zoom_in=none`, `zoom_out=none`) until the owner picks them.
+- **The shot gap** (`Scope.ShotGap`, 5 ticks) is not pinned: at the fixed 1/60 step it never
+  binds, because a shot adds a quarter second to the clip timer, which already holds the next
+  shot back for 15 steps. Breaking it leaves the goldens green (measured).
+- **The demo's beta moves** around the scope (`Kurt.Beta.cs`, the helmet) and the snapshot's
+  clip fields (`Kurt.Snapshot.cs`, the saves) are not ported.
+- **newlib's `cosf`/`sinf`/`powf`** on the 3DS are unmeasured against the oracle (the same
+  libm-leaf gap as the follow camera's `powf`).
