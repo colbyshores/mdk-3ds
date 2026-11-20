@@ -101,7 +101,12 @@ void quatFromYawPitchRoll(float yaw, float pitch, float roll, float out[4]) {
     // product reproduces all 72 of the oracle's pinned spin components; replaying it
     // as a fused MAC gets 23 of 72 wrong -- that pair is a scratch model of the
     // disassembly's grouping, not a committed harness, and the recipe to re-derive
-    // it is in "Iteration 88". What is NOT measured on the target is the libm leaf
+    // it is in "Iteration 88". NOT bit-exact on the host either (measured 2026-11-20,
+    // docs/DIVERGENCES.md D5): .NET 10's CreateFromYawPitchRoll takes its sines and
+    // cosines from Vector3.SinCos, a vectorised polynomial, not libm; glibc's sinf/cosf
+    // differ from it on 47 of 3000 spin angles, and with Vector3.SinCos's values this
+    // formula matches all 3000. Only the pieces' drawn spin sees it (accepted rounding).
+    // What is NOT measured on the target is the libm leaf
     // itself: the R6 pin's "sinf/cosf match" claim was measured against glibc, and
     // the shipped link resolves them from newlib (docs/OPEN_ITEMS.md).
     /* @vfp-exempt R6 — piece-spawn spin construction, cold: once per created piece
@@ -120,20 +125,39 @@ void quatFromYawPitchRoll(float yaw, float pitch, float roll, float out[4]) {
     out[3] = cy * cp * cr + sy * sp * sr;
 }
 
-// System.Numerics Quaternion.Multiply(a, b) then Normalize (orientation step).
-void quatMulNormalize(const float a[4], const float b[4], float out[4]) {
-    float x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
-    float y = a[3] * b[1] + a[1] * b[3] + a[2] * b[0] - a[0] * b[2];
-    float z = a[3] * b[2] + a[2] * b[3] + a[0] * b[1] - a[1] * b[0];
-    float w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
-    float len = sqrtf(x * x + y * y + z * z + w * w);
+} // namespace
+
+// System.Numerics Quaternion.Multiply(a, b) then Normalize (orientation step), in .NET 10's
+// operation order. Its operator * is the Vector128 form: result = b * a.W, then three
+// accumulations of a shuffled b times a.X, a.Y and a.Z with signs (+-+-), (++--), (-++-),
+// one rounded product and one rounded add each. Normalize divides by sqrt of the pairwise
+// Vector128 dot, (x*x + y*y) + (z*z + w*w). Measured 2026-11-20 against .NET 10 over 2000
+// random pairs: this spelling 0 wrong in the product and 0 in the normalize; the textbook
+// left-to-right spelling this replaced was wrong in 1124 products, and a sequential dot in
+// 230 normalizes (docs/DIVERGENCES.md D5; tests/scripts/system_numerics_tests.cpp).
+void quaternionMultiplyNormalize(const float a[4], const float b[4], float out[4]) {
+    float x = b[0] * a[3];
+    float y = b[1] * a[3];
+    float z = b[2] * a[3];
+    float w = b[3] * a[3];
+    x += b[3] * a[0];
+    y -= b[2] * a[0];
+    z += b[1] * a[0];
+    w -= b[0] * a[0];
+    x += b[2] * a[1];
+    y += b[3] * a[1];
+    z -= b[0] * a[1];
+    w -= b[1] * a[1];
+    x -= b[1] * a[2];
+    y += b[0] * a[2];
+    z += b[3] * a[2];
+    w -= b[2] * a[2];
+    float len = sqrtf((x * x + y * y) + (z * z + w * w));
     out[0] = x / len;
     out[1] = y / len;
     out[2] = z / len;
     out[3] = w / len;
 }
-
-} // namespace
 
 void Debris::Piece::reset() {
     arena.clear();
@@ -422,7 +446,7 @@ void Debris::update(float ticks) {
     for (int32_t i = (int32_t)pieces_.size() - 1; i >= 0; i--) {
         Piece* piece = pieces_[i];
         float next[4];
-        quatMulNormalize(piece->orientation, piece->spin, next);
+        quaternionMultiplyNormalize(piece->orientation, piece->spin, next);
         for (int k = 0; k < 4; k++) {
             piece->orientation[k] = next[k];
         }
@@ -454,8 +478,12 @@ void Debris::move(Piece* piece, float ticks) {
     }
     if (hasHit && vlenSq(vsub(hit.point, piece->center)) > kOnSurface * kOnSurface) {
         piece->center = hit.point;
+        // C# `h.Normal * Vector3.Dot(v, h.Normal) * Bounce` is (normal * dot) * 1.4, two
+        // rounded products per component; scaling by (dot * 1.4) is not the same float,
+        // and over GUNT_2's explode it kept one piece alive 10 steps longer than the C#
+        // (docs/DIVERGENCES.md D5, golden/L8_hazards_debris.txt).
         piece->velocity =
-            vsub(piece->velocity, vscale(hit.normal, vdot(piece->velocity, hit.normal) * kBounce));
+            vsub(piece->velocity, vscale(vscale(hit.normal, vdot(piece->velocity, hit.normal)), kBounce));
         piece->ticks -= kBounceTicks;
     } else {
         piece->center = vadd(piece->center, motion);

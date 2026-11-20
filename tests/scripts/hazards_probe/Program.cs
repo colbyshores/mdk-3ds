@@ -30,7 +30,10 @@ using KurtT = Mdk.Game.Kurt.Kurt;
 //   `run:step:MODEL:pc:dx:dy:dz` spawns MODEL (Spawning.Plain) in Kurt's arena at his feet plus
 //                                the offset, running the retail script at CMI offset pc -- the
 //                                bytecode the level's own objects run, entered at an opcode;
-//   `watch:TYPE`                 prints every live object of that type each step.
+//   `watch:TYPE`                 prints every live object of that type each step;
+//   `flying`                     appends ` fly=P,E`: FNV-1a hashes of every debris piece's
+//                                centre, velocity and ticks and every effect's position,
+//                                velocity and life (2026-11-20, docs/DIVERGENCES.md D5).
 // The goldens' schedules are in tick1.cpp's kHazardsCases table.
 //
 // HOW IT WAS BUILT AND RUN (2026-11-20, .NET SDK 10.0.404): as tests/scripts/items_probe -- copy
@@ -100,6 +103,7 @@ var drops = new List<(int Step, string Model, Vector3 Offset)>();
 var teleports = new List<(int Step, string Arena, Vector3 Position)>();
 var runs = new List<(int Step, string Model, int Pc, Vector3 Offset)>();
 var watched = new List<string>();
+var flying = false;
 foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries))
 {
     var parts = token.Split(':');
@@ -119,6 +123,9 @@ foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries)
             continue;
         case "watch":
             watched.Add(parts[1]);
+            continue;
+        case "flying":
+            flying = true;
             continue;
     }
 
@@ -212,5 +219,44 @@ for (var step = 1; step <= steps; step++)
         $"opos={sx},{sy},{sz} kills={runtime.Stats.Kills} boxes={(boxes.Count == 0 ? "-" : string.Join(";", boxes))} " +
         $"watch={(watch.Count == 0 ? "-" : string.Join(";", watch))} " +
         $"bomb={(runtime.Items.Bomb is { Dead: false } ? 1 : 0)} pieces={runtime.Debris.Pieces.Count} effects={runtime.Effects.All.Count} " +
-        $"white={F(kurt.WhiteFlash)} shake={F(runtime.Shake)} voices={Voices()}");
+        $"white={F(kurt.WhiteFlash)} shake={F(runtime.Shake)} voices={Voices()}" + (flying ? Flying() : ""));
+}
+
+// The `flying` token's column: FNV-1a over every piece's centre, velocity and ticks, and every
+// effect's position, velocity and life, as bits, in list order (Debris.Move's and Effects.Move's
+// bounces). The pieces' orientation is left out: Quaternion.CreateFromYawPitchRoll takes its sines
+// from Vector3.SinCos, which the C++'s libm does not reproduce (docs/DIVERGENCES.md, D5).
+string Flying()
+{
+    var pieces = 2166136261u;
+    foreach (var p in runtime.Debris.Pieces)
+    {
+        foreach (var v in new[] { p.Center.X, p.Center.Y, p.Center.Z, p.Velocity.X, p.Velocity.Y, p.Velocity.Z })
+        {
+            pieces = Fnv(pieces, BitConverter.SingleToInt32Bits(v));
+        }
+
+        pieces = Fnv(pieces, p.Ticks);
+    }
+
+    var effects = 2166136261u;
+    foreach (var e in runtime.Effects.All)
+    {
+        foreach (var v in new[] { e.Position.X, e.Position.Y, e.Position.Z, e.Velocity.X, e.Velocity.Y, e.Velocity.Z, e.Life })
+        {
+            effects = Fnv(effects, BitConverter.SingleToInt32Bits(v));
+        }
+    }
+
+    return $" fly={pieces:X8},{effects:X8}";
+}
+
+uint Fnv(uint hash, int value)
+{
+    foreach (var b in BitConverter.GetBytes(value))
+    {
+        hash = (hash ^ b) * 16777619u;
+    }
+
+    return hash;
 }

@@ -69,6 +69,12 @@ Merge order: 1 before 2; 3 before 9–11; 5 before 6, and 6 before 7, 14 and 16.
   - 215: the white flash is drawn (`hud_view.cpp`) — moved to complete.
   - 16/56: `kill` runs the explode effects (`ScriptRuntime::explode`) — moved to complete.
 
+## Divergences already root-caused
+
+The C#-vs-C++ drifts the packages recorded (Kurt's walk off yaw 0, L8's XG push, HMO_6's extra
+objects, Gunter's yaw, GUNT_2's debris piece, the stream's 45 pixels, the L3 fan room) are
+measured to their cause in [DIVERGENCES.md](DIVERGENCES.md); don't re-chase them.
+
 ## Oracle gaps — don't chase these
 
 - Arena-embedded sounds that the C# never plays.

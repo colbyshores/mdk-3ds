@@ -4253,7 +4253,8 @@ std::vector<std::string> splitColons(const std::string& token) {
 
 bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* holds,
                           std::vector<ItemsGive>* gives, std::vector<HazardsTeleport>* teleports,
-                          std::vector<HazardsRun>* runs, std::vector<std::string>* watched) {
+                          std::vector<HazardsRun>* runs, std::vector<std::string>* watched,
+                          bool* flying) {
     std::string items;
     size_t start = 0;
     while (start < schedule.size()) {
@@ -4293,6 +4294,11 @@ bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* h
                 return false;
             }
             watched->push_back(f[1]);
+        } else if (f[0] == "flying") {
+            if (f.size() != 1) {
+                return false;
+            }
+            *flying = true;
         } else {
             items += (items.empty() ? "" : ",") + token;
         }
@@ -4320,7 +4326,8 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
     std::vector<HazardsTeleport> teleports;
     std::vector<HazardsRun> runs;
     std::vector<std::string> watched;
-    if (!parseHazardsSchedule(schedule, &holds, &gives, &teleports, &runs, &watched)) {
+    bool flying = false;
+    if (!parseHazardsSchedule(schedule, &holds, &gives, &teleports, &runs, &watched, &flying)) {
         *why = "the schedule did not parse: " + schedule;
         return false;
     }
@@ -4467,6 +4474,38 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
                  runtime.shake);
         *out += buffer;
         *out += voices.empty() ? "-" : voices;
+        if (flying) {
+            // The `flying` token: FNV-1a over every piece's centre, velocity and ticks, and
+            // every effect's position, velocity and life, as bits, in list order. Each
+            // piece's orientation is left out on purpose: .NET's CreateFromYawPitchRoll takes
+            // its sines from Vector3.SinCos, not libm (docs/DIVERGENCES.md, D5).
+            uint32_t pieces = 2166136261u;
+            const std::vector<scripts::Debris::Piece*>& list = runtime.debris().pieces();
+            for (size_t i = 0; i < list.size(); i++) {
+                const scripts::Debris::Piece* piece = list[i];
+                pieces = fnvFloat(pieces, piece->center.x);
+                pieces = fnvFloat(pieces, piece->center.y);
+                pieces = fnvFloat(pieces, piece->center.z);
+                pieces = fnvFloat(pieces, piece->velocity.x);
+                pieces = fnvFloat(pieces, piece->velocity.y);
+                pieces = fnvFloat(pieces, piece->velocity.z);
+                pieces = fnvInt(pieces, (uint32_t)piece->ticks);
+            }
+            uint32_t effects = 2166136261u;
+            const std::vector<scripts::Effects::Effect*>& all = runtime.effects.all();
+            for (size_t i = 0; i < all.size(); i++) {
+                const scripts::Effects::Effect* effect = all[i];
+                effects = fnvFloat(effects, effect->position.x);
+                effects = fnvFloat(effects, effect->position.y);
+                effects = fnvFloat(effects, effect->position.z);
+                effects = fnvFloat(effects, effect->velocity.x);
+                effects = fnvFloat(effects, effect->velocity.y);
+                effects = fnvFloat(effects, effect->velocity.z);
+                effects = fnvFloat(effects, effect->life);
+            }
+            snprintf(buffer, sizeof(buffer), " fly=%08X,%08X", pieces, effects);
+            *out += buffer;
+        }
         *out += "\n";
     }
     return true;
@@ -9923,6 +9962,17 @@ int main(int argc, char** argv) {
              "tp:1:MEAT_4:284:7382:-1139,fwd:100-400,turbo:100-400,watch:XGSNOW",
              "MEAT_4's snowboarder: path_speed_by_kurt (164) eases its path speed by Kurt's "
              "lead, and the path pushes it"},
+            // docs/DIVERGENCES.md D5: package 4's dropped explode-beside-a-victim run. One
+            // piece outlived the C#'s by 10 steps (s=152-161, 284 vs 283) because the
+            // bounce scaled the normal by (dot * 1.4) where the C# scales it by dot, then
+            // by 1.4; the effects' bounce had the same order. `flying` hashes every
+            // piece's and effect's motion, so the old debris bounce fails here at s=68
+            // and the old effects bounce at s=66 (measured 2026-11-20).
+            {"L8_hazards_debris", "golden/L8_hazards_debris.txt", 8, 400,
+             "tp:1:GUNT_2:-209:480:40,run:3:XBANG:24840:0:105:0,fire:60-300,watch:XBANG,"
+             "watch:BOLT,watch:BIGBOLT,flying",
+             "a second XBANG explodes beside GUNT_2's: the debris' and effects' bounces "
+             "(Debris.Move, Effects.Move) in the C#'s operation order"},
             {"L8_hazards_kill", "golden/L8_hazards_kill.txt", 8, 300,
              "tp:1:GUNT_2:-156:53:-4,run:3:XG:21471:40:0:0,run:20:XBANG:25067:44:0:0,"
              "watch:XBANG",

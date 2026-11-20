@@ -641,3 +641,30 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - 3DS: release and harness builds compile; no emulator run here (the parent's).
 - **Commit:** this entry's commit.
 
+### The C#-vs-C++ divergences, root-caused; the debris and effects bounces fixed
+- **What:** each drift the packages recorded was measured to the first step, field and operation where the C++ stops matching the C#. The findings are in `docs/DIVERGENCES.md` (D1-D7), linked from `OPEN_ITEMS.md` and `PORT_GAPS.md`.
+  - **Fixed (port bug, D5):** `Debris::move` and `Effects::move` scaled the bounce as `normal * (dot * 1.4)`. The C# does `(normal * dot) * 1.4`. That cost GUNT_2's explode one debris piece: it lived 10 steps longer than the C#'s, the divergence package 4/8 left open.
+  - **Fixed (port bug, D5):** the pieces' orientation step now follows .NET 10's `Quaternion.Normalize(a * b)`: a Vector128 product and a pairwise dot. It is `scripts::quaternionMultiplyNormalize`.
+  - **Resolved by package 8 (logic, D3/D7):** HMO_6's extra objects and the L3 fan-room drift. Without the fans' `FanSpark`, the runtime's RNG stream fell behind the C#'s, and HMO_6's turret fired an extra BOLT.
+  - **Accepted rounding (owner direction, not changed):**
+    - D1: Kurt's walk and aim. The trig table in `Player::facing()` is the ONLY cause.
+    - D4: Gunter's yaw. He turns toward Kurt's LUT-drifted feet.
+    - D2: L8's XG push. Root motion's `Vector3.Transform` is fused on .NET 10; a verified one-line `fmaf` fix is described, not landed.
+    - D6: the stream's 45 pixels. A UV sits exactly on a texel row; the matrix grouping's rounding picks the row.
+    - D5: the spin's `CreateFromYawPitchRoll`. It takes .NET's `Vector3.SinCos`, not libm.
+  - Test support: the hazards probe and `tick1 dump hazards` take a `flying` token (FNV-1a of every piece's and effect's motion). New golden: `golden/L8_hazards_debris.txt`. `system_numerics_tests` gains the quaternion step.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. The owner doubted that the trig LUT caused the drifts several port agents had blamed on it without testing. The coordinator's re-scope: the LUT stays and rounding-only drift is accepted; logic divergences get fixed with goldens.
+- **Evidence:**
+  - D1 experiment (reverted): with `cosf/sinf` in `Player::facing()`, 7 walks of 600-900 steps on L3-L8 (`items_probe` vs `tick1 dump items`, feet/yaw/speeds as bits) and the sniper run at start yaws 37/123.5/250 on L3 and L7 all matched the C# with 0 differing lines. With the LUT they differ on 135-871 lines from the first running step (feet.y, 4 ULP).
+  - D4: the cutscene probe at 8362320, with XGUNTAM traced. Gunter matches while Kurt stands or walks at yaw 0. He drifts 1 ULP once Kurt walks after a turn (282 trace lines in one 600-step run), and the drift goes to 0 with exact trig.
+  - D2: the save probe at 5d1d4ab, with the XG traced. The first difference is XG #1004's `Push.x` at its 140th motion tick, during root motion. The `fmaf` rotation makes the scenario byte-identical in the export.
+  - D3: at 5d1d4ab, `L3_save_fan`'s scenario is byte-identical at 200+30 and 1200+60 steps. With the fans' `setSpark` line commented out, the save has 10 objects where the C# has 9.
+  - D5: per-piece and per-effect bit dumps of the GUNT_2 run. The first difference is a bounced piece's velocity at s=68, and the effects' at s=66. After the fix, every piece's centre, velocity and ticks and every effect's position, velocity and life match the C# in that run and in `L8_hazards_bang`, `L8_hazards_kill` and `L4_hazards_blast`. The quaternion step was measured against .NET 10 over 2000 random pairs: the old code was wrong on 1225, the new on 0.
+  - D6: a fork's capture of the Linux build of 9de8765 against the oracle app (lavapipe, `DISPLAY=:99` in a private namespace). Nudging Kurt's v moves the count 45 -> 35/71.
+  - The goldens bite:
+    - the old debris bounce fails `L8_hazards_debris` at s=68;
+    - the old effects bounce fails it at s=66;
+    - the old quaternion step fails `system_numerics_tests` ("row 0 component 2 was 3EF50A3D, .NET 10 says 3EF50A3C").
+  - Every existing golden is unchanged and passes.
+  - Prior-solution lookup: the Obsidian and Cognee MCP calls failed ("Error POSTing to endpoint"). A read-only grep of `/mnt/nas/Vaults/port-docs` found no prior note on these drifts.
+- **Commit:** this entry's commit.

@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "game/frame_blend.h"
+#include "scripts/debris.h"
 #include "util/system_numerics_inverse.h"
 
 namespace {
@@ -246,6 +247,53 @@ void testScalarLerpIsTheDotnetsFmaShape() {
     check(kEdges, sizeof(kEdges) / sizeof(Row));
 }
 
+// Debris.Update's orientation step, Quaternion.Normalize(orientation * spin). .NET 10's
+// operator * is its Vector128 shuffle-and-accumulate form, and Normalize divides by the
+// square root of a PAIRWISE dot. A textbook left-to-right product with a sequential dot
+// was wrong on 1225 of 2000 random pairs (2026-11-20, docs/DIVERGENCES.md D5). These six
+// rows are such pairs, with .NET 10.0.15's Quaternion.Normalize(a * b) as the expected bits.
+void testQuaternionStepIsTheDotnetsOrder() {
+    struct Row {
+        uint32_t a[4];
+        uint32_t b[4];
+        uint32_t result[4];
+    };
+
+    static const Row kRows[] = {
+        {{0x3F2CB90B, 0x3F02B7C4, 0x3F070DB2, 0xBD9B2C13}, {0x3DAFE18A, 0xBC339ABF, 0xBD9E2317, 0x3F7E4586},
+         {0x3F214729, 0x3F1AFBAB, 0x3EF50A3C, 0xBDB1E6E4}},
+        {{0x3F3A4573, 0xBE3F24FD, 0x3F14AF7D, 0xBEA099AC}, {0x3D94F0CA, 0xBDC0EE71, 0x3D48A938, 0x3F7DDEFA},
+         {0x3F3E8C5A, 0xBE188B88, 0x3F017156, 0xBED1EDE2}},
+        {{0xBF2B6D16, 0x3F01FCC5, 0xBF09C2B2, 0x3D8484A4}, {0x3DAFBB33, 0x3D9A2505, 0x3D02BFE7, 0x3F7E3217},
+         {0xBF1A474C, 0x3EF7F056, 0xBF20512D, 0x3DCE2BAF}},
+        {{0xBF1208E8, 0xBEE49794, 0x3F1A59D3, 0x3EAB2358}, {0x3DA8A658, 0x3C9D41A5, 0x3D8172C3, 0x3F7E91C7},
+         {0xBF145C0D, 0xBEB425BF, 0x3F258176, 0x3EB31BF5}},
+        {{0x3EE4C729, 0xBF38C4F5, 0x3EC1C5CC, 0xBEBCF061}, {0x3D364D87, 0xBDC4804E, 0xBBABA2E3, 0x3F7E8F7D},
+         {0x3EEF9C2B, 0xBF29C144, 0x3EBC2B52, 0xBEE8801A}},
+        {{0x3E07EE40, 0x3E8E7826, 0x3F084672, 0x3F49D4D0}, {0xBD90204E, 0xBDA875A4, 0xBC3ECCF8, 0x3F7E7A68},
+         {0x3DEFA77F, 0x3E340F4C, 0x3F07551B, 0x3F52782D}},
+    };
+    const size_t count = sizeof(kRows) / sizeof(Row);
+    for (size_t row = 0; row < count; row++) {
+        float a[4];
+        float b[4];
+        float out[4];
+        for (int i = 0; i < 4; i++) {
+            a[i] = bitsOf(kRows[row].a[i]);
+            b[i] = bitsOf(kRows[row].b[i]);
+        }
+        mdk::scripts::quaternionMultiplyNormalize(a, b, out);
+        for (int i = 0; i < 4; i++) {
+            if (floatBits(out[i]) != kRows[row].result[i]) {
+                printf("  FAIL: debris quaternion step row %d component %d was %08X, .NET 10 says %08X\n",
+                       (int)row, i, floatBits(out[i]), kRows[row].result[i]);
+                failures++;
+                return;
+            }
+        }
+    }
+}
+
 }  // namespace
 
 namespace mdk {
@@ -254,6 +302,7 @@ namespace test {
 int runSystemNumericsTests() {
     testCancellationUsesTheDotnetsPairwiseReduction();
     testScalarLerpIsTheDotnetsFmaShape();
+    testQuaternionStepIsTheDotnetsOrder();
     return failures;
 }
 

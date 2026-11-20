@@ -291,7 +291,9 @@ bool Effects::move(Effect* effect, float ticks) {
         return true;
     }
     const float into = dot(effect->velocity, hit.normal);
-    effect->velocity = sub(effect->velocity, scaled(hit.normal, into * kBounce));
+    // C# `hit.Normal * Dot(...) * Bounce` is (normal * dot) * 1.4, two rounded products
+    // per component, not normal * (dot * 1.4) (docs/DIVERGENCES.md D5).
+    effect->velocity = sub(effect->velocity, scaled(scaled(hit.normal, into), kBounce));
     effect->life -= (float)kBounceTicks;
     return true;
 }

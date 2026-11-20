@@ -37,6 +37,10 @@ namespace scripts {
 
 struct MdkObject;
 
+// System.Numerics Quaternion.Normalize(a * b) in .NET 10's operation order, quaternions as
+// (x, y, z, w): the orientation step of Debris.Update. Pinned by system_numerics_tests.
+void quaternionMultiplyNormalize(const float a[4], const float b[4], float out[4]);
+
 // A segment hit in an arena: point, surface normal, arena, triangle group
 // (the C# ScriptRuntime.RayHit).
 struct DebrisRayHit {
