@@ -690,3 +690,21 @@ Newest entries are at the bottom. Performance experiments keep their own table i
 - **Emulator checks for the parent (not run here):** the splash at boot: `make -C mdk_3ds AUTOQUIT=30` (no LEVEL=) -- the INTRO1A logo fading in, the publisher text at ~5 s, then MDK12.FLC behind the menu; `CAPTURE=300` is mid cross-fade. The menu's video alone: `make AUTOQUIT=20 SPLASH=0 CAPTURE=40`. The end movies: `make AUTOQUIT=40 FIXED=1 LEVEL=5 AT=465,-6,-2263,0 EVENT=81` -- "game: finished; the flow shows EndMovie", "flow: the end movies (end movies: done)", then the menu with the splash. The loading screen: any `LEVEL=` run shows LOAD_n's picture, "Loading" and the bar while the level loads ("flow: the loading screen of level N").
 - **Integration with #20b (the slideshow):** `MainMenu` now owns #20b's `Slideshow` and starts it from the player's Finished (`video_.setFinished(&MainMenu::videoFinished, this)`, the C#'s `_video.Finished += _slideshow.Start`), keeping the video's last frame as image 0; its Update runs after the video's, a key resets it, its image is shown on the player (`showSlide`, the C#'s Next -> ShowStill) and the bare first slide hides the items (status "main menu: slideshow"). No C# probe runs the menu long enough to print it, so `movie_tests`' `checkSlideshowStart` pins it against Slideshow.cs's rules (end -> image 0 -> 5 s -> MDKS_001 on the player without the items -> a key gives way to MDKS_002 and chooses nothing -> past the last slide, the last frame again); removing the hook fails it (five checks).
 - **Commit:** this entry's commit.
+
+### Every package integrated; smoke pass; main fast-forwarded
+- **What:**
+  - An integrator agent landed ten finished packages as a linear series ending at c9b7292e, in order: #18b stream screen, #7 sniper view, #12 ledges, #9 rides, #10 snowboard, #11 bomber, #17b fall screen, #20b statistics, the drift fixes, #20c movies.
+  - It fixed three interaction bugs on the way:
+    - On the 3DS, the scope camera overrode the air strike's camera.
+    - The rides package's `canSnapshot` fix wasn't in its commit.
+    - On Linux, the statistics screen re-read typed text that the cheats had already taken.
+  - It also wired the cross-package hooks: the scope's strike-target check, and the slideshow starting from the menu video's end.
+  - The working branch was fast-forwarded to c9b7292e. Then, after the smoke pass, local `main` was fast-forwarded to c9b7292e. That was a clean fast-forward: main was an ancestor, 93 commits behind. Nothing was pushed.
+- **Why:**
+  - The owner's "do 1 - 4" plan: drain the queue, run the gates and a smoke pass, fast-forward main locally, keep working on the experimental branch.
+  - The owner's direction to port all gameplay first.
+- **Evidence:**
+  - All five gates passed on every combined tree the integrator built.
+  - The smoke pass and every per-package emulator check are in `docs/evidence/2026-11-21-mandarine-pass.md`. Two checks there were inconclusive, because their walk scripts were tuned in the C# and the 3DS's accepted trig rounding shifts the aim: the bullet-hole shot and the bomber mount. They go to the playthrough pass, with new harness shortcuts.
+- **Commit:** this entry. Main points at c9b7292e.
+- **Next:** the leftovers (the cutscene save check, the save prompt after the level-8 stream, the 3DS slideshow stall, harness shortcuts), then level-by-level playthroughs in Mandarine, then the hardware session at the end once ../forsaken is done.
