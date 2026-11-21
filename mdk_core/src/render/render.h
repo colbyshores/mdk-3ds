@@ -391,9 +391,18 @@ int32_t mdk_render_canvas_capacity(MdkRenderer r);
 // Insets
 // ---------------------------------------------------------------------------
 
-// A 3D view inside a canvas rectangle. The rectangle is in the canvas's
-// 640x360 space. The 3DS's PICA viewport is a HARDWARE CLIP RECTANGLE, so a
-// zero-area inset silently drops its draw; the backend guards against that.
+// A 3D view inside a canvas rectangle (render_types.h Inset; the C#'s
+// Renderer.Insets.cs): sniper mode's round cameras and clip (game/sniper_view.h).
+// The rectangle is in canvas units. Neither seam flushes: begin RECORDS the inset,
+// and the meshes drawn until end go into an Own inset instead of the scene. The
+// backend draws the insets under the canvas after the scene and the others after
+// the canvas.
+//   * Vulkan draws both kinds, each in its viewport and scissor with its depth
+//     cleared; not in a stereo frame (refused once).
+//   * Citro3D draws an Own inset's meshes the canvas's way (one composed matrix
+//     onto the rectangle, no depth, no cull) and NO Scene inset (refused once in
+//     the log): a second pass of the whole scene is not this target's budget.
+// A zero-area inset draws nothing.
 void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* inset);
 void mdk_render_end_inset(MdkRenderer r);
 

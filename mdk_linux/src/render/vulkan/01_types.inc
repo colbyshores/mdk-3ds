@@ -416,6 +416,23 @@ struct RendererVk {
     // `capturesWritten` is incremented ONLY on the path where the bytes landed.
     int32_t capturesRequested = 0;
     int32_t capturesWritten = 0;
+
+    // THE INSETS (render.h, the C#'s Renderer.Insets.cs): this frame's 3D views in
+    // canvas rectangles, recorded at begin_inset and drawn after the scene --
+    // the ones under the canvas before it, the others after it. An Own inset keeps
+    // the draws made while it is open in its own queue; a Scene inset draws the
+    // frame's queue again through its camera. The entries are kept across frames
+    // (`insetCount` is this frame's) so a frame of insets does not allocate.
+    struct InsetVk {
+        mdk::Inset inset;
+        mdk::DrawQueue own;
+    };
+    std::vector<InsetVk> insets;
+    size_t insetCount = 0;
+    int32_t openInset = -1;
+    // The under-canvas insets were drawn this frame (at canvas_begin, or by the
+    // frame's end when it had no canvas).
+    bool insetsUnderDrawn = false;
 };
 
 // Defined with the drawing code below; the frame and the canvas need them and

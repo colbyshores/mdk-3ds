@@ -26,7 +26,7 @@
 //   L            jump
 //   R, ZR        fire
 //   D-pad L / R  previous item / next item
-//   D-pad up     sniper (the mode is gameplay-only: the scope view is not drawn yet)
+//   D-pad up     sniper (the scope's view and overlay: game/sniper_view.h)
 //   D-pad down   use item
 //   ZL           turbo (New 3DS only; unassigned by the owner)
 //   Start        the frontend's PAUSE menu (main_3ds.cpp, game/enhanced_menu.h:

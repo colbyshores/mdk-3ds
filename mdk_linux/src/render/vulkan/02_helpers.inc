@@ -4,6 +4,8 @@
 
 // they come later in the file.
 void flushDraws(RendererVk* r);
+// A queue's buckets in the pass order (12_draw.inc).
+void drawBuckets(RendererVk* r, const mdk::DrawQueue& queue, bool overlay);
 
 RendererVk* asVk(MdkRenderer r) {
     return static_cast<RendererVk*>(r);

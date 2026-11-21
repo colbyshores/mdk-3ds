@@ -383,14 +383,22 @@ struct CanvasQuad {
 // Insets
 // ---------------------------------------------------------------------------
 
-// A 3D view drawn inside a canvas rectangle: the sniper mode's round
-// cameras. The rectangle is in the canvas's 640x360 space.
+// A 3D view drawn inside a canvas rectangle (the C#'s Renderer.Insets): sniper
+// mode's round cameras and its clip of loaded rounds (game/sniper_view.h). The
+// rectangle is in the canvas's units (360 high, render.h).
+//
+// `scene` is the C#'s InsetContent: true (Scene) draws the frame's whole scene
+// again through `camera` -- every draw of the frame, whenever it was queued --
+// and takes no draws of its own; false (Own) draws only the meshes drawn between
+// mdk_render_begin_inset and mdk_render_end_inset, which then do not go into the
+// scene. The rectangle's depth is cleared first either way.
 struct Inset {
     float x = 0.0f;
     float y = 0.0f;
     float width = 0.0f;
     float height = 0.0f;
     bool under_canvas = true;    // drawn before the canvas, or after
+    bool scene = true;           // InsetContent.Scene, or Own
     Camera camera;
 };
 

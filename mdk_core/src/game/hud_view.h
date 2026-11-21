@@ -13,9 +13,9 @@
 // THE SPRITES come from TRAVERSE/TRAVSPRT.BNI (the same Bni the Kurt sprite
 // and the scripts use) and are indexed through the level's palette, exactly as
 // the C# HudView does. The message stream (Messages, game/messages.h) is the
-// C#'s too: HudView owns it and draws it last, over the rest. The sniper
-// overlay and the bomber sight are separate subsystems, not part of this port
-// yet.
+// C#'s too: HudView owns it and draws it last, over the rest. Sniper mode's
+// screen (game/sniper_overlay.h, the C#'s HudView.Sniper) is owned here too and
+// replaces the HUD while it shows. The bomber sight is not ported yet.
 // ============================================================================
 
 #include <stdint.h>
@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "game/messages.h"
+#include "game/sniper_overlay.h"
 #include "render/render.h"
 #include "render/render_types.h"
 
@@ -78,6 +79,11 @@ public:
     // once per drawn frame (Viewer.DrawScene).
     Messages& messages() { return messages_; }
 
+    // Sniper mode's screen (the C# HudView.Sniper): loaded with the HUD from the
+    // same sprites and palette (set its `budget` before load); while it shows,
+    // draw() draws it and the messages instead of the HUD.
+    SniperOverlay& sniper() { return sniper_; }
+
     // The fonts the messages draw in (FONTBIG, FONTSML of MDKFONT.FTI in SYS_PAL,
     // the C# HudView's pair), BORROWED: the 3DS shares its menu's. Without them
     // (or before they are ready) the messages are kept but not drawn.
@@ -122,6 +128,7 @@ private:
     Colour barFrame_ = {0.0f, 0.0f, 0.0f, 1.0f};
     int32_t blink_ = 0;
     Messages messages_;
+    SniperOverlay sniper_;
     const FontView* big_ = nullptr;
     const FontView* small_ = nullptr;
 };

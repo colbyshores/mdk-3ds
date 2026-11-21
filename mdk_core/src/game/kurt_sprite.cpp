@@ -426,8 +426,9 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
                       const Vec3& forward, const Vec3& up, float fieldOfView, ArenaSpace* space) {
     // Kurt.Visible (KurtSprite.cs:182): a cutscene hides him. The C# tests it with the
     // depth, after nothing that has an effect, so returning first is the same draw and
-    // asks the frame stream for nothing. (The Sniping arm waits for the sniper, package 5.)
-    if (!player.visible) {
+    // asks the frame stream for nothing. `kurt.Sniping` hides him too (the same
+    // line): the scope's view is from his own eye (game/sniper_view.h, package #7).
+    if (!player.visible || player.sniping()) {
         return false;
     }
     Pick selected;

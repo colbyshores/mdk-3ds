@@ -58,6 +58,9 @@
 #include "game/object_view.h"
 #include "game/player.h"
 #include "game/sky_modes.h"
+
+#include "game/sniper_overlay.h"
+#include "game/sniper_view.h"
 #include "render/arena_scene.h"
 #include "render/material_resolver.h"
 #include "scripts/script_runtime.h"
@@ -2297,8 +2300,224 @@ const char* roundStateName(scripts::SniperRounds::State state) {
     return kNames[(int)state];
 }
 
+// SNIPER MODE'S SCREEN AND VIEWS (gap package #7; golden/L*_sniper_hud*.txt), the C++ side
+// of the rounds probe's `hud` and `iris` modes (tests/scripts/rounds_probe, whose header
+// has the columns). The overlay is game/sniper_overlay.cpp loaded through the recorder
+// stubs above (texture ids from 1 in load order, palette 7) and drawn into them; the views
+// are game/sniper_view.cpp's.
+struct SniperHudProbe {
+    SniperOverlay overlay;
+    float panelX = 0.0f;
+    float panelY = 0.0f;
+    float panelW = 0.0f;
+    float panelH = 0.0f;
+};
+
+bool loadSniperHudProbe(const LevelData& levelData, const Bni& sprites, SniperHudProbe* probe,
+                        std::string* why) {
+    g_indexTextures = 0;
+    if (!probe->overlay.load(nullptr, sprites, levelData.dti().palette(), 7)) {
+        *why = "the sniper overlay did not load";
+        return false;
+    }
+    Texture panel;
+    if (!sprites.image("SC_STAT", &panel)) {
+        *why = "no SC_STAT";
+        return false;
+    }
+    // HudView.Draw's panel in the view: the normal HUD's place.
+    probe->panelW = (float)panel.width();
+    probe->panelH = (float)panel.height();
+    probe->panelX = SniperOverlay::kViewWidth - (probe->panelW + 16.0f);
+    probe->panelY = SniperOverlay::kViewHeight - (probe->panelH + 10.0f);
+    return true;
+}
+
+uint32_t fnvMatrix(uint32_t hash, const float m[16]) {
+    for (int i = 0; i < 16; i++) {
+        hash = fnvFloat(hash, m[i]);
+    }
+    return hash;
+}
+
+// The probe's OverlayLine: the state, then Draw's quads (count and hash; all when `full`).
+std::string sniperOverlayLine(SniperHudProbe* probe, float width, int health, bool full) {
+    std::vector<CanvasQuad> quads;
+    g_canvasQuads = &quads;
+    probe->overlay.draw(nullptr, width, health, Blink::Shown, probe->panelX, probe->panelY,
+                        probe->panelW, probe->panelH);
+    g_canvasQuads = nullptr;
+    uint32_t hash = 2166136261u;
+    std::string list;
+    for (size_t i = 0; i < quads.size(); i++) {
+        const CanvasQuad& q = quads[i];
+        const float values[12] = {q.colour.r, q.colour.g, q.colour.b, q.colour.a,
+                                  q.x0, q.y0, q.x2, q.y2, q.u0, q.v0, q.u2, q.v2};
+        hash = fnvInt(fnvInt(hash, (uint32_t)q.texture), (uint32_t)q.palette);
+        for (int v = 0; v < 12; v++) {
+            hash = fnvFloat(hash, values[v]);
+        }
+        if (full) {
+            list += "\n    q" + std::to_string(i) + " " + std::to_string(q.texture) + " " +
+                    std::to_string(q.palette) + " ";
+            for (int v = 0; v < 12; v++) {
+                list += (v > 0 ? "," : "") + hexBits(values[v]);
+            }
+        }
+    }
+    char line[256];
+    snprintf(line, sizeof(line), "vis=%d iris=%s pulse=%s tgt=%d gauge=%d quads=%d hash=%08X",
+             probe->overlay.visible() ? 1 : 0, hexBits(probe->overlay.iris()).c_str(),
+             hexBits(probe->overlay.pulse()).c_str(), probe->overlay.target() ? 1 : 0,
+             (int)probe->overlay.gaugeShown(), (int)quads.size(), hash);
+    return line + list;
+}
+
+// `tick1 dump sniperiris <level> <steps>`: the probe's `iris` mode.
+bool sniperIrisDump(int level, int steps, const MdkData& data, const Bni* sprites,
+                    std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI";
+        return false;
+    }
+    LevelData levelData;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    SniperHudProbe probe;
+    if (!loadSniperHudProbe(levelData, *sprites, &probe, why)) {
+        return false;
+    }
+    *out = "iris level=" + std::to_string(level) + " steps=" + std::to_string(steps) + "\n";
+    char buffer[256];
+    for (int step = 1; step <= steps; step++) {
+        const int32_t selected = step < 40 ? 0 : 5;
+        const StrikeAim aim = step < 50 ? StrikeAim::NotChecked
+                              : step <= 150 ? StrikeAim::Target
+                              : step <= 170 ? StrikeAim::None
+                              : step <= 260 ? StrikeAim::Target
+                                            : StrikeAim::NotChecked;
+        const float zoom = step < 150 ? 1.0f - (float)step * 0.0055f
+                                      : 0.2f + (float)(step - 150) * 0.004f;
+        SniperHud hud;
+        hud.zoom = zoom;
+        const int32_t ammo[5] = {0, 4, 0, 2, 3};
+        for (int i = 0; i < 5; i++) {
+            hud.ammo[i] = ammo[i];
+        }
+        hud.selectedAmmo = selected;
+        hud.cameras[0] = scripts::SniperRounds::RoundCamera{scripts::SniperRounds::ShotEmpty,
+                                                            Vec3{}, Vec3{}, 0.0f};
+        hud.cameras[1] = scripts::SniperRounds::RoundCamera{scripts::SniperRounds::ShotMiss,
+                                                            Vec3{}, Vec3{}, (float)step * 0.5f};
+        hud.cameras[2] = scripts::SniperRounds::RoundCamera{
+            step % 90 < 45 ? scripts::SniperRounds::ShotHit : scripts::SniperRounds::ShotKill,
+            Vec3{}, Vec3{}, 0.0f};
+        hud.cameraCount = 3;
+        hud.aim = aim;
+        probe.overlay.update(1.0f / 60.0f, &hud);
+        snprintf(buffer, sizeof(buffer), "s=%d zoom=%s sel=%d aim=%d pct=%d ", step,
+                 hexBits(zoom).c_str(), (int)selected, (int)aim,
+                 (int)SniperOverlay::zoomPercent(zoom));
+        *out += buffer +
+                sniperOverlayLine(&probe, 480.0f, 37, step % 60 == 0 || step == 100 || step == 200) +
+                "\n";
+    }
+    return true;
+}
+
+// The probe's `hud` lines for one step of kurtRoundsDump (SniperView.Draw's half).
+void sniperHudStep(SniperHudProbe* probe, const Player& player, scripts::ScriptRuntime& runtime,
+                   int step, std::string* out) {
+    const Scope& scope = player.scope();
+    if (!player.sniping()) {
+        probe->overlay.update(1.0f / 60.0f, nullptr);
+    } else {
+        const SniperHud hud = SniperView::hudOf(player, &runtime);
+        probe->overlay.update(1.0f / 60.0f, &hud);
+    }
+    char buffer[512];
+    snprintf(buffer, sizeof(buffer), "s=%d snipe=%d zoom=%s clip=%d/%s sel=%d ", step,
+             player.sniping() ? 1 : 0, hexBits(scope.zoom).c_str(), (int)scope.clipRounds,
+             hexBits(scope.clipTime).c_str(), (int)player.combat().selectedAmmo());
+    *out += buffer +
+            sniperOverlayLine(probe, 600.0f, player.health(), player.sniping() && step % 60 == 0) +
+            "\n";
+    if (!player.sniping()) {
+        return;
+    }
+    const auto vec = [](const Vec3& v) {
+        return hexBits(v.x) + "," + hexBits(v.y) + "," + hexBits(v.z);
+    };
+    const auto rect = [](const SniperOverlay::Rect& r) {
+        return hexBits(r.x) + "," + hexBits(r.y) + "," + hexBits(r.w) + "," + hexBits(r.h);
+    };
+    float scale = 0.0f;
+    float left = 0.0f;
+    SniperOverlay::placement(600.0f, &scale, &left);
+    for (int32_t i = 0; i < scripts::SniperRounds::kSlots; i++) {
+        const scripts::SniperRounds::RoundCamera camera = runtime.sniperRounds().camera(i);
+        snprintf(buffer, sizeof(buffer), "  cam%d shot=%d time=%s", (int)i, (int)camera.shot,
+                 hexBits(camera.time).c_str());
+        *out += buffer;
+        if (camera.shot == scripts::SniperRounds::ShotWatching) {
+            const SniperOverlay::Rect area =
+                SniperView::onCanvas(SniperOverlay::kRoundViews[i], scale, left);
+            Camera view;
+            SniperView::roundCameraView(&view, camera, area);
+            Mat4 v;
+            Mat4 pr;
+            memcpy(v.m, view.view, sizeof(v.m));
+            memcpy(pr.m, view.projection, sizeof(pr.m));
+            const Mat4 product = multiply(v, pr);
+            snprintf(buffer, sizeof(buffer), " area=%s at=%s view=%08X proj=%08X",
+                     rect(area).c_str(), vec(camera.position).c_str(),
+                     fnvMatrix(2166136261u, product.m), fnvMatrix(2166136261u, pr.m));
+            *out += buffer;
+        }
+        *out += "\n";
+    }
+    if (runtime.findModel(runtime.currentArena(),
+                          SniperView::roundModel(player.combat().selectedAmmo())) == nullptr) {
+        return;
+    }
+    const SniperOverlay::Rect whole = {0.0f, 0.0f, SniperOverlay::kViewWidth,
+                                       SniperOverlay::kViewHeight};
+    const SniperOverlay::Rect clipArea = SniperView::onCanvas(whole, scale, left);
+    bool shown = false;
+    for (int32_t i = 0; i < Scope::kClipSize; i++) {
+        const float t = scope.clipTime + (float)i;
+        if (i >= scope.clipRounds || t == 0.0f || t >= 3.0f) {
+            continue;
+        }
+        shown = true;
+        Mat4 rotation;
+        Vec3 position;
+        float roundScale = 0.0f;
+        SniperView::clipPlace(t, &rotation, &position, &roundScale);
+        snprintf(buffer, sizeof(buffer), "  clip%d t=%s rot=%08X at=%s scale=%s\n", (int)i,
+                 hexBits(t).c_str(), fnvMatrix(2166136261u, rotation.m), vec(position).c_str(),
+                 hexBits(roundScale).c_str());
+        *out += buffer;
+    }
+    if (shown) {
+        Camera view;
+        SniperView::clipView(&view, clipArea);
+        Mat4 v;
+        Mat4 pr;
+        memcpy(v.m, view.view, sizeof(v.m));
+        memcpy(pr.m, view.projection, sizeof(pr.m));
+        const Mat4 product = multiply(v, pr);
+        snprintf(buffer, sizeof(buffer), "  clipview area=%s view=%08X proj=%08X\n",
+                 rect(clipArea).c_str(), fnvMatrix(2166136261u, product.m),
+                 fnvMatrix(2166136261u, pr.m));
+        *out += buffer;
+    }
+}
+
 bool kurtRoundsDump(int level, int steps, const std::string& schedule, const MdkData& data,
-                    const Bni* sprites, std::string* out, std::string* why) {
+                    const Bni* sprites, std::string* out, std::string* why, bool hud = false) {
     if (!sprites) {
         *why = "no TRAVSPRT.BNI to take the frame counts from";
         return false;
@@ -2367,8 +2586,12 @@ bool kurtRoundsDump(int level, int steps, const std::string& schedule, const Mdk
         return hexBits(v.x) + "," + hexBits(v.y) + "," + hexBits(v.z);
     };
     std::map<const scripts::MdkObject*, std::string> seen;
-    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
-           " seed=1 schedule=" + schedule + "\n";
+    SniperHudProbe hudProbe;
+    if (hud && !loadSniperHudProbe(levelData, *sprites, &hudProbe, why)) {
+        return false;
+    }
+    *out = std::string(hud ? "hud " : "") + "level=" + std::to_string(level) +
+           " steps=" + std::to_string(steps) + " seed=1 schedule=" + schedule + "\n";
     char buffer[768];
     for (int step = 1; step <= steps; step++) {
         for (size_t i = 0; i < gives.size(); i++) {
@@ -2409,6 +2632,14 @@ bool kurtRoundsDump(int level, int steps, const std::string& schedule, const Mdk
         player.update(input, 1.0f / 60.0f);
         runtime.update(1.0f / 60.0f);
 
+        // In `hud` mode the rounds' lines are made but not kept: they number the objects
+        // (id), which the schedule's `hp:` refers to.
+        std::string discarded;
+        std::string* lines = out;
+        if (hud) {
+            sniperHudStep(&hudProbe, player, runtime, step, out);
+            lines = &discarded;
+        }
         const Kurt& combat = player.combat();
         const Scope& scope = player.scope();
         snprintf(buffer, sizeof(buffer),
@@ -2422,7 +2653,7 @@ bool kurtRoundsDump(int level, int steps, const std::string& schedule, const Mdk
                  combat.ammo(4), combat.ammo(5), id(runtime.sniperTarget), player.health(),
                  runtime.stats.sniperShots, runtime.stats.sniperHits, runtime.stats.kills,
                  runtime.objectCount(), runtime.effects.count(), runtime.debris().pieceCount());
-        *out += buffer;
+        *lines += buffer;
         const scripts::SniperRounds& rounds = runtime.sniperRounds();
         for (int32_t i = 0; i < scripts::SniperRounds::kSlots; i++) {
             const scripts::SniperRounds::Round& r = rounds.round(i);
@@ -2449,7 +2680,7 @@ bool kurtRoundsDump(int level, int steps, const std::string& schedule, const Mdk
                      hexBits(r.yawRate).c_str(), (int)r.path, hexBits(r.pathTime).c_str(),
                      hexBits(r.cameraDistance).c_str(), vec(r.cameraPosition).c_str(),
                      hexBits(r.watch).c_str(), visual.c_str());
-            *out += buffer;
+            *lines += buffer;
         }
         const std::deque<scripts::MdkObject>& objects = runtime.objects();
         for (size_t i = 0; i < objects.size(); i++) {
@@ -2474,7 +2705,7 @@ bool kurtRoundsDump(int level, int steps, const std::string& schedule, const Mdk
                          o.type_name.c_str(), (int)o.health, (int)o.hit_event, (int)o.hit_type,
                          hexBits(o.hit_direction).c_str(), (int)o.shot_part,
                          vec(o.shot_point).c_str(), vec(o.position).c_str());
-                *out += buffer;
+                *lines += buffer;
             }
         }
     }
@@ -6489,13 +6720,24 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
-        if (what == "rounds") {
-            // `tick1 dump rounds <level> <steps> <schedule>`: kurtRoundsDump's text, the
-            // C++ side of the sniper rounds probe.
+        if (what == "sniperiris") {
+            // `tick1 dump sniperiris <level> <steps>`: the rounds probe's `iris` mode.
+            std::string got;
+            std::string why;
+            if (!sniperIrisDump(level, ticks, data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
+        if (what == "rounds" || what == "sniperhud") {
+            // `tick1 dump rounds|sniperhud <level> <steps> <schedule>`: kurtRoundsDump's
+            // text, the C++ side of the sniper rounds probe (sniperhud: its `hud` mode).
             std::string got;
             std::string why;
             if (!kurtRoundsDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
-                                &why)) {
+                                &why, what == "sniperhud")) {
                 printf("%s\n", why.c_str());
                 return 1;
             }
@@ -7892,6 +8134,60 @@ int main(int argc, char** argv) {
             if (ok) {
                 printf("PASS %s: %s\n", c.name, c.pass);
             } else {
+                failures++;
+            }
+        }
+    }
+
+    // Sniper mode's screen and views (gap package #7: game/sniper_overlay.cpp,
+    // game/sniper_view.cpp) against the rounds probe's `hud` and `iris` modes
+    // (tests/scripts/rounds_probe; sniperHudStep and sniperIrisDump for the columns): the
+    // overlay's state and every quad it draws, the round cameras' and the clip's views.
+    {
+        struct HudCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;  // null: the iris sequence
+            const char* pass;
+        };
+        static const HudCase kHudCases[] = {
+            {"L3_sniper_iris", "golden/L3_sniper_iris.txt", 3, 300, nullptr,
+             "the overlay alone: the strike's iris closing on a target, its pulse, opening, the "
+             "gauge following a zoom sweep, the zoom percent, the ammo icons and count, the "
+             "cameras' fills and the miss animation, every quad on a 480-wide canvas"},
+            {"L8_sniper_hud_ship", "golden/L8_sniper_hud_ship.txt", 8, 450,
+             "snipe:30-32,aim:35:42A77D94:C2A22812,fire:70-140,give:150:SW_HOME,fire:200-205,"
+             "give:215:SW_SGREN,fire:265-270,give:280:SW_HGREN,fire:330-335",
+             "the rounds' cameras watching (their windows and views), hit, the clip's loaded "
+             "rounds sliding in (ClipPlace) and its view, the ammo types, on the 3DS's canvas"},
+            {"L8_sniper_hud_kill", "golden/L8_sniper_hud_kill.txt", 8, 240,
+             "snipe:30-32,aim:45:42B41B0C:C0C13FC0,hp:70:7:8,fire:70-80,"
+             "aim:100:00000000:00000000,fire:100-104",
+             "a kill's camera fill and a miss's SNIPERGA animation"},
+        };
+        for (size_t i = 0; i < sizeof(kHudCases) / sizeof(kHudCases[0]); i++) {
+            const HudCase& c = kHudCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            const bool made = c.schedule == nullptr
+                                  ? sniperIrisDump(c.level, c.steps, data, spritesArg, &got, &why)
+                                  : kurtRoundsDump(c.level, c.steps, c.schedule, data, spritesArg,
+                                                   &got, &why, true);
+            if (!made) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
                 failures++;
             }
         }

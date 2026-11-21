@@ -1394,6 +1394,11 @@ static void replayQueue(RendererC3D* r) {
             drawRecorded(r, &bucket[i]);
         }
     }
+    // The insets over the canvas, after it (render.h; the C#'s RenderInsets
+    // OverCanvas): the sniper clip's rounds.
+    for (size_t i = 0; i < r->insetOverDraws.size(); i++) {
+        drawRecorded(r, &r->insetOverDraws[i]);
+    }
 }
 
  void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
@@ -1405,6 +1410,25 @@ static void replayQueue(RendererC3D* r) {
     // a time, and render.h gives that ordering job to the backend. With the
     // depth test off on this target, the order IS the occlusion, so this is not
     // a tidiness change.
+    //
+    // An open Own inset takes the draw (07_canvas.inc): its world becomes the
+    // whole transform onto the inset's rectangle, drawn the canvas's way.
+    if (r->insetOpen) {
+        mdk::MeshDraw inset = *draw;
+        mdk::Mat4 world;
+        mdk::Mat4 transform;
+        memcpy(world.m, draw->world, sizeof(world.m));
+        memcpy(transform.m, r->insetMatrix, sizeof(transform.m));
+        const mdk::Mat4 full = mdk::multiply(world, transform);
+        memcpy(inset.world, full.m, sizeof(inset.world));
+        inset.material.pass = mdk::Pass::Overlay;
+        if (r->insetOver) {
+            r->insetOverDraws.push_back(inset);
+        } else {
+            r->queue.add(inset);
+        }
+        return;
+    }
     r->queue.add(*draw);
 }
 

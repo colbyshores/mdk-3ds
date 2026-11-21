@@ -25,6 +25,9 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   `if_hit_part ANY`; the retail sites are L5 MUSE_2/MUSE_5, L6 OLYM_10 x2, L8 GUNT_10 x2).
   Recount (numeric `case` labels of both VMs, set difference), after package 8's 224:
   C# **238**, C++ **238**, remaining **0** -- every C# VM case is dispatched.
+
+- **Sniper frontends and HUD (2026-11-20, PORT_GAPS package 7):** no opcode: the scope's view,
+  sniper mode's screen and the round cameras are frontend and HUD work. Counts unchanged.
 - **Sniper rounds (2026-11-20, PORT_GAPS package 6):** 28 (`bomb_follow_path`) ported:
   `SniperRounds::guideLastMortar` (scripts/sniper_rounds.cpp), pinned end to end by
   `golden/L7_rounds_mortar.txt` (LEVEL7 DANT_6's group 12 hit script guides a mortar round

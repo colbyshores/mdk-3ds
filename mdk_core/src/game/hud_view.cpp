@@ -109,6 +109,11 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
         }
     }
 
+    // C# HudView: `Sniper = new SniperOverlay(renderer, sprites, palette, _palette,
+    // mods)`. A missing image leaves it unloaded (the C# throws): the HUD still
+    // loads, and sniper mode keeps the HUD instead of its screen.
+    sniper_.load(renderer, sprites, palette, palette_);
+
     barFill_ = paletteColour(palette, kBarFill);
     barFrame_ = paletteColour(palette, kBarFrame);
 
@@ -170,6 +175,21 @@ void HudView::draw(MdkRenderer renderer, const HudState& state) {
     if (state.whiteFlash > 0.0f) {
         fillRect(0.0f, 0.0f, canvasWidth, kCanvasHeight,
                  Colour{1.0f, 1.0f, 1.0f, clampf(state.whiteFlash / kFlashMax, 0.0f, 1.0f)});
+    }
+
+    // Sniper mode's screen instead of the HUD (C# HudView.Draw): the health in
+    // the frame's panel, where the normal view puts SC_STAT, then the messages.
+    if (sniper_.visible()) {
+        const Blink blink = state.health > kLowHealth || blink_ < kBlinkOn ? Blink::Shown
+                                                                           : Blink::Hidden;
+        const float panelAtX = SniperOverlay::kViewWidth - (panel_.w + kPanelRight);
+        const float panelAtY = SniperOverlay::kViewHeight - (panel_.h + kPanelBottom);
+        sniper_.draw(renderer_, canvasWidth, state.health, blink, panelAtX, panelAtY, panel_.w,
+                     panel_.h);
+        if (big_ != nullptr && small_ != nullptr && big_->ready() && small_->ready()) {
+            messages_.draw(renderer_, *big_, *small_, canvasWidth);
+        }
+        return;
     }
 
     // The health panel at the bottom right; the number blinks when health is low.

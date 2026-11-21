@@ -348,9 +348,8 @@ original's own lookup (0x431590 searches the SNI directory) and none here.
 - `KurtSprite` cannot reach the states another subsystem owns: the ride's pose
   (`Kurt.Pose`, which loops past its last frame), the beta back-up (`K_BCKUP`) and
   muzzle flash (`K_MUZZF`) are loaded but never selected, and `Kurt.Visible` is absent
-  so the C#'s early return there is the false branch. Sniper mode is ported
-  (`Player::sniping()`), but `KurtSprite` does not yet read it: hiding Kurt belongs with the
-  frontends' scope view (gap package #7), since until then the follow camera still looks at him. The
+  so the C#'s early return there is the false branch. Sniper mode hides him
+  (`KurtSprite::draw` reads `Player::sniping()`, gap package #7: the frame is the scope's). The
   knock-down, throw, ledge and helmet states have no writer for the same
   reason. Whoever ports each one sets `Player`'s state and the frame counts follow.
 - `KurtSprite` (like `HudView`) has no release path for its palette and mesh:
@@ -1777,11 +1776,8 @@ off its M32 at every zoom).
 
 Still open:
 - ~~**The rounds** (gap package #6)~~: landed 2026-11-20, see the next section.
-- **The frontends' scope view and overlay** (#7): neither frontend draws through
-  `buildSniperCamera` yet, sets `SoundMixer::scopeZoom`/the listener from the scope, hides Kurt
-  (`KurtSprite`'s `Sniping` return), or fills `Input::wheel` (the Linux wheel also presses the
-  item keys in the C#). So on device, D-pad up stops Kurt and turns the look and the zoom over to
-  the scope, but the picture stays the follow camera's.
+- ~~**The frontends' scope view and overlay** (#7)~~: landed 2026-11-20, see "Sniper mode's
+  frontends and screen" below.
 - **The 3DS zoom buttons**: unbound (`zoom_in=none`, `zoom_out=none`) until the owner picks them.
 - **The shot gap** (`Scope.ShotGap`, 5 ticks) is not pinned: at the fixed 1/60 step it never
   binds, because a shot adds a quarter second to the clip timer, which already holds the next
@@ -1849,10 +1845,8 @@ A sniper shot spent ammo and hit nothing. Landed, operation for operation, pinne
 Still open:
 - ~~Bones' air strike~~ (`FireSniper`'s `Scope.Strike` arm, `AirStrike.Call`): landed with
   package #14 on 2026-11-20 (`golden/L5_strike_gunter.txt`, `L3_strike_teeth.txt`).
-- **The round models are not drawn** (`SniperRounds.Visuals`, drawn with the objects in the
-  C#'s Viewer): their state (model, place, basis) is ported and pinned (`vis=` in the goldens);
-  drawing them, and the round cameras (`SniperRounds.Camera`, the scope's inset views), are
-  #7's frontends.
+- ~~**The round models are not drawn**~~: both frontends draw them with the objects, and the
+  round cameras are Vulkan insets (#7, 2026-11-20; the 3DS draws no round camera, below).
 - **Bullet holes** (opcode 130, package #16): landed 2026-11-20, see "The bullet holes"
   below. A WALL gets none: the C#'s `MoveStraight` stamps nothing where a round stops on the
   arena, so neither does the port.
@@ -1916,12 +1910,10 @@ written back as the C# Viewer does. Goldens `L5_strike_gunter`, `L3_strike_teeth
 `L5_strike_event51` (C# probe `tests/scripts/strike_probe` == `tick1 dump strike`, byte for byte).
 
 Still open:
-- **The sniper overlay's strike-target bit** (`SniperView.Aim`, SniperView.cs:81-88) lives in
-  package #7's `game/sniper_view.cpp`, which was not in the tip this landed on. Its `aim()` answers
-  `StrikeAim::None` for "nothing in the crosshair"; once #7 merges it should read
-  `scripts->airStrike().findTarget(player.sniperEye(), player.sniperForward(), &point) ?
-  StrikeAim::Target : StrikeAim::None` (it needs the runtime passed in). The test itself is ported
-  and pinned: the goldens' `tgt=` column is `FindTarget` from the sniper eye every step.
+- ~~The sniper overlay's strike-target bit~~ (`SniperView.Aim`, SniperView.cs:81-88): wired at
+  integration with #7 -- `SniperView::aim(player, scripts)` answers Target when
+  `airStrike().findTarget` from the sniper eye finds one. The test itself is pinned by the strike
+  goldens' `tgt=` column; the overlay's use of it in play is not pinned by a golden.
 - **`Vector2.Normalize` as a divide** (`AirStrike.Start`'s 50 units behind Kurt) is not settled by
   the goldens: writing it as a multiply by the reciprocal passes all three. The divide follows the
   documented `Vector3.Normalize` (util/matrix.h).
@@ -1999,3 +1991,53 @@ menu's CHEATS page. Pinned by `golden/cheats_*.txt` against `tests/scripts/cheat
   until the owner binds a button.
 - **The main menu's D (statistics with random counts) and F/S** lead to screens this port skips (#20b, #17b,
   #18b): the flow's skipUnported walks past them, as for any other entry.
+
+## Sniper mode's frontends and screen (2026-11-20, gap package #7): what landed, what is open
+
+Sniper mode worked in logic and drew the follow camera. Landed, operation for operation:
+
+- `Hud/SniperOverlay.cs` -> `game/sniper_overlay.{h,cpp}`: the frame (cut by `CutView`) and the
+  mask, the round cameras' fills and the miss animation, the air strike's iris and its pulse, the
+  crosshair, the zoom percent and its gauge, the ammo icons, label and count, the health in the
+  frame's panel; `HudView` owns it and draws it instead of the HUD (`HudView.Draw`).
+- `SniperView.cs` -> `game/sniper_view.{h,cpp}` (the arithmetic: `CameraMath.View`, `ClipPlace`,
+  `OnCanvas`, the round and clip views, `Aim`, the SniperHud) and `sniper_view_draw.cpp` (`Draw`,
+  `DrawRoundCamera`, `DrawClip`); the rounds in flight are drawn with the objects by both
+  frontends.
+- `Viewer.SceneView`/`DrawScene`: both frontends draw, hear (the listener, `ScopeZoom`, its line
+  of sight) and give the scripts' eye the scope's view in sniper mode; `KurtSprite` hides Kurt.
+- `Renderer.Insets.cs` -> the render seam: `Inset::scene` (InsetContent), begin/end record
+  instead of flushing; Vulkan draws Scene and Own insets in their viewports with the depth cleared
+  (the direct, the deferred and the post frames); Citro3D draws Own insets the canvas's way.
+- `Input.AddWheel`/`ClearMouse` (Linux): the wheel zooms the scope and presses the item keys
+  until the step that uses them (`Input::wheelKeys`); `SniperTest` (`--sniper`, `--zoom`,
+  `--sniper-fire`) on the Linux command line.
+Pinned by `golden/L3_sniper_iris.txt`, `golden/L8_sniper_hud_ship.txt` and
+`golden/L8_sniper_hud_kill.txt` (the rounds probe's `hud`/`iris` modes == `tick1 dump
+sniperhud|sniperiris`, every quad and matrix as bits), and by Linux frames against the oracle's
+`--sniper` (L3 at 2 s: 58 pixels of 307200 differ, all in the scene; the round camera at 1.77 s:
+376).
+
+Still open:
+- **The 3DS draws no round camera.** A round camera is a Scene inset: the whole scene submitted
+  again into a 140x70 sub-viewport, three of them, with a depth clear the PICA200 path cannot do
+  for a rectangle. On the Old 3DS that is a second and third frame's worth of command list, so
+  the backend refuses Scene insets (logged once) and the 3DS frontend asks the overlay to fill a
+  watching camera's window as an empty one. Owner-gated: a reduced-rate inset behind an
+  EnhancedMenu toggle is the next step if the owner wants the round views on the console.
+- **The 3DS overlay's budget**: the frame and the mask are drawn from 63x63 pieces of every
+  second texel (`SniperOverlay::Budget`, ~0.4 MiB of linear memory instead of 4 MiB); the
+  transparent pieces are not made. Unmeasured on hardware: the pieces' cost (~100 canvas quads)
+  and whether a filtered (enableFiltering) edge shows the cuts.
+- **The 3DS clip** (the loaded rounds) is drawn the canvas's way: no depth test within a round's
+  model and its textures pinned RGBA8 like a canvas picture's. Unchecked in Mandarine.
+- **Stereo (Vulkan)**: a stereo frame draws no insets (refused once); the C# draws them per eye.
+- **The enhanced look's post pass** draws the insets in its canvas pass, after the post, as the
+  C# does; without the post they go into the scene pass. Neither is pinned by a frame.
+- **The mods' overlay images** (`CanvasImages`, `ModImages`) are not ported for the overlay.
+- ~~**Bones' strike** (#14)~~: `SniperView.Aim` asks `AirStrike.FindTarget` since the
+  integration with #14, and the full-screen strike (`DrawStrike`) is #14's `game/strike_view`.
+- **The 3DS zoom**: the C# pad zooms on the d-pad's up and down (`GamepadMap.cs`); this layout
+  gives those to sniper and use_item, so the zoom stays on the unbound zoom_in/zoom_out (logged
+  once at boot while unbound). The circle pad turns the scope and X/B tilt it, as in the C#.
+

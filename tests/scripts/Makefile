@@ -123,6 +123,9 @@ SOURCES := \
 	$(CORE)/fall/fall_sim.cpp \
 	$(CORE)/fall/fall_missile.cpp \
 	$(CORE)/formats/fall3d.cpp \
+	$(CORE)/game/sniper_overlay.cpp \
+	$(CORE)/game/sniper_view.cpp \
+	$(CORE)/formats/sniper_screen.cpp \
 	$(COMMON_SOURCES)
 
 SOURCES_VM := \

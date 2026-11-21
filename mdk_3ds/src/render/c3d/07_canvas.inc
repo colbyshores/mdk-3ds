@@ -220,14 +220,55 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
 // ---------------------------------------------------------------------------
 
  void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* i) {
-    // The same contract as mdk_render_canvas_begin: an inset is a viewport
-    // change INSIDE one eye's replay, not a flush point, so nothing is emitted
-    // here. Wiring the sniper insets means recording the viewport with the
-    // draw, not flushing the frame at its boundary.
-    (void)r;
-    (void)i;
+    // The same contract as mdk_render_canvas_begin: nothing is emitted here. An
+    // Own inset's transform is made once and its draws are RECORDED with it
+    // (mdk_render_draw_mesh), to be drawn inside each eye's replay.
+    RendererC3D* c = asC3d(r);
+    if (!c || !i || !c->inFrame) {
+        return;
+    }
+    c->insetOpen = false;
+    if (i->scene) {
+        if (!c->insetSceneRefused) {
+            c->insetSceneRefused = true;
+            mdk::log3dsPrintf("inset: a scene inset (a sniper round camera) is not drawn on "
+                              "this target");
+        }
+        return;
+    }
+    // A ZERO-AREA inset draws nothing (render.h): its rectangle has no pixels.
+    if (!(i->width > 0.0f) || !(i->height > 0.0f)) {
+        return;
+    }
+    // The inset camera's clip -> its rectangle of the canvas, in homogeneous
+    // canvas units: x' = x * w/2 + w * (rx + w/2), y' = -y * h/2 + w * (ry + h/2)
+    // (the clip's y runs up, the canvas's down), z and w kept. Then the canvas's
+    // own matrix, which takes canvas units to the panel (its quarter turn and its
+    // mid-range depth included).
+    mdk::Mat4 rect = mdk::Mat4::identity();
+    rect.m[0] = i->width * 0.5f;
+    rect.m[5] = -i->height * 0.5f;
+    rect.m[12] = i->x + i->width * 0.5f;
+    rect.m[13] = i->y + i->height * 0.5f;
+    rect.m[15] = 1.0f;
+    mdk::Mat4 view;
+    mdk::Mat4 projection;
+    memcpy(view.m, i->camera.view, sizeof(view.m));
+    memcpy(projection.m, i->camera.projection, sizeof(projection.m));
+    mdk::Mat4 canvas;
+    mdk::pica::canvasMatrix(canvas.m, mdk_render_canvas_width(r));
+    const mdk::Mat4 full =
+        mdk::multiply(mdk::multiply(mdk::multiply(view, projection), rect), canvas);
+    memcpy(c->insetMatrix, full.m, sizeof(c->insetMatrix));
+    c->insetOver = !i->under_canvas;
+    c->insetOpen = true;
 }
- void mdk_render_end_inset(MdkRenderer r) { (void)r; }
+ void mdk_render_end_inset(MdkRenderer r) {
+    RendererC3D* c = asC3d(r);
+    if (c) {
+        c->insetOpen = false;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Diagnostics

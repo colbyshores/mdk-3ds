@@ -139,8 +139,21 @@ void flushDraws(RendererVk* r) {
     if (r->enhancedLook && !r->replayingEyes) {
         return;
     }
+    drawBuckets(r, r->queue, true);
+    if (!r->replayingEyes) {
+        r->queue.reset();
+    }
+}
+
+// Draw a queue's buckets in the pass order -- the frame's queue, or an Own
+// inset's -- through the camera installed now. `overlay` false leaves the Overlay
+// bucket out, as the C#'s RenderInset does (Renderer.Insets.cs:113-119).
+void drawBuckets(RendererVk* r, const mdk::DrawQueue& queue, bool overlay) {
     for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
-        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+        if (!overlay && pass == static_cast<int32_t>(mdk::Pass::Overlay)) {
+            continue;
+        }
+        const std::vector<mdk::MeshDraw>& bucket = queue.bucket(pass);
         for (size_t i = 0; i < bucket.size(); i++) {
             // enableMirrors off: mirror draws are skipped whole, at
             // queue setup, not shaded around (SPEC.md 7.9).
@@ -149,9 +162,6 @@ void flushDraws(RendererVk* r) {
             }
             drawRecorded(r, &bucket[i]);
         }
-    }
-    if (!r->replayingEyes) {
-        r->queue.reset();
     }
 }
 

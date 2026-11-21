@@ -252,8 +252,8 @@ std::string writeControls(const ControlBindings& bindings) {
         "# unassigned), so an original 3DS has no turbo unless you bind it here.\n"
         "# The circle pad looks. START opens the pause menu and SELECT the\n"
         "# effects menu, whatever is bound.\n"
-        "# sniper enters and leaves sniper mode; the scope's view and overlay are\n"
-        "# not drawn yet. zoom_in and zoom_out zoom the scope (unbound by default).\n"
+        "# sniper enters and leaves sniper mode (X/B tilt the scope, the circle pad\n"
+        "# turns it). zoom_in and zoom_out zoom the scope (unbound by default).\n"
         "# down sinks Kurt while the pause menu's NOCLIP cheat is on (unbound).\n"
         "# Delete this file to get the defaults back.\n";
     for (size_t i = 0; i < kActionCount; i++) {

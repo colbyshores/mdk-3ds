@@ -80,6 +80,10 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     r->frameIndex++;
     settleRetired(r);
     r->queue.reset();
+    // This frame's insets start empty (renderInsets, 14_canvas_seam.inc).
+    r->insetCount = 0;
+    r->openInset = -1;
+    r->insetsUnderDrawn = false;
 
     // The viewport and scissor are dynamic state; set them once per frame so
     // every pipeline shares them.
@@ -156,18 +160,26 @@ void mdk_render_end_frame(MdkRenderer rr) {
         }
         drawSky(r);
         flushDraws(r);
-        r->queue.reset();
+        // The insets around the canvas (renderInsets): in the scene pass without
+        // the post, in the post's canvas pass with it -- after the post, as the
+        // C# draws them (scene, post, insets under the canvas, canvas, insets
+        // over it). The queue is kept until then: a Scene inset draws it again.
         if (!post) {
+            renderInsets(r, true);
             replayCanvas(r);
+            renderInsets(r, false);
         }
         mdk::vk::endPass(&r->ctx);
         if (post) {
             generateSceneMips(r);
             drawPost(r);
             mdk::vk::beginPass(&r->ctx, r->canvasFramebuffer, r->canvasLoadPass, 0);
+            renderInsets(r, true);
             replayCanvas(r);
+            renderInsets(r, false);
             mdk::vk::endPass(&r->ctx);
         }
+        r->queue.reset();
         r->replayingEyes = false;
         deferredFrame = true;
     }
@@ -227,6 +239,18 @@ void mdk_render_end_frame(MdkRenderer rr) {
     bool submitted = false;
     if (stereoFrame || deferredFrame) {
         submitted = mdk::vk::submitFrame(&r->ctx);
+    }
+    if (!stereoFrame && !deferredFrame) {
+        // The direct frame's insets: the ones under the canvas if no canvas was
+        // drawn (canvas_begin draws them otherwise), then whatever was queued
+        // after the canvas, then the ones over it -- all before the pass closes.
+        if (!r->insetsUnderDrawn) {
+            drawBuckets(r, r->queue, true);
+            renderInsets(r, true);
+            r->queue.reset();
+        }
+        flushDraws(r);
+        renderInsets(r, false);
     }
     if (!stereoFrame && !deferredFrame && r->gamma != 1.0f && ensureGamma(r)) {
         flushDraws(r);

@@ -569,6 +569,21 @@ struct RendererC3D {
     std::vector<mdk::CanvasQuad> canvasQuads;
     std::vector<mdk::Vertex> canvasVerts;
 
+    // THE INSETS (render.h; sniper mode's clip, game/sniper_view.h). An Own inset's
+    // draws are recorded as Overlay records whose world is the whole transform --
+    // the model's world, the inset camera's view-projection, the inset's rectangle
+    // of the canvas and the canvas's own matrix (pica::canvasMatrix) -- so they go
+    // through the canvas's path: no depth, no cull, drawn in record order. Those
+    // over the canvas wait in `insetOverDraws` for the end of each eye's Overlay
+    // bucket (replayQueue). A Scene inset (a round camera: the whole scene again in
+    // a sub-viewport) is NOT drawn on this target: the frontend does not ask for
+    // one (sniper_view.h), and one that arrives is refused once in the log.
+    bool insetOpen = false;
+    bool insetOver = false;
+    float insetMatrix[16] = {0};
+    std::vector<mdk::MeshDraw> insetOverDraws;
+    bool insetSceneRefused = false;
+
     // The mesh the canvas's corners are uploaded into, and what it can hold.
     // Made on the first frame that draws a canvas, sized to that frame, and grown
     // by doubling after that: the HUD's quad count changes with the inventory and

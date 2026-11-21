@@ -28,9 +28,11 @@
 //   zoom_in, zoom_out  unbound (the scope's zoom; the owner picks the buttons)
 //
 // SNIPER enters and leaves sniper mode (Player's sniper step, gap package #5):
-// Kurt stands, looks and zooms through the scope and fires its clip. The
-// scope's view and overlay are not drawn yet (package #7), so the frontend logs
-// once that the mode is gameplay-only.
+// Kurt stands, looks and zooms through the scope and fires its clip; the scope's
+// view and overlay are drawn (package #7, game/sniper_view.h). The C# pad zooms
+// on the d-pad's up and down (GamepadMap.cs), which this layout gives to sniper
+// and use_item, so the zoom stays on zoom_in/zoom_out until the owner binds them
+// (the frontend logs once while they are unbound).
 //
 // THE FILE. key=value lines, as config.ini (game/enhanced_config.cpp): '#' or
 // ';' starts a comment, blank lines pass, spaces around the key and value are

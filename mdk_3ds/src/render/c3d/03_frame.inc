@@ -1609,6 +1609,8 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     r->canvasQuadsThisFrame = 0;
     r->canvasDrawsThisFrame = 0;
     r->queue.reset();
+    r->insetOverDraws.clear();
+    r->insetOpen = false;
     // C3D_FrameEnd is the ONLY present path. It triggers the auto display
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);

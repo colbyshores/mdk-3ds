@@ -96,6 +96,7 @@
 #include "game/object_draw.h"
 #include "game/object_view.h"
 #include "game/player.h"
+#include "game/sniper_view.h"
 #include "render/material_resolver.h"
 #include "render/render.h"
 #include "render/render_c3d_stats.h"
@@ -576,9 +577,9 @@ int main(int argc, char** argv) {
                                         "defaults in use");
         }
         mdk::log3dsPrintf("controls: %s", mdk::describeControls(controls).c_str());
-        if (controls.buttons[mdk::kKeySniper] != 0) {
-            mdk::log3dsPrintf("controls: sniper mode is gameplay-only (the scope's view and "
-                              "overlay are not drawn yet)");
+        if (controls.buttons[mdk::kKeyZoomIn] == 0 || controls.buttons[mdk::kKeyZoomOut] == 0) {
+            mdk::log3dsPrintf("controls: the scope's zoom_in/zoom_out are unbound; sniper mode "
+                              "stays at its entry zoom");
         }
     }
 
@@ -1148,6 +1149,11 @@ int main(int argc, char** argv) {
                 } else {
                     mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
                 }
+                // Sniper mode's screen in pieces, every second texel (the 3DS's
+                // memory budget, game/sniper_overlay.h): its two full-screen images
+                // would otherwise cost 2 MiB of linear memory each.
+                hud.sniper().budget.tiles = true;
+                hud.sniper().budget.shrink = 2;
                 if (hud.load(renderer, sprites, level.dti().palette(),
                              hdSource.pack ? &hdPack : nullptr)) {
                     hudReady = true;
@@ -1404,6 +1410,10 @@ int main(int argc, char** argv) {
     mdk::MaterialResolver objectResolver(&level.dti(), mdk::Shading::Lit);  // see view.setShading
     mdk::ObjectView objectView(objectResolver);
     mdk::ObjectDraw objectDraw;
+    // Sniper mode's view besides the world through the scope: the overlay's state
+    // and the clip's inset (game/sniper_view.h; no round-camera insets here).
+    mdk::SniperView sniperView;
+    bool sniperClipFailureLogged = false;
     mdk::EffectsView effectsView(objectResolver, &level, mdk::Shading::Sprite);
     mdk::EffectsDraw effectsDraw;
     mdk::EffectsFrame effectsFrame;
@@ -1758,6 +1768,11 @@ int main(int argc, char** argv) {
     // roll is 0 because this Player has not stepped yet (C# CameraRoll starts
     // level).
     mdk::Camera camera;
+    // THE FRAME'S VIEW (C# Viewer.SceneView): the follow camera's, or in sniper mode
+    // the scope's from Kurt's eye (FollowCamera.SniperView). `camera` stays the
+    // follow camera's state, which follow.update places every step; this is what
+    // the frame is drawn and heard through.
+    mdk::Camera sceneCamera;
     if (playerReady) {
         mdk::buildFollowCamera(&camera, player.feet, player.facing(),
                                mdk::follow_camera::kDefaultPitch,
@@ -2555,7 +2570,21 @@ int main(int argc, char** argv) {
         // bound at its first sample. A no-op on the software path.
         // The `audio` profile span is all of it, in both modes (PROFILE builds).
         const uint64_t spanAudio0 = mdk::harnessProfileTick();
+        // The scope's view in sniper mode (C# Viewer.SceneView), but never over the
+        // strike's frame: DrawStrike presents its own view before SceneView is asked
+        // (Viewer.cs:396-410), and Bones' strike is called from the scope.
+        sceneCamera = camera;
+        if (playerReady && player.sniping() && !strikeFrame) {
+            mdk::buildSniperCamera(&sceneCamera, player, kAspect);
+        }
+        // C# Viewer.DrawScene (Viewer.cs:686-693): the listener stands at the frame's
+        // view with the follow camera's right; in sniper mode the sounds are heard
+        // through the scope (ScopeZoom, Kurt's line of sight and its up).
         mix->listenFromCamera(camera);
+        mix->listenerPosition = sceneCamera.position;
+        mix->scopeZoom = playerReady && player.sniping() ? player.scope().zoom : 0.0f;
+        mix->listenerForward = player.sniperForward();
+        mix->listenerUp = mdk::followCameraUpOf(mix->listenerForward);
         mix->update(elapsed);
         mdk::audioDspFrame(*mix);
         mix->device().update(elapsed);
@@ -2836,7 +2865,7 @@ int main(int argc, char** argv) {
         if (capturePath[0]) {
             capturePath[0] = '\0';  // one frame, one picture (after the copy above)
         }
-        mdk_render_set_camera(renderer, &camera);
+        mdk_render_set_camera(renderer, &sceneCamera);
 
         // The enhanced look's light (LevelLight.Update): the scripts' current
         // arena's rig, or the start arena's before the runtime exists. The Linux
@@ -2877,9 +2906,9 @@ int main(int argc, char** argv) {
                 sky.material.texture = range.texture;
                 sky.material.pass = mdk::Pass::DoubleSided;
                 sky.world[0] = sky.world[5] = sky.world[10] = sky.world[15] = 1.0f;
-                sky.world[12] = camera.position.x;
-                sky.world[13] = camera.position.y;
-                sky.world[14] = camera.position.z;
+                sky.world[12] = sceneCamera.position.x;
+                sky.world[13] = sceneCamera.position.y;
+                sky.world[14] = sceneCamera.position.z;
                 mdk_render_draw_mesh(renderer, &sky);
             }
         }
@@ -2947,6 +2976,16 @@ int main(int argc, char** argv) {
                 const mdk::scripts::MdkObject& subject = runtime->strikeScene()->subject();
                 objectView.addObject(subject, objectLook(subject.arena), subject.transform(),
                                      &objectStream);
+            }
+            // C# SniperView.Draw's first loop (Viewer.cs:706; not in the strike's
+            // frame, which DrawStrike draws instead): the sniper rounds in
+            // flight, each in its arena's look, at its own transform.
+            for (int32_t i = 0; i < mdk::scripts::SniperRounds::kSlots && !strikeFrame; i++) {
+                if (runtime->sniperRounds().visualFlying(i)) {
+                    const mdk::scripts::MdkObject& round = runtime->sniperRounds().visual(i);
+                    objectView.addObject(round, objectLook(round.arena), round.transform(),
+                                         &objectStream);
+                }
             }
             objectDraw.draw(renderer, &surfaces, objectStream);
             // The frame's own cost, kept for the log line below. The peak over a
@@ -3026,7 +3065,7 @@ int main(int argc, char** argv) {
             // and sniper scope the C# draws alongside are not ported.
             // A refusal is reported like the object pass's, edge-triggered
             // and re-armed, but on this pass's own latch.
-            effectsView.build(*runtime, camera, &effectsFrame);
+            effectsView.build(*runtime, sceneCamera, &effectsFrame);
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_GLOWPROBE)
             // THE HARNESS'S GLOW PROBE (`make AUTOQUIT=.. GLOWPROBE=1`): one halo,
             // 30 units in front of the camera, 12 across, warm white -- the
@@ -3035,15 +3074,15 @@ int main(int argc, char** argv) {
             {
                 mdk::Mat4 view;
                 mdk::Mat4 projection;
-                memcpy(view.m, camera.view, sizeof(view.m));
-                memcpy(projection.m, camera.projection, sizeof(projection.m));
+                memcpy(view.m, sceneCamera.view, sizeof(view.m));
+                memcpy(projection.m, sceneCamera.projection, sizeof(projection.m));
                 mdk::Vec3 right;
                 mdk::Vec3 up;
                 mdk::Vec3 forward;
                 mdk::effectsBillboardBasis(mdk::multiply(view, projection), &right, &up, &forward);
-                const mdk::Vec3 at{camera.position.x + forward.x * 30.0f,
-                                   camera.position.y + forward.y * 30.0f,
-                                   camera.position.z + forward.z * 30.0f};
+                const mdk::Vec3 at{sceneCamera.position.x + forward.x * 30.0f,
+                                   sceneCamera.position.y + forward.y * 30.0f,
+                                   sceneCamera.position.z + forward.z * 30.0f};
                 mdk::GlowQuad probe;
                 mdk::effectsQuadVertices(at, right, up, 12, 12, probe.corners);
                 probe.colour[0] = 1.0f;
@@ -3073,6 +3112,23 @@ int main(int argc, char** argv) {
                 effectsFailureLogged = false;
             }
         }
+        if (playerReady && !strikeFrame) {
+            // The rest of C# SniperView.Draw (Viewer.cs:706): the overlay's state and
+            // the loaded rounds' inset. NO round-camera insets on this target
+            // (sniper_view.h): a watching camera's window is filled as an empty one.
+            sniperView.draw(renderer, hud.sniper(), player, runtime.get(), elapsed, false,
+                            objectView, &surfaces,
+                            objectLook(runtime ? runtime->currentArena() : std::string()));
+            if (sniperView.allocationFailed()) {
+                if (!sniperClipFailureLogged) {
+                    sniperClipFailureLogged = true;
+                    mdk::log3dsPrintf("sniper: the clip's stream mesh — linearAlloc FAILED, "
+                                      "the loaded rounds are not drawn");
+                }
+            } else {
+                sniperClipFailureLogged = false;
+            }
+        }
         if (kurtSpriteReady && playerReady && !strikeFrame) {
             // THE PACK STREAM'S PUMP (KurtSprite::pumpStream): the read the
             // reader thread finished, if any, staged -- no I/O on this thread. A
@@ -3086,9 +3142,10 @@ int main(int argc, char** argv) {
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
         if (runtime && !strikeFrame) {
-            // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it); the
-            // strike's frames are not DrawScene's, so they leave it alone.
-            runtime->eye = camera.position;
+            // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it) --
+            // the frame's view, the scope's in sniper mode; the strike's frames are
+            // not DrawScene's, so they leave it alone.
+            runtime->eye = sceneCamera.position;
         }
         const bool showHint = menuReady && !menu.open() && now < hintUntil;
         if (!strikeFrame && (hudReady || menu.open() || showHint)) {

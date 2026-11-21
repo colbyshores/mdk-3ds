@@ -57,8 +57,12 @@ struct Input {
     // the user), which zoom the scope in sniper mode (Scope::wheel). The frontend that
     // fills it clears it after each step, as the C#'s ClearMouse does.
     float wheel = 0.0f;
+    // The C# Input._wheel: the keys a wheel notch presses (Input.DefaultButtons: up
+    // the previous item, down the next one), held until a game step has used them,
+    // as bit k = Key k. The frontend that fills it clears it with `wheel`.
+    uint32_t wheelKeys = 0;
 
-    bool isDown(Key key) const { return down[key]; }
+    bool isDown(Key key) const { return down[key] || ((wheelKeys >> key) & 1u) != 0; }
 
     // The C# Kurt.Axis: +1 when the positive action is held, -1 when the
     // negative one is, 0 when both or neither.

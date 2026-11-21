@@ -91,6 +91,8 @@ void drawPost(RendererVk* r);
 } // namespace
 
 void replayCanvas(RendererVk* r);
+// The frame's insets of one layer (14_canvas_seam.inc).
+void renderInsets(RendererVk* r, bool underCanvas);
 
 #include "vulkan/07_frame.inc"
 // ---------------------------------------------------------------------------
@@ -134,6 +136,13 @@ void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
     // pass, and the pass a batch belongs to is not the order it was found in.
     // render.h gives this job to the backend ("the material carries the pass,
     // so the backend sorts and batches; the caller does not").
+    //
+    // While an Own inset is open the draw is the inset's (the C#'s Queue =>
+    // _open?.Commands ?? _commands, Renderer.Insets.cs:37).
+    if (r->openInset >= 0 && (size_t)r->openInset < r->insetCount) {
+        r->insets[(size_t)r->openInset].own.add(*draw);
+        return;
+    }
     r->queue.add(*draw);
 }
 

@@ -253,13 +253,28 @@ bool windowPump(Window* window, Input* input) {
                     menuKeys.any = true;
                 }
                 // The C# Input.DefaultButtons: the left button fires, the right one is
-                // the sniper key. (The wheel -- the item keys, and the scope's zoom in
-                // sniper mode -- is not ported: Input::wheel stays 0.)
+                // the sniper key. (The wheel is SDL_EVENT_MOUSE_WHEEL, below.)
                 if (input && event.button.button == SDL_BUTTON_LEFT) {
                     hold(input, kKeyFire, &fireHeld, 4u,
                          event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
                 } else if (input && event.button.button == SDL_BUTTON_RIGHT) {
                     input->down[kKeySniper] = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                }
+                break;
+            case SDL_EVENT_MOUSE_WHEEL:
+                // The C# Input.AddWheel (Window.cs:338): the notches add up for the
+                // scope's zoom (Input::wheel, Scope::wheel; positive away from the
+                // user), and a notch presses its binding until the next game step --
+                // up the previous item, down the next (Input.DefaultButtons). The
+                // frontend clears both after each step (the C#'s ClearMouse).
+                if (input) {
+                    const float notches = event.wheel.y;
+                    input->wheel += notches;
+                    if (notches > 0.0f) {
+                        input->wheelKeys |= 1u << kKeyItemPrevious;
+                    } else if (notches < 0.0f) {
+                        input->wheelKeys |= 1u << kKeyItemNext;
+                    }
                 }
                 break;
             case SDL_EVENT_MOUSE_MOTION:

@@ -57,6 +57,7 @@
 #include "game/object_draw.h"
 #include "game/object_view.h"
 #include "game/player.h"
+#include "game/sniper_view.h"
 #include "game/input.h"
 #include "game/arena_space.h"
 #include "game/arena_views.h"
@@ -463,6 +464,17 @@ int main(int argc, char** argv) {
     // is entered and solid. --at alone only moves his feet.
     std::string startArenaOverride;
 
+    // The C#'s sniper tests (Program.cs:56-58, SniperTest.cs): --sniper[=zoom[,pitch]]
+    // enters sniper mode once Kurt stands, at that zoom and pitch; --zoom=seconds holds
+    // "zoom in" that long from then; --sniper-fire fires one round once the clip is
+    // loaded (1 s after entering, for 0.1 s). With --fixed-step and --capture-frame
+    // they frame the scope as the oracle's --sniper and --screenshot do.
+    bool sniperTest = false;
+    float sniperTestZoom = 1.0f;
+    float sniperTestPitch = 0.0f;
+    float sniperTestHold = 0.0f;
+    bool sniperTestFire = false;
+
     auto optionValue = [](const char* arg, const char* name) -> const char* {
         const size_t length = std::strlen(name);
         if (std::strncmp(arg, name, length) != 0 || arg[length] != '=') {
@@ -572,6 +584,31 @@ int main(int argc, char** argv) {
             eventValue = (int32_t)parsed;
         } else if (std::strcmp(argv[i], "--event-every-level") == 0) {
             eventEveryLevel = true;
+        } else if (std::strcmp(argv[i], "--sniper") == 0) {
+            sniperTest = true;
+        } else if ((value = optionValue(argv[i], "--sniper")) != nullptr) {
+            // SniperTest.Setup: "zoom[,pitch]", both optional.
+            float zoom = 1.0f;
+            float pitch = 0.0f;
+            const int fields = std::sscanf(value, "%f,%f", &zoom, &pitch);
+            if (fields < 1 || !(zoom > 0.0f) || zoom > 1.0f) {
+                std::fprintf(stderr, "[main] invalid --sniper: %s (want zoom[,pitch], zoom 0-1)\n",
+                             value);
+                return 1;
+            }
+            sniperTest = true;
+            sniperTestZoom = zoom;
+            sniperTestPitch = fields > 1 ? pitch : 0.0f;
+        } else if ((value = optionValue(argv[i], "--zoom")) != nullptr) {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || *end != '\0' || parsed < 0.0f) {
+                std::fprintf(stderr, "[main] invalid --zoom: %s (want seconds)\n", value);
+                return 1;
+            }
+            sniperTestHold = parsed;
+        } else if (std::strcmp(argv[i], "--sniper-fire") == 0) {
+            sniperTestFire = true;
         } else if (std::strcmp(argv[i], "--replay-level") == 0) {
             replayLevel = true;
         } else if (std::strcmp(argv[i], "--enhanced") == 0) {
@@ -1399,6 +1436,10 @@ int main(int argc, char** argv) {
         objectView.setSwaps(&modModels);
     }
     mdk::ObjectDraw objectDraw;
+    // Sniper mode's view besides the world through the scope: the overlay's state,
+    // the round cameras' and the clip's insets (game/sniper_view.h).
+    mdk::SniperView sniperView;
+    bool sniperClipFailureLogged = false;
     mdk::EffectsView effectsView(objectResolver, &level,
                                  enhancedLook ? mdk::Shading::Sprite : mdk::Shading::Original);
     mdk::EffectsDraw effectsDraw;
@@ -1724,6 +1765,13 @@ int main(int argc, char** argv) {
     // C# Viewer._time and TestStart (Viewer.cs:109): the game time the --event fires at.
     const float kTestStart = 1.0f;
     float testTime = 0.0f;
+    // SniperTest's _entered (the game time sniper mode was entered; < 0: not yet).
+    float sniperTestEntered = -1.0f;
+    // THE FRAME'S VIEW (C# Viewer.SceneView): the follow camera's, or in sniper mode
+    // the scope's from Kurt's eye (FollowCamera.SniperView). `camera` stays the
+    // follow camera's state -- it is what follow.update places every step, sniping
+    // or not -- and this is what the frame is drawn and heard through.
+    mdk::Camera sceneCamera = camera;
     while (true) {
         const auto now = std::chrono::steady_clock::now();
         // A golden capture MUST NOT depend on how long the host took between
@@ -1952,6 +2000,22 @@ int main(int argc, char** argv) {
                     runtime->specialEvent(
                         &runtime->getArenaState(runtime->currentArena()).controller, eventValue);
                 }
+                // C# SniperTest.Step (Viewer.cs:507), before Kurt's step: sniper mode
+                // once he stands (after SettleTime 0.5 s), then the zoom key and the shot.
+                if (sniperTest && (firstLevel || eventEveryLevel)) {
+                    if (sniperTestEntered < 0.0f && player.onFloor && testTime >= 0.5f) {
+                        player.enterSniper();
+                        player.scope().zoom = sniperTestZoom;
+                        player.scope().pitch = sniperTestPitch;
+                        sniperTestEntered = testTime;
+                    }
+                    if (sniperTestEntered >= 0.0f) {
+                        const float since = testTime - sniperTestEntered;
+                        input.down[mdk::kKeyZoomIn] = since < sniperTestHold;
+                        input.down[mdk::kKeyFire] =
+                            sniperTestFire && since >= 1.0f && since < 1.0f + 0.1f;
+                    }
+                }
                 player.update(input, kStep);
                 // The C# Viewer order is Kurt, then the scripts, then the
                 // camera (Viewer.cs:505-535). ScriptRuntime keeps its own
@@ -1988,6 +2052,10 @@ int main(int argc, char** argv) {
                     }
                 }
                 follow.update(&camera, &space, player, target, kStep, kAspect);
+                // C# input.ClearMouse() after UpdateCamera (Viewer.cs:518): the wheel's
+                // notches and the keys they pressed were this step's.
+                input.wheel = 0.0f;
+                input.wheelKeys = 0;
                 // The music follows Kurt's arena, which the scripts set (C#
                 // Viewer.cs:521-525: Enter, then Update(Step), every step, after
                 // the camera).
@@ -2114,7 +2182,13 @@ int main(int argc, char** argv) {
                 cutsceneCamera.blend(fixedStep ? 1.0f : runtime->tick_blend(pending));
                 cutsceneCamera.build(&camera, kAspect);
             }
-            mdk_render_set_camera(renderer, &camera);
+            // Sniper mode before the cutscene (C# Viewer.SceneView: flying, then
+            // Sniping, then CutsceneCamera.Active).
+            sceneCamera = camera;
+            if (player.sniping()) {
+                mdk::buildSniperCamera(&sceneCamera, player, kAspect);
+            }
+            mdk_render_set_camera(renderer, &sceneCamera);
             // The walk's route evidence: Kurt's arena (the scripts' current one,
             // which the 3DS's arena-entry table keys on) on every change, and his
             // feet every 30 frames.
@@ -2166,7 +2240,15 @@ int main(int argc, char** argv) {
         // frame (Game.cs:334-337). Both get the frame's elapsed, not the step's.
         if (runtime) {
             mdk::audio::SoundMixer& mixer = runtime->mixer();
+            // C# Viewer.DrawScene (Viewer.cs:686-693): the listener stands at the
+            // frame's view (the scope's eye in sniper mode) with the follow camera's
+            // right, and in sniper mode the sounds are heard through the scope:
+            // ScopeZoom, along Kurt's line of sight with its up.
             mixer.listenFromCamera(camera);
+            mixer.listenerPosition = sceneCamera.position;
+            mixer.scopeZoom = player.sniping() ? player.scope().zoom : 0.0f;
+            mixer.listenerForward = player.sniperForward();
+            mixer.listenerUp = mdk::followCameraUpOf(mixer.listenerForward);
             mixer.update(elapsed);
             mixer.device().update(elapsed);
         }
@@ -2343,6 +2425,17 @@ int main(int argc, char** argv) {
                 objectView.addObject(subject, objectLook(subject.arena), subject.transform(),
                                      &objectStream);
             }
+            // C# SniperView.Draw's first loop (Viewer.cs:706; not in the strike's
+            // frame, which DrawStrike draws instead): the sniper rounds in
+            // flight (SniperRounds.Visuals), each in its arena's look, at its own
+            // transform -- they are not in the object list and do not blend.
+            for (int32_t i = 0; i < mdk::scripts::SniperRounds::kSlots && !strikeFrame; i++) {
+                if (runtime->sniperRounds().visualFlying(i)) {
+                    const mdk::scripts::MdkObject& round = runtime->sniperRounds().visual(i);
+                    objectView.addObject(round, objectLook(round.arena), round.transform(),
+                                         &objectStream);
+                }
+            }
             objectDraw.draw(renderer, &surfaces, objectStream);
             // A REFUSED STREAM MESH IS A SILENTLY EMPTY OBJECT PASS UNLESS SOMEONE
             // PRINTS IT (review-11 F4, the half `object_draw.h` records as owed to
@@ -2380,10 +2473,27 @@ int main(int argc, char** argv) {
                 streamFailureLogged = false;
             }
         }
+        if (playerReady && !strikeFrame) {
+            // The rest of C# SniperView.Draw (Viewer.cs:706): the overlay's state, the
+            // round cameras' insets and the loaded rounds' inset, between the objects
+            // and the effects.
+            sniperView.draw(renderer, hud.sniper(), player, runtime.get(), elapsed, true,
+                            objectView, &surfaces,
+                            objectLook(runtime ? runtime->currentArena() : std::string()));
+            if (sniperView.allocationFailed()) {
+                if (!sniperClipFailureLogged) {
+                    sniperClipFailureLogged = true;
+                    std::printf("[main] sniper: the clip's stream mesh was REFUSED by the "
+                                "backend -- the loaded rounds are not drawn\n");
+                }
+            } else {
+                sniperClipFailureLogged = false;
+            }
+        }
         if (runtime && !strikeFrame) {
             // The pieces and sprite effects, where the C# draws them:
             // after the objects, before Kurt (Viewer.cs:707).
-            effectsView.build(*runtime, camera, &effectsFrame);
+            effectsView.build(*runtime, sceneCamera, &effectsFrame);
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
             if (effectsDraw.allocationFailed()) {
                 if (!effectsFailureLogged) {
@@ -2403,9 +2513,10 @@ int main(int argc, char** argv) {
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
         if (runtime && !strikeFrame) {
-            // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it); the
-            // strike's frames are not DrawScene's, so they leave it alone.
-            runtime->eye = camera.position;
+            // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it) --
+            // the frame's view, the scope's in sniper mode; the strike's frames are
+            // not DrawScene's, so they leave it alone.
+            runtime->eye = sceneCamera.position;
         }
         if (hudReady && !strikeFrame) {
             // The health, skull and its fade are Kurt's now, and the target bar is the

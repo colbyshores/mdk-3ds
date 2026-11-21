@@ -7,8 +7,20 @@ void mdk_render_canvas_begin(MdkRenderer r) {
     if (vk) {
         // The scene ends here: the queued draws go in BEFORE any canvas quad,
         // because the canvas is the Overlay pass drawn over the scene and the
-        // oracle draws its Overlay bucket last (draw_queue.h).
-        flushDraws(vk);
+        // oracle draws its Overlay bucket last (draw_queue.h). Then the insets
+        // under the canvas (Renderer.Insets.cs RenderInsets: scene, insets under
+        // the canvas, canvas, insets over it), which a Scene inset draws the
+        // queue again for -- so the queue is dropped only after them. A deferred
+        // or stereo frame does all of this at its end instead (flushDraws waits).
+        const bool direct = vk->inFrame && vk->stereo.mode == mdk::StereoMode::Off &&
+                            !vk->enhancedLook;
+        if (direct && !vk->insetsUnderDrawn) {
+            drawBuckets(vk, vk->queue, true);
+            renderInsets(vk, true);
+            vk->queue.reset();
+        } else {
+            flushDraws(vk);
+        }
         vk->canvasOffset = 0;
         vk->canvasRecords.clear();
     }
@@ -179,16 +191,128 @@ int32_t mdk_render_canvas_capacity(MdkRenderer r) {
 // Insets
 // ---------------------------------------------------------------------------
 
-// An inset is a 3D view inside a canvas rectangle, so its draws are their own
-// scene group: the queued draws go in before the viewport changes and before it
-// is restored, in the inset's own rectangle. This backend has no inset support
-// yet (the rectangle is ignored), but the queue boundary is still the right one
-// for the day it has.
-void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* i) {
-    (void)i;
-    flushDraws(asVk(r));
+// The C#'s Renderer.Insets.cs. BeginInset RECORDS the inset (no flush: a Scene
+// inset is the whole frame's queue seen again, the draws queued after it
+// included, exactly as the C#'s RenderInset reads `_commands` at present time);
+// an Own inset takes the draws made until EndInset into its own queue
+// (mdk_render_draw_mesh). renderInsets draws them: after the scene for the ones
+// under the canvas, after the canvas for the others.
+void mdk_render_begin_inset(MdkRenderer rr, const mdk::Inset* i) {
+    RendererVk* r = asVk(rr);
+    if (!r || !i || !r->inFrame) {
+        return;
+    }
+    if (r->insetCount == r->insets.size()) {
+        r->insets.push_back(RendererVk::InsetVk());  // a new most-insets frame only
+    }
+    RendererVk::InsetVk& slot = r->insets[r->insetCount++];
+    slot.inset = *i;
+    slot.own.reset();
+    r->openInset = i->scene ? -1 : (int32_t)(r->insetCount - 1);
 }
-void mdk_render_end_inset(MdkRenderer r) { flushDraws(asVk(r)); }
+void mdk_render_end_inset(MdkRenderer rr) {
+    RendererVk* r = asVk(rr);
+    if (r) {
+        r->openInset = -1;
+    }
+}
+
+// The C#'s RenderInsets(commands, layer) and RenderInset: each inset of the layer
+// in its rectangle (canvas units scaled to the target, the viewport and the
+// scissor), its depth cleared, through its own camera: the sky and the frame's
+// queue for a Scene inset, its own queue otherwise, without the Overlay bucket.
+// Called inside an open pass that has a depth attachment (the scene pass, or the
+// post's canvas pass). The frame's camera, viewport and scissor are put back.
+void renderInsets(RendererVk* r, bool underCanvas) {
+    if (!r || !r->inFrame) {
+        return;
+    }
+    if (underCanvas) {
+        r->insetsUnderDrawn = true;
+    }
+    if (r->insetCount == 0) {
+        return;
+    }
+    if (r->stereo.mode != mdk::StereoMode::Off) {
+        // The C# draws an inset per eye (View.Eye); the eye passes here replay the
+        // scene queue only. Stated, not hidden: a stereo frame has no insets.
+        refused("insets: a stereo frame draws no insets (sniper mode's round cameras and "
+                "clip are left out)");
+        return;
+    }
+    VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+    const float scale = (float)r->ctx.extent.height / mdk::kCanvasHeight;
+    const mdk::Camera frameCamera = r->camera;
+    const mdk::Camera frameActive = r->activeCamera;
+    for (size_t n = 0; n < r->insetCount; n++) {
+        const RendererVk::InsetVk& slot = r->insets[n];
+        const mdk::Inset& inset = slot.inset;
+        if (inset.under_canvas != underCanvas) {
+            continue;
+        }
+        VkViewport viewport = {};
+        viewport.x = inset.x * scale;
+        viewport.y = inset.y * scale;
+        viewport.width = inset.width * scale;
+        viewport.height = inset.height * scale;
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        int32_t sx = (int32_t)viewport.x;
+        int32_t sy = (int32_t)viewport.y;
+        int32_t sw = (int32_t)std::ceil(viewport.width);
+        int32_t sh = (int32_t)std::ceil(viewport.height);
+        // Clipped to the target: Vulkan refuses a scissor outside it.
+        if (sx < 0) {
+            sw += sx;
+            sx = 0;
+        }
+        if (sy < 0) {
+            sh += sy;
+            sy = 0;
+        }
+        if (sx + sw > (int32_t)r->ctx.extent.width) {
+            sw = (int32_t)r->ctx.extent.width - sx;
+        }
+        if (sy + sh > (int32_t)r->ctx.extent.height) {
+            sh = (int32_t)r->ctx.extent.height - sy;
+        }
+        if (sw <= 0 || sh <= 0 || viewport.width <= 0.0f || viewport.height <= 0.0f) {
+            continue;
+        }
+        VkRect2D scissor = {{sx, sy}, {(uint32_t)sw, (uint32_t)sh}};
+        vkCmdSetViewport(cb, 0, 1, &viewport);
+        vkCmdSetScissor(cb, 0, 1, &scissor);
+        // The C#'s BeginOver: the rectangle's depth cleared.
+        VkClearAttachment clear = {};
+        clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        clear.clearValue.depthStencil.depth = 1.0f;
+        clear.clearValue.depthStencil.stencil = 0;
+        VkClearRect clearRect = {};
+        clearRect.rect = scissor;
+        clearRect.baseArrayLayer = 0;
+        clearRect.layerCount = 1;
+        vkCmdClearAttachments(cb, 1, &clear, 1, &clearRect);
+
+        r->camera = inset.camera;
+        r->activeCamera = inset.camera;
+        if (inset.scene) {
+            drawSky(r);
+            drawBuckets(r, r->queue, false);
+        } else {
+            drawBuckets(r, slot.own, false);
+        }
+    }
+    r->camera = frameCamera;
+    r->activeCamera = frameActive;
+    VkViewport full = {};
+    full.width = (float)r->ctx.extent.width;
+    full.height = (float)r->ctx.extent.height;
+    full.minDepth = 0.0f;
+    full.maxDepth = 1.0f;
+    VkRect2D fullScissor = {{0, 0}, r->ctx.extent};
+    vkCmdSetViewport(cb, 0, 1, &full);
+    vkCmdSetScissor(cb, 0, 1, &fullScissor);
+}
 
 // ---------------------------------------------------------------------------
 // Diagnostics
