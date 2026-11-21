@@ -80,6 +80,12 @@ public:
     // C# Rides.RideWalker (Rides.cs:92): puts Kurt on a walker at once, as touching
     // it does (the tests' --ride, RideTest.Start).
     void rideWalker(MdkObject* obj);
+    // A test aid (game/harness_aids.h: the 3DS harness's RIDE=, Linux --ride):
+    // TryMount's choice for ONE object, without the touch -- the board, a walker
+    // (by RideWalker, the C#'s --ride) or a bomber, mounted as touching it would.
+    // False when the object is none of those, dead, or (the board, a bomber) not
+    // rideable yet.
+    bool mount(MdkObject* obj);
     // C# Rides.Hides (Rides.cs:99): the XE once the view is inside it (package #11).
     bool hides(const MdkObject* obj) const;
     // C# Rides.TakesHits (Rides.cs:102): hits on Kurt go to what he rides (the XD2,

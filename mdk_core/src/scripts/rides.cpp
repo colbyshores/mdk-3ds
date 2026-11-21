@@ -108,6 +108,29 @@ void Rides::rideWalker(MdkObject* obj) {
     mountWalker(obj);
 }
 
+bool Rides::mount(MdkObject* obj) {
+    // TryMount's dispatch (Rides.cs:135-152) for one object, its touch scan left out.
+    if (obj == nullptr || obj->dead || ridden_ != nullptr) {
+        return false;
+    }
+    if (typeIn(obj->type_name, kWalkers, sizeof(kWalkers) / sizeof(kWalkers[0]))) {
+        rideWalker(obj);
+        return true;
+    }
+    if ((obj->flags & kFlagRideable) == 0) {
+        return false;
+    }
+    if (typeIs(obj->type_name, kBoard)) {
+        mountBoard(obj);
+        return ridden_ == obj;
+    }
+    if (typeIn(obj->type_name, kBombers, sizeof(kBombers) / sizeof(kBombers[0]))) {
+        mountBomber(obj);
+        return ridden_ == obj;
+    }
+    return false;
+}
+
 bool Rides::hides(const MdkObject* obj) const {
     // C# Rides.Hides (Rides.cs:99): `Bomber != null && obj == Ridden && Bomber.HidesXe`.
     return bomber_ && obj == ridden_ && bomberRide_.hidesXe();

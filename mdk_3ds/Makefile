@@ -200,6 +200,49 @@ $(error MENU=$(MENU) needs AUTOQUIT: the menu presses are a harness-build featur
 endif
 DEFINES += -DMDK_HW_MENU='"$(MENU)"'
 endif
+# THE SET PIECES' AIDS (game/harness_aids.h; the Linux build's --give, --ride, --aim),
+# for playthroughs that start at a set piece. The first level's only. A refused value
+# is logged ("main: harness aids ... REFUSED") and that aid dropped. Only main_3ds.cpp
+# reads them: touch it (or `make clean`) after changing any. No spaces, no quotes.
+#   GIVE=SW_BONES[,SW_HOME...]  those pickups in Kurt's inventory at spawn (Kurt::collect,
+#                               the items probe's `give:`).
+#   RIDE=XE|XD2|XD|XSNOWB|X_STRIKE  from 1 s on, Kurt mounted on the nearest live one of
+#                               that model in his arena by the ported Rides code
+#                               (Rides::mount): a walker at once (RideWalker, the C#'s
+#                               --ride), the board and a bomber once rideable; in DANT_5
+#                               an XE not rideable yet is called first, as the C#'s
+#                               RideTest does (group 16 hit), and boards ~9 s later.
+#   AIM=yaw,pitch               Kurt's yaw at spawn, and the scope's yaw and pitch the
+#                               first time he snipes (degrees; pitch within +-50, down
+#                               positive): a shot that does not depend on turns rounded
+#                               through the trig table.
+# The set pieces (FIXED=1: frame f of WALK is step f):
+#   the bomber   LEVEL=7 AT=100,2320,-60,90 ARENA=DANT_5 RIDE=XE FIXED=1
+#                WALK='fire@800-802;turnright@820-840;fire@840-842;forward@850-865;fire@866-868'
+#   the XD2      LEVEL=7 AT=45,4868,-25,90 ARENA=DANT_9 RIDE=XD2 FIXED=1
+#                WALK='forward@120-200;turnleft@200-230;forward@230-280'
+#   the strike   LEVEL=5 AT=250,121,-1622,0 GIVE=SW_BONES AIM=0,1.25 FIXED=1
+#                WALK='sniper@20-22;fire@80-82'
+#   the holes    LEVEL=8 AT=20,3360,-360,0 ARENA=GUNT_10 AIM=123.80164,-26.158365 FIXED=1
+#                WALK='sniper@150-152;fire@190-200'
+ifneq ($(strip $(GIVE)),)
+ifndef AUTOQUIT
+$(error GIVE=$(GIVE) needs AUTOQUIT: the pickups at spawn are a harness-build feature)
+endif
+DEFINES += -DMDK_HW_GIVE='"$(GIVE)"'
+endif
+ifneq ($(strip $(RIDE)),)
+ifndef AUTOQUIT
+$(error RIDE=$(RIDE) needs AUTOQUIT: the ride at spawn is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_RIDE='"$(RIDE)"'
+endif
+ifneq ($(strip $(AIM)),)
+ifndef AUTOQUIT
+$(error AIM=$(AIM) needs AUTOQUIT: the facing at spawn is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_AIM='"$(AIM)"'
+endif
 # `make AUTOQUIT=90 EVENT=1` runs special_event 1 after one second of game time, the
 # C#'s --event test option (Program.cs:53, Viewer.RunTests): 50 and below end the level
 # (the arena breaks up, Kurt rises, the screen goes white). Since package 2 the flow

@@ -35,6 +35,7 @@
 #include "render/render.h"
 #include "render/camera_builder.h"
 #include "game/enhanced_config.h"
+#include "game/harness_aids.h"
 #include "game/level_data.h"
 #include "game/level_light.h"
 #include "game/mod_catalog.h"
@@ -250,6 +251,11 @@ void printMemory(const char* tag, int level, const MemorySample& sample) {
 // as the C# prints them so the two runs' lines compare as text.
 void printStreamLine(void*, const char* line) {
     std::printf("%s\n", line);
+}
+
+// The set pieces' test aids' lines (game/harness_aids.h: --give, --ride, --aim).
+void printHarnessAid(const char* line) {
+    std::printf("[main] %s\n", line);
 }
 
 // THE STREAM SCREEN (package #18b; stream/stream_screen.h). Everything a stream
@@ -485,6 +491,10 @@ int main(int argc, char** argv) {
     // Viewer.EnterStartArena), so an arena only a teleport reaches (LEVEL3's HMO_7)
     // is entered and solid. --at alone only moves his feet.
     std::string startArenaOverride;
+    // --give=SW_BONES[,...], --ride=XE|XD2|XSNOWB, --aim=yaw,pitch: the set pieces'
+    // test aids (game/harness_aids.h; the 3DS harness's GIVE=, RIDE=, AIM=), the
+    // first level only.
+    mdk::HarnessAids harnessAids;
     // THE STATISTICS (package #20b), the C#'s test options (Program.cs:22-23,
     // Game.cs:405-420): --stats=N starts at the screens after level N, --phase=1-4
     // at one of their pages (1 Score-O-matic, 2 intermission, 3 briefing, 4
@@ -797,6 +807,25 @@ int main(int argc, char** argv) {
             stereo.convergence = parsed;
         } else if ((value = optionValue(argv[i], "--arena")) != nullptr) {
             startArenaOverride = value;
+        } else if ((value = optionValue(argv[i], "--give")) != nullptr) {
+            std::string why;
+            if (!mdk::parseHarnessGive(value, &harnessAids.gives, &why)) {
+                std::fprintf(stderr, "[main] invalid --give: %s\n", why.c_str());
+                return 1;
+            }
+        } else if ((value = optionValue(argv[i], "--ride")) != nullptr) {
+            std::string why;
+            if (!mdk::parseHarnessRide(value, &harnessAids.ride, &why)) {
+                std::fprintf(stderr, "[main] invalid --ride: %s\n", why.c_str());
+                return 1;
+            }
+        } else if ((value = optionValue(argv[i], "--aim")) != nullptr) {
+            std::string why;
+            if (!mdk::parseHarnessAim(value, &harnessAids.aimYaw, &harnessAids.aimPitch, &why)) {
+                std::fprintf(stderr, "[main] invalid --aim: %s\n", why.c_str());
+                return 1;
+            }
+            harnessAids.aim = true;
         } else if (std::strcmp(argv[i], "--die") == 0) {
             dieTest = true;
         } else if (std::strcmp(argv[i], "--god") == 0) {
@@ -1889,6 +1918,10 @@ int main(int argc, char** argv) {
                             player.feet.z);
             }
         }
+        // --give / --aim (game/harness_aids.h): test options, the first level's only.
+        if (firstLevel && harnessAids.any()) {
+            mdk::harnessAidsAtSpawn(&harnessAids, &player, printHarnessAid);
+        }
         // C# Viewer's constructor: RestoreSnapshot (a full save being loaded), then
         // ShowNotice ("Game loaded"). The restore enters the save's arenas into the
         // scripts' space; Kurt's is this frontend's, so they go into it too (the C#
@@ -1978,6 +2011,9 @@ int main(int argc, char** argv) {
     // C# Viewer._time and TestStart (Viewer.cs:109): the game time the --event fires at.
     const float kTestStart = 1.0f;
     float testTime = 0.0f;
+    // Whether the full-screen strike played last frame, for its log line (the set
+    // pieces' tests: harness_aids_test.sh).
+    bool strikeLogged = false;
     // SniperTest's _entered (the game time sniper mode was entered; < 0: not yet).
     float sniperTestEntered = -1.0f;
     // THE FRAME'S VIEW (C# Viewer.SceneView): the follow camera's, or in sniper mode
@@ -2036,6 +2072,11 @@ int main(int argc, char** argv) {
         // skips it instead of opening the pause menu (Viewer.cs:389-396).
         const bool striking = runtime && runtime->strikeScene() != nullptr &&
                               runtime->strikeScene()->active();
+        if (striking != strikeLogged) {
+            strikeLogged = striking;
+            std::printf("[main] strike: the scene %s at frame %u\n", striking ? "plays" : "ends",
+                        frame);
+        }
         if (pause.open()) {
             pauseNext = pause.update(keys, elapsed);
             pausedFrame = true;
@@ -2228,6 +2269,11 @@ int main(int argc, char** argv) {
                         input.down[mdk::kKeyFire] =
                             sniperTestFire && since >= 1.0f && since < 1.0f + 0.1f;
                     }
+                }
+                // --ride / --aim's scope (game/harness_aids.h), before Kurt's step.
+                if (firstLevel && harnessAids.any()) {
+                    mdk::harnessAidsStep(&harnessAids, &player, runtime.get(), kStep,
+                                         printHarnessAid);
                 }
                 player.update(input, kStep);
                 // The C# Viewer order is Kurt, then the scripts, then the

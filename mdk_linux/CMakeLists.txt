@@ -222,6 +222,7 @@ set(SOURCES
     ${CORE}/src/scripts/hazards.cpp
     ${CORE}/src/scripts/platforms.cpp
     ${CORE}/src/scripts/rides.cpp
+    ${CORE}/src/game/harness_aids.cpp
     ${CORE}/src/scripts/snowboard.cpp
     ${CORE}/src/scripts/bomber.cpp
     ${CORE}/src/scripts/updraft_wind.cpp

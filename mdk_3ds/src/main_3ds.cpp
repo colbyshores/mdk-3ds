@@ -70,6 +70,7 @@
 #include "game/arena_space.h"
 #include "game/arena_views.h"
 #include "game/enhanced_config.h"
+#include "game/harness_aids.h"
 #include "game/enhanced_menu.h"
 #include "game/cheats_menu.h"
 #include "platform/controls_3ds.h"
@@ -202,6 +203,15 @@ bool saveConfigNow() {
 // numbers on every probe. No probe on this path allocates (log3dsPrintf
 // writes through a static FILE buffer, not newlib's heap).
 static uint32_t g_heapPeak = 0;
+
+#if defined(MDK_AUTOQUIT) && (defined(MDK_HW_GIVE) || defined(MDK_HW_RIDE) || defined(MDK_HW_AIM))
+#define MDK_HW_AIDS 1
+// The set pieces' test aids' lines (game/harness_aids.h: GIVE=, RIDE=, AIM=).
+static void printHarnessAid(const char* line) {
+    mdk::log3dsPrintf("%s", line);
+}
+#endif
+
 static void heapProbe(const char* tag) {
     struct mallinfo mi = mallinfo();
     const uint32_t used = (uint32_t)mi.uordblks;
@@ -793,6 +803,37 @@ int main(int argc, char** argv) {
 #endif
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_NOCLIP)
     cheatSwitches.noclip = true;
+#endif
+#if defined(MDK_HW_AIDS)
+    // THE SET PIECES' AIDS (`make AUTOQUIT=.. GIVE=SW_BONES RIDE=XE AIM=yaw,pitch`,
+    // game/harness_aids.h): pickups at spawn, a ride mounted from 1 s, Kurt's and the
+    // scope's facing set exactly. The first level's only, as the C#'s test options.
+    // A refused value is logged and that aid dropped; the run goes on.
+    static mdk::HarnessAids harnessAids;
+    {
+        std::string why;
+#if defined(MDK_HW_GIVE)
+        if (!mdk::parseHarnessGive(MDK_HW_GIVE, &harnessAids.gives, &why)) {
+            mdk::log3dsPrintf("main: harness aids GIVE=%s REFUSED: %s", MDK_HW_GIVE, why.c_str());
+        }
+#endif
+#if defined(MDK_HW_RIDE)
+        if (!mdk::parseHarnessRide(MDK_HW_RIDE, &harnessAids.ride, &why)) {
+            mdk::log3dsPrintf("main: harness aids RIDE=%s REFUSED: %s", MDK_HW_RIDE, why.c_str());
+        }
+#endif
+#if defined(MDK_HW_AIM)
+        harnessAids.aim =
+            mdk::parseHarnessAim(MDK_HW_AIM, &harnessAids.aimYaw, &harnessAids.aimPitch, &why);
+        if (!harnessAids.aim) {
+            mdk::log3dsPrintf("main: harness aids AIM=%s REFUSED: %s", MDK_HW_AIM, why.c_str());
+        }
+#endif
+        mdk::log3dsPrintf("main: harness aids: %d pickups, ride %s, aim %s",
+                          (int)harnessAids.gives.size(),
+                          harnessAids.ride.empty() ? "-" : harnessAids.ride.c_str(),
+                          harnessAids.aim ? "yes" : "-");
+    }
 #endif
 
     // =====================================================================
@@ -1757,6 +1798,12 @@ int main(int argc, char** argv) {
             }
         }
 #endif
+#if defined(MDK_HW_AIDS)
+        // GIVE= and AIM='s yaw (game/harness_aids.h), after AT= and ARENA=.
+        if (firstLevel && harnessAids.any()) {
+            mdk::harnessAidsAtSpawn(&harnessAids, &player, printHarnessAid);
+        }
+#endif
         // C# Viewer's constructor: RestoreSnapshot (a full save being loaded, F9's),
         // then ShowNotice ("Game loaded"). The save's arenas go into Kurt's space too
         // (the C#'s ONE ArenaSpace; ScriptRuntime::enteredArenas), and his arena is
@@ -2383,6 +2430,13 @@ int main(int argc, char** argv) {
                         quickLoad();
                     }
 #endif
+                }
+#endif
+#if defined(MDK_HW_AIDS)
+                // RIDE= and AIM='s scope (game/harness_aids.h), before Kurt's step.
+                if (firstLevel && harnessAids.any()) {
+                    mdk::harnessAidsStep(&harnessAids, &player, runtime.get(), step,
+                                         printHarnessAid);
                 }
 #endif
                 const uint64_t tp0 = mdk::harnessProfileTick();

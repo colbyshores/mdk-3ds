@@ -2308,3 +2308,15 @@ Still open:
 - **On the 3DS a streamed picture's index 0 is black, not transparent** (RGB565 has no alpha).
   Every streamed picture is the bottom layer over the black clear, where the C#'s transparent
   index 0 also shows black; a future streamed picture drawn OVER something would differ.
+
+## Harness shortcuts for the set pieces (2026-11-20, leftovers)
+
+`game/harness_aids.h`: the 3DS harness's GIVE=, RIDE=, AIM= and the Linux `--give`, `--ride`,
+`--aim` (see `mdk_3ds/Makefile`'s harness section for the four set pieces' lines).
+- **RIDE=XE outside DANT_5** waits for an XE some script makes rideable: only DANT_5's call
+  (RideTest's group 16) is made for it. X_STRIKE and the board are mounted only once their
+  scripts flag them rideable.
+- **AIM sets the scope once**, the first step Kurt snipes; leaving and re-entering the scope
+  resets its pitch as in the game.
+- **The aids are unrun on the 3DS** (compiled; the parent's emulator run).
+

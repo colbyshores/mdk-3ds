@@ -439,12 +439,19 @@ expect_reject "capture frame with no capture path" --headless --fixed-step --siz
 expect_reject "capture frame past the bound, reversed order" --headless --fixed-step --size=320x240 --frames 2 --capture="$WORK/past2.bmp" --capture-frame=99
 expect_reject "--frames past INT_MAX" --headless --fixed-step --frames 99999999999999999999
 expect_reject "--seed past INT_MAX" --headless --fixed-step --seed 99999999999999999999 --frames 1
+# The set pieces' aids (game/harness_aids.h): a ride that is no ride, an aim that is
+# not yaw,pitch or past the scope's 50 degrees, an empty pickup name.
+expect_reject "--ride that is not a ride" --headless --fixed-step --ride=XG --frames 1
+expect_reject "--aim without a pitch" --headless --fixed-step --aim=90 --frames 1
+expect_reject "--aim past the scope's limit" --headless --fixed-step --aim=0,60 --frames 1
+expect_reject "--give with an empty name" --headless --fixed-step --give=SW_BONES,,SW_HOME --frames 1
 
 # --- and the things it must still do --------------------------------------------
 # 19/20. Both documented value styles, or the gate is just a refusal machine.
 expect_accept "documented run" --headless --fixed-step --level=3 --size=320x240 --seed 1 --frames 2
 expect_accept "highest shipped level" --headless --fixed-step --level=8 --size=320x240 --seed 1 --frames 2
 expect_accept "a scripted walk" --headless --fixed-step --level=7 --size=320x240 --seed 1 --walk='forward+turbo@0-2;turnleft@1-2' --frames 2
+expect_accept "the set pieces' aids" --headless --fixed-step --level=5 --size=320x240 --seed 1 --give=SW_BONES --ride=xe --aim=0,1.25 --frames 2
 # 21. The frame count is honoured, not just parsed.
 expect_frames "--frames 3 stops at 3" 3 \
     --headless --fixed-step --level=3 --size=320x240 --seed 1 --frames 3
