@@ -708,3 +708,16 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - The smoke pass and every per-package emulator check are in `docs/evidence/2026-11-21-mandarine-pass.md`. Two checks there were inconclusive, because their walk scripts were tuned in the C# and the 3DS's accepted trig rounding shifts the aim: the bullet-hole shot and the bomber mount. They go to the playthrough pass, with new harness shortcuts.
 - **Commit:** this entry. Main points at c9b7292e.
 - **Next:** the leftovers (the cutscene save check, the save prompt after the level-8 stream, the 3DS slideshow stall, harness shortcuts), then level-by-level playthroughs in Mandarine, then the hardware session at the end once ../forsaken is done.
+
+### The Linux-binary suites refuse a stale binary
+- **What:** a new suite step, `tests/scripts/linux_binary_fresh_test.sh`, runs before the Linux-binary suites in `make -C tests/scripts test`. It fails, naming the rebuild command, when any `mdk_core/src` or `mdk_linux/src` source is newer than `build-linux/mdk`. With no binary it skips, as those suites do.
+- **Why:** those suites run `build-linux/mdk` as it is on disk, and nothing rebuilds it. A stale binary reports the current tree's checks with an old program: an unknown new flag reads as "the run exited 1", and every log expectation after it fails. That happened three times on 2026-11-20:
+  - the walk-harness merge;
+  - the stream screen's chain;
+  - the checkpoint commit 2029db50, where the suite went red at a tree that is green with a fresh build.
+- **Evidence:**
+  - Passes on a fresh build.
+  - With `mdk_linux/src/main.cpp` touched, it fails and names the file and `cmake --build build-linux -j8`.
+  - After the rebuild it passes.
+  - The suite at 2029db50, rebuilt, is green (exit 0).
+- **Commit:** this entry.
