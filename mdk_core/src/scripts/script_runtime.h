@@ -46,6 +46,7 @@
 #include "game/level_data.h"
 #include "game/messages.h"
 #include "render/render_types.h"
+#include "scripts/air_strike.h"
 #include "scripts/animated_textures.h"
 #include "scripts/debris.h"
 #include "scripts/effects.h"
@@ -55,6 +56,7 @@
 #include "scripts/object.h"
 #include "scripts/script_vm.h"
 #include "scripts/sniper_rounds.h"
+#include "scripts/strike_scene.h"
 #include "scripts/twister.h"
 #include "util/random.h"
 
@@ -264,6 +266,24 @@ public:
     // the debris (runTick). bomb_follow_path (opcode 28) reaches guideLastMortar through it.
     SniperRounds& sniperRounds() { return sniperRounds_; }
     const SniperRounds& sniperRounds() const { return sniperRounds_; }
+
+    // ---- The air strike and the strike scene (package #14: Scripts/AirStrike.cs,
+    //      Scripts/StrikeScene.cs, ScriptRuntime.cs:178-180, :957, :1022, :1284, :1697) ----
+    // C# ScriptRuntime.AirStrike (:178): Bones' strike, updated once a tick after the rounds
+    // (runTick); fireSniper calls it. The frontends set usedUp from the saved game's
+    // StrikeUsed and read it back when Kurt dies (Viewer.cs:236, :891).
+    AirStrike& airStrike() { return airStrike_; }
+    const AirStrike& airStrike() const { return airStrike_; }
+    // C# ScriptRuntime.Strike (:180): the full-screen strike last played, or null before the
+    // first. The frontend drives it (StrikeScene.update/skip) and waits while it is active.
+    StrikeScene* strikeScene() { return strikePlayed_ ? &strikeScene_ : nullptr; }
+    const StrikeScene* strikeScene() const { return strikePlayed_ ? &strikeScene_ : nullptr; }
+    // C# PlayStrikeScene (:1697): plays the full-screen strike (0x4398f0) while the game
+    // waits -- a fresh scene each time. The C#'s StrikeSceneChanged event has no reader
+    // (nothing subscribes to it in src/), so it is not ported.
+    void playStrikeScene(StrikeScene::Kind kind, StrikeScene::Plane plane);
+    friend class AirStrike;
+    friend class StrikeScene;
     // C# ScriptRuntime.SniperTarget (:177, 0x573a8c): the object locked in the scope, which
     // homing rounds chase; written each tick by updateSniperTarget, null out of sniper mode.
     MdkObject* sniperTarget = nullptr;
@@ -445,11 +465,11 @@ public:
     // below end the level (EndTheLevel); above 50 are the cutscenes (0x477cf4): the dog
     // (52), Gunter (61), the end of the game (81), the boss intros (91, 93), the shot
     // change (55) and the cutscene's end (53, 92) -- package 13, ported below. Returns
-    // false only for 51, whose arm is ported EXCEPT its full-screen strike
-    // (PlayStrikeScene, package 14), so the VM records opcode 131 as reached-but-unported
-    // there; every other value is fully handled (an arm, or the C#'s own no-op for a value
-    // its switch has no case for). Either way the VM's control flow is the C#'s: the
-    // opcode has no branch, and the next instruction follows.
+    // true for every value since package 14 ported 51's full-screen strike
+    // (PlayStrikeScene): an arm, or the C#'s own no-op for a value its switch has no
+    // case for. The bool stays so the VM's reached-but-unported bookkeeping keeps its
+    // seam. The VM's control flow is the C#'s: the opcode has no branch, and the next
+    // instruction follows.
     bool specialEvent(MdkObject* obj, int32_t value);
     // C# ScriptRuntime.LastEndEvent (ScriptRuntime.cs:59).
     static constexpr int32_t kLastEndEvent = 50;
@@ -928,9 +948,7 @@ public:
     // once a tick. A save carries it. Its consumer at 0, FlattenTown (the shake,
     // the OOT_L message and the global flag), is package #15's.
     int32_t townTicks = 0;
-    // C# AirStrike.UsedUp: the one air strike of the last two levels was used. The
-    // air strike is package #14; the flag is here because a save carries it.
-    bool airStrikeUsedUp = false;
+    // (C# AirStrike.UsedUp is airStrike().usedUp since package #14; a save carries it.)
     // The arenas' states in the order they were made (the C#'s Dictionary order,
     // which the save follows; arenas_ is a map and sorts).
     const std::vector<std::string>& arenaOrder() const { return arenaOrder_; }
@@ -1066,7 +1084,7 @@ private:
     // on it (0x4678b0). Called from runTick after SniperRounds.Update, as the C# does.
     void updateSniperTarget();
     // C# FireSniper (:1282), Kurt.SniperFire: a round of `type`, or Bones' air strike
-    // (package #14, not ported: no strike goes). False when nothing went.
+    // (AirStrike::call, package #14). False when nothing went.
     bool fireSniper(int32_t type);
     static bool fireSniperTrampoline(void* ctx, int32_t type);
     friend class SniperRounds;
@@ -1207,6 +1225,9 @@ private:
     audio::SoundMixer mixer_;
     Debris debris_;  // C# ScriptRuntime.Debris, sharing rng_ (declared above it)
     SniperRounds sniperRounds_{*this};  // C# ScriptRuntime.SniperRounds
+    AirStrike airStrike_{*this};        // C# ScriptRuntime.AirStrike (package #14)
+    StrikeScene strikeScene_;           // C# ScriptRuntime.Strike, valid while strikePlayed_
+    bool strikePlayed_ = false;
     // C# _following: the voices started with playOn per object, so Remove can
     // stop them with the object. The C# pools the lists; a vector is pooled by
     // its own allocator, so the spare stack is not ported.

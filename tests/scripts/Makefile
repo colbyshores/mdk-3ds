@@ -96,6 +96,8 @@ COMMON_SOURCES := \
 	$(CORE)/scripts/script_vm.cpp \
 	$(CORE)/scripts/script_runtime.cpp \
 	$(CORE)/scripts/sniper_rounds.cpp \
+	$(CORE)/scripts/air_strike.cpp \
+	$(CORE)/scripts/strike_scene.cpp \
 	$(CORE)/scripts/bullet_holes.cpp \
 	$(CORE)/util/system_numerics_inverse.cpp \
 	$(CORE)/scripts/items.cpp \

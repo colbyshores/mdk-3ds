@@ -777,11 +777,13 @@ void ScriptRuntime::runTick() {
     fans.update();
     debris_.update(1.0f);
     // SniperRounds.Update(1f) (ScriptRuntime.cs:956): the rounds fly and hit, before the
-    // objects run. AirStrike.Update(1f) comes next in the C# (package 14, not ported),
-    // then EndLevel?.Update(1f) (ScriptRuntime.cs:958): the end of the level tears, lifts
-    // and turns, before the objects run. Its Finished event is EndLevel.cs:1509's
-    // LevelEnded(GameOver.No), latched here.
+    // objects run. AirStrike.Update(1f) next (ScriptRuntime.cs:957, package 14): the strike
+    // flies its curve, drops its teeth or dives, and crashes. Then EndLevel?.Update(1f)
+    // (ScriptRuntime.cs:958): the end of the level tears, lifts and turns, before the
+    // objects run. Its Finished event is EndLevel.cs:1509's LevelEnded(GameOver.No),
+    // latched here.
     sniperRounds_.update(1.0f);
+    airStrike_.update(1.0f);
     if (endLevel_ && endLevel_->update(1.0f)) {
         levelEnded_ = true;
     }
@@ -3840,13 +3842,8 @@ bool ScriptRuntime::specialEvent(MdkObject* obj, int32_t value) {
         case 51: {
             // Kurt strikes (0x4779e0): X_STRIKD full screen (0x4398f0), then he's put at the
             // object, which moves 4 units along y.
-            //
-            // PACKAGE 14 HOOK: the C# calls PlayStrikeScene(StrikeScene.Kind.Kurt,
-            // StrikeScene.Plane.WithPilot) first. It changes no gameplay state here (the
-            // scene is its own object; the Viewer pauses the steps while it plays), so the
-            // rest of the arm -- the teleport, the cutscene, its shot -- is separable and
-            // ported; the scene itself is AirStrike/StrikeScene's, and until it lands the
-            // arm returns false so opcode 131 is still recorded as reached-but-unported.
+            // The scene is its own object: the frontend waits on it (package 14).
+            playStrikeScene(StrikeScene::Kurt, StrikeScene::WithPilot);
             if (player_ != nullptr) {
                 player_->teleport(obj->position, obj->yaw);
             }
@@ -3858,7 +3855,7 @@ bool ScriptRuntime::specialEvent(MdkObject* obj, int32_t value) {
                                   obj->position.z - -8.0f};
             cameraPitch = 0.0f;
             cameraYaw = 90.0f - obj->yaw;
-            return false;
+            return true;
         }
         case 52: {
             MdkObject* dog = findObjectNamed("XBN");

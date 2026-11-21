@@ -820,15 +820,13 @@ void ScriptRuntime::updateSniperTarget() {
 
 bool ScriptRuntime::fireSniper(int32_t type) {
     // C# FireSniper (ScriptRuntime.cs:1282-1293): a round of `type`, or Bones' air
-    // strike. The strike (AirStrike.Call) is package #14 and NOT ported: no strike goes,
-    // so the clip keeps Bones' round (the C#'s answer when there is no target), until
-    // #14 replaces this arm with its Call(Kurt.SniperEye, Kurt.SniperForward).
+    // strike (AirStrike.Call, package #14).
     if (player_ == nullptr) {
         return false;
     }
     const bool fired =
         type == Scope::kStrike
-            ? false
+            ? airStrike_.call(player_->sniperEye(), player_->sniperForward())
             : sniperRounds_.fire(type, player_->sniperEye(), scriptWrap360(player_->yaw),
                                  player_->scope().pitch, sniperTarget);
     if (fired) {

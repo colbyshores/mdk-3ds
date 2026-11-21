@@ -3110,6 +3110,315 @@ bool cutsceneDump(int level, int steps, const std::string& schedule, const MdkDa
     return true;
 }
 
+// THE AIR STRIKE AND THE STRIKE SCENE (golden/L*_strike_*.txt; PORT_GAPS package #14). Kurt
+// then the scripts at 1/60 s, as Viewer.RunSteps -- and, as Viewer.Update (Viewer.cs:396-410,
+// SniperView.DrawStrike), while the runtime's strike scene is active the game WAITS: the step
+// is the scene's update(1/60 s) (`skip:` steps: skip()), and a step on which it ends runs the
+// game too. The oracle is tests/scripts/strike_probe (`Probe <level> <steps> <schedule>`), whose
+// header says what the lines hold; this prints the same bytes. Tokens: at:x:y:z:yaw,
+// give:step:MODEL, aim:step:YAW:PITCH (float bits), ev:step:value, used:step, skip:step,
+// show:step, and key holds `snipe|fire|next|prev|zin|zout:from-to` over game steps.
+bool strikeDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    static const struct {
+        const char* name;
+        Key key;
+    } kKeys[] = {{"snipe", kKeySniper}, {"fire", kKeyFire},  {"next", kKeyItemNext},
+                 {"prev", kKeyItemPrevious}, {"zin", kKeyZoomIn}, {"zout", kKeyZoomOut}};
+    std::vector<RoundsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<RoundsAim> aims;
+    std::vector<std::pair<int, int> > events;
+    std::vector<int> used;
+    std::vector<int> skips;
+    bool haveAt = false;
+    float at[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    int show = 1;
+    size_t cursor = 0;
+    while (cursor < schedule.size()) {
+        size_t comma = schedule.find(',', cursor);
+        if (comma == std::string::npos) {
+            comma = schedule.size();
+        }
+        const std::string token = schedule.substr(cursor, comma - cursor);
+        cursor = comma + 1;
+        if (token.empty()) {
+            continue;
+        }
+        std::vector<std::string> fields;
+        size_t from = 0;
+        while (true) {
+            const size_t next = token.find(':', from);
+            fields.push_back(token.substr(from, next == std::string::npos ? std::string::npos
+                                                                          : next - from));
+            if (next == std::string::npos) {
+                break;
+            }
+            from = next + 1;
+        }
+        const std::string& kind = fields[0];
+        if (kind == "at" && fields.size() == 5) {
+            // float.Parse of the probe's decimal text: strtof rounds the same way.
+            for (int i = 0; i < 4; i++) {
+                at[i] = strtof(fields[(size_t)i + 1].c_str(), nullptr);
+            }
+            haveAt = true;
+        } else if (kind == "give" && fields.size() == 3) {
+            ItemsGive give;
+            give.step = atoi(fields[1].c_str());
+            give.model = fields[2];
+            give.drop = false;
+            give.offset = Vec3{};
+            gives.push_back(give);
+        } else if (kind == "aim" && fields.size() == 4) {
+            RoundsAim aim;
+            aim.step = atoi(fields[1].c_str());
+            aim.yaw = roundsBits(fields[2]);
+            aim.pitch = roundsBits(fields[3]);
+            aims.push_back(aim);
+        } else if (kind == "ev" && fields.size() == 3) {
+            events.push_back(std::make_pair(atoi(fields[1].c_str()), atoi(fields[2].c_str())));
+        } else if (kind == "used" && fields.size() == 2) {
+            used.push_back(atoi(fields[1].c_str()));
+        } else if (kind == "skip" && fields.size() == 2) {
+            skips.push_back(atoi(fields[1].c_str()));
+        } else if (kind == "show" && fields.size() == 2) {
+            show = atoi(fields[1].c_str());
+        } else {
+            bool known = false;
+            for (size_t k = 0; k < sizeof(kKeys) / sizeof(kKeys[0]); k++) {
+                if (fields.size() == 2 && kind == kKeys[k].name) {
+                    RoundsHold hold;
+                    hold.key = kKeys[k].key;
+                    if (sscanf(fields[1].c_str(), "%d-%d", &hold.from, &hold.to) != 2) {
+                        break;
+                    }
+                    holds.push_back(hold);
+                    known = true;
+                }
+            }
+            if (!known) {
+                *why = "the schedule did not parse: " + token;
+                return false;
+            }
+        }
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = haveAt ? Vec3{at[0], at[1], at[2]} : Vec3{start[0], start[1], start[2]};
+    player.yaw = haveAt ? at[3] : levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    std::map<const scripts::MdkObject*, int> ids;
+    const auto id = [&ids](const scripts::MdkObject* obj) {
+        std::map<const scripts::MdkObject*, int>::iterator found = ids.find(obj);
+        if (found != ids.end()) {
+            return found->second;
+        }
+        const int next = (int)ids.size();
+        ids[obj] = next;
+        return next;
+    };
+    const auto vec = [](const Vec3& v) {
+        return hexBits(v.x) + "," + hexBits(v.y) + "," + hexBits(v.z);
+    };
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    char buffer[1024];
+    // The probe's SceneLine: the last scene played, or `scene=-`.
+    const auto sceneLine = [&]() {
+        const scripts::StrikeScene* scene = runtime.strikeScene();
+        if (scene == nullptr) {
+            return std::string("scene=-");
+        }
+        Vec3 eye;
+        Vec3 target;
+        scene->camera(&eye, &target);
+        const scripts::MdkObject& subject = scene->subject();
+        char line[512];  // its own: the caller's buffer may hold the line it is appended to
+        snprintf(line, sizeof(line), "scene=%d f=%s y=%s sub=%s:%d:%X:%s eye=%s at=%s",
+                 scene->active() ? 1 : 0, hexBits(scene->frame()).c_str(),
+                 hexBits(scene->yaw()).c_str(),
+                 subject.type_name.empty() ? "-" : subject.type_name.c_str(),
+                 (int)subject.animation_frame, (unsigned)subject.hidden_parts,
+                 hexBits(subject.yaw).c_str(), vec(eye).c_str(), vec(target).c_str());
+        return std::string(line);
+    };
+    std::map<const scripts::MdkObject*, std::string> seen;
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < gives.size(); i++) {
+            if (gives[i].step == step) {
+                player.collect(gives[i].model);
+            }
+        }
+        for (size_t i = 0; i < aims.size(); i++) {
+            if (aims[i].step == step) {
+                player.yaw = aims[i].yaw;
+                player.scope().pitch = aims[i].pitch;
+            }
+        }
+        for (size_t i = 0; i < used.size(); i++) {
+            if (used[i] == step) {
+                runtime.airStrike().usedUp = true;
+            }
+        }
+        for (size_t i = 0; i < events.size(); i++) {
+            if (events[i].first == step) {
+                runtime.specialEvent(&runtime.getArenaState(runtime.currentArena()).controller,
+                                     events[i].second);
+            }
+        }
+
+        // Viewer.Update through SniperView.DrawStrike: the scene advances (or Esc skips it)
+        // and the game waits while it plays.
+        scripts::StrikeScene* scene = runtime.strikeScene();
+        if (scene != nullptr && scene->active()) {
+            bool skip = false;
+            for (size_t i = 0; i < skips.size(); i++) {
+                skip = skip || skips[i] == step;
+            }
+            if (skip) {
+                scene->skip();
+            } else {
+                scene->update(1.0f / 60.0f);
+            }
+            if (scene->active()) {
+                if (step >= show) {
+                    *out += "w=" + std::to_string(step) + " " + sceneLine() + "\n";
+                }
+                continue;
+            }
+        }
+
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        if (step < show) {
+            continue;
+        }
+
+        // The C#'s list holds no removed object: they are neither numbered nor printed.
+        const std::deque<scripts::MdkObject>& objects = runtime.objects();
+        int live = 0;
+        for (size_t i = 0; i < objects.size(); i++) {
+            if (runtime.isRemoved(&objects[i])) {
+                continue;
+            }
+            id(&objects[i]);
+            if (!objects[i].dead) {
+                live++;
+            }
+        }
+
+        // SniperView.Aim's test, the overlay's strike-target bit.
+        std::string target = "-";
+        Vec3 point;
+        if (runtime.airStrike().findTarget(player.sniperEye(), player.sniperForward(), &point)) {
+            target = vec(point);
+        }
+        const scripts::AirStrike& air = runtime.airStrike();
+        snprintf(buffer, sizeof(buffer),
+                 "strike=%d used=%d len=%s off=%s toff=%s doff=%s teeth=%d diving=%d",
+                 air.isActive() ? 1 : 0, air.usedUp ? 1 : 0,
+                 air.hasCurve() ? hexBits(air.curveLength()).c_str() : "-",
+                 hexBits(air.offset()).c_str(), hexBits(air.targetOffset()).c_str(),
+                 hexBits(air.diveOffset()).c_str(), (int)air.teeth(), air.diving() ? 1 : 0);
+        std::string strike = buffer;
+        if (const scripts::MdkObject* x = air.strike()) {
+            snprintf(buffer, sizeof(buffer), " x#%d=%s:%s:%s:%s:%s:%X:%X:%d", id(x),
+                     x->type_name.c_str(), x->dead ? "dead" : "live", vec(x->position).c_str(),
+                     hexBits(x->yaw).c_str(), vec(x->velocity).c_str(), (unsigned)x->flags,
+                     (unsigned)x->contact_flags, (int)x->health);
+            strike += buffer;
+        }
+        const Kurt& combat = player.combat();
+        const Scope& scope = player.scope();
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d feet64=%d,%d,%d snipe=%d sel=%d ammo5=%d clip=%d/%s hp=%d shots=%d "
+                 "kills=%d objs=%d effects=%d cut=%x arena=%s tgt=%s ",
+                 step, p64(player.feet.x), p64(player.feet.y), p64(player.feet.z),
+                 player.sniping() ? 1 : 0, combat.selectedAmmo(), combat.ammo(5),
+                 scope.clipRounds, hexBits(scope.clipTime).c_str(), player.health(),
+                 runtime.stats.sniperShots, runtime.stats.kills, live, runtime.effects.count(),
+                 (unsigned)runtime.cutscene, runtime.currentArena().c_str(), target.c_str());
+        *out += std::string(buffer) + strike + " " + sceneLine() + "\n";
+
+        // A tooth from its drop on, while it changes; any other object when its hit state does.
+        for (size_t i = 0; i < objects.size(); i++) {
+            const scripts::MdkObject& o = objects[i];
+            if (runtime.isRemoved(&o)) {
+                continue;
+            }
+            const int objectId = id(&o);
+            const bool tooth = o.type_name == "X_TOOTH";
+            if (tooth) {
+                snprintf(buffer, sizeof(buffer), "%s p=%s v=%s f=%X k=%d it=%d c=%X",
+                         o.dead ? "dead" : "live", vec(o.position).c_str(),
+                         vec(o.velocity).c_str(), (unsigned)o.flags, (int)o.thrown_kind,
+                         (int)o.item_ticks, (unsigned)o.contact_flags);
+            } else {
+                snprintf(buffer, sizeof(buffer), "hp=%d ev=%d ht=%d dead=%d", (int)o.health,
+                         (int)o.hit_event, (int)o.hit_type, o.dead ? 1 : 0);
+            }
+            const std::string text = buffer;
+            std::map<const scripts::MdkObject*, std::string>::iterator before = seen.find(&o);
+            const bool known = before != seen.end();
+            if (known && before->second == text) {
+                continue;
+            }
+            seen[&o] = text;
+            if (tooth) {
+                *out += "  t#" + std::to_string(objectId) + " " + text + "\n";
+            } else if (known) {
+                *out += "  #" + std::to_string(objectId) + " " + o.type_name + " " + text +
+                        " pos=" + vec(o.position) + "\n";
+            }
+        }
+    }
+    return true;
+}
+
 // The hazards probe's schedule (tests/scripts/hazards_probe): items_probe's tokens, plus
 // `tp:step:ARENA:x:y:z` (TeleportKurt), `run:step:MODEL:pc:dx:dy:dz` (a plain spawn in
 // Kurt's arena at his feet plus the offset, running the retail script at CMI offset pc)
@@ -5665,6 +5974,18 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "strike") {
+            // `tick1 dump strike <level> <steps> <schedule>`: strikeDump's text, the C++ side
+            // of the strike probe (package #14).
+            std::string got;
+            std::string why;
+            if (!strikeDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "cutscene") {
             // `tick1 dump cutscene <level> <steps> <schedule>`: cutsceneDump's text, the C++
             // side of the cutscene probe.
@@ -7329,7 +7650,7 @@ int main(int argc, char** argv) {
             {"L5_cut_strike", "golden/L5_cut_strike.txt", 5, 200,
              "at:465:-6:-2263:0,fire:5-60,ev:30:51,ev:120:53",
              "51's cutscene half (0x47): Kurt teleported to the controller, which moves 4 "
-             "along y, shown; the shot from 10 behind it (the strike scene is package 14)"},
+             "along y, shown; the shot from 10 behind it (the strike scene: L5_strike_event51)"},
             {"L5_cut_end", "golden/L5_cut_end.txt", 5, 120,
              "at:465:-6:-2263:0,fire:5-60,ev:30:81",
              "the end of the game (0x51): GameFinished, Kurt shown, nothing else runs or shows"},
@@ -7349,6 +7670,56 @@ int main(int argc, char** argv) {
             std::string got;
             std::string why;
             if (!cutsceneDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The air strike and the strike scene (package #14), end to end against the oracle probe
+    // (tests/scripts/strike_probe; see strikeDump for the lines). The schedules are the probe's
+    // arguments, byte for byte: each golden's first line repeats its schedule.
+    {
+        struct StrikeCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const StrikeCase kStrikeCases[] = {
+            {"L5_strike_gunter", "golden/L5_strike_gunter.txt", 5, 470,
+             "at:250:121:-1622:0,snipe:20-22,give:25:SW_BONES,aim:30:00000000:3FA00000,"
+             "fire:80-82,give:430:SW_BONES,fire:440-442",
+             "the last levels' dive: X_STRIKB full screen without Bones (the game waits 4 s), "
+             "X_STRIKE's curve, the dive and crash into MUSE_4's XGUNTAM (if_hit_weapon -6), "
+             "then UsedUp: a second call is a raspberry"},
+            {"L3_strike_teeth", "golden/L3_strike_teeth.txt", 3, 760,
+             "snipe:20-22,give:25:SW_BONES,aim:30:42B40000:C1300000,fire:80-82,skip:140",
+             "Bones' strike before the last levels: the scene skipped (Esc), the curve over "
+             "the target, 9 X_TOOTH grenades one every 15 units, their blasts on XS, the end"},
+            {"L5_strike_event51", "golden/L5_strike_event51.txt", 5, 400,
+             "at:465:-6:-2263:0,ev:30:51,ev:330:53",
+             "special_event 51 end to end: X_STRIKD full screen with Kurt (the game waits), "
+             "then 51's cutscene (0x47) until 53 ends it"},
+        };
+        for (size_t i = 0; i < sizeof(kStrikeCases) / sizeof(kStrikeCases[0]); i++) {
+            const StrikeCase& c = kStrikeCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!strikeDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
                 printf("FAIL %s: %s\n", c.name, why.c_str());
                 failures++;
             } else if (got == expected) {

@@ -1,0 +1,4 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-21T01:19:17Z at 4c2a570
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/claude-1000/-mnt-nas-Development-mdk-sdl/60c8a7b7-6018-4bf7-8dd6-949041120aa4/scratchpad/pkg14/tmp/mdk-frame-reference/L3_f1.bmp)

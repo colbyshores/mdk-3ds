@@ -127,6 +127,7 @@ set(SOURCES
     ${CORE}/src/game/bsp.cpp
     ${CORE}/src/game/camera_roll.cpp
     ${CORE}/src/game/cutscene_camera.cpp
+    ${CORE}/src/game/strike_view.cpp
     ${CORE}/src/game/follow_camera.cpp
     ${CORE}/src/game/frame_blend.cpp
     ${CORE}/src/game/game_flow.cpp
@@ -188,6 +189,8 @@ set(SOURCES
     ${CORE}/src/scripts/pose_cache.cpp
     ${CORE}/src/scripts/script_runtime.cpp
     ${CORE}/src/scripts/sniper_rounds.cpp
+    ${CORE}/src/scripts/air_strike.cpp
+    ${CORE}/src/scripts/strike_scene.cpp
     ${CORE}/src/scripts/bullet_holes.cpp
     ${CORE}/src/scripts/script_snapshot.cpp
     ${CORE}/src/scripts/items.cpp

@@ -1181,7 +1181,7 @@ void testSetSkyModeWritesSharedLevelState(LevelData* levelData, const Cmi* cmi,
 
 // Opcode 131 (special_event, ScriptVm.cs:1044 -> ScriptRuntime.SpecialEvent :1009): 50 and
 // below end the level (EndTheLevel: LevelOver, the town flags, an EndLevel), once; the arms
-// above 50 are package 13 and are recorded as unimplemented, while a value the C#'s switch has
+// above 50 are package 13's (51's strike scene package 14's), while a value the C#'s switch has
 // no case for is its own no-op. Either way the opcode has no branch: the next instruction runs.
 // The end sequence itself is pinned end to end by golden/L*_end_*.txt (tick1).
 void testSpecialEventEndsTheLevelAndKeepsSync(LevelData* levelData, const Cmi* cmi,
@@ -1195,7 +1195,11 @@ void testSpecialEventEndsTheLevelAndKeepsSync(LevelData* levelData, const Cmi* c
         cutscene.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
         cutscene.end();
         runProgram(runtime, cutscene, &obj);
-        CHECK(sawUnimplemented(kSpecialEvent));  // 51's strike scene is package 14
+        // 51 is whole since package 14: its strike scene played (no X_STRIKD in an arena
+        // named "", so it ended at once, as the C#'s Play does without its model).
+        CHECK(!sawUnimplemented(kSpecialEvent));
+        CHECK(runtime.strikeScene() != nullptr);
+        CHECK(!runtime.strikeScene()->active());
         CHECK(!runtime.levelOver);
         CHECK(runtime.endLevel() == nullptr);
         CHECK(obj.variables[0] == 2.0f);

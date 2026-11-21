@@ -601,9 +601,10 @@ void Fans::restore(const json::Document& doc, int node) {
 
 bool ScriptRuntime::canSnapshot() const {
     // C# CanSnapshot: Cutscene == 0 (no cutscenes yet, #13) && !LevelOver &&
-    // EndLevel == null && !AirStrike.IsActive() (no strike yet, #14) &&
+    // EndLevel == null && !AirStrike.IsActive() (package #14) &&
     // Rides.Ridden == null && Kurt.Health > 0 && CurrentArena != "".
-    return !levelOver && !endLevel_ && ridesRidden_ == nullptr && player_ != nullptr &&
+    return !levelOver && !endLevel_ && !airStrike_.isActive() && ridesRidden_ == nullptr &&
+           player_ != nullptr &&
            player_->health() > 0 && !currentArena_.empty();
 }
 
@@ -767,7 +768,7 @@ std::string ScriptRuntime::capture() const {
     out.key("alien_target");
     io.writeRef(alienTarget_);
     out.key("strike_used");
-    out.valueBool(airStrikeUsedUp);
+    out.valueBool(airStrike_.usedUp);
     out.key("stats");
     out.beginObject();
     GameStats stats = this->stats;
@@ -976,7 +977,7 @@ bool ScriptRuntime::load(const std::string& text, std::string* why) {
     io.field("shatter_point", shatterPoint);
     io.field("shatter_direction", shatterDirection);
     alienTarget_ = io.readRef(doc.member(levelNode, "alien_target"));
-    airStrikeUsedUp = doc.asBool(doc.member(levelNode, "strike_used"), &flag) && flag;
+    airStrike_.usedUp = doc.asBool(doc.member(levelNode, "strike_used"), &flag) && flag;
 
     io.node = doc.member(levelNode, "stats");
     visitStats(io, stats);

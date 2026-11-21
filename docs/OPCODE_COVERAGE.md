@@ -417,10 +417,11 @@ dog, XBN), 53/92 (EndCutscene), 55 (shot 2), 61 (Gunter, XGUNTAM), 81 (the end o
 `gameFinished()`), 91 and 93 (the boss intros), with RunTick's Cutscene branch and the
 objects' and Kurt's Visible. Pinned by `golden/L5_cut_{gunter,dog,dog_long,strike,end}.txt`,
 `L7_cut_boss.txt` and `L8_cut_boss.txt` (byte-identical to the C# probe
-`tests/scripts/cutscene_probe`). **51 is half ported**: its teleport, cutscene and shot run,
-but its full-screen strike (`PlayStrikeScene`) is package 14, so 51 alone still counts
-opcode 131 in the VM's unimplemented diagnostic. The script carries on to the next
-instruction either way, exactly as the C# does (the opcode has no branch). A value the C#'s
+`tests/scripts/cutscene_probe`). **51 is whole since package 14 (2026-11-20)**: its
+full-screen strike (`playStrikeScene(Kurt, WithPilot)`, X_STRIKD) plays first, the frontends
+wait on it, then its teleport, cutscene and shot run (`golden/L5_strike_event51.txt`); no
+value of 131 counts as unimplemented any more. The script carries on to the next
+instruction, exactly as the C# does (the opcode has no branch). A value the C#'s
 switch has no case for (54) is its own no-op and is not counted.
 
 **Combat and hazard batch (2026-11-20, docs/PORT_GAPS.md package 4):** 158
@@ -534,7 +535,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   Rides subsystem also writes that field (`Rides.cs:219,224`); Rides remains
   deferred with its own player/vehicle slice, so the riding vehicle's alarm
   source is not present yet.
-- **Camera/cutscene/debug:** 131 is ported whole but for 51's strike scene (package 14;
+- **Camera/cutscene/debug:** 131 is ported whole, 51's strike scene included (package 14;
   see the 2026-11-20 entries above)
   (77 `debug_msg` is a reference no-op, now pinned by `vm_tests`; 13 `if_cheat_key` is an explicit false branch, so
   no camera/cheat subsystem is needed — ported with the harness twin. 243
@@ -620,7 +621,7 @@ portable with no new subsystem, and it is ported.)**
 | 174 | if_ammo | reads `Kurt`'s super-chain-gun timer and five sniper-ammo entries; the pickups write them and sniper mode's clip spends them (`Kurt::useAmmo`, 2026-11-20) |
 | 202 | set_574304 | writes the runtime's shared `skyMode`, but the renderer's `SkyModes.BackdropOf` and save/load snapshot consumers are not ported |
 | 203 | camera_track | writes the runtime's `cameraTrackPitch`/`cameraTrackTicks`, and the Linux follow camera consumes them, but the save/load snapshot's `camera_track_*` fields are not ported |
-| 131 | special_event | the <= 50 arm (the end of a level) is ported; the arms above 50 (the strike, the cutscenes, Gunter, the end of the game) are package 13 and still count as unimplemented |
+| 131 | special_event | ported whole: the <= 50 arm (package 1), the arms above 50 (package 13) and 51's strike scene (package 14); none counts as unimplemented |
 | 195 | if_hit_weapon | reads `hit_type`; the chain gun, the blast, the mortar, the cow, touch_damage, `hitGroup` and the sniper rounds (package 6: the round's type on an object, the type as the group hit's weapon) write it |
 | 248 | push_kurt | knocks Kurt down and shoves him, from the object's frame or away from it (golden/L3_kurt_push.txt); the C#'s `StopFiring()` inside KnockDown is inert because the firing/muzzle subsystem is not ported |
 

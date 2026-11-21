@@ -1472,8 +1472,11 @@ Still open:
   at its start); the real fall (#17) hands on what Kurt took and lost. A skipped stream keeps
   the level's health; the real stream (#18) changes it, and its health bonus is what LEVEL5
   gets after LEVEL8. The statistics' Score-O-matic, the save prompt and the briefing
-  (#19/#20) show nothing. `GameState.StrikeUsed` and `Deaths` are not carried (the air strike
-  is #14; deaths are counted only for the save, #19).
+  (#19/#20) show nothing. `GameState.StrikeUsed` is carried as the C# Viewer carries it
+  (package #14): read when the runtime is made, written back when Kurt dies -- and, as in the
+  C#, NOT on a level's end, so a strike used in LEVEL8 is offered again in LEVEL5 unless Kurt
+  died after using it (Viewer.cs:236, :891; ported as it is). The death's write is #19's
+  `countDeath`, which now reads `airStrike().usedUp`; a save carries it too.
 - **Death still respawns in place**: the C#'s KurtDied goes to the menu; unchanged (see package #20a's section: the menu exists now, the LASTGAME write is #19's).
 - ~~**Death still respawns in place**~~ (closed by package #19, 2026-11-20): a death now writes
   LASTGAME and the flow's menu skip takes the menu's "Continue", which reloads the level from
@@ -1582,8 +1585,7 @@ Landed, operation for operation, pinned by `golden/L7_cut_boss.txt`, `L8_cut_bos
   2's LEVEL-END HOOK (the end movie is not played).
 
 Still open:
-- **51's strike scene (package 14)**: `PlayStrikeScene(Kurt, WithPilot)` is a marked hook in
-  `specialEvent`; until it lands 51 alone still counts opcode 131 as unimplemented.
+- ~~51's strike scene (package 14)~~: landed 2026-11-20, `golden/L5_strike_event51.txt`.
 - **The oracle's targets look wrong, and are ported as they are.** Every retail call above 50
   is an ARENA CONTROLLER's (L5 MUSE_5, L7 DANT_10, L8 GUNT_10), so 51, 81, 91 and 93 target
   the controller, whose position is the origin: the boss shots look at (0, 0, 3) from their
@@ -1824,9 +1826,8 @@ A sniper shot spent ammo and hit nothing. Landed, operation for operation, pinne
   `mdk_core/src/util/system_numerics_inverse.{h,cpp}` so the core can use it.
 
 Still open:
-- **Bones' air strike** (`FireSniper`'s `Scope.Strike` arm, `AirStrike.Call`) is package #14:
-  until it lands no strike goes and the clip keeps the Bones round (the C#'s answer when the
-  strike finds no target). No golden fires a strike for that reason.
+- ~~Bones' air strike~~ (`FireSniper`'s `Scope.Strike` arm, `AirStrike.Call`): landed with
+  package #14 on 2026-11-20 (`golden/L5_strike_gunter.txt`, `L3_strike_teeth.txt`).
 - **The round models are not drawn** (`SniperRounds.Visuals`, drawn with the objects in the
   C#'s Viewer): their state (model, place, basis) is ported and pinned (`vis=` in the goldens);
   drawing them, and the round cameras (`SniperRounds.Camera`, the scope's inset views), are
@@ -1881,3 +1882,36 @@ Still open:
   starts with clean textures and an empty stamped list.
 - **QuickSlot's "newest"** uses stat's seconds; two saves in one second fall back to name order.
 
+
+## The air strike and the strike scene (2026-11-20, gap package #14): what landed, what is open
+
+Landed: `Scripts/AirStrike.cs` (AirStrike and BezierPath) and `Scripts/StrikeScene.cs` whole, in
+`mdk_core/src/scripts/air_strike.{h,cpp}` and `strike_scene.{h,cpp}`; `ScriptRuntime.PlayStrikeScene`
+(defined in `strike_scene.cpp`), `AirStrike.Update` in RunTick after the rounds, `FireSniper`'s strike
+arm, special_event 51's strike half (131 is whole); the frontends' half of `SniperView.DrawStrike`
+and `Viewer.Update` (`game/strike_view.{h,cpp}`, both frontends: the game waits, the sky and the
+model alone from the scene's camera, Esc / START skips it and does not pause); `StrikeUsed` read and
+written back as the C# Viewer does. Goldens `L5_strike_gunter`, `L3_strike_teeth`,
+`L5_strike_event51` (C# probe `tests/scripts/strike_probe` == `tick1 dump strike`, byte for byte).
+
+Still open:
+- **The sniper overlay's strike-target bit** (`SniperView.Aim`, SniperView.cs:81-88) lives in
+  package #7's `game/sniper_view.cpp`, which was not in the tip this landed on. Its `aim()` answers
+  `StrikeAim::None` for "nothing in the crosshair"; once #7 merges it should read
+  `scripts->airStrike().findTarget(player.sniperEye(), player.sniperForward(), &point) ?
+  StrikeAim::Target : StrikeAim::None` (it needs the runtime passed in). The test itself is ported
+  and pinned: the goldens' `tgt=` column is `FindTarget` from the sniper eye every step.
+- **`Vector2.Normalize` as a divide** (`AirStrike.Start`'s 50 units behind Kurt) is not settled by
+  the goldens: writing it as a multiply by the reciprocal passes all three. The divide follows the
+  documented `Vector3.Normalize` (util/matrix.h).
+- **The 3DS bakes the scene's animation on its first frame** (`pose_parts()` bakes every frame of
+  X_STRIKB / X_STRIKD once per model, as the C# does): a one-off cost when the scene starts,
+  unmeasured on the Old 3DS (owner rule: no main-thread stalls).
+- **No Linux/oracle pixel gate for the scene.** A headless capture at `--level=5
+  --at=465,-6,-2263,0 --event=51 --fixed-step`, frame 150, shows the same picture as the oracle's
+  `--wait=2.5` (Kurt in X_STRIKD over the sky); 43% of its pixels differ because the model turns
+  45 deg/s and the oracle's strike time is not on the same step boundary. Not committed as a
+  reference.
+- **The 3DS harness cannot hand Kurt SW_BONES**, so Bones' strike is shown in the emulator only
+  where a level places the pickup; event 51 (`EVENT=51`) shows the scene directly.
+- **The C# carries `StrikeUsed` only on a death** (see the skipped screens above): ported as it is.

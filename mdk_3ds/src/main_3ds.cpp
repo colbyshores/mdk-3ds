@@ -74,6 +74,7 @@
 #include "platform/controls_3ds.h"
 #include "game/font_view.h"
 #include "game/cutscene_camera.h"
+#include "game/strike_view.h"
 #include "game/follow_camera.h"
 #include "game/game_flow.h"
 #include "game/game_settings.h"
@@ -1501,6 +1502,8 @@ int main(int argc, char** argv) {
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, seed, &bank, &player,
                                                           &sprites));
             runtime->option = kScriptOption;
+            // The one air strike of the last two levels survives a death (Viewer.cs:236).
+            runtime->airStrike().usedUp = flow.state().strikeUsed;
             // hud_message reaches the HUD (Viewer.cs:245, `_scripts.Messages`).
             runtime->hudMessages = &hud.messages();
             // Kurt's sounds go through the runtime's mixer, because in the C# they
@@ -1940,8 +1943,12 @@ int main(int argc, char** argv) {
         // QUIT is a row, confirmed with A: never a single press.
         bool menuQuit = false;
         bool menuMainMenu = false;
+        // THE FULL-SCREEN STRIKE (package 14, game/strike_view.h): while it plays, START or
+        // SELECT skips it (the C#'s Esc) instead of pausing (Viewer.cs:389-396).
+        const bool striking = runtime && runtime->strikeScene() != nullptr &&
+                              runtime->strikeScene()->active();
         if (menuReady) {
-            if (!menu.open() && (pressed & (KEY_START | KEY_SELECT))) {
+            if (!menu.open() && !striking && (pressed & (KEY_START | KEY_SELECT))) {
                 menu.setOpen(true);
                 mdk::log3dsPrintf("menu: paused (%s)",
                                   (pressed & KEY_START) ? "START" : "SELECT");
@@ -2097,7 +2104,14 @@ int main(int argc, char** argv) {
             }
         }
 
-        if (playerReady && !menu.open()) {
+        // The strike advances (or is skipped) and, while it plays, the game waits: no step
+        // runs and the frame is the sky and its model alone (SniperView.DrawStrike).
+        const bool strikeFrame =
+            !menu.open() &&
+            mdk::advanceStrikeScene(runtime.get(),
+                                    striking && (pressed & (KEY_START | KEY_SELECT)) != 0,
+                                    elapsed);
+        if (playerReady && !menu.open() && !strikeFrame) {
             // The C# Viewer.Frame order: the mouse look is PER FRAME (Kurt's yaw
             // and the camera's look offset), then the simulation runs in fixed
             // steps, and EACH step updates Kurt and then the camera (UpdateKurt
@@ -2329,7 +2343,7 @@ int main(int argc, char** argv) {
             if (player.died() && !leaveLevel) {
                 mdk::log3dsPrintf("Kurt died at frame %lu", (unsigned long)frame);
                 mdk::flow::countDeath(&flow.state(), flow.state().level,
-                                      runtime ? runtime->airStrikeUsedUp
+                                      runtime ? runtime->airStrike().usedUp
                                               : flow.state().strikeUsed);
                 leaveLevel = true;
                 leaveEvent = mdk::flow::Event::KurtDied;
@@ -2371,6 +2385,11 @@ int main(int argc, char** argv) {
         if (runtime && mdk::CutsceneCamera::active(*runtime)) {
             cutsceneCamera.blend(runtime->tick_blend(pending));
             cutsceneCamera.build(&camera, kAspect);
+        }
+        // The strike's own camera while it holds the frame (SniperView.DrawStrike's view);
+        // the follow camera rewrites `camera` on the first step after it.
+        if (strikeFrame) {
+            mdk::buildStrikeCamera(*runtime->strikeScene(), kAspect, &camera);
         }
 
         // THE MIX, once per frame, after the steps that moved the listener. The C#
@@ -2684,7 +2703,7 @@ int main(int argc, char** argv) {
         // The arenas the scripts say are drawn: Kurt's and the active second
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
         // the runtime's first tick has named one.
-        if (arena && frameDrawn) {
+        if (arena && frameDrawn && !strikeFrame) {
             // The end of a level's torn triangles leave the arena's mesh first (the C#'s
             // LevelView.DrawEnd, Viewer.cs:703): its view swaps to a dynamic mesh and
             // rewrites it in this frame, which is the slot C3D_FrameBegin waited for
@@ -2727,10 +2746,22 @@ int main(int argc, char** argv) {
             const float tickAlpha = runtime->tick_blend(pending);
             objectStream.reset();
             for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
+                if (strikeFrame) {
+                    break;  // the strike's frame shows its model alone (below)
+                }
                 if (!obj.visible || runtime->isRemoved(&obj)) {
                     continue;
                 }
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(tickAlpha),
+                                     &objectStream);
+            }
+            if (strikeFrame) {
+                // THE FULL-SCREEN STRIKE (package 14): the scene's model alone over the sky
+                // (SniperView.DrawStrike: objects.Draw of its Subject, posed by its frame and
+                // turned by its yaw), through this same pass -- which sets every GPU state
+                // it needs per draw.
+                const mdk::scripts::MdkObject& subject = runtime->strikeScene()->subject();
+                objectView.addObject(subject, objectLook(subject.arena), subject.transform(),
                                      &objectStream);
             }
             objectDraw.draw(renderer, &surfaces, objectStream);
@@ -2805,7 +2836,7 @@ int main(int argc, char** argv) {
                                   (int)objectCorners, (int)objectDraws);
             }
         }
-        if (runtime) {
+        if (runtime && !strikeFrame) {
             // The pieces and sprite effects, where the C# draws them:
             // after the objects, before Kurt (Viewer.cs:707). The ropes
             // and sniper scope the C# draws alongside are not ported.
@@ -2858,7 +2889,7 @@ int main(int argc, char** argv) {
                 effectsFailureLogged = false;
             }
         }
-        if (kurtSpriteReady && playerReady) {
+        if (kurtSpriteReady && playerReady && !strikeFrame) {
             // THE PACK STREAM'S PUMP (KurtSprite::pumpStream): the read the
             // reader thread finished, if any, staged -- no I/O on this thread. A
             // failed read is logged once and its frames stay 16-bit.
@@ -2870,12 +2901,13 @@ int main(int argc, char** argv) {
             kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
-        if (runtime) {
-            // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it).
+        if (runtime && !strikeFrame) {
+            // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it); the
+            // strike's frames are not DrawScene's, so they leave it alone.
             runtime->eye = camera.position;
         }
         const bool showHint = menuReady && !menu.open() && now < hintUntil;
-        if (hudReady || menu.open() || showHint) {
+        if (!strikeFrame && (hudReady || menu.open() || showHint)) {
             // The HUD is the last thing drawn before the frame ends, which is the
             // C#'s order (Viewer.DrawScene: the canvas is the Overlay pass, and
             // the queue draws Overlay after every other pass). The canvas seams
