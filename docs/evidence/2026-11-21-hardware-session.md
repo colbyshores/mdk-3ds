@@ -70,3 +70,28 @@ The commands are the step-1 commands, built in each branch's worktree.
 - E11 stays parked. Its look is proven on hardware but its gain isn't, and the cost is ~0.5 MB of bake files a level.
 - **E14:** E14's log says "cpu: Old 3DS; syscore time limit 30% ... workers on core 1; probe core 2 refused, core 3 refused". So on an Old 3DS the workers do run on core 1, and cores 2 and 3 do not exist, as the Mandarine note predicted. There is no frame gain at idle: a spawn reads nothing, so the case E14 is for, a streaming read, isn't in these runs.
 - The audio-starvation counters are not written in profile builds; a plain `--once` run is queued for them.
+
+## Step 3: the menu video on hardware, and the scenes Mandarine drew dark (cd4bf497)
+
+All five runs are `hw_cycle.sh --capture`, FRESH.
+
+**The menu:** `SPLASH=0 FIXED=1 CAPTURE=2400`.
+- The log has `menu: slides loading off the main thread at frame 168 (0 loaded)` and `menu: slides loaded at frame 219 (8 loaded)`. The slides are read DURING the video, by design (c9711c89).
+- The capture at 40 s shows an MDKS slide with the menu items over it, so the cycle runs with the RomFS fix.
+- The playthrough agent's "the slide lines never print" came from reading emurun's 25-line tail, not the whole log.
+
+**The dark scenes:**
+
+| Scene | Command | Result |
+|---|---|---|
+| GUNT_7 | `LEVEL=8 AT=23,2643,-290,90 ARENA=GUNT_7 FIXED=1 CAPTURE=300` | near-black floor and left wall |
+| GUNT_7, lighting off | same + `TOGGLES=enableLighting=0` | the same |
+| DANT_7 | `LEVEL=7 AT=381,4513,-85,90 ARENA=DANT_7 FIXED=1 CAPTURE=300` | half of the left wall black, hard edge |
+| MEAT_1 | `LEVEL=4 FIXED=1 CAPTURE=300` | written (log line present); `hw_cycle` said CAPTURE MISSING, see below |
+
+**Compared with the Linux build at the same points.** The command was `build-linux/mdk --headless --level=N --at=... --arena=... --fixed-step --seed 1 --original|--enhanced --capture-frame=300`. Both looks show the same dark floor and the same hard-edged black wall. These arenas ARE dark in the game, so it is not a 3DS or Mandarine defect. The playthrough's "dark surfaces" item is closed.
+
+**`hw_cycle.sh` CAPTURE MISSING on a good capture.** The capture check was `printf '%s' "$SESSION" | grep -qF ...` under `set -o pipefail`.
+- grep -q exits at the first match. When the match is early and the session is large, printf still has chunks to write, dies of SIGPIPE, and the pipeline reads as failed.
+- MEAT_1's session was 48 KB with the line at 107 of 412.
+- Fixed with a here-string. The selftest gains a case that puts the line early in a session past a pipe buffer.

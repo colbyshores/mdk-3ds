@@ -400,7 +400,11 @@ fi
 # proves nothing about THIS run. The proof is THIS session's own line: the
 # renderer logs `screenshot: wrote <path>` only after a complete write. The
 # session is everything after the last `--- mdk 3ds session ---` header.
-if ! printf '%s' "$SESSION" | grep -qF "screenshot: wrote sdmc:/3ds/mdk/$CAP_NAME"; then
+# A HERE-STRING, NOT A PIPE: with pipefail, `printf "$SESSION" | grep -q` fails
+# whenever grep matches early and exits while printf still has chunks to write
+# (SIGPIPE) -- measured 2026-11-21: a 48 KB level-4 session with the line at 107
+# of 412 read as CAPTURE MISSING on a good capture (the trap on line ~77, again).
+if ! grep -qF "screenshot: wrote sdmc:/3ds/mdk/$CAP_NAME" <<< "$SESSION"; then
     echo "hw_cycle: CAPTURE MISSING -- this session did not log a completed write of $CAP_NAME." >&2
     printf '%s' "$SESSION" | grep -F 'screenshot:' | sed 's/^/    /' >&2
     exit 1

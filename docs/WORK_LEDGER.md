@@ -794,3 +794,16 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - E14 runs on core 1 (cores 2 and 3 refused on the Old 3DS) with no frame gain at idle.
   - A MONO=1 PROFILE build compiles; all five gates are green.
 - **Commit:** this entry's commit.
+
+### Hardware session (2026-11-21): hw_cycle.sh read a good capture as missing (SIGPIPE under pipefail)
+- **What:** `hw_cycle.sh`'s capture check now uses `grep -qF ... <<< "$SESSION"` instead of `printf '%s' "$SESSION" | grep -qF ...`. `hw_cycle_selftest.sh` gains a case, `capbig`: the screenshot line early in a session larger than a pipe buffer. The selftest now runs 19 cases.
+- **Why:** step 3's level 4 capture was written (`screenshot: wrote sdmc:/3ds/mdk/hwcap.bmp.log`) but read as CAPTURE MISSING.
+  - grep -q exits at its first match. printf, still writing the 48 KB session, dies of SIGPIPE, and under `set -o pipefail` the `!` takes the failed pipeline as "no match".
+  - It is the same trap the script already documents for the payload check (line ~77).
+  - Step 3 also closed two playthrough items on hardware. The slideshow log lines print (the agent read a 25-line tail). GUNT_7 and DANT_7 are dark in the game itself: the Linux original and enhanced looks match the 3DS.
+- **Evidence:**
+  - The selftest is 19 PASS / 0 FAIL.
+  - The non-vacuity run, with the parent script as HW_CYCLE_UNDER_TEST, fails `capbig` (expected rc 0, got 1). It also failed "a timed-out run kept nothing to read afterwards" once; that case passes on the fixed script and has nothing to do with this change, so it is a timing flake to watch.
+  - Captures and the Linux comparisons are in `docs/evidence/2026-11-21-hardware-session.md` step 3.
+  - All five gates are green.
+- **Commit:** this entry's commit.

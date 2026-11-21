@@ -124,13 +124,19 @@ def grow():
             f.write(f"frame {i} elapsed=0.0700 steps=1\n")
             f.flush()
             time.sleep(2)
-        if MODE == "capture":
+        if MODE in ("capture", "capbig"):
             f.write("screenshot: wrote sdmc:/3ds/mdk/hwcap.bmp.log (4x4)\n")
+        if MODE == "capbig":
+            # The line EARLY in a session larger than a pipe buffer (64 KiB):
+            # `printf "$SESSION" | grep -q` then always dies of SIGPIPE under
+            # pipefail and read a good capture as missing (2026-11-21, level 4).
+            for i in range(3000):
+                f.write(f"frame {i + 3} elapsed=0.0167 steps=1 feet=(0.0,0.0,0.0) padding\n")
         if MODE in ("profold", "profnew"):
             fam = "old3ds" if MODE == "profold" else "new3ds"
             f.write("profile: frames=3 mean=33.300ms p50<=33.4ms p95<=33.4ms p99<=33.4ms max=33.400ms over16.7ms=3 over33.3ms=0\n")
             f.write(f"profile: console model=0 family={fam} clock=268MHz l2=none stereo=off\n")
-        if MODE in ("ok", "ledger", "capture", "capold", "profold", "profnew"):
+        if MODE in ("ok", "ledger", "capture", "capbig", "capold", "profold", "profnew"):
             f.write("exiting after 3 frames: harness autoquit (MDK_AUTOQUIT)\n")
             f.write("--- session end ---\n")
 threading.Thread(target=grow, daemon=True).start()
@@ -231,6 +237,7 @@ DSX_OVERRIDE="$WORK/capture.3dsx"
 CYCLE_MODE=--capture
 case_run "a capture run pulls its picture" capture 60 0 "CAPTURE 4x4 102 bytes"
 case_run "an earlier session's capture is not this run's" capold 60 1 "CAPTURE MISSING"
+case_run "a capture early in a session past a pipe buffer is found" capbig 60 0 "CAPTURE 4x4 102 bytes"
 # A harness payload with neither the capture nor the profile, independent of
 # what the tree's own mdk.3dsx happens to be built with.
 printf '/3ds/netload_stub.3dsx\0' > "$WORK/plain.3dsx"
