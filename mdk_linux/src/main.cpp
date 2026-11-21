@@ -46,6 +46,7 @@
 #include "game/follow_camera.h"
 #include "game/game_flow.h"
 #include "game/game_settings.h"
+#include "game/cheats.h"
 #include "game/pause_menu.h"
 #include "game/screen_view.h"
 #include "game/font_view.h"
@@ -320,6 +321,19 @@ int main(int argc, char** argv) {
     std::string saveDir;
     std::string loadName;
     std::string saveName;
+    // THE CONSOLE'S CHEATS (gap package #21). --god and --noclip are the C# console's
+    // `god` and `noclip` (DevTools/ConsoleCommands.cs:37-38), which DevSession holds for
+    // the session and the Viewer hands to every level's Kurt (Viewer.cs:286-289); this
+    // port has no console, so the command line is where they are turned on. The C#'s
+    // own test spelling is `--console="god;noclip"`.
+    bool godCheat = false;
+    bool noclipCheat = false;
+    // --type=TEXT@SECONDS: TEXT typed in the first level at that much game time, as if
+    // from the keyboard (the cheats: TOOSCARYFORME, SEETHEWHOLEGAME). A test aid, not
+    // the C#'s: a headless run has no keyboard.
+    bool hasTypeTest = false;
+    std::string typeTestText;
+    float typeTestTime = 0.0f;
     // --die: Kurt is hurt to death at the test start (the C#'s ViewerOptions.Die,
     // Viewer.RunTests with FatalDamage 1000), the first level only -- how a death's
     // LASTGAME and the level's reload are run without a console.
@@ -506,6 +520,21 @@ int main(int argc, char** argv) {
             startArenaOverride = value;
         } else if (std::strcmp(argv[i], "--die") == 0) {
             dieTest = true;
+        } else if (std::strcmp(argv[i], "--god") == 0) {
+            godCheat = true;
+        } else if (std::strcmp(argv[i], "--noclip") == 0) {
+            noclipCheat = true;
+        } else if ((value = optionValue(argv[i], "--type")) != nullptr) {
+            const char* at = std::strrchr(value, '@');
+            char* end = nullptr;
+            const float seconds = at ? std::strtof(at + 1, &end) : -1.0f;
+            if (!at || at == value || end == at + 1 || *end != '\0' || seconds < 0.0f) {
+                std::fprintf(stderr, "[main] invalid --type: %s (want TEXT@SECONDS)\n", value);
+                return 1;
+            }
+            hasTypeTest = true;
+            typeTestText.assign(value, (size_t)(at - value));
+            typeTestTime = seconds;
         } else if ((value = optionValue(argv[i], "--save-dir")) != nullptr) {
             saveDir = value;
         } else if ((value = optionValue(argv[i], "--load")) != nullptr) {
@@ -1178,6 +1207,11 @@ int main(int argc, char** argv) {
     // camera to the start is the same fresh start.
     mdk::Input input;
     mdk::Player player;
+    // C# Viewer._cheats (Viewer.cs:171, `new Cheats(ui.Settings, state)`): one per level,
+    // so a half-typed cheat does not carry into the next. It flips the run's settings
+    // (gore, not saved by itself) and the flow's state (the debug keys).
+    mdk::flow::Cheats cheats(&settings, &flow.state());
+    bool typeTestDone = false;
     mdk::FollowCamera follow;
     // The scripts' cutscene camera (package 13, game/cutscene_camera.h): the C# Viewer's
     // _cutscene (Viewer.cs:142), the view instead of `follow` while a cutscene holds it.
@@ -1217,6 +1251,16 @@ int main(int argc, char** argv) {
         player.setSpace(&space);
         if (kurtSpriteReady) {
             player.setFrameCounts(kurtSprite.frameCounts());
+        }
+        // The session's cheats hold in every level (Viewer.cs:286-288, SetGod/SetNoclip
+        // from DevSession), and in a respawn's fresh Kurt.
+        player.setMortality(godCheat ? mdk::Kurt::God : mdk::Kurt::Mortal);
+        player.setClipping(noclipCheat ? mdk::Player::ClipOff : mdk::Player::ClipOn);
+        // A respawn is a fresh C# Viewer, and with it a fresh Cheats (an empty window).
+        cheats = mdk::flow::Cheats(&settings, &flow.state());
+        if (godCheat || noclipCheat) {
+            std::printf("[main] cheats: god %s, noclip %s\n", godCheat ? "on" : "off",
+                        noclipCheat ? "on" : "off");
         }
         // Pickups show their names (Viewer.cs:249). A respawn is a fresh C# Viewer,
         // so its HUD's messages start empty.
@@ -1543,6 +1587,31 @@ int main(int argc, char** argv) {
             std::string typed;
             uint32_t typing = 0;
             mdk::windowTakeTyping(&typed, &typing);
+            if (hasTypeTest && firstLevel && !typeTestDone && testTime >= typeTestTime) {
+                typed += typeTestText;
+                typeTestDone = true;
+                std::printf("[main] --type: \"%s\" typed at %.2f s\n", typeTestText.c_str(),
+                            testTime);
+            }
+            // C# Viewer.TypeCheats (Viewer.cs:431, 862-882): the letters typed this frame,
+            // unless the prompt, the pause menu or the full-screen strike holds the game
+            // (Viewer.Frame returns before it on those frames, and on the one Esc opens
+            // the menu).
+            if (!prompt && !pausedFrame && !striking) {
+                const std::string letters = mdk::flow::cheatLetters(typed);
+                for (size_t c = 0; c < letters.size(); c++) {
+                    const mdk::flow::Cheats::Cheat cheat = cheats.type(letters[c]);
+                    if (cheat == mdk::flow::Cheats::Gore) {
+                        // `_scripts.Option = _ui.Settings.Gore ? 1 : 0`, then the line.
+                        if (runtime) {
+                            runtime->option = settings.gore ? 1 : 0;
+                        }
+                        std::printf("Gore %s\n", settings.gore ? "on" : "off");
+                    } else if (cheat == mdk::flow::Cheats::DebugKeys) {
+                        std::printf("Debug keys %s\n", flow.state().debugKeys ? "on" : "off");
+                    }
+                }
+            }
             if (prompt) {
                 mdk::flow::SavePrompt::Input promptKeys;
                 promptKeys.accept = (typing & (mdk::kPressEnter | mdk::kPressSpace)) != 0;
@@ -1569,7 +1638,8 @@ int main(int argc, char** argv) {
                         notify("Game saved");
                     }
                     prompt.reset();
-                    mdk::windowTextInput(&window, false);
+                    // The text input stays on: the C# starts it with the window and never
+                    // stops it (Window.cs:71-75), because the cheats are typed in play.
                     mdk::windowCaptureMouse(&window, true);
                     pending = 0.0f;
                 }

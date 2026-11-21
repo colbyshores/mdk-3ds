@@ -41,6 +41,10 @@ enum Key {
     // the pad's d-pad up/down). Read in sniper mode only.
     kKeyZoomIn,
     kKeyZoomOut,
+    // The C#'s Key.Down (Input.cs:13, Q by default, Input.cs:92): the flying camera's
+    // and noclip's descent (Kurt.Cheats.cs UpdateNoclip, `Axis(input, Key.Jump,
+    // Key.Down)`). Read only while noclip is on (gap package #21).
+    kKeyDown,
     kKeyCount
 };
 

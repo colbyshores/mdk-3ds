@@ -1973,3 +1973,15 @@ Still open:
   retextured group (only L3 HMO_3 has one).
 - **`hp:` cannot kill**: a probe that sets an object's health to 0 does not run its death script
   (only `Kill` does), so the goldens use `kill:step:ID`.
+
+## The cheats (gap package #21, 2026-11-20): what landed, what is open
+
+Landed: TOOSCARYFORME and SEETHEWHOLEGAME (game/cheats), god mode and noclip (Kurt.Cheats.cs), the main
+menu's typed keys; Linux types them in play (`--god`, `--noclip`, `--type=TEXT@S`), the 3DS has the START
+menu's CHEATS page. Pinned by `golden/cheats_*.txt` against `tests/scripts/cheats_probe`. Open:
+- **SEETHEWHOLEGAME on the 3DS.** Its debug keys are typed in the main menu, and the 3DS has no keyboard; the
+  CHEATS page leaves it out. A swkbd prompt or a menu row would be a design choice for the owner.
+- **The 3DS `down` action is unbound** (controls.ini `down=none`): noclip rises with jump but cannot sink
+  until the owner binds a button.
+- **The main menu's D (statistics with random counts) and F/S** lead to screens this port skips (#20b, #17b,
+  #18b): the flow's skipUnported walks past them, as for any other entry.

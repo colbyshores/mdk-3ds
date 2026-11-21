@@ -479,3 +479,21 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - The full scripts suite is green (no golden or frame changed). `tools/check.sh`: four gates pass; core parity's only findings were package #21's new files, not yet in the Linux list in the worktree it ran on (that package's commit adds them).
   - Frame: `docs/frames/2026-11-21-linux-level-sound.png`.
 - **Open:** the fall screen (#17b) is not in this base; when it lands on Linux its device takes the same `setSink` line (docs/OPEN_ITEMS.md, the fall's section).
+- **Commit:** c6a8573, "Linux: the level's sound reaches the speakers".
+
+### Package #21: the cheats
+- **What:**
+  - `game/cheats.{h,cpp}` (Flow/Cheats.cs): `Cheats::type`, the 15-letter window that completes `TOOSCARYFORME` (the settings' gore flipped, not saved) and `SEETHEWHOLEGAME` (GameState's debug keys), and `cheatLetters`, Viewer.TypeCheats' filter (upper-cased ASCII letters).
+  - Kurt.Cheats.cs: `Kurt::setMortality` (god: `damage()` already refused under it; `Player::fall` now skips the fall-out death, Kurt.cs:494), and `Player::setClipping` with `updateNoclip` (C# UpdateNoclip, operation for operation: 60 u/s, turbo x3, jump up and the new `kKeyDown` down, the turn keys still turn; no collision, no gravity). `updateTurning` is C# UpdateTurning, now shared by the walk and noclip.
+  - The main menu's typed keys (MainMenu.HandleKeys/DebugKey): `menu::Keys::typed`; with SEETHEWHOLEGAME on, 3-8 play that level, F the fall, S the stream, D the statistics with random counts; "Really Quit?" takes Y/J/O/S/T and N.
+  - Opcode 13 (`if_cheat_key`) stays the C#'s explicit false (ScriptVm.cs:1709, "cheat keys aren't done"): ported faithfully, nothing to change.
+  - Linux: the text input is on from the window's creation (Window.cs:71-75), so the cheats are typed in a level (Viewer.TypeCheats' place in the frame: not under the prompt or the pause menu) and the debug keys in the main menu; Q is `kKeyDown`. `--god` and `--noclip` are the C# console's `god`/`noclip` held for the session (every level's and respawn's Kurt, Viewer.cs:286-288). `--type=TEXT@SECONDS` types text in the first level (a test aid).
+  - 3DS: the START menu has a **CHEATS** row (above OPTIONS) that opens a page of toggles, `game/cheats_menu.{h,cpp}`: GORE (TOOSCARYFORME's effect: the settings' gore and the running level's script Option), GOD MODE and NOCLIP (held for the session). A page of toggles, not swkbd: the swkbd applet would need its own APT round trip and a typed word for three switches. SEETHEWHOLEGAME is left out on the 3DS: the main menu cannot be typed at. `controls.ini` gains `down` (unbound; the owner picks it). Harness: `make AUTOQUIT=.. GOD=1 NOCLIP=1`; `WALK=` takes `down`.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. The PORT_GAPS row: the gore toggle and god mode (player.cpp's "God mode is not ported"); noclip and the debug keys came with them.
+- **Evidence:**
+  - `tests/scripts/cheats_probe` (the C# probe: Cheats, Viewer.TypeCheats, MainMenu.DebugKey, Kurt with LevelCommands.SetGod/SetNoclip). Byte-identical twins:
+    - `golden/cheats_typed.txt` (9 typed strings, letter by letter: the cheat, gore, debug keys, the Option, the window) and `golden/cheats_menu.txt` (14 typed texts) vs `vm_tests dump-cheats typed|menu`;
+    - `golden/cheats_L3_noclip.txt` (noclip through the floor, then the fall-out death), `cheats_L3_god.txt` (no damage, survives the fall out, dies at once when mortal), `cheats_L7_hurt.txt` (a hurt lands, none under god, one again when mortal) vs `tick1 dump cheats`.
+  - `cheats_tests.cpp` also pins the CHEATS page (rows, wrap, flips, BACK, close) and the main page's frame() reading the typed keys.
+  - The goldens bite. Each break fails a golden: the god guard dropped from `fall` (cheats_L3_god); jump and Down swapped in noclip (cheats_L3_noclip, cheats_L3_god); the window 14 letters (cheats_typed); DebugKey's fall index 3 (cheats_menu); the god guard dropped from `Kurt::damage` (cheats_L3_god, cheats_L7_hurt).
+- **Commit:** "The cheats: TOOSCARYFORME, SEETHEWHOLEGAME, god mode and noclip (#21)", the commit after c6a8573.

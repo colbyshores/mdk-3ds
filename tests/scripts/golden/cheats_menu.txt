@@ -1,0 +1,14 @@
+menu debug=1 text=3 handled=1 next=Play level=3 counts=-
+menu debug=1 text=8 handled=1 next=Play level=8 counts=-
+menu debug=1 text=9 handled=0 next=None level=7 counts=-
+menu debug=1 text=2 handled=0 next=None level=7 counts=-
+menu debug=1 text=x5 handled=1 next=Play level=5 counts=-
+menu debug=1 text=f handled=1 next=Fall level=8 counts=-
+menu debug=1 text=S handled=1 next=Stream level=7 counts=-
+menu debug=1 text=d handled=1 next=Statistics level=7 counts=below100
+menu debug=1 text=hello handled=0 next=None level=7 counts=-
+menu debug=1 text=ab4f handled=1 next=Play level=4 counts=-
+menu debug=1 text=q handled=0 next=None level=7 counts=-
+menu debug=0 text=5 handled=0 next=None level=7 counts=-
+menu debug=0 text=f handled=0 next=None level=7 counts=-
+menu debug=1 text= handled=0 next=None level=7 counts=-

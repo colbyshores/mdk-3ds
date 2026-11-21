@@ -133,6 +133,9 @@ SOURCES_VM := \
 	archive_guard_tests.cpp \
 	flow_tests.cpp \
 	menu_tests.cpp \
+	cheats_tests.cpp \
+	$(CORE)/game/cheats.cpp \
+	$(CORE)/game/cheats_menu.cpp \
 	$(CORE)/game/game_settings.cpp \
 	$(CORE)/game/screen_view.cpp \
 	$(CORE)/game/menu_items.cpp \

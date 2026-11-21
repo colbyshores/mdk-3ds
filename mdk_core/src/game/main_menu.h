@@ -29,9 +29,9 @@
 //     own fallback without the video is MDKOPT, which is what is drawn, and
 //     without the slideshow the items always show (ItemsShown).
 //   * MAINSONG and the menus' sounds (menu_items.h).
-//   * The typed keys: "Really Quit?"'s Y/J/O/S/T and N, and SEETHEWHOLEGAME's
-//     debug keys (3-8, D, F, S; the cheat is package #21). Yes and No are items
-//     the D-pad and Enter reach.
+//   (The typed keys -- "Really Quit?"'s Y/J/O/S/T and N, and SEETHEWHOLEGAME's
+//   debug keys 3-8, D, F, S -- are ported with the cheat, package #21: Keys::typed.
+//   The 3DS has no keyboard, so there they are never typed.)
 //
 // Cold code. No virtuals, no templates, no exceptions (AGENTS.md §10).
 // ============================================================================
@@ -92,6 +92,14 @@ public:
     const char* pageName() const;
     int32_t levelIndex() const { return levelIndex_; }
     flow::Event next() const { return next_; }
+
+    // C# MainMenu.DebugKey (MainMenu.cs:202-243), the debug keys SEETHEWHOLEGAME turns
+    // on: in the upper-cased text, the first of 3-8 plays that level, F the fall before
+    // Order[4], S the stream after Order[0], D the statistics with random counts
+    // (Random.Shared.Next(100) each). True when one was taken: `state` and `next` are
+    // set. Static so the golden reaches it without a Ui (the C# probe calls the private
+    // method on a MainMenu made without its constructor).
+    static bool debugKey(const std::string& typed, flow::GameState* state, flow::Event* next);
 
 private:
     enum class Page { Main, Quit, Other };

@@ -165,6 +165,9 @@ const char* EnhancedMenu::rowLabel(int32_t row) {
     if (row == kMainMenuRow) {
         return "MAIN MENU";
     }
+    if (row == kCheatsRow) {
+        return "CHEATS";
+    }
     return isItemRow(row) ? kItems[row - 1].label : "";
 }
 
@@ -226,6 +229,9 @@ EnhancedMenu::Action EnhancedMenu::handle(const Input& input, EnhancedToggles* t
     }
     if (input.confirm && selected_ == kMainMenuRow) {
         return Action::MainMenu;
+    }
+    if (input.confirm && selected_ == kCheatsRow) {
+        return Action::Cheats;
     }
     const Item* item = rowItem(selected_);
     if (!item) {

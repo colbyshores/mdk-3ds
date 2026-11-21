@@ -284,8 +284,13 @@ void Player::update(const Input& input, float delta) {
     // still does not. It runs BEFORE the step's writers, which is why the roll can
     // hold one extra step after the keys come off (CameraRoll's held flag).
     _cameraRoll.settle(delta);
+    // C# Kurt.cs:161-164: the noclip step owns the whole step when Clipping is Off,
+    // right after the roll settles and ahead of the ride (gap package #21).
+    if (updateNoclip(input, delta)) {
+        return;
+    }
     // C# Kurt.Update runs UpdateKnockDamage here (Kurt.cs:176): after the ride and
-    // noclip returns (neither is ported) and before UpdateChuteSound and the
+    // noclip returns (the ride is not ported) and before UpdateChuteSound and the
     // Hang/HardLand branch, so a crashing Kurt's recent-damage counter declines too --
     // and so a Kurt who is knocked down mid-crash is knocked down before the crash
     // takes the step. The whole method is ported: the trigger and the decline tail.
@@ -312,17 +317,8 @@ void Player::update(const Input& input, float delta) {
     const bool turbo = input.isDown(kKeyTurbo);
 
     // The C# UpdateTurning (the mouse term is applied per frame in mouseLook).
+    updateTurning(input, turbo, delta);
     const float turn = input.axis(kKeyTurnLeft, kKeyTurnRight);
-    if (turn == 0.0f) {
-        const float friction = std::fabs(turnRate) > kTurnSpeed ? kTurnFrictionFast
-                                                                : kTurnFrictionSlow;
-        turnRate = moveToward(turnRate, 0.0f, friction * delta);
-    } else {
-        const float max = turbo ? kTurnSpeedTurbo : kTurnSpeed;
-        const float acceleration = turbo ? kTurnAccelerationTurbo : kTurnAcceleration;
-        turnRate = clampf(turnRate + turn * acceleration * delta, -max, max);
-    }
-    yaw += turnRate * delta;
     // C# Kurt.cs:203: a platform that no longer keeps him lets go.
     checkKeeper();
 
@@ -384,6 +380,53 @@ void Player::update(const Input& input, float delta) {
     updateFiring(input);
     updateState(forward, strafe, delta);
     updateMuzzle(delta);
+}
+
+// C# Kurt.UpdateTurning (Kurt.cs:318-335), shared by the walk and noclip (Kurt.Cheats.cs
+// calls it too). The C#'s `- input.MouseX * MouseDegrees` and `_mouseTurn = Walk` are
+// mouseLook's here: `_mouseTurnScope` was cleared at the top of the step.
+void Player::updateTurning(const Input& input, bool turbo, float delta) {
+    const float turn = input.axis(kKeyTurnLeft, kKeyTurnRight);
+    if (turn == 0.0f) {
+        const float friction = std::fabs(turnRate) > kTurnSpeed ? kTurnFrictionFast
+                                                                : kTurnFrictionSlow;
+        turnRate = moveToward(turnRate, 0.0f, friction * delta);
+    } else {
+        const float max = turbo ? kTurnSpeedTurbo : kTurnSpeed;
+        const float acceleration = turbo ? kTurnAccelerationTurbo : kTurnAcceleration;
+        turnRate = clampf(turnRate + turn * acceleration * delta, -max, max);
+    }
+    yaw += turnRate * delta;
+}
+
+// C# Kurt.UpdateNoclip (Kurt.Cheats.cs:24-41), operation for operation:
+//   Feet += (Facing * forward + Right * strafe + Vector3.UnitZ * rise) * speed * delta;
+// each component summed left to right, then scaled by speed, then by delta, as
+// System.Numerics evaluates it. No collision, no gravity, no state change: the
+// speeds go to 0 and he is off the floor.
+bool Player::updateNoclip(const Input& input, float delta) {
+    // C# Kurt.NoclipSpeed and NoclipTurbo.
+    static constexpr float kNoclipSpeed = 60.0f;
+    static constexpr float kNoclipTurbo = 3.0f;
+    if (_clipping == ClipOn) {
+        return false;
+    }
+    const bool turbo = input.isDown(kKeyTurbo);
+    updateTurning(input, turbo, delta);
+    const float forward = input.axis(kKeyForward, kKeyBack);
+    const float strafe = input.axis(kKeyStrafeRight, kKeyStrafeLeft);
+    const float rise = input.axis(kKeyJump, kKeyDown);
+    const float speed = kNoclipSpeed * (turbo ? kNoclipTurbo : 1.0f);
+    const Vec3 f = facing();
+    const Vec3 r = right();
+    feet.x += (f.x * forward + r.x * strafe + 0.0f * rise) * speed * delta;
+    feet.y += (f.y * forward + r.y * strafe + 0.0f * rise) * speed * delta;
+    feet.z += (f.z * forward + r.z * strafe + 1.0f * rise) * speed * delta;
+    forwardSpeed = 0.0f;
+    strafeSpeed = 0.0f;
+    verticalSpeed = 0.0f;
+    onFloor = false;
+    return true;
 }
 
 bool Player::pressed(const Input& input, Key key) {
@@ -1083,10 +1126,13 @@ void Player::fall(float delta) {
     // 0x469efc). Fifty below his arena's lowest point Kurt dies and counts as
     // on a floor so the death plays. This post-move test is load-bearing in
     // UpdateDeath too: below the arena it sets OnFloor back to true after the
-    // zero-length move, exactly as the oracle does. God mode is not ported.
+    // zero-length move, exactly as the oracle does. God mode (Kurt.Mortality ==
+    // God, the console's cheat, gap package #21) skips the death: `|| Mortality ==
+    // Mortality.God` in the C#'s return test.
     fallMove(delta);
     float bottom = 0.0f;
-    if (_space && _space->bottom(toVec(feet), &bottom) && feet.z <= bottom + kFallOutDepth) {
+    if (_space && _space->bottom(toVec(feet), &bottom) && feet.z <= bottom + kFallOutDepth &&
+        combat_.mortality() != Kurt::God) {
         combat_.setHealth(0);
         verticalSpeed = 0.0f;
         onFloor = true;

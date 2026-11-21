@@ -101,6 +101,13 @@ public:
     enum Mortality { Mortal, God };
     enum Difficulty { Easy, Normal, Hard };
 
+    // C# Kurt.Mortality (Kurt.Cheats.cs:19, a public field): the console's god
+    // (DevTools/LevelCommands.cs:37 SetGod) -- no damage (damage() below) and no
+    // death by falling out (Player::fall). Gap package #21: the frontends' cheats
+    // write it (Linux --god, the 3DS pause menu's CHEATS page).
+    void setMortality(Mortality mortality) { mortality_ = mortality; }
+    Mortality mortality() const { return mortality_; }
+
     // Inventory.Difficulty (Inventory.cs, a public field): the fall's own inventory takes
     // the game's difficulty (FallSim's constructor, FallSim.cs `Inventory.Difficulty =
     // setup.Difficulty`), which scales the grenades, the super chain gun's time and the

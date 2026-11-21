@@ -115,6 +115,18 @@ public:
     // Starts with another health than full (C# SetHealth: max(health, 0)).
     void setHealth(int health);
 
+    // THE CONSOLE'S CHEATS (C# Kurt.Cheats.cs, gap package #21). God mode is the
+    // combat half's Mortality (Kurt::setMortality: no damage, and fall() below skips
+    // the fall-out death). Noclip is C# Kurt.Clipping: off, Kurt flies through
+    // everything -- the walking keys move him, jump and Down (Q) rise and sink, turbo
+    // is three times faster (updateNoclip). Both are the C#'s public fields, written
+    // by LevelCommands.SetGod/SetNoclip; here by the frontends' cheats.
+    enum Clipping { ClipOn, ClipOff };
+    void setClipping(Clipping clipping) { _clipping = clipping; }
+    Clipping clipping() const { return _clipping; }
+    void setMortality(Kurt::Mortality mortality) { combat_.setMortality(mortality); }
+    Kurt::Mortality mortality() const { return combat_.mortality(); }
+
     // The C# Kurt state machine's visual state (Kurt.cs:104). The movement half
     // drives it, because the state changes the movement (a hard landing stops
     // walking), but the FIELD lives in the combat half: Kurt.Hurt reads the state
@@ -409,6 +421,13 @@ private:
     // ---- end of platforms, solid objects and touches ----
 
     void updateVertical(const Input& input, const Vec3& move, float delta);
+    // C# Kurt.UpdateTurning (Kurt.cs:318-335): the turn keys' rate and the yaw. The
+    // mouse term is mouseLook's (per frame).
+    void updateTurning(const Input& input, bool turbo, float delta);
+    // C# Kurt.UpdateNoclip (Kurt.Cheats.cs:24-41): a noclip step; false when Kurt
+    // collides as usual.
+    bool updateNoclip(const Input& input, float delta);
+    Clipping _clipping = ClipOn;   // C# Kurt.Clipping
     // C# Kurt.UpdateUpdraft (Kurt.Updraft.cs:21).
     void updateUpdraft(float delta);
     // C# Kurt.UpdateSlide and its helpers (Kurt.Slide.cs:138-301).

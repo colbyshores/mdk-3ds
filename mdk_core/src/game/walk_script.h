@@ -25,7 +25,8 @@
 //
 // The action names (lower case): forward, back, strafeleft, straferight,
 // turnleft, turnright, jump, turbo, fire, useitem, itemnext, itemprevious, sniper,
-// zoomin, zoomout (sniper mode and its scope zoom).
+// zoomin, zoomout (sniper mode and its scope zoom), down (noclip's descent, the
+// cheat of gap package #21).
 // Escape is not walkable: the frontends read the quit chord elsewhere.
 //
 // Cold code: parsed once at boot. walkKeysAt is a per-frame scan of at most

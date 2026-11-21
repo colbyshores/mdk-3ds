@@ -36,6 +36,10 @@ bool windowCreate(Window* window, const WindowDesc* desc) {
     window->handle = sdl;
     window->width = desc->width;
     window->height = desc->height;
+    // Typed text (names of saved games, cheats): on from the start and never off, as
+    // the C#'s Window does (Window.cs:71-75), so TOOSCARYFORME reaches the level and
+    // SEETHEWHOLEGAME's keys the main menu (gap package #21).
+    SDL_StartTextInput(sdl);
     return true;
 }
 
@@ -100,6 +104,9 @@ int keyForScancode(SDL_Scancode sc) {
         case SDL_SCANCODE_PAGEDOWN:
         case SDL_SCANCODE_MINUS:
             return kKeyZoomOut;
+        // The C# Input.DefaultKeys' Key.Down (Input.cs:92): noclip's descent.
+        case SDL_SCANCODE_Q:
+            return kKeyDown;
         default:
             return -1;
     }

@@ -32,6 +32,7 @@ const Action kActions[] = {
     {kKeyZoomOut, "zoom_out"},
     {kKeyUseItem, "use_item"},
     {kKeyTurbo, "turbo"},
+    {kKeyDown, "down"},
 };
 const size_t kActionCount = sizeof(kActions) / sizeof(kActions[0]);
 
@@ -110,6 +111,9 @@ ControlBindings defaultControlBindings() {
     // package #5): zoom_in and zoom_out are written as `none`.
     bindings.buttons[kKeyZoomIn] = 0;
     bindings.buttons[kKeyZoomOut] = 0;
+    // Noclip's descent (the C#'s Key.Down, gap package #21) is unbound too: the cheat
+    // is the pause menu's, and the owner picks its button.
+    bindings.buttons[kKeyDown] = 0;
     return bindings;
 }
 
@@ -250,6 +254,7 @@ std::string writeControls(const ControlBindings& bindings) {
         "# effects menu, whatever is bound.\n"
         "# sniper enters and leaves sniper mode; the scope's view and overlay are\n"
         "# not drawn yet. zoom_in and zoom_out zoom the scope (unbound by default).\n"
+        "# down sinks Kurt while the pause menu's NOCLIP cheat is on (unbound).\n"
         "# Delete this file to get the defaults back.\n";
     for (size_t i = 0; i < kActionCount; i++) {
         out += kActions[i].name;

@@ -168,7 +168,8 @@ endif
 # script (platform/harness_3ds.h, game/walk_script.h): `<keys>@<first>-<end>`
 # segments, ';' between them, '+' between keys (forward, back, strafeleft,
 # straferight, turnleft, turnright, jump, turbo, fire, useitem, itemnext,
-# itemprevious), the end frame exclusive. With FIXED=1 frame f is step f, as on the
+# itemprevious, sniper, zoomin, zoomout, down: noclip's descent), the end frame
+# exclusive. With FIXED=1 frame f is step f, as on the
 # Linux build's --fixed-step --walk=..., where a route is found and checked. The
 # script is parsed at boot and a refused one stops the run. main_3ds.cpp and
 # harness_3ds.cpp read it: `make clean` after changing WALK. No spaces, no quotes.
@@ -230,6 +231,23 @@ ifndef AUTOQUIT
 $(error SAVETEST=$(SAVETEST) needs AUTOQUIT: the save test is a harness-build feature)
 endif
 DEFINES += -DMDK_HW_SAVETEST=1
+endif
+# `make AUTOQUIT=90 GOD=1 NOCLIP=1` starts the session with the pause menu's CHEATS page
+# toggles on (gap package #21): god mode (no damage, no fall-out death) and noclip (the
+# walking keys fly Kurt through everything, jump rises, the `down` action sinks). With a
+# WALK= the noclip flight is visible without touching the console. Only main_3ds.cpp
+# reads them: touch it after changing GOD or NOCLIP.
+ifneq ($(strip $(GOD)),)
+ifndef AUTOQUIT
+$(error GOD=$(GOD) needs AUTOQUIT: the start-up cheat is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_GOD=1
+endif
+ifneq ($(strip $(NOCLIP)),)
+ifndef AUTOQUIT
+$(error NOCLIP=$(NOCLIP) needs AUTOQUIT: the start-up cheat is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_NOCLIP=1
 endif
 # `make AUTOQUIT=90 TOGGLES='enableGlowBillboards=0;shadowMapSize=128'` applies
 # config.ini lines (';' between them, no spaces, no commas) over the console's own

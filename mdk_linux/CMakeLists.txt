@@ -146,6 +146,8 @@ set(SOURCES
     ${CORE}/src/game/messages.cpp
     ${CORE}/src/game/enhanced_config.cpp
     ${CORE}/src/game/enhanced_menu.cpp
+    ${CORE}/src/game/cheats.cpp
+    ${CORE}/src/game/cheats_menu.cpp
     ${CORE}/src/game/game_settings.cpp
     ${CORE}/src/game/screen_view.cpp
     ${CORE}/src/game/menu_items.cpp

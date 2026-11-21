@@ -5,6 +5,8 @@
 
 #include <stdio.h>
 
+#include <random>
+
 #include "formats/beta_demo.h"
 #include "formats/fti.h"
 #include "game/level_flow.h"
@@ -71,16 +73,86 @@ flow::Event MainMenu::frame(const Keys& keys, float elapsed) {
     return next_;
 }
 
-// C# HandleKeys: Esc on the main page asks "Really Quit?", and there means no.
+// C# HandleKeys (MainMenu.cs:175-200): Esc on the main page asks "Really Quit?", and
+// there means no; Y/J/O/S/T typed there mean yes and N no; the debug keys first.
 void MainMenu::handleKeys(const Keys& keys) {
+    // C# YesKeys and NoKeys.
+    static const char kYesKeys[] = "YJOST";
+    static const char kNoKeys[] = "N";
     if (!items_.visible) {
+        return;
+    }
+    // `var typed = input.Typed.ToUpperInvariant();` (ASCII: the keys are letters and
+    // digits).
+    std::string typed = keys.typed;
+    for (size_t i = 0; i < typed.size(); i++) {
+        if (typed[i] >= 'a' && typed[i] <= 'z') {
+            typed[i] = (char)(typed[i] - 'a' + 'A');
+        }
+    }
+    if (page_ == Page::Main && state_ != nullptr && state_->debugKeys &&
+        debugKey(typed, state_, &next_)) {
         return;
     }
     if (page_ == Page::Main && keys.back) {
         showQuit();
-    } else if (page_ == Page::Quit && keys.back) {
+    } else if (page_ == Page::Quit && typed.find_first_of(kYesKeys) != std::string::npos) {
+        next_ = flow::Event::Quit;
+    } else if (page_ == Page::Quit &&
+               (typed.find_first_of(kNoKeys) != std::string::npos || keys.back)) {
         showMain();
     }
+}
+
+// C# DebugKey (MainMenu.cs:202-243), branch for branch.
+bool MainMenu::debugKey(const std::string& typed, flow::GameState* state, flow::Event* next) {
+    // C# DebugFirstLevel/LastLevel, DebugStatistics, DebugFall (Order[4]), DebugStream
+    // (Order[0]) and DebugCountLimit.
+    static const char kFirstLevel = '3';
+    static const char kLastLevel = '8';
+    static const char kStatistics = 'D';
+    static const char kFall = 'F';
+    static const int32_t kFallIndex = 4;
+    static const char kStream = 'S';
+    static const int32_t kStreamIndex = 0;
+    static const int32_t kCountLimit = 100;
+    for (size_t i = 0; i < typed.size(); i++) {
+        const char c = typed[i];
+        if (c >= kFirstLevel && c <= kLastLevel) {
+            state->level = c - '0';
+            *next = flow::Event::Play;
+            return true;
+        }
+        if (c == kFall) {
+            state->level = flow::kOrder[kFallIndex];
+            *next = flow::Event::Fall;
+            return true;
+        }
+        if (c == kStream) {
+            state->level = flow::kOrder[kStreamIndex];
+            *next = flow::Event::Stream;
+            return true;
+        }
+        if (c != kStatistics) {
+            continue;
+        }
+        // Random.Shared: a host random source, not the game's (the C#'s counts are not
+        // reproducible either; the golden checks only their range).
+        static std::random_device device;
+        static std::mt19937 engine(device());
+        std::uniform_int_distribution<int32_t> count(0, kCountLimit - 1);
+        scripts::GameStats& stats = state->stats;
+        stats.shots = count(engine);
+        stats.shotHits = count(engine);
+        stats.sniperShots = count(engine);
+        stats.sniperHits = count(engine);
+        stats.headShots = count(engine);
+        stats.enemies = count(engine);
+        stats.kills = count(engine);
+        *next = flow::Event::Statistics;
+        return true;
+    }
+    return false;
 }
 
 void MainMenu::act(const Event& event) {

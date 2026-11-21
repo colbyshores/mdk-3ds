@@ -23,6 +23,10 @@
 // difficulty), MAIN MENU leaves the level for the main menu; both are A on the
 // row, never a single press from where the menu opens.
 //
+// CHEATS (gap package #21) sits just above OPTIONS: A on it opens the cheats
+// page (game/cheats_menu.h: gore, god mode, noclip), which this target has no
+// keyboard or console to reach otherwise.
+//
 // This class is the menu's LOGIC and its canvas drawing. It owns no
 // platform input and no file: the frontend translates its buttons into
 // the edge struct below, calls handle(), and acts on its answer: a setting
@@ -62,6 +66,7 @@ public:
         Quit,      // QUIT confirmed with A: the caller ends the run
         Options,   // OPTIONS with A: the caller opens the options pages
         MainMenu,  // MAIN MENU with A: the caller leaves for the main menu
+        Cheats,    // CHEATS with A: the caller opens the cheats page
     };
 
     // THE SETTING ROWS, t2k's menu kinds (t2k_core/src/ui/menu.cpp TOG / SLD /
@@ -81,13 +86,14 @@ public:
         int32_t choiceCount;
     };
 
-    // The rows: RESUME, the settings, OPTIONS, MAIN MENU, QUIT.
+    // The rows: RESUME, the settings, CHEATS, OPTIONS, MAIN MENU, QUIT.
     static const int32_t kItemCount = 18;
     static const int32_t kResumeRow = 0;
-    static const int32_t kOptionsRow = kItemCount + 1;
-    static const int32_t kMainMenuRow = kItemCount + 2;
-    static const int32_t kQuitRow = kItemCount + 3;
-    static const int32_t kRowCount = kItemCount + 4;
+    static const int32_t kCheatsRow = kItemCount + 1;
+    static const int32_t kOptionsRow = kItemCount + 2;
+    static const int32_t kMainMenuRow = kItemCount + 3;
+    static const int32_t kQuitRow = kItemCount + 4;
+    static const int32_t kRowCount = kItemCount + 5;
     // The rows the panel shows at once (the 240-line top screen holds twelve at
     // the small font's 1.5x); the window scrolls to keep the selection in it.
     static const int32_t kVisibleRows = 12;
@@ -111,8 +117,8 @@ public:
     // it backwards/forwards and A forwards. Changed only when a value really
     // moved: a slider at its end answers None, so nothing is written. A on
     // RESUME closes; A on QUIT is Quit and on MAIN MENU MainMenu (the menu
-    // stays open: the caller is leaving); A on OPTIONS is Options (the menu stays
-    // open under the options pages).
+    // stays open: the caller is leaving); A on OPTIONS is Options and on CHEATS
+    // Cheats (the menu stays open under the page).
     Action handle(const Input& input, EnhancedToggles* toggles);
 
     // The label of a row ("RESUME", "HAZE", "OPTIONS", "MAIN MENU", "QUIT").

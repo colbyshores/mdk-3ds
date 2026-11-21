@@ -73,6 +73,10 @@ struct Keys {
     bool leftHeld = false;
     bool rightHeld = false;
     bool any = false;
+    // The text typed this frame (the C#'s Input.Typed: SDL's text events, Window.cs:71),
+    // which the main menu reads for "Really Quit?"'s Y/N and SEETHEWHOLEGAME's debug
+    // keys (MainMenu.HandleKeys). Empty where there is no keyboard (the 3DS).
+    std::string typed;
 };
 
 // What a frame's keys did to the page, for its owner: an item pressed (or Esc

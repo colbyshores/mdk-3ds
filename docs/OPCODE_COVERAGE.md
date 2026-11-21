@@ -553,7 +553,9 @@ By blocking subsystem (carried grouping, corrected for this batch):
   source is not present yet.
 - **Camera/cutscene/debug:** 131 is ported whole, 51's strike scene included (package 14;
   see the 2026-11-20 entries above)
-  (77 `debug_msg` is a reference no-op, now pinned by `vm_tests`; 13 `if_cheat_key` is an explicit false branch, so
+  (77 `debug_msg` is a reference no-op, now pinned by `vm_tests`; 13 `if_cheat_key` is an explicit false branch -- the
+  C#'s own (ScriptVm.cs:1709, "cheat keys aren't done"), re-checked with the cheats of gap package #21, which
+  are typed words and console switches and never reach this opcode -- so
   no camera/cheat subsystem is needed — ported with the harness twin. 243
   `if_point_sees_player` left the same way: it reads only `reference_point`,
   `kurtPosition` and `raycastClear`, none of which needs the camera —

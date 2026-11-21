@@ -310,6 +310,7 @@ void testTheDefaults() {
     expect("turbo = ZL", d.buttons[kKeyTurbo], kHidZL);
     expect("the zoom keys are unbound (the owner picks them)",
            d.buttons[kKeyZoomIn] | d.buttons[kKeyZoomOut], 0);
+    expect("noclip's down is unbound (package #21; the owner picks it)", d.buttons[kKeyDown], 0);
     expect("the turn axes have no buttons", d.buttons[kKeyTurnLeft] | d.buttons[kKeyTurnRight], 0);
     expect("escape has none (START is the pause menu)", d.buttons[kKeyEscape], 0);
     // No default uses START or SELECT: those are the frontend's menus.
@@ -321,7 +322,7 @@ void testTheDefaults() {
     expectText("the boot log's line", describeControls(d),
                "forward=X back=B strafe_left=Y strafe_right=A jump=L fire=R+ZR "
                "item_previous=DLEFT item_next=DRIGHT sniper=DUP zoom_in=none zoom_out=none "
-               "use_item=DDOWN turbo=ZL");
+               "use_item=DDOWN turbo=ZL down=none");
 }
 
 // The default file, written and read back, is the defaults; a file of only
@@ -339,7 +340,7 @@ void testTheRoundTrip() {
             failures++;
         }
     }
-    expect("thirteen action lines taken", report.applied, 13);
+    expect("fourteen action lines taken", report.applied, 14);
     expect("none bad", report.bad, 0);
     expect("none unknown", report.unknown, 0);
     expect("every line a line: the text ends with a newline", text.empty() ? 0 : text.back(), '\n');

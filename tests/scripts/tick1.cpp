@@ -1981,6 +1981,187 @@ bool kurtItemsDump(int level, int steps, const std::string& schedule, const MdkD
     return true;
 }
 
+// THE CHEATS' KURT (golden/cheats_L*.txt, gap package #21): god mode and noclip
+// (C# Kurt.Cheats.cs, the god guards in Kurt.Fall and Kurt.Damage) under a schedule.
+// The oracle is tests/scripts/cheats_probe (`Probe kurt <level> <steps> <schedule>`):
+// Kurt, the scripts and Kurt's solid arenas stepped at 1/60 s as Viewer.RunSteps does
+// (the solid arenas are what Fall's Bottom reads, so the fall-out death needs them).
+// The schedule: `key:from-to` (fwd back left right sleft sright jump turbo down fire),
+// `god|mortal|noclip|clip:step` (LevelCommands.SetGod/SetNoclip before that step),
+// `hurt:step:N` (Kurt.Hurt before that step), `yaw:DEG` (his yaw at the start).
+bool kurtCheatsDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                    const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    struct Hold {
+        Key key;
+        int from;
+        int to;
+    };
+    struct Switch {
+        int step;
+        std::string what;
+    };
+    struct Hurt {
+        int step;
+        int damage;
+    };
+    static const struct {
+        const char* name;
+        Key key;
+    } kKeys[] = {{"fwd", kKeyForward},      {"back", kKeyBack},       {"left", kKeyTurnLeft},
+                 {"right", kKeyTurnRight},  {"sleft", kKeyStrafeLeft}, {"sright", kKeyStrafeRight},
+                 {"jump", kKeyJump},        {"turbo", kKeyTurbo},     {"down", kKeyDown},
+                 {"fire", kKeyFire}};
+    std::vector<Hold> holds;
+    std::vector<Switch> switches;
+    std::vector<Hurt> hurts;
+    bool hasYaw = false;
+    float startYaw = 0.0f;
+    size_t at = 0;
+    while (at < schedule.size()) {
+        size_t comma = schedule.find(',', at);
+        if (comma == std::string::npos) {
+            comma = schedule.size();
+        }
+        const std::string token = schedule.substr(at, comma - at);
+        at = comma + 1;
+        if (token.empty()) {
+            continue;
+        }
+        const size_t colon = token.find(':');
+        if (colon == std::string::npos) {
+            *why = "the schedule did not parse: " + token;
+            return false;
+        }
+        const std::string head = token.substr(0, colon);
+        const std::string rest = token.substr(colon + 1);
+        if (head == "god" || head == "mortal" || head == "noclip" || head == "clip") {
+            switches.push_back(Switch{std::atoi(rest.c_str()), head});
+            continue;
+        }
+        if (head == "hurt") {
+            const size_t second = rest.find(':');
+            if (second == std::string::npos) {
+                *why = "the schedule did not parse: " + token;
+                return false;
+            }
+            hurts.push_back(Hurt{std::atoi(rest.substr(0, second).c_str()),
+                                 std::atoi(rest.substr(second + 1).c_str())});
+            continue;
+        }
+        if (head == "yaw") {
+            hasYaw = true;
+            startYaw = std::strtof(rest.c_str(), nullptr);
+            continue;
+        }
+        bool found = false;
+        for (size_t k = 0; k < sizeof(kKeys) / sizeof(kKeys[0]); k++) {
+            if (head == kKeys[k].name) {
+                const size_t dash = rest.find('-');
+                if (dash == std::string::npos) {
+                    *why = "the schedule did not parse: " + token;
+                    return false;
+                }
+                holds.push_back(Hold{kKeys[k].key, std::atoi(rest.substr(0, dash).c_str()),
+                                     std::atoi(rest.substr(dash + 1).c_str())});
+                found = true;
+            }
+        }
+        if (!found) {
+            *why = "the schedule did not parse: " + token;
+            return false;
+        }
+    }
+
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = hasYaw ? startYaw : levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    *out = "cheats level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    char buffer[512];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < switches.size(); i++) {
+            if (switches[i].step != step) {
+                continue;
+            }
+            // LevelCommands.SetGod / SetNoclip (DevTools/LevelCommands.cs:37-39).
+            const std::string& what = switches[i].what;
+            if (what == "god") {
+                player.setMortality(Kurt::God);
+            } else if (what == "mortal") {
+                player.setMortality(Kurt::Mortal);
+            } else if (what == "noclip") {
+                player.setClipping(Player::ClipOff);
+            } else {
+                player.setClipping(Player::ClipOn);
+            }
+        }
+        for (size_t i = 0; i < hurts.size(); i++) {
+            if (hurts[i].step == step) {
+                player.combat().hurt(hurts[i].damage);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        // Viewer.RunSteps: Kurt, the scripts, then Kurt's solid arenas (Viewer.cs:533).
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        space.setSolid(runtime.solidArenas());
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d state=%s feet64=%d,%d,%d yaw=%.4f hp=%d floor=%d speeds=%.4f,%.4f,%.4f "
+                 "god=%d clip=%d\n",
+                 step, kurtStateName(player.state()), p64(player.feet.x), p64(player.feet.y),
+                 p64(player.feet.z), player.yaw, player.health(), player.onFloor ? 1 : 0,
+                 player.forwardSpeed, player.strafeSpeed, player.verticalSpeed,
+                 player.mortality() == Kurt::God ? 1 : 0,
+                 player.clipping() == Player::ClipOn ? 1 : 0);
+        *out += buffer;
+    }
+    return true;
+}
+
 // THE SNIPER ROUNDS (golden/L*_rounds_*.txt): Kurt and the scripts runtime stepped together
 // at 1/60 s, as kurtItemsDump does, under a schedule that enters sniper mode, aims, fires
 // and teleports. The oracle is tests/scripts/rounds_probe (`Probe <level> <steps>
@@ -6271,6 +6452,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "cheats") {
+            // `tick1 dump cheats <level> <steps> <schedule>`: kurtCheatsDump's text, the
+            // C++ side of the cheats probe's Kurt (`Probe kurt ...`, package #21).
+            std::string got;
+            std::string why;
+            if (!kurtCheatsDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                                &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "platforms") {
             // `tick1 dump platforms <level> <steps> <schedule>`: kurtPlatformsDump's text,
             // the C++ side of the platform probe (package #3).
@@ -7292,6 +7486,56 @@ int main(int argc, char** argv) {
             std::string why;
             if (!kurtItemsDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why,
                                c.view ? c.view : "")) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The cheats' Kurt, end to end against the oracle probe (tests/scripts/cheats_probe,
+    // `Probe kurt`; see kurtCheatsDump for the columns): god mode and noclip (gap package
+    // #21). The schedules are the probe's arguments, byte for byte.
+    {
+        struct CheatsCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const CheatsCase kCheatsCases[] = {
+            {"cheats_L3_noclip", "golden/cheats_L3_noclip.txt", 3, 300,
+             "yaw:0,noclip:1,fwd:1-20,sright:20-30,sleft:30-35,jump:35-45,turbo:40-45,"
+             "down:45-160,turbo:100-160,left:160-170,clip:180",
+             "noclip flies him through the floor (60 u/s, turbo x3, jump up, Down down, the "
+             "turn keys still turn), and with clipping back he falls out of the arena and dies"},
+            {"cheats_L3_god", "golden/cheats_L3_god.txt", 3, 320,
+             "god:1,hurt:5:30,noclip:10,down:10-150,turbo:10-150,clip:150,hurt:200:40,"
+             "mortal:250",
+             "god mode takes no damage and survives the fall out of the arena; mortal again, "
+             "the fall-out death comes at once"},
+            {"cheats_L7_hurt", "golden/cheats_L7_hurt.txt", 7, 360,
+             "hurt:30:5,god:300,hurt:310:5,mortal:320,hurt:330:5",
+             "Kurt.Damage: a hurt lands (knocked in the air), none under god (no knock either), "
+             "and one lands again once mortal"},
+        };
+        for (size_t i = 0; i < sizeof(kCheatsCases) / sizeof(kCheatsCases[0]); i++) {
+            const CheatsCase& c = kCheatsCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!kurtCheatsDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
                 printf("FAIL %s: %s\n", c.name, why.c_str());
                 failures++;
             } else if (got == expected) {

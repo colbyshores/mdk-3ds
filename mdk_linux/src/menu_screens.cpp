@@ -218,6 +218,11 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         MenuKeyState state;
         windowTakeMenuKeys(&state);
         menu::Keys keys = menuKeysOf(state);
+        // The text typed this frame (C# Input.Typed): the main menu's Y/N on "Really
+        // Quit?" and SEETHEWHOLEGAME's debug keys (MainMenu.HandleKeys, package #21).
+        // Taken on every screen, so nothing typed here reaches the level's cheats.
+        uint32_t typingPresses = 0;
+        windowTakeTyping(&keys.typed, &typingPresses);
         if (front->presses) {
             front->presses->apply(*front->time, &keys);
         }

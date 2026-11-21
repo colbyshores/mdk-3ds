@@ -71,6 +71,7 @@
 #include "game/arena_views.h"
 #include "game/enhanced_config.h"
 #include "game/enhanced_menu.h"
+#include "game/cheats_menu.h"
 #include "platform/controls_3ds.h"
 #include "game/font_view.h"
 #include "game/cutscene_camera.h"
@@ -752,6 +753,20 @@ int main(int argc, char** argv) {
     // (pause_menu.h's openOptions). Static: it outlives the levels, as the menu
     // and its fonts do.
     static mdk::menu::PauseMenu pauseOptions;
+    // THE CHEATS (gap package #21): the START menu's CHEATS row opens this page of
+    // toggles, because this target has no keyboard for TOOSCARYFORME and no console for
+    // god and noclip. The switches are the session's, as the C#'s DevSession holds god
+    // and noclip for every level (Viewer.cs:286-288); gore is the settings' own flag,
+    // mirrored when the page opens. Harness builds can start with them on:
+    // `make AUTOQUIT=.. GOD=1 NOCLIP=1`.
+    static mdk::CheatsMenu cheatsPage;
+    static mdk::CheatsMenu::Switches cheatSwitches;
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_GOD)
+    cheatSwitches.god = true;
+#endif
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_NOCLIP)
+    cheatSwitches.noclip = true;
+#endif
 
     // =====================================================================
     // THE LEVEL LOOP (package 2, the next-level transition). One pass per level:
@@ -1401,8 +1416,8 @@ int main(int argc, char** argv) {
     // way. Review-6 F2: the port used to write 0 and call it "the oracle's Option",
     // which is the opposite of the oracle's default.
     // Since package #20a the menus' Gore option (C# Viewer.cs:234, `Option =
-    // ui.Settings.Gore ? 1 : 0`), read as the level starts; on by default.
-    const int32_t kScriptOption = g_gameSettings.gore ? 1 : 0;
+    // ui.Settings.Gore ? 1 : 0`), read as each runtime is built; on by default. The
+    // gore cheat (package #21) flips the setting mid-level, so it is read there.
     // THE ONE MIXER, and which one it is depends on the runtime: the C# gives the
     // runtime and Kurt the same SoundMixer, and ScriptRuntime OWNS its mixer, so
     // when there is a runtime the frontend mixes that one and the sink is attached
@@ -1429,6 +1444,13 @@ int main(int argc, char** argv) {
         player.combat().setDifficulty((mdk::Kurt::Difficulty)g_gameSettings.difficulty);
         player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
         player.yaw = level.dti().startAngle();
+        // The session's cheats hold in every level and every respawn (Viewer.cs:286-288).
+        player.setMortality(cheatSwitches.god ? mdk::Kurt::God : mdk::Kurt::Mortal);
+        player.setClipping(cheatSwitches.noclip ? mdk::Player::ClipOff : mdk::Player::ClipOn);
+        if (cheatSwitches.god || cheatSwitches.noclip) {
+            mdk::log3dsPrintf("cheats: god %s, noclip %s", cheatSwitches.god ? "on" : "off",
+                              cheatSwitches.noclip ? "on" : "off");
+        }
         // Pickups show their names (Viewer.cs:249). A respawn is a fresh C# Viewer,
         // so its HUD's messages start empty.
         hud.messages().reset();
@@ -1506,7 +1528,9 @@ int main(int argc, char** argv) {
 #endif
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, seed, &bank, &player,
                                                           &sprites));
-            runtime->option = kScriptOption;
+            // The setting as it is now: the gore cheat flips it mid-level (not saved), and
+            // a respawn is a fresh C# Viewer reading `ui.Settings.Gore` again.
+            runtime->option = g_gameSettings.gore ? 1 : 0;
             // The one air strike of the last two levels survives a death (Viewer.cs:236).
             runtime->airStrike().usedUp = flow.state().strikeUsed;
             // hud_message reaches the HUD (Viewer.cs:245, `_scripts.Messages`).
@@ -1534,7 +1558,7 @@ int main(int argc, char** argv) {
                 mix->device().setSink(mdk::kDspAudio ? nullptr : mdk::audioSink, nullptr);
             }
             mdk::log3dsPrintf("scripts: runtime ready (seed %d, option %d)", (int)seed,
-                              (int)kScriptOption);
+                              (int)runtime->option);
             heapProbe("runtime");
         }
         if (kurtSpriteReady) {
@@ -1961,6 +1985,7 @@ int main(int argc, char** argv) {
         if (menuReady) {
             if (!menu.open() && !striking && (pressed & (KEY_START | KEY_SELECT))) {
                 menu.setOpen(true);
+                cheatsPage.setOpen(false);
                 mdk::log3dsPrintf("menu: paused (%s)",
                                   (pressed & KEY_START) ? "START" : "SELECT");
             } else if (menu.open() && pauseOptions.open()) {
@@ -1980,6 +2005,35 @@ int main(int argc, char** argv) {
                 pauseOptions.update(keys, elapsed);
                 if (!pauseOptions.open()) {
                     mdk::log3dsPrintf("menu: options closed");
+                }
+            } else if (menu.open() && cheatsPage.open()) {
+                // THE CHEATS PAGE (package #21): the D-pad moves, A or left/right flips,
+                // B, START or SELECT (or A on BACK) returns to the START menu.
+                mdk::EnhancedMenu::Input edges;
+                edges.up = (pressed & KEY_DUP) != 0;
+                edges.down = (pressed & KEY_DDOWN) != 0;
+                edges.left = (pressed & KEY_DLEFT) != 0;
+                edges.right = (pressed & KEY_DRIGHT) != 0;
+                edges.confirm = (pressed & KEY_A) != 0;
+                edges.close = (pressed & (KEY_START | KEY_B | KEY_SELECT)) != 0;
+                const mdk::CheatsMenu::Action action = cheatsPage.handle(edges, &cheatSwitches);
+                if (action == mdk::CheatsMenu::Action::Changed) {
+                    // TOOSCARYFORME (Viewer.cs:872-876): the settings' gore, not saved, and
+                    // the running level's script Option. God and noclip: the console's
+                    // SetGod/SetNoclip on this level's Kurt (LevelCommands.cs:37-39).
+                    g_gameSettings.gore = cheatSwitches.gore;
+                    if (runtime) {
+                        runtime->option = g_gameSettings.gore ? 1 : 0;
+                    }
+                    player.setMortality(cheatSwitches.god ? mdk::Kurt::God : mdk::Kurt::Mortal);
+                    player.setClipping(cheatSwitches.noclip ? mdk::Player::ClipOff
+                                                            : mdk::Player::ClipOn);
+                    mdk::log3dsPrintf("menu: cheats: gore %s, god %s, noclip %s",
+                                      cheatSwitches.gore ? "on" : "off",
+                                      cheatSwitches.god ? "on" : "off",
+                                      cheatSwitches.noclip ? "on" : "off");
+                } else if (action == mdk::CheatsMenu::Action::Closed) {
+                    mdk::log3dsPrintf("menu: cheats closed");
                 }
             } else if (menu.open() && (pressed & (KEY_X | KEY_Y))) {
                 // THE SAVES (package #19): X saves the level (F2 + Enter), Y loads the
@@ -2035,6 +2089,10 @@ int main(int argc, char** argv) {
                 } else if (action == mdk::EnhancedMenu::Action::MainMenu) {
                     menuMainMenu = true;
                     mdk::log3dsPrintf("menu: MAIN MENU chosen");
+                } else if (action == mdk::EnhancedMenu::Action::Cheats) {
+                    cheatSwitches.gore = g_gameSettings.gore;
+                    cheatsPage.setOpen(true);
+                    mdk::log3dsPrintf("menu: cheats opened");
                 } else if (action == mdk::EnhancedMenu::Action::Options) {
                     // The C# options pages, over the paused game, in the fonts the
                     // START menu draws with; their changes apply and save at once.
@@ -3001,6 +3059,9 @@ int main(int argc, char** argv) {
                 mdk::ScreenView view;
                 view.layoutInside(mdk_render_canvas_width(renderer), mdk::kCanvasHeight);
                 pauseOptions.draw(renderer, view, menuBig, menuSmall);
+            } else if (menu.open() && cheatsPage.open()) {
+                cheatsPage.draw(renderer, menuBig, menuSmall, mdk_render_canvas_width(renderer),
+                                cheatSwitches);
             } else if (menu.open()) {
                 menu.draw(renderer, menuBig, menuSmall, mdk_render_canvas_width(renderer),
                           enhancedToggles);

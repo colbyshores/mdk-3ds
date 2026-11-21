@@ -33,6 +33,7 @@
 #include "audio_stream_tests.h"
 #include "voice_binding_tests.h"
 #include "flow_tests.h"
+#include "cheats_tests.h"
 #include "menu_tests.h"
 #include "save_tests.h"
 #include "input_3ds_tests.h"
@@ -8191,6 +8192,14 @@ int main(int argc, char** argv) {
     // The formats library reaches the filesystem through this seam.
     mdk::formats::setFileSystem(mdk::test::host::fileSystem());
 
+    // `vm_tests dump-cheats typed|menu`: the typed cheats and the main menu's debug keys
+    // (cheats_tests.h), the C++ side of tests/scripts/cheats_probe -- how
+    // golden/cheats_typed.txt and golden/cheats_menu.txt are diffed.
+    if (argc > 2 && strcmp(argv[1], "dump-cheats") == 0) {
+        fputs(mdk::test::cheatsDump(argv[2]).c_str(), stdout);
+        return 0;
+    }
+
     // `vm_tests dump-menu <section>`: the menus (menu_tests.h), the C++ side of
     // tests/scripts/menu_probe -- how golden/menu_<section>.txt is diffed.
     if (argc > 2 && strcmp(argv[1], "dump-menu") == 0) {
@@ -8653,6 +8662,15 @@ int main(int argc, char** argv) {
     // Package #19's saves without game data: the record and the folder against the
     // C# (golden/save_flow.txt), the JSON float writer (golden/json_floats.txt), the
     // prompt, a death's LASTGAME and the menu's Continue, the safe write (save_tests.h).
+    // Package #21's cheats: TOOSCARYFORME / SEETHEWHOLEGAME (golden/cheats_typed.txt),
+    // the main menu's debug keys (golden/cheats_menu.txt), the 3DS CHEATS page and the
+    // main page's typed keys (cheats_tests.h).
+    const int cheatsFailures = mdk::test::runCheatsTests();
+    failures += cheatsFailures;
+    if (cheatsFailures == 0) {
+        printf("PASS CheatsMatchTheOracle\n");
+    }
+
     const int saveFailures = mdk::test::runSaveTests();
     failures += saveFailures;
     if (saveFailures == 0) {
