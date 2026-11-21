@@ -22,6 +22,15 @@
 
 namespace mdk {
 
+void input3dsScopeButtons(uint32_t held, const ControlBindings& bindings, Input* input) {
+    if (input == nullptr) {
+        return;
+    }
+    const uint32_t zoom = bindings.buttons[kKeyZoomIn] | bindings.buttons[kKeyZoomOut];
+    input->down[kKeyForward] = (held & bindings.buttons[kKeyForward] & ~zoom) != 0;
+    input->down[kKeyBack] = (held & bindings.buttons[kKeyBack] & ~zoom) != 0;
+}
+
 void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& bindings,
                    Input* input) {
     if (input == nullptr) {

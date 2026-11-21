@@ -4,6 +4,12 @@ Extracted from `docs/CONTINUATION.md` on 2026-10-29 so that file stays at
 "current state + priority order". Nothing here is new policy; each item records a
 measured or cited reason, and the batch that closes one should delete its entry.
 
+## Arena-entry stutter on the owner's New 3DS (2026-11-21): the top open item
+
+The owner's first play test showed severe stutter on entering a new area, which they read as textures thrashing in and out of memory. It has not been measured or fixed yet.
+- **Suspects:** the one-arena pixel stream's blocking finish, GPU-texture LRU eviction, and the 6 MiB HD budget. All three were sized for the Old 3DS.
+- **Method and handoff:** see `docs/WORK_LEDGER.md`, "PAUSE AND HANDOFF (2026-11-21)", item 1.
+
 ## Testability and the oracle harness
 
 - Oracle/goldens compare fixed table + script fields, not velocity, `alarm_ticks`,

@@ -95,3 +95,25 @@ All five runs are `hw_cycle.sh --capture`, FRESH.
 - grep -q exits at the first match. When the match is early and the session is large, printf still has chunks to write, dies of SIGPIPE, and the pipeline reads as failed.
 - MEAT_1's session was 48 KB with the line at 107 of 412.
 - Fixed with a here-string. The selftest gains a case that puts the line early in a session past a pipe buffer.
+
+## Step 4: level 8 cost sweep (dca4a031), and E14's audio
+
+`make -C mdk_3ds AUTOQUIT=90 LEVEL=8 PROFILE=1 [MONO=1] [TOGGLES=...]`, then `hw_cycle.sh --profile`. Kurt idle at spawn. All runs FRESH except the repeat baseline (see below). The baseline is step 1's 42.5 ms.
+
+| Change | Steady mean | vblanks 2:3 | sim / draw / end (ms) |
+|---|---|---|---|
+| baseline (step 1) | 42.5 | 897:1096 | 6.47 / 7.66 / 16.34 |
+| MONO=1 (one eye) | **33.5** | 2526:2 | 5.14 / 7.55 / 9.12 |
+| enableLighting=0 | **34.9** | 2226:200 | 5.44 / 7.61 / 13.71 |
+| enableSkyShadows=0 | **37.3** | 1778:490 | 5.80 / 7.67 / 14.46 |
+| enableEdgeSmoothing=0 | 39.9 | 1374:746 | 6.39 / 7.65 / 16.29 |
+| enableHaze / GlowBillboards / FragmentLights / Mirrors / Filtering / Mipmaps / HdTextures = 0 | 42.4–44.0 | — | no change, within spread |
+| every toggle off | 33.5 | 2566:6 | 6.63 / 7.41 / 13.39 |
+| every toggle off + MONO | 33.5 | 2569:1 | 6.16 / 7.42 / 6.79 |
+
+**Reading.**
+- Stereo, lighting and sky shadows are the costs. Each alone brings level 8 from mostly 3 vblanks to almost all 2 vblanks (30 fps).
+- Even everything off and mono stays at 2 vblanks. Then sim+draw is ~13.6 ms and end ~6.8 ms, just over one 16.7 ms vblank. So 60 fps on level 8 needs CPU work cut, not GPU features: the simulation is ~2.5 steps of ~2.5 ms, and the draw queueing is ~7.4 ms.
+- The repeat baseline (s-base-l8) read the selftest's fake log through `hw_cycle.sh`'s fixed `/tmp/mdk-hw-cycle.pull`: the selftest ran at the same time. The fix (pull beside `--out`) is in the next commit. The baseline itself was not re-run.
+
+**E14 audio** (`exp/hw-e14-rebased` 15a50cf6, `make AUTOQUIT=90 LEVEL=7`, `--once`): after 85.6 s, `audio: dsp ... restarts=0 dspframes=18282 dspdropped=0`. With both workers on core 1 (30% time limit) the music never starved. That was the owner's condition for merging E14 (2026-11-19). It is NOT merged yet, because E14 shows no frame gain at idle. Merge it, or measure it in a streaming scene first: the owner decides.

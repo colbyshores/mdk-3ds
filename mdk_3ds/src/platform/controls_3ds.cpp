@@ -107,10 +107,11 @@ ControlBindings defaultControlBindings() {
     bindings.buttons[kKeySniper] = kHidDUp;
     bindings.buttons[kKeyUseItem] = kHidDDown;
     bindings.buttons[kKeyTurbo] = kHidZL;
-    // The scope's zoom keys are unbound until the owner picks their buttons (gap
-    // package #5): zoom_in and zoom_out are written as `none`.
-    bindings.buttons[kKeyZoomIn] = 0;
-    bindings.buttons[kKeyZoomOut] = 0;
+    // The scope's zoom (owner 2026-11-21): X in, B out -- the circle pad already
+    // moves the scope's view, so forward/back have nothing to do in sniper mode,
+    // and input3dsScopeButtons gives their shared buttons to the zoom there.
+    bindings.buttons[kKeyZoomIn] = kHidX;
+    bindings.buttons[kKeyZoomOut] = kHidB;
     // Noclip's descent (the C#'s Key.Down, gap package #21) is unbound too: the cheat
     // is the pause menu's, and the owner picks its button.
     bindings.buttons[kKeyDown] = 0;

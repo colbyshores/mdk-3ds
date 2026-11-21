@@ -807,3 +807,48 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - Captures and the Linux comparisons are in `docs/evidence/2026-11-21-hardware-session.md` step 3.
   - All five gates are green.
 - **Commit:** this entry's commit.
+
+### Owner play test (2026-11-21): the scope zooms on X/B; hw_cycle pulls beside its --out
+- **What:**
+  - `defaultControlBindings` gives zoom_in=X and zoom_out=B.
+  - The new `input3dsScopeButtons` runs in main after the poll, only while `player.sniping()`. There, forward/back read only buttons NOT also bound to a zoom key, so X zooms instead of tilting (the circle pad already tilts the scope).
+  - `input_3ds_tests` covers the new defaults and the scope rule, including that controls.ini's own zoom buttons keep forward's tilt.
+  - `hw_cycle.sh`'s pull file is `$OUT.pull` instead of the fixed `/tmp/mdk-hw-cycle.pull`.
+- **Why:**
+  - The owner's first play of the release build on their New 3DS: "when in sniper mode X and B should zoom in and out (as the analogue stick can move the camera around)".
+  - The pull path: a selftest running at the same time as a console run made the console run read the fake console's log (hardware evidence step 4).
+- **Evidence:** the input tests (the digital-map table now expects X and B to also press zoom in/out), the 19-case hw_cycle selftest, and all five gates green.
+- **Owner's console:** their `sdmc:/3ds/mdk/controls.ini` was written by an older build and says `zoom_in=none zoom_out=none`, which overrides the new defaults. Edit those two lines to `X` and `B`, or delete the file so the next run writes the defaults.
+- **Commit:** this entry's commit.
+
+### PAUSE AND HANDOFF (2026-11-21): what is left
+The owner paused the session (weekly usage) to hand the project on. State at this entry's commit: everything above is committed. Local `main` = debef918 (fast-forwarded today), no push.
+
+**1. The arena-entry STUTTER: the top priority, owner-reported.** From the owner's first play test: "really really bad stuttering ... clearly loading textures in and out of RAM ... there should be a cache and thrashing should not be occurring." Not yet measured or fixed. What is known:
+- **Three layers can stall or thrash on an arena entry:**
+  - (a) `mdk_core/src/game/arena_stream.{h,cpp}`: ONE MTO arena's texture pixels are resident. A switch frees the old arena first, then streams 32 KiB a frame. A drawn arena whose stream isn't done is finished at once, blocking (counted as a stall).
+  - (b) GPU-texture LRU eviction (`mdk_3ds/src/render/c3d/04_textures.inc` `evictTextures`). An evicted texture is remade from its source on the next draw.
+  - (c) The HD replacements (04_textures.inc "THE HD STREAM"): `kHdBudgetBytes` = 6 MiB (`01_types.inc:122`), largest 341 KiB, so more than ~17 large replacements in view churn.
+- **All budgets were sized for the Old 3DS (64 MiB).** The owner plays on a New 3DS (124 MiB for homebrew, main heap capped by the 96 MiB OS_HEAP_AREA). These are linear FCRAM budgets, not VRAM: both models have the same 6 MB VRAM, and the textures here live in linear memory. So the New 3DS can afford far larger, never-thrashing caches; the Old 3DS still needs bounded ones.
+- **Owner's ideas:** a cache that never thrashes, async loading, show small mips while the 512x512s load. Owner rules: no main-thread stalls (async I/O, decode off-thread, time-budgeted uploads, show a resident fallback), memory over texture precision, performance over accuracy, both console models must work.
+- **Method:** measure FIRST on the appliance with the arena-entry table. The level 7 route over two doorways (09c8ed80): `make -C mdk_3ds AUTOQUIT=90 LEVEL=7 FIXED=1 PROFILE=1 WALK='forward+turbo@60-260;turnright@270-307;forward+turbo@320-552;turnleft@562-599;forward+turbo@612-720;turnleft@730-770;forward+turbo@785-990;turnright@1000-1035;forward+turbo@1050-1300'`, then `hw_cycle.sh --profile`. Run it with HD on and with `TOGGLES=enableHdTextures=0`. Find the layer, then design: e.g. budgets from free memory at boot, keep the corridor pair's arenas resident across a doorway, prefetch the neighbour from the scripts' second-arena/opcode-223 signal, never block on an HD copy.
+- **Partial work:** an agent started on this and was stopped by the pause. It left UNCOMMITTED, UNVERIFIED instrumentation edits in `.claude/worktrees/agent-aa9c0555e90e42ef9` (Makefile, main_3ds.cpp, harness_3ds.{h,cpp}, 01_types.inc). Read them or discard them; nothing depends on them.
+
+**2. Ship the zoom fix to the owner.** Build a release `.3dsx` and upload it to the owner's New 3DS (ftpd-pro :5000; its DHCP address moves, it was 192.168.4.90 today; list the SD to confirm) at `sdmc:/3ds/mdk.3dsx`, and fix their controls.ini as above.
+
+**3. Performance (hardware evidence steps 1–4).**
+- Old-3DS steady frames at spawn, stereo on: L3 35.6, L4 16.7, L8 42.5, L5 33.5, L6 22.3, L7 26.9 ms.
+- On level 8, stereo (−9 ms), lighting (−7.6) and sky shadows (−5) are the costs. With everything off it is still 2 vblanks, CPU-bound: sim ~6.5 ms and draw queueing ~7.4 ms. The `end` span is the per-eye command REPLAY (CPU), not GPU wait.
+- **Next:** profile the replay and the draw queueing (the dedupe counters in the profile log); level 5 combat runs the script runtime at ~2.2 ms per step and 4–5 steps per frame. The owner decides which toggles stay on the Old 3DS by default, from step 4's table.
+- **E11 (baked light)** `exp/hw-e11-rebased` 81832d85: it looks the same on hardware but saves no frame time. Parked.
+- **E14 (workers on core 1)** `exp/hw-e14-rebased` 15a50cf6: no audio starvation (dspdropped 0, restarts 0) and no frame gain at idle. It meets the owner's merge condition; the owner decides.
+
+**4. Still open from the port.**
+- The bullet holes on level 8's GUNT_10 turret: inconclusive on every platform (the AIM shortcut's pitch is the suspect; compare a C# viewer frame).
+- Owner decisions: noclip "down" button, the sniper round-camera insets on the 3DS, and the boss intros aiming at the origin (needs the original EXE in Ghidra).
+- The ends of levels 6 and 7, and doors/lifts/pickups, were only covered by teleports in the emulator playthrough; play them on hardware.
+- A compile-only gate for the harness variants (PROFILE, CAPTURE, MONO): `PROFILE=1` bit-rotted unseen for a day.
+- The frontend refactor (main_3ds.cpp sprawl) waits until after the performance work.
+- CIA packaging and testing come last.
+
+**5. Worktrees and branches from today** (all local, under `.claude/worktrees/`): `hw-session` (detached at dca4a031, used by the console runs), `hw-e11`, `hw-e14`, `agent-a929628fc005c0d8f` (the playthrough, merged), `agent-aa9c0555e90e42ef9` (stopped stutter work). The console runs' raw logs are in the session scratchpad (`scratchpad/hw/`), which a reboot clears. The numbers that matter are copied into `docs/evidence/2026-11-21-hardware-session.md`.
