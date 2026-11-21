@@ -13,13 +13,15 @@
 // UpdateMuzzle and the SHOT / RUN_FIRE states; the hits are the scripts
 // runtime's ScriptRuntime::fireChainGun), and the items (Kurt.UpdateItems and the
 // THROW state, whose ItemUsed reaches the scripts runtime's Items through
-// ItemHooks). The states whose branches belong to other subsystems (the ride,
-// the beta moves) are not reachable here, and the C#'s branches on them are taken
-// the way they are false. The fans' updraft (Kurt.Updraft.cs) and the wind zones'
-// slide (Kurt.Slide.cs) are ported (package 8): the scripts runtime answers the
-// updraft through UpdraftHook and starts, pushes and stops the slide. The ledges
-// (Kurt.Ledge.cs: the grab, the hang and the climb) are ported in
-// game/player_ledge.cpp (package 12).
+// ItemHooks). The states whose branches belong to other subsystems (the beta
+// moves) are not reachable here, and the C#'s branches on them are taken the way
+// they are false. The ride (Kurt.Ride.cs) is ported (package 9): Walk::Riding in
+// the XD2 (scripts/rides.cpp mounts him), and the RideHook seam the snowboard and
+// the bomber (packages 10, 11) step him through. The fans' updraft
+// (Kurt.Updraft.cs) and the wind zones' slide (Kurt.Slide.cs) are ported
+// (package 8): the scripts runtime answers the updraft through UpdraftHook and
+// starts, pushes and stops the slide. The ledges (Kurt.Ledge.cs: the grab, the
+// hang and the climb) are ported in game/player_ledge.cpp (package 12).
 //
 // Units and convention match the C#: world units, Z up; Yaw in degrees,
 // counter-clockwise, Facing = (cos yaw, sin yaw, 0); the follow camera's pitch
@@ -58,8 +60,10 @@ public:
     bool frozen = false;
     // C# Kurt.Visible (Kurt.Combat.cs:90): KurtSprite draws him only while it is set
     // (KurtSprite.cs:182). The cutscenes hide him except in the strike and the end of the
-    // game (ScriptRuntime::cutsceneTick) and show him again at their end; the rides'
-    // writers (Rides.cs:178, :187, Kurt.Ride.cs:81, :95) are packages 9-11.
+    // game (ScriptRuntime::cutsceneTick) and show him again at their end. The rides
+    // hide him in the XD2 (Rides.cs:178, scripts/rides.cpp, package #9) and show him
+    // when he gets out (Kurt.Ride.cs:81, :95: jumpOff, getOffBoard); the XE's (Rides.cs:187)
+    // is package #11's.
     bool visible = true;
     // C# Kurt.Rising (Kurt.Ride.cs:38): the end of a level is lifting him, so the
     // follow camera holds no air tilt (FollowCamera.cs:113-117).
@@ -71,6 +75,42 @@ public:
     bool hasPose = false;
     const char* poseName = nullptr;
     int32_t poseFrame = 0;
+    // ---- Rides (C# Kurt.Ride.cs, package #9) ----
+    // C# Kurt.Walk / Kurt.Walking (Kurt.Ride.cs:20, 29): in the XD2 Kurt walks
+    // hidden, without strafing, jumping, items or the gun (update() takes the C#'s
+    // `Walking == Walk.Riding` arms, Kurt.cs:207 and :228). scripts/rides.cpp sets it.
+    enum Walk { WalkNormal, WalkRiding };
+    Walk walkMode = WalkNormal;
+    // C# Kurt.RideKeys (Kurt.Ride.cs:23): what a walker ride reads, written each
+    // riding step -- steering (forward or turn held) and fire.
+    struct RideKeys {
+        bool steer = false;
+        bool fire = false;
+    };
+    const RideKeys& rideKeys() const { return _rideKeys; }
+    // C# Kurt.Ride (Kurt.Ride.cs:27, Action<Input, float>): a ride's step (the
+    // snowboard, the bomber; packages #10 and #11) instead of walking. §10 forbids the
+    // delegate, so it is a function pointer over a context, the UpdraftHook shape.
+    // Null is the C#'s null delegate: Kurt walks. Nothing in this package sets it.
+    struct RideHook {
+        void* context = nullptr;
+        void (*step)(void* context, const Input& input, float delta) = nullptr;
+    };
+    void setRideHook(const RideHook& hook) { _rideHook = hook; }
+    const RideHook& rideHook() const { return _rideHook; }
+    // C# Kurt.Glide (Kurt.Ride.cs:50): a ride's move at `velocity` (u/s) -- the walk
+    // move against the arena and the objects, sticking to downhill floors, gravity
+    // and the fall. The snowboard's (package #10).
+    void glide(const Vec3& velocity, float delta);
+    // C# Kurt.UpdateGun (Kurt.Ride.cs:71): the chain gun and its flash on the board.
+    void updateGun(const Input& input, float delta);
+    // C# Kurt.JumpOff (Kurt.Ride.cs:78): out of the XD2, a running jump forward
+    // (40 u/s up, 20 u/s ahead).
+    void jumpOff();
+    // C# Kurt.GetOffBoard (Kurt.Ride.cs:89): off the board or the bomber, keeping the
+    // ride's speeds (u/s) as his walking ones.
+    void getOffBoard(float forward, float strafe);
+    // ---- end of rides ----
     float forwardSpeed = 0.0f;
     float strafeSpeed = 0.0f;
     float turnRate = 0.0f;     // degrees/s
@@ -195,8 +235,8 @@ public:
 
     // C# Kurt.StopFiring (Kurt.Combat.cs:183): sniper mode ends (silently), the gun
     // stops, its looped voice is stopped and the muzzle flash goes. Public as in the C#:
-    // the knock-down, the hard landing and the death call it here, and the cutscene, the
-    // level's end and the rides call it from the scripts runtime when those slices land.
+    // the knock-down, the hard landing and the death call it here, and the level's end and
+    // the rides (scripts/rides.cpp) call it from the scripts runtime; the cutscenes will.
     void stopFiring();
 
     // ---- Sniper mode (src/Mdk.Game/Kurt/Kurt.Sniper.cs; game/player_sniper.cpp) ----
@@ -423,6 +463,10 @@ private:
     ArenaSpace::Result contact(const ArenaSpace::Result& result);
     // C# Kurt.UpdateTouched (Kurt.Ride.cs:133).
     void updateTouched();
+    // C# Kurt.RideWalker (Kurt.Ride.cs:101): in the XD2, gravity and the fall only.
+    void rideWalker(const Input& input, float forward, float delta);
+    RideKeys _rideKeys;
+    RideHook _rideHook;
     // Kurt.Keeper.cs: CheckKeeper, KeptPlatform, KeepOn, StayOnKeeper, Kept.
     bool keeperAt(scripts::MdkObject* owner, Vec3* at) const;
     void checkKeeper();

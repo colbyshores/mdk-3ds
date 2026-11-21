@@ -428,6 +428,7 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
     // depth, after nothing that has an effect, so returning first is the same draw and
     // asks the frame stream for nothing. `kurt.Sniping` hides him too (the same
     // line): the scope's view is from his own eye (game/sniper_view.h, package #7).
+    // The XD2 hides him through Visible (package #9, scripts/rides.cpp).
     if (!player.visible || player.sniping()) {
         return false;
     }

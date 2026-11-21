@@ -4674,6 +4674,246 @@ bool kurtPlatformsDump(int level, int steps, const std::string& schedule, const 
 }
 // ---- end of the platforms dump (package #3) ------------------------------------------
 
+// ---- the rides dump (package #9) ---------------------------------------------------
+// Kurt and the walker ride, end to end against the oracle probe (tests/scripts/ride_probe):
+// the C++ Player, ScriptRuntime and FollowCamera stepped at 1/60 s in the C# Viewer's order
+// (Kurt, the scripts -- whose update ends with Rides::follow -- then the camera), under the
+// probe's schedule: the key holds (`key:from-to`), `tp:step:ARENA:x:y:z:yaw`
+// (teleportKurt), `ride:step:TYPE` (Rides::rideWalker on the first live object of that
+// type, the tests' --ride), `off:step:TYPE` (its rideable flag cleared, as its script
+// does), `kill:step:TYPE` (ScriptRuntime::kill, the tests' --kill) and `hit:step:DAMAGE`
+// (ScriptRuntime::hurtKurt), each before its step. Its columns are the probe's, byte for
+// byte:
+//
+//   state ... floor  Kurt's state, feet (1/64 units), yaw, forward/strafe/vertical speeds.
+//   walk vis keys    Player::walkMode (N/R), visible, the ride keys (steer, fire).
+//   fire hp          the chain gun, Kurt's health.
+//   ride ride171     Rides.Ridden, and whether it is the walker (opcode 171's answer).
+//   hits alarm       Rides.TakesHits, the alarm countdown the XD2's fire raises.
+//   touched          Kurt.Touched (what TryMount reads).
+//   walker           the first XD2/XD the level spawned: where it is (1/64), yaw, flags,
+//                    animation rate, health, script position, dead.
+//   cam64 pitch      the follow camera's position (1/64) and its eased arena and air pitch,
+//                    eased toward the arena's rest pitch (see the probe on camera_track).
+//   track            the scripts' camera_track ticks (opcode 203).
+//   voices           the mixer's voices: DUMMY while steering, ALERT while firing.
+bool kurtRideDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                  const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    struct RideAction {
+        int step;
+        std::string kind;
+        std::string arg;
+        std::string arena;
+        Vec3 at;
+        float yaw;
+    };
+    std::vector<RideAction> actions;
+    std::string keys;
+    size_t start = 0;
+    while (start < schedule.size()) {
+        size_t end = schedule.find(',', start);
+        if (end == std::string::npos) {
+            end = schedule.size();
+        }
+        const std::string token = schedule.substr(start, end - start);
+        start = end + 1;
+        std::vector<std::string> fields;
+        size_t at = 0;
+        while (at <= token.size()) {
+            size_t colon = token.find(':', at);
+            if (colon == std::string::npos) {
+                colon = token.size();
+            }
+            fields.push_back(token.substr(at, colon - at));
+            at = colon + 1;
+        }
+        const std::string& kind = fields[0];
+        if (kind == "tp" && fields.size() == 7) {
+            RideAction a;
+            a.step = atoi(fields[1].c_str());
+            a.kind = kind;
+            a.arena = fields[2];
+            a.at = Vec3{strtof(fields[3].c_str(), nullptr), strtof(fields[4].c_str(), nullptr),
+                        strtof(fields[5].c_str(), nullptr)};
+            a.yaw = strtof(fields[6].c_str(), nullptr);
+            actions.push_back(a);
+        } else if ((kind == "ride" || kind == "off" || kind == "kill" || kind == "hit") &&
+                   fields.size() == 3) {
+            RideAction a;
+            a.step = atoi(fields[1].c_str());
+            a.kind = kind;
+            a.arg = fields[2];
+            a.at = Vec3{0.0f, 0.0f, 0.0f};
+            a.yaw = 0.0f;
+            actions.push_back(a);
+        } else {
+            keys += (keys.empty() ? "" : ",") + token;
+        }
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<ItemsPush> pushes;
+    if (!parseItemsSchedule(keys, &holds, &gives, &pushes) || !gives.empty() || !pushes.empty()) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* place = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{place[0], place[1], place[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+    // Viewer.cs:237: the follow camera over the same space (no ClipView in either tree).
+    FollowCamera follow;
+    Camera camera;
+
+    // The probe's FirstOf: the first live object of that type, in list order.
+    const auto firstOf = [&runtime](const std::string& type) -> scripts::MdkObject* {
+        std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            if (!objects[i].dead && objects[i].type_name == type) {
+                return &objects[i];
+            }
+        }
+        return nullptr;
+    };
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    const scripts::MdkObject* walker = nullptr;
+    char buffer[1024];
+    for (int step = 1; step <= steps; step++) {
+        // The probe's order: the teleports of the step, then its other actions.
+        for (size_t i = 0; i < actions.size(); i++) {
+            if (actions[i].step == step && actions[i].kind == "tp") {
+                runtime.teleportKurt(actions[i].arena, actions[i].at, actions[i].yaw);
+            }
+        }
+        for (size_t i = 0; i < actions.size(); i++) {
+            const RideAction& a = actions[i];
+            if (a.step != step || a.kind == "tp") {
+                continue;
+            }
+            if (a.kind == "hit") {
+                runtime.hurtKurt(atoi(a.arg.c_str()));
+                continue;
+            }
+            scripts::MdkObject* obj = firstOf(a.arg);
+            if (obj == nullptr) {
+                continue;
+            }
+            if (a.kind == "ride") {
+                runtime.rides().rideWalker(obj);
+            } else if (a.kind == "off") {
+                obj->flags &= ~scripts::Rides::kFlagRideable;
+            } else if (a.kind == "kill") {
+                runtime.kill(obj);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        // The arena's rest pitch, not camera_track's: see the probe (opcode 203's atan2 is
+        // the LUT's here, a ULP or two off MathF.Atan2, and the eased pitch carries it).
+        follow.update(&camera, &space, player, levelData.arenaPitch(runtime.currentArena()),
+                      1.0f / 60.0f, 4.0f / 3.0f);
+
+        if (walker == nullptr) {
+            const std::deque<scripts::MdkObject>& objects = runtime.objects();
+            for (size_t i = 0; i < objects.size() && walker == nullptr; i++) {
+                if (objects[i].type_name == "XD2" || objects[i].type_name == "XD") {
+                    walker = &objects[i];
+                }
+            }
+        }
+        std::string touched;
+        for (size_t i = 0; i < player.touched().size(); i++) {
+            touched += (i ? "|" : "") + platformName(player.touched()[i]);
+        }
+        char w[256];
+        if (walker == nullptr) {
+            snprintf(w, sizeof(w), "-");
+        } else {
+            snprintf(w, sizeof(w), "%s@%d,%d,%d/y%.4f/f%X/a%.4f/hp%d/r%d/d%d",
+                     platformName(walker).c_str(), p64(walker->position.x),
+                     p64(walker->position.y), p64(walker->position.z), walker->yaw,
+                     (unsigned)walker->flags, walker->animation_rate, (int)walker->health,
+                     (int)walker->restart, walker->dead ? 1 : 0);
+        }
+        const scripts::MdkObject* ridden = runtime.rides().ridden();
+        const Kurt& combat = player.combat();
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d arena=%s state=%s feet64=%d,%d,%d yaw=%.4f fs=%.4f ss=%.4f vz=%.4f "
+                 "floor=%d walk=%s vis=%d keys=%d%d fire=%d hp=%d ride=%s ride171=%d hits=%d "
+                 "alarm=%d touched=%s walker=%s cam64=%d,%d,%d pitch=%.4f,%.4f track=%d objs=%d "
+                 "voices=",
+                 step, runtime.currentArena().c_str(), kurtStateName(player.state()),
+                 p64(player.feet.x), p64(player.feet.y), p64(player.feet.z), player.yaw,
+                 player.forwardSpeed, player.strafeSpeed, player.verticalSpeed,
+                 player.onFloor ? 1 : 0, player.walkMode == Player::WalkRiding ? "R" : "N",
+                 player.visible ? 1 : 0, player.rideKeys().steer ? 1 : 0,
+                 player.rideKeys().fire ? 1 : 0, combat.firing() ? 1 : 0, player.health(),
+                 platformName(ridden).c_str(), walker != nullptr && ridden == walker ? 1 : 0,
+                 runtime.rides().takesHits() ? 1 : 0, (int)runtime.alarmTicks,
+                 touched.empty() ? "-" : touched.c_str(), w, p64(camera.position.x),
+                 p64(camera.position.y), p64(camera.position.z), follow.arenaPitch(),
+                 follow.airPitch(), (int)runtime.cameraTrackTicks, runtime.objectCount());
+        *out += buffer;
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& live = runtime.mixer().voices();
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) {
+                voices += ",";
+            }
+            voices += live[i].name;
+        }
+        *out += voices.empty() ? "-" : voices;
+        *out += "\n";
+    }
+    return true;
+}
+// ---- end of the rides dump (package #9) ----------------------------------------------
+
 // Kurt in the fans' updrafts and the wind zones' slide, end to end against the oracle probe
 // (tests/scripts/wind_probe): the C++ Player and ScriptRuntime stepped at 1/60 s in the C#
 // Viewer's order (Kurt, the scripts, then ArenaSpace.SetSolid(SolidArenas)) from a placed
@@ -6846,6 +7086,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "ride") {
+            // `tick1 dump ride <level> <steps> <schedule>`: kurtRideDump's text, the C++
+            // side of the rides probe (package #9).
+            std::string got;
+            std::string why;
+            if (!kurtRideDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                              &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "sniperiris") {
             // `tick1 dump sniperiris <level> <steps>`: the rounds probe's `iris` mode.
             std::string got;
@@ -8606,6 +8859,71 @@ int main(int argc, char** argv) {
         }
     }
     // ---- end of package #3 -------------------------------------------------------------
+
+    // The rides probe's goldens (tests/scripts/ride_probe; see kurtRideDump for the columns),
+    // package #9. Each case is the probe's command line. L7 DANT_9's XD2: killed (its death
+    // script, 127789), it turns to face Kurt and makes itself rideable while he is behind it
+    // (127906); Kurt mounts it on touching it, and its script branches on opcode 171 (127847 ->
+    // 128004: health 50, the doors, then 128092 waiting for Kurt in the rect by the guards).
+    // Kurt's yaw is 90 at every mount (the XD2's own), so his walk goes through the trig LUT
+    // only where a schedule turns him: the feet's 1/64 columns absorb that (as
+    // L7_plat_door's walk does), and the turned walks below were checked byte for byte.
+    {
+        struct RideCase {
+            const char* golden;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* what;
+        };
+        static const RideCase kRideCases[] = {
+            // The whole ride: firing, Kurt runs into the rideable XD2 and does not get in
+            // (TryMount refuses while Kurt.Firing); he lets go and is in (hidden, Walk.Riding,
+            // 171 true, hits to the walker); it follows him (DUMMY while he steers); his fire
+            // is its alarm (ALERT, AlarmTicks 10, flag 1); jump and strafe do nothing; he
+            // turns it; teleported beside the guards' rect he drives in, its script waits
+            // 3.5 s, clears the flag and he jumps out (JumpOff), then it blows up (knocked).
+            {"L7_ride_xd2", 7, 700,
+             "tp:1:DANT_9:45:4868:-25:90,kill:60:XD2,fwd:200-235,fire:200-224,fire:245-252,"
+             "jump:262-270,sleft:262-280,left:282-292,fwd:285-300,tp:320:DANT_9:162:4880:-37:90,"
+             "fwd:330-420",
+             "Kurt mounts the XD2, rides, steers, fires its alarm and jumps out (171 true, "
+             "then false)"},
+            // Hits on Kurt go to the XD2 (HurtKurt -> TakesHits): 30 takes it to 20, 30 more
+            // kills it, Rides.Lost puts him out with a running jump and 50 damage.
+            {"L7_ride_lost", 7, 400,
+             "tp:1:DANT_9:45:4868:-25:90,kill:60:XD2,fwd:200-235,hit:250:30,hit:270:30,"
+             "fwd:300-320",
+             "the XD2 takes Kurt's hits and its loss throws him out (Rides.Lost)"},
+            // The tests' --ride (Rides.RideWalker) on the live XD2, steered at its yaw of
+            // 321 and turned, then its rideable flag cleared: he jumps out. The live walker
+            // then turns to face him through turn_to_target_offset (opcode 235's atan2, the
+            // LUT's here and a ULP off the oracle's from step 132), so the run stops at 128.
+            {"L7_ride_test", 7, 128,
+             "tp:1:DANT_9:45:4868:-25:90,ride:30:XD2,fwd:40-80,right:60-70,off:120:XD2",
+             "Rides.RideWalker mounts the live XD2; a cleared flag lets Kurt out"},
+        };
+        for (size_t i = 0; i < sizeof(kRideCases) / sizeof(kRideCases[0]); i++) {
+            const RideCase& c = kRideCases[i];
+            const std::string path = std::string("golden/") + c.golden + ".txt";
+            std::string expected;
+            std::string got;
+            std::string why;
+            if (!readText(path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.golden, path.c_str());
+                failures++;
+            } else if (!kurtRideDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.golden, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.golden, c.what);
+            } else {
+                printf("FAIL %s: %s\n", c.golden, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+    // ---- end of package #9 -------------------------------------------------------------
 
     // The end of a level, end to end against the oracle probe (tests/scripts/end_probe; see
     // levelEndDump for the columns): special_event <= 50 -> EndTheLevel -> EndLevel.cs, and

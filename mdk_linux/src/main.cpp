@@ -2399,11 +2399,12 @@ int main(int argc, char** argv) {
             // so alpha 1 -- which transform_at answers with the raw transform -- is
             // the capture's own picture, byte for byte.
             //
-            // What is NOT here is the other half of TransformOf: `obj == _driven`
-            // draws the object shifted by the step's lag, which needs Rides (the
-            // ridden object) and FrameBlend's Kurt pose, neither of which this port
-            // has. ScriptRuntime::ridesRidden_ is null for every tick of every
-            // shipped level, so the oracle does not take that branch either here.
+            // The other half of TransformOf: `obj == _driven` (the XD2 Kurt rides,
+            // package #9) is drawn at its own transform shifted by Kurt's lag between
+            // two steps. This port draws Kurt at Player::feet (FrameBlend's Kurt pose is
+            // not ported), so his lag is zero and the driven object is drawn at its
+            // current transform -- alpha 1 -- where Rides::follow put it after the
+            // step, under the camera that follows the same feet.
             const float tickAlpha = fixedStep ? 1.0f : runtime->tick_blend(pending);
             objectStream.reset();
             for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
@@ -2413,7 +2414,8 @@ int main(int argc, char** argv) {
                 if (!obj.visible || runtime->isRemoved(&obj)) {
                     continue;
                 }
-                objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(tickAlpha),
+                const float alpha = &obj == runtime->rides().driven() ? 1.0f : tickAlpha;
+                objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
                                      &objectStream);
             }
             if (strikeFrame) {

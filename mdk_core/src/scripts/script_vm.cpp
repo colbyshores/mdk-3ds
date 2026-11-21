@@ -1855,9 +1855,8 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, compare((float)obj->health, listval(op(ins, 0))));
         case 241:  // if_player_health: compare Kurt's health
             return branch(obj, ins, compare((float)runtime_.kurt().health(), listval(op(ins, 0))));
-        case 171:  // if_is_573c30: true when obj is the object Kurt rides (Rides.Ridden).
-                   // The ride slice is unported, so ridesRidden() is null and this is
-                   // false for every object -- the same value the C# reads on foot.
+        case 171:  // if_is_573c30: true when obj is the object Kurt rides (Rides.Ridden,
+                   // ScriptVm.cs:1712): the XD2 he is in (scripts/rides.cpp, package #9).
             return branch(obj, ins, runtime_.ridesRidden() == obj);
         case 213: {  // if_partner_distance: zero without a live linked object
             float distance = 0.0f;

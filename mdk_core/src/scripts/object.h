@@ -302,8 +302,9 @@ struct MdkObject {
     //   ported as ScriptRuntime::partBounds (it uses no runtime state, but lives
     //   beside the other blast geometry).
     //   FrameBlend's OTHER half -- Kurt's blended feet and yaw (Record/Update/
-    //   Turn/KurtAt) and the driven-carrier offset TransformOf adds -- which needs
-    //   Rides and Kurt.Teleports; see game/frame_blend.h.
+    //   Turn/KurtAt) and the driven-carrier offset TransformOf adds (zero while
+    //   Kurt is drawn at his feet; the frontends draw Rides::driven() at alpha 1);
+    //   see game/frame_blend.h.
     // Animation, pose_bounds(), sound_position(), distance_to(), part_center(),
     // and yaw_to() are implemented in ScriptRuntime, SoundMixer, or this class.
     // sound_position() and distance_to() are inlined/owned elsewhere, not members

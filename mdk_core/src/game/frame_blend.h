@@ -10,8 +10,8 @@
 //   * the three statics below — the lerp, the shortest-way-around angle lerp and
 //     the jump test — which MdkObject uses for its own tick-to-tick interpolation
 //     (position_at/yaw_at/transform_at);
-//   * Kurt's blended feet and yaw (Record/Update/Turn/KurtAt), which needs the
-//     carrier and ride state (Rides, Kurt.Teleports) this port does not have.
+//   * Kurt's blended feet and yaw (Record/Update/Turn/KurtAt), over the carrier
+//     and the ride (scripts/rides.h, package #9) and Kurt.Teleports -- not ported.
 //
 // Only the first half is here, because only the first half has a caller: the
 // object pass. The second is deferred with its subsystem (docs/OPEN_ITEMS.md),

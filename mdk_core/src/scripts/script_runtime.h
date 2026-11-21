@@ -54,6 +54,7 @@
 #include "scripts/fans.h"
 #include "scripts/game_stats.h"
 #include "scripts/object.h"
+#include "scripts/rides.h"
 #include "scripts/script_vm.h"
 #include "scripts/sniper_rounds.h"
 #include "scripts/strike_scene.h"
@@ -437,9 +438,7 @@ public:
     Kurt& kurt();
     // C# HurtKurt (ScriptRuntime.cs:2676, 0x46a498): riding the XD2 or the XE,
     // the ridden object takes the hits instead of Kurt; on foot or on the board,
-    // Kurt does. Rides is a later slice — nothing mounts Kurt yet — so ridesRidden
-    // stays null and Kurt takes every hit, which is what the C# reads while
-    // nothing is ridden.
+    // Kurt does (Rides.TakesHits, scripts/rides.h; package #9).
     void hurtKurt(int32_t damage);
     // push_kurt (opcode 248, ScriptRuntime.cs:2826-2852, dispatched at
     // ScriptVm.cs:1600): knock Kurt down and shove him. It is the ONLY writer of a
@@ -588,10 +587,11 @@ public:
     void selectTarget(MdkObject* obj);
     MdkObject* alienTarget() const { return alienTarget_; }
     void setAlienTarget(MdkObject* obj) { alienTarget_ = obj; }
-    // Rides.Ridden (Rides.cs:40): the object Kurt rides, or null on foot. The ride
-    // slice is unported, so this is null on every tick of the corpus; opcode 171
-    // (if_is_573c30) branches on it and reads the same value the C# does.
-    MdkObject* ridesRidden() const { return ridesRidden_; }
+    // Rides.Ridden (Rides.cs:40): the object Kurt rides, or null on foot; opcode 171
+    // (if_is_573c30) branches on it. C# ScriptRuntime.Rides (package #9).
+    MdkObject* ridesRidden() const { return rides_.ridden(); }
+    Rides& rides() { return rides_; }
+    const Rides& rides() const { return rides_; }
     // The first live object of obj's arena whose type matches (C# FirstOther with
     // instance = AnyInstance): face_mode 3 copies its yaw. Null when none.
     MdkObject* firstOther(MdkObject* obj, const std::string& type, int32_t instance = -1);
@@ -889,7 +889,7 @@ public:
     // resolve (its C# Named() answers null) rather than a list this function emptied. The
     // snowboard half is the oracle's too: on the board Kurt collides with his own
     // arena ALONE (ScriptRuntime.cs:274-280), so the active second drops out. The
-    // ride slice is unported, so ridesBoard_ is false on every tick of the corpus
+    // snowboard is package #10, so rides_.onBoard() is false on every tick of the corpus
     // and that branch cannot be reached yet -- it is here so the rule is the C#'s on
     // the day the board lands, and it is the one case where a one-name pin IS the
     // oracle's value.
@@ -1133,6 +1133,7 @@ private:
     std::vector<const formats::Texture*> stamped_;
     TextureStampedHook textureStampedHook_ = nullptr;
     void* textureStampedUser_ = nullptr;
+    friend class Rides;
     // C# AimScore (:2029, 0x41ab2c): a box is a target when it is within its size + 140
     // of the origin, inside a cone around Kurt's yaw that is wider for big and close boxes,
     // and visible. Its score (squared distance, height counting double; lower is better),
@@ -1347,12 +1348,8 @@ private:
     // passes a null Player): kurt() falls back to this, and there is no second
     // copy of it anywhere. With a Player bound, kurt() IS the entity's own.
     Kurt unboundKurt_;  // C# ScriptRuntime.Kurt — the combat/inventory slice (game/kurt.h)
-    // Rides.Ridden (Rides.cs:40) and Rides.OnBoard (Rides.cs:89): the ridden
-    // object, and whether it is the snowboard. The ride slice (mount/dismount)
-    // is unported, so both stay at these values — what the C# reads while Kurt
-    // rides nothing, which is every tick of the corpus.
-    MdkObject* ridesRidden_ = nullptr;
-    bool ridesBoard_ = false;
+    // C# ScriptRuntime.Rides (package #9): what Kurt rides (scripts/rides.h).
+    Rides rides_{*this};
     Vec3 targetPosition_{};
     Vec3 previousKurtPosition_{};  // C# _previousKurtPosition
     // C# _teleported (:316): set by TeleportKurt and read once, by the first-tick rule

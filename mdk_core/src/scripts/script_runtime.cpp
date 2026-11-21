@@ -399,6 +399,9 @@ void ScriptRuntime::update(float delta) {
         runTick();
         tickCount_++;
     }
+    // Rides.Follow (ScriptRuntime.cs:392, package #9): each step, after the ticks, the
+    // XD2 is where Kurt is.
+    rides_.follow();
 }
 
 float ScriptRuntime::tick_blend(float ahead) const {
@@ -742,6 +745,9 @@ void ScriptRuntime::runTick() {
     // KurtTouchesGroups (ScriptRuntime.cs:936), after UpdateArenas and before
     // Rides.Update and CollectPickups (package #3).
     kurtTouchesGroups();
+    // Rides.Update (ScriptRuntime.cs:937, package #9): getting on, riding the XD2,
+    // getting off -- after Kurt moved, before the pickups and the objects.
+    rides_.update();
 
     // ScriptRuntime.cs:945-946 records Kurt's observed feet delta before the
     // object scripts run. The C# computes it after CollectPickups; pickups and
@@ -755,7 +761,7 @@ void ScriptRuntime::runTick() {
     // first tick after a load observes no movement. The snapshot slice must
     // reset previousKurtPosition_ the same way.
     // CollectPickups (ScriptRuntime.cs:940-943): from the second tick on, after
-    // KurtTouchesGroups and Rides.Update (neither ported) and BEFORE the velocity
+    // KurtTouchesGroups and Rides.Update and BEFORE the velocity
     // write below, because it reads the segment from the previous position.
     if (tickCount_ > 0) {
         collectPickups();
@@ -996,14 +1002,14 @@ void ScriptRuntime::updateDrawnArenas() {
     // object of every arena the scripts had ever shown was drawn, wherever Kurt was
     // -- and it is what lets the frontends keep only the drawn arenas' textures
     // (game/arena_views.h). The C#'s other term, `!Rides.Hides(obj)` (the bomber's
-    // XE once the view is inside it), is unported with the rides (there is no
-    // Bomber here to hide anything), so the term is true.
+    // XE once the view is inside it), is rides_.hides(), false until the bomber
+    // (package #11) lands.
     for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
         bool drawn = false;
         for (size_t i = 0; i < drawnArenas_.size() && !drawn; i++) {
             drawn = drawnArenas_[i] == it->arena;
         }
-        it->visible = drawn;
+        it->visible = drawn && !rides_.hides(&(*it));
     }
 }
 
@@ -1014,14 +1020,14 @@ const std::vector<std::string>& ScriptRuntime::solidArenas() const {
     // a door or an arena_show that ran later in the tick would have moved). On the
     // board it is drawn[0] alone (:274-280), and drawn[0] is always the current arena
     // because :660 adds it unconditionally -- so the board case is this list without the
-    // second, which is what the `!ridesBoard_` half below encodes. The ride slice is
-    // unported, so ridesBoard_ is false on every tick the corpus has and that half is
+    // second, which is what the `!rides_.onBoard()` half below encodes. The snowboard is
+    // package #10, so onBoard() is false on every tick the corpus has and that half is
     // not reachable yet; it is here so the rule is the C#'s the day it lands.
     //
     // Before the first tick drawnArenas_ is empty and so is the C#'s _drawnArenas:
     // ArenaSpace::setSolid then clears its pin and Kurt collides with the arenas around
     // his feet, in both trees.
-    if (!ridesBoard_) {
+    if (!rides_.onBoard()) {
         return drawnArenas_;
     }
     solidArenas_.clear();
@@ -3811,16 +3817,15 @@ Kurt& ScriptRuntime::kurt() { return player_ ? player_->combat() : unboundKurt_;
 
 // C# HurtKurt (ScriptRuntime.cs:2676, 0x46a498): riding the XD2 or the XE the
 // ridden object takes the hits (and dies at 0 unless indestructible); on foot or
-// on the snowboard Kurt does. Rides.TakesHits is Ridden != null && no board; the
-// ride slice is unported, so ridesRidden stays null and every hit reaches Kurt —
-// what the C# reads while nothing is ridden.
+// on the snowboard Kurt does. Rides.TakesHits is Ridden != null && no board
+// (scripts/rides.h, package #9).
 void ScriptRuntime::hurtKurt(int32_t damage) {
-    if (ridesRidden_ == nullptr || ridesBoard_) {
+    if (!rides_.takesHits()) {
         kurt().hurt(damage);
         return;
     }
 
-    MdkObject* ridden = ridesRidden_;
+    MdkObject* ridden = rides_.ridden();
     if (ridden->health >= kIndestructible) {
         return;
     }
@@ -5636,6 +5641,11 @@ void ScriptRuntime::remove(MdkObject* obj) {
     // retained pointer to the permanent slot behaves exactly like the oracle's
     // retained managed reference. A pickup that falls out (FallOut -> remove) takes
     // its chute with it.
+    // Rides.Lost (ScriptRuntime.cs:1650, package #9), the C#'s first statement: the
+    // ridden object going puts Kurt off it (and hurts him but for the board). A removed
+    // object is never the ridden one (its first removal let him off), so this before
+    // the idempotence return is the C#'s order without a second effect.
+    rides_.lost(obj);
     if (isRemoved(obj)) {
         return;  // C# Objects.Remove is idempotent; do not double-process
     }

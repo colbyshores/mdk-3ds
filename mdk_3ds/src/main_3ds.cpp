@@ -2947,11 +2947,12 @@ int main(int argc, char** argv) {
             // exactly what `pending` holds here, after the loop above took every
             // whole step out of it.
             //
-            // What is NOT here is the other half of TransformOf: `obj == _driven`
-            // draws the object shifted by the step's lag, which needs Rides (the
-            // ridden object) and FrameBlend's Kurt pose, neither of which this port
-            // has. ScriptRuntime::ridesRidden_ is null for every tick of every
-            // shipped level, so the oracle does not take that branch either here.
+            // The other half of TransformOf: `obj == _driven` (the XD2 Kurt rides,
+            // package #9) is drawn at its own transform shifted by Kurt's lag between
+            // two steps. This port draws Kurt at Player::feet (FrameBlend's Kurt pose is
+            // not ported), so his lag is zero and the driven object is drawn at its
+            // current transform -- alpha 1 -- where Rides::follow put it after the
+            // step, under the camera that follows the same feet.
             //
             // And the ropes and sniper scope that the C# draws between the
             // objects and Kurt (Viewer.cs:705-706) are not ported; see the
@@ -2965,7 +2966,8 @@ int main(int argc, char** argv) {
                 if (!obj.visible || runtime->isRemoved(&obj)) {
                     continue;
                 }
-                objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(tickAlpha),
+                const float alpha = &obj == runtime->rides().driven() ? 1.0f : tickAlpha;
+                objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
                                      &objectStream);
             }
             if (strikeFrame) {

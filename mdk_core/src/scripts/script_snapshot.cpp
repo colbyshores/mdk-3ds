@@ -605,7 +605,7 @@ bool ScriptRuntime::canSnapshot() const {
     // C# CanSnapshot: Cutscene == 0 (no cutscenes yet, #13) && !LevelOver &&
     // EndLevel == null && !AirStrike.IsActive() (package #14) &&
     // Rides.Ridden == null && Kurt.Health > 0 && CurrentArena != "".
-    return !levelOver && !endLevel_ && !airStrike_.isActive() && ridesRidden_ == nullptr &&
+    return !levelOver && !endLevel_ && !airStrike_.isActive() && rides_.ridden() == nullptr &&
            player_ != nullptr &&
            player_->health() > 0 && !currentArena_.empty();
 }

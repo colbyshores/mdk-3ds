@@ -100,7 +100,7 @@ const std::vector<solids::Solid>& ScriptRuntime::solidsWithin(const formats::Box
         MdkObject* obj = &(*it);
         solids::Footing footing;
         if (obj->dead || obj->arena != currentArena_ || obj->health == 0 || obj->model == nullptr ||
-            !footingOf(obj, &footing) || obj == ridesRidden_ ||
+            !footingOf(obj, &footing) || obj == rides_.ridden() ||
             !intersects(worldBounds(obj), region)) {
             continue;
         }

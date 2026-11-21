@@ -552,3 +552,19 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - Gates: `make -C mdk_3ds`, `tests/formats`, the Linux build, `make -C tests/scripts test` and `tools/check.sh` (see the commit). No emulator or hardware run.
 - **Commit:** this entry's commit.
 - **Still open:** `docs/OPEN_ITEMS.md`, "Ledges: what the goldens cannot see".
+
+### Package #9: the rides core and the XD2 (2026-11-20)
+- **What:** `Scripts/Rides.cs` and the ride half of `Kurt/Kurt.Ride.cs`, ported operation for operation.
+  - `mdk_core/src/scripts/rides.{h,cpp}`: `Rides` (Update, TryMount, MountWalker, UpdateWalker, Follow, Dismount, Lost, RideWalker, Hides, TakesHits, Driven), owned by `ScriptRuntime` as `rides_` in place of the fixed-null `ridesRidden_`/`ridesBoard_`; `Update` in `runTick` after `KurtTouchesGroups`, `Follow` after the tick loop, `Lost` first in `remove`, `TakesHits` in `hurtKurt`, `Hides` in the visibility pass. Opcode 171 now answers true for the XD2 Kurt rides.
+  - `Player` (`game/player.{h,cpp}`): `walkMode` (Walk.Riding: no strafe, and the riding return after the walk move), `visible`, `rideKeys`, `rideWalker`, `jumpOff`, `getOffBoard`, `glide`, `updateGun`, and the C#'s `Ride` delegate as `Player::RideHook` with its branch in `update()` and `land()`'s soft landing.
+  - `KurtSprite::draw` returns early while Kurt is hidden; both frontends draw the ridden XD2 (`Rides::driven()`) at its current transform, with Kurt.
+  - Seams for #10 (snowboard) and #11 (XE bomber): `TryMount` recognises XSNOWB/XE/X_STRIKE and leaves Kurt off them; `Rides::board_`/`bomber_`, `RideHook`, `glide`, `getOffBoard` wait for them.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. LEVEL7's DANT_9 is played in the XD2: kill its driver, climb in from behind, walk it past the guards to their room, and its script lets you out (opcode 171 drives that script). Before this Kurt bumped into an empty XD2 forever; the board (#10) and the bomber (#11) build on this core.
+- **Evidence:**
+  - `tests/scripts/ride_probe` (C#) and `tick1 dump ride` (C++) match byte for byte on three goldens: `L7_ride_xd2` (700 steps: firing, he runs into the rideable XD2 and stays out; he lets go and is in, hidden, 171 true; DUMMY while steering, ALERT and the alarm while firing, jump and strafe ignored, a turn to 115.7; teleported beside the guards' rect he drives in, the script clears the flag 3.5 s later and he jumps out; the XD2 blows up and knocks him down), `L7_ride_lost` (two 30-point hits go to the XD2, the second kills it, Rides.Lost: 50 damage and the jump), `L7_ride_test` (Rides.RideWalker on the live XD2, steered at yaw 321 and turned, the flag cleared: out). Per step: Kurt's state, feet, yaw, speeds, walk mode, visibility, ride keys, gun, health, the ridden object, 171's answer, TakesHits, the alarm, Touched, the XD2 (place, yaw, flags, animation rate, health, script position), the follow camera (place, pitch) and the voices.
+  - The goldens bite; each mutant is caught: mounting while firing (`L7_ride_xd2` at line 219), no Follow (all three), strafing in the XD2 (`L7_ride_xd2`), no 50 damage on Lost (`L7_ride_lost`), hits to Kurt while riding (`L7_ride_lost`).
+  - The camera eases toward the arena's rest pitch in both trees: opcode 203's track pitch is fastAtan2 here and a ULP off (`docs/OPEN_ITEMS.md`, the rides section).
+  - Prior-solution lookup: the Obsidian and Cognee MCP servers answered "Error POSTing to endpoint"; the vault on disk (`/mnt/nas/Vaults/port-docs`) has no note on the rides or the XD2. Pi knowledge is not in this session.
+  - Gates: `make -C mdk_3ds`, `tests/formats`, the Linux build, `make -C tests/scripts test` and `tools/check.sh` (see the commit). No emulator or hardware run (the parent runs Mandarine).
+- **Commit:** this entry's commit.
+- **Still open:** `docs/OPEN_ITEMS.md`, "The rides: the core and the XD2".

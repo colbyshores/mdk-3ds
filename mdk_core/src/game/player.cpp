@@ -289,6 +289,16 @@ void Player::update(const Input& input, float delta) {
     if (updateNoclip(input, delta)) {
         return;
     }
+    // C# Kurt.cs:166-174 (package #9): a ride's step (the snowboard, the bomber) owns
+    // the step -- no knock-down, chute or ledges while riding; the noclip step above
+    // comes first. No ride sets the hook yet (packages #10, #11).
+    if (_rideHook.step != nullptr) {
+        combat_.setKnockDamage(0.0f);
+        stopChuteSound();
+        _keeper = nullptr;
+        _rideHook.step(_rideHook.context, input, delta);
+        return;
+    }
     // C# Kurt.Update runs UpdateKnockDamage here (Kurt.cs:176): after the ride and
     // noclip returns (the ride is not ported) and before UpdateChuteSound and the
     // Hang/HardLand branch, so a crashing Kurt's recent-damage counter declines too --
@@ -325,7 +335,9 @@ void Player::update(const Input& input, float delta) {
     checkKeeper();
 
     const float forwardIn = input.axis(kKeyForward, kKeyBack);
-    const float strafeIn = input.axis(kKeyStrafeRight, kKeyStrafeLeft);
+    // C# Kurt.cs:207: no strafing in the XD2 (package #9).
+    const float strafeIn =
+        walkMode == WalkRiding ? 0.0f : input.axis(kKeyStrafeRight, kKeyStrafeLeft);
     // C# Kurt.cs:213-217: thrown, knocked down, getting up -- or kept by a platform,
     // which is not ported -- he does not walk. The INPUT is zeroed, not the speed: the
     // C# still runs Accelerate with a zero axis, so his speed decays by friction while
@@ -365,6 +377,14 @@ void Player::update(const Input& input, float delta) {
     } else {
         feet.x += move.x;
         feet.y += move.y;
+    }
+
+    // C# Kurt.cs:228-232 (package #9): in the XD2 the walk move above is the whole of
+    // it -- gravity and the fall, the ride's keys, and he stands (hidden). No jump, no
+    // keeper, no touches, no items, no gun.
+    if (walkMode == WalkRiding) {
+        rideWalker(input, forward, delta);
+        return;
     }
 
     updateVertical(input, move, delta);
@@ -1220,8 +1240,9 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
     // The C# is `if (hard) HardLanding(); else if (creep) Feet = before;`. The
     // hard landing's damage and animation land with health, but the ELSE is
     // load-bearing for position: a hard landing must NOT snap to `before`, or
-    // Kurt is left floating just above the floor with onFloor set.
-    if (verticalSpeed < kHardLandingSpeed) {
+    // Kurt is left floating just above the floor with onFloor set. A ride's step lands
+    // softly (`&& Ride == null`, Kurt.cs:560: the board skips the hard landing).
+    if (verticalSpeed < kHardLandingSpeed && _rideHook.step == nullptr) {
         // C# HardLanding(): 10 damage, then K_CRASHL unless the damage killed
         // Kurt. The hard-landing state owns the next steps, so the ordinary
         // walk state machine cannot replace it on this tick.
@@ -1345,6 +1366,79 @@ void Player::updateTouched() {
         _touched.push_back(_platform);
     }
 }
+
+// ---- Rides (C# Kurt.Ride.cs, package #9) ----
+
+void Player::glide(const Vec3& velocity, float delta) {
+    // C# Kurt.Glide (Kurt.Ride.cs:50-67): a ride's move -- the walk move against the
+    // arena and the objects, then sticking to downhill floors on a floor or gravity in
+    // the air, the fall, and the touches. The snowboard's step (package #10) calls it.
+    const Vec3 move{velocity.x * delta, velocity.y * delta, velocity.z * delta};
+    if (move.x != 0.0f || move.y != 0.0f || move.z != 0.0f) {
+        if (_space) {
+            feet = fromVec(contact(_space->move(toVec(feet), toVec(move), ArenaSpace::kMotionWalk,
+                                                kWalkSlide,
+                                                nearby(Vec3{feet.x + move.x, feet.y + move.y,
+                                                            feet.z + move.z})))
+                               .feet);
+        } else {
+            feet = Vec3{feet.x + move.x, feet.y + move.y, feet.z + move.z};
+        }
+    }
+
+    if (onFloor) {
+        glueDownhill(move, delta);
+    } else {
+        verticalSpeed = std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
+    }
+
+    fall(delta);
+    updateTouched();
+}
+
+void Player::updateGun(const Input& input, float delta) {
+    // C# Kurt.UpdateGun (Kurt.Ride.cs:71-75): the chain gun and its flash on the board.
+    updateFiring(input);
+    updateMuzzle(delta);
+}
+
+void Player::jumpOff() {
+    // C# Kurt.JumpOff (Kurt.Ride.cs:78-86): out of the XD2, a running jump forward.
+    walkMode = WalkNormal;
+    visible = true;
+    verticalSpeed = kJumpSpeed;
+    forwardSpeed = kMaxSpeed;
+    onFloor = false;
+    setState(Kurt::RunJump);
+}
+
+void Player::getOffBoard(float forward, float strafe) {
+    // C# Kurt.GetOffBoard (Kurt.Ride.cs:89-99): off the board or the bomber, keeping
+    // the ride's speeds (u/s) as his walking ones. TopDownHeight (the bomber's view,
+    // FollowCamera) is package #11's and is not a field here yet.
+    _rideHook = RideHook();
+    hasPose = false;
+    poseName = nullptr;
+    poseFrame = 0;
+    cameraPivot = 4.5f;  // C# Kurt.DefaultPivot
+    visible = true;
+    forwardSpeed = forward;
+    strafeSpeed = strafe;
+    setState(Kurt::Still);
+}
+
+void Player::rideWalker(const Input& input, float forward, float delta) {
+    // C# Kurt.RideWalker (Kurt.Ride.cs:101-108): in the XD2, gravity and the fall only;
+    // the keys the walker reads (forward is the step's, already zeroed when he can't
+    // walk); he stands, hidden.
+    verticalSpeed = std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
+    fall(delta);
+    _rideKeys.steer = forward != 0.0f || input.axis(kKeyTurnLeft, kKeyTurnRight) != 0.0f;
+    _rideKeys.fire = input.isDown(kKeyFire);
+    setState(Kurt::Still);
+}
+
+// ---- end of rides ----
 
 void Player::carry(const Vec3& from, const Vec3& to, float turn) {
     // C# Kurt.Carry (Kurt.cs:282-287): Vector3.Transform(Feet - from,

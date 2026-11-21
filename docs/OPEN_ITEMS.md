@@ -175,11 +175,11 @@ original's own lookup (0x431590 searches the SNI directory) and none here.
     `golden/frame_blend.txt` (ten poses at five alphas, driven identically on both
     sides, transforms as raw bits, byte-identical to the oracle probe) and
     `golden/L3_t1_blend.txt`; measured A/B in `docs/evidence/2026-10-31-L3-f60-blend-forced.txt`.
-    What is NOT ported is the other half of `TransformOf`: `obj == _driven` draws the
-    ridden object shifted by the step's lag, which needs `Rides` and `FrameBlend`'s
-    Kurt pose (`Record/Update/Turn/KurtAt`). `ScriptRuntime::ridesRidden_` is null for
-    every tick of the corpus, so the oracle does not take that branch either here; the
-    deferral is with `Rides`, below.
+    The other half of `TransformOf`, `obj == _driven` (the XD2 Kurt rides), draws the
+    ridden object shifted by Kurt's lag between two steps. FrameBlend's Kurt pose
+    (`Record/Update/Turn/KurtAt`) is not ported and Kurt is drawn at `Player::feet`, so
+    his lag is zero: both frontends draw `Rides::driven()` at alpha 1, its transform
+    after `Rides::follow` (package #9, 2026-11-20). The Kurt pose stays deferred.
   * **The pinned frame does not exercise the object pass, and cannot.** At capture frame
     1 exactly 1/60 s has passed and `ScriptRuntime` completes a tick per 1/30 s, so
     neither the oracle nor the port has a single object at frame 1: the earlier
@@ -347,10 +347,10 @@ original's own lookup (0x431590 searches the SNI directory) and none here.
   two are the same pixel, and sub-step blending is not ported.
 - `KurtSprite` cannot reach the states another subsystem owns: the ride's pose
   (`Kurt.Pose`, which loops past its last frame), the beta back-up (`K_BCKUP`) and
-  muzzle flash (`K_MUZZF`) are loaded but never selected, and `Kurt.Visible` is absent
-  so the C#'s early return there is the false branch. Sniper mode hides him
-  (`KurtSprite::draw` reads `Player::sniping()`, gap package #7: the frame is the scope's). The
-  knock-down, throw and helmet states have no writer for the same
+  muzzle flash (`K_MUZZF`) are loaded but never selected. `Kurt.Visible` hides him in a
+  cutscene (#13) and in the XD2 (the rides, package #9): `KurtSprite::draw` returns early. Sniper
+  mode hides him (`KurtSprite::draw` reads `Player::sniping()`, gap package #7: the frame is the
+  scope's). The knock-down, throw and helmet states have no writer for the same
   reason. Whoever ports each one sets `Player`'s state and the frame counts follow.
   (The ledge's K_HANG has its writer since package #12, `game/player_ledge.cpp`.)
 - `KurtSprite` (like `HudView`) has no release path for its palette and mesh:
@@ -1349,10 +1349,10 @@ default case). Goldens: `L3_plat_keeper`, `L7_plat_tank`, `L6_plat_gun`, `L7_pla
 `corridor_probe`).
 
 Still open, with cause:
-- **The ride parts of the same C# code wait for package #9**: `Kurt.Update`'s `Ride` branch
-  (which also drops the keeper, `_keeper = null`), `Glide`, `Land`'s `Ride == null` test, and
-  the `Touched` consumers in `Rides.cs`/`Snowboard.cs`. `SolidsWithin` already skips
-  `ridesRidden_`, which stays null until then.
+- ~~**The ride parts of the same C# code wait for package #9**~~: landed with #9
+  (2026-11-20): `Kurt.Update`'s `Ride` branch (`Player::RideHook`, which also drops the
+  keeper), `Glide`, `Land`'s `Ride == null` test and `Rides.TryMount`'s `Touched` reader.
+  `SolidsWithin` skips `rides_.ridden()`. Snowboard.cs's `Touched` reader is package #10's.
 - **`Kurt.Sliding`'s branch of `FallMove`** waits for the slide (package #8), as before.
 - ~~**L6's flying gun diverged from step 68**~~ in its bullets (XBG_B1) and an EXPLODE: that
   was package #4's combat opcodes. With #4 merged the C# and C++ agree to step 1200, and
@@ -2067,3 +2067,47 @@ Still open:
   gives those to sniper and use_item, so the zoom stays on the unbound zoom_in/zoom_out (logged
   once at boot while unbound). The circle pad turns the scope and X/B tilt it, as in the C#.
 
+## The rides: the core and the XD2 (2026-11-20, gap package #9): what landed, what is open
+
+Landed, operation for operation (C# -> C++):
+- `Scripts/Rides.cs` -> `mdk_core/src/scripts/rides.{h,cpp}` (`Rides`, owned by the runtime
+  as `rides_`): `Update` (in `runTick` after `KurtTouchesGroups`, ScriptRuntime.cs:937),
+  `TryMount`, `MountWalker`, `UpdateWalker` (the walker on the tick's Kurt, its animation
+  rate, DUMMY at 0x2000 while steering, ALERT and `alarmTicks` 10 while firing), `Follow`
+  (after the tick loop, ScriptRuntime.cs:392), `Dismount`, `Lost` (first in
+  `ScriptRuntime::remove`, ScriptRuntime.cs:1650), `RideWalker`, `TakesHits` (`hurtKurt`),
+  `Hides` (the visibility pass), and the Viewer's `Driven` (the frontends' object pass).
+- `Kurt/Kurt.Ride.cs` -> `Player`: `Walk`/`Walking` (`walkMode`), `Visible`, `RideKeys`,
+  `RideWalker`, `JumpOff`, `GetOffBoard`, `Glide`, `UpdateGun`; the `Ride` delegate is
+  `Player::RideHook` (a function pointer over a context), with its branch in `update()`
+  (Kurt.cs:166) and `land()`'s `Ride == null` (Kurt.cs:560); Kurt.cs:207's no-strafe and
+  :228's riding return.
+- Goldens `L7_ride_xd2` (700 steps: no mount while firing, the mount, 171, the steer, the
+  alarm, no jump or strafe, the guards' rect, the script's flag clear, the jump out, the
+  XD2's explosion), `L7_ride_lost` (hits to the XD2, its loss, 50 damage, the jump),
+  `L7_ride_test` (`RideWalker` on the live XD2, the flag cleared by hand), C# probe
+  `tests/scripts/ride_probe`, C++ twin `tick1 dump ride`.
+
+Still open:
+- **The snowboard (#10) and the XE bomber (#11)** are seams: `TryMount` finds XSNOWB / XE /
+  X_STRIKE and leaves Kurt off them (the C#'s MountBoard / MountBomber); `Rides::board_` and
+  `bomber_` are never set, so `onBoard()` (the solid-arena pin), `Hides`, `Follow`'s bomber
+  arm and `Dismount`'s board and bomber arms are unreachable. `Player::RideHook`, `glide`,
+  `updateGun` and `getOffBoard` are ported and unexercised by any golden until those land.
+  `Kurt.TopDownHeight` (the bomber's view) is not a Player field yet.
+- **The camera_track pitch is a ULP off** (opcode 203's `fastAtan2`, R6, vs `MathF.Atan2`:
+  -24.1330566 vs -24.1330547 at the XD2 golden's step 300), and the follow camera's eased
+  pitch carries it into its 1/64 position. The ride goldens therefore ease the camera toward
+  the arena's rest pitch and print the track's ticks only. Not a ride defect; it belongs to
+  opcode 203 / the camera.
+- **Kurt's walk in the XD2 turns through the LUT** (`Player::facing`, the open yaw-0 owner
+  decision of packages 5/6/19). Every mount puts him at the XD2's own yaw (90 in two goldens,
+  321 in the third); the goldens' turned walks (to 115.7, to 295.3) match byte for byte in the
+  feet's 1/64 columns, but a schedule that turned and walked longer would cross a 1/64
+  boundary sooner or later (one camera cell did in a probe-only run at yaw 101.9). Riding
+  does not make the decision unavoidable: the XD2 route is short.
+- **A live XD2 turning to face Kurt** (`turn_to_target_offset`, opcode 235's atan2) is the
+  LUT's: `L7_ride_test` stops at step 128 for it (they part at 132).
+- **The save prompt's `Rides.Ridden == null`** (`ScriptRuntime.Snapshot.cs:25`) is #19's.
+- **No emulator or hardware run here.** The 3DS harness `AT=` sets Kurt's feet but does not
+  load DANT_9 (L7's start arena is DANT_1); see the commit's report for the walk.
