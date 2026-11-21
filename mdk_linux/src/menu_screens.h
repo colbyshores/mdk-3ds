@@ -85,10 +85,14 @@ struct FrontScreens {
     // them, GameFlow::skipScreen, instead of the screen).
     int statsPhase = 0;
     bool skipStatistics = false;
+    // --skip-save-prompt: the save prompt after LEVEL8 closed the C#'s Esc way
+    // before its first frame (GameFlow::skipScreen: Event.Play), a test aid as
+    // --skip-statistics is.
+    bool skipSavePrompt = false;
 };
 
-// Runs the Menu, the Briefing, the Statistics (StatsScreen), the Fall and the
-// EndMovie (whichever the flow shows) until the flow names a Level (returned) or
+// Runs the Menu, the Briefing, the Statistics (StatsScreen), the Fall, the
+// EndMovie and the SavePrompt after LEVEL8 (whichever the flow shows) until the flow names a Level (returned) or
 // the run ends (Screen::None: Quit, the window closed, the frame budget, the
 // capture taken).
 flow::Screen runFrontScreens(FrontScreens* front);

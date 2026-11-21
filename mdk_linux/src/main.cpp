@@ -493,6 +493,9 @@ int main(int argc, char** argv) {
     // --nobloodno: gore on or off instead of the settings' (the heads' row).
     // --skip-statistics: a level's end takes the C#'s skip of them (GameFlow::
     // skipScreen; the level chain's tests), a test aid, not the C#'s.
+    // --skip-save-prompt: the save prompt after LEVEL8 closed the C#'s Esc way
+    // (GameFlow::skipScreen: Event.Play, as tests/scripts/flow_probe closes it).
+    bool skipSavePrompt = false;
     bool statsGiven = false;
     int statsPhase = 0;
     std::vector<int32_t> statsCounts;
@@ -645,6 +648,8 @@ int main(int argc, char** argv) {
             goreOverride = 0;
         } else if (std::strcmp(argv[i], "--skip-statistics") == 0) {
             skipStatistics = true;
+        } else if (std::strcmp(argv[i], "--skip-save-prompt") == 0) {
+            skipSavePrompt = true;
         } else if ((value = optionValue(argv[i], "--press")) != nullptr) {
             std::string error;
             if (!presses.parse(value, &error)) {
@@ -1123,6 +1128,7 @@ int main(int argc, char** argv) {
     // --skip-statistics: a level's end skips them.
     front.statsPhase = statsGiven ? statsPhase : 0;
     front.skipStatistics = skipStatistics;
+    front.skipSavePrompt = skipSavePrompt;
     // THE PAUSE MENU (C# PauseMenu: Esc in a level). It outlives the levels; its
     // options change `settings` and save them, and the volumes reach the live
     // mixer at once (C# Settings.Apply), through `pauseDevice`.
@@ -1248,6 +1254,12 @@ int main(int argc, char** argv) {
                             (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
             }
         }
+        if (after == mdk::flow::Screen::SavePrompt && skipSavePrompt) {
+            // --skip-save-prompt: the prompt after the Gunter stream closed the C#'s Esc
+            // way (Event.Play), as tests/scripts/flow_probe closes it.
+            std::printf("[main] flow: skipped SavePrompt (--skip-save-prompt)\n");
+            after = flow.handle(flow.skipScreen());
+        }
         if (after == mdk::flow::Screen::Fall && skipFalls) {
             // --skip-falls (package #17b): the next level's fall skipped the C#'s Esc way,
             // as the level-end hook below does.
@@ -1267,6 +1279,10 @@ int main(int argc, char** argv) {
             // The statistics (package #20b): the front screens show them, then the
             // fall and the level.
             std::printf("[main] flow: the statistics follow\n");
+        } else if (after == mdk::flow::Screen::SavePrompt) {
+            // The save prompt after LEVEL8 (C# SavePromptScreen): the front screens
+            // show it, then LEVEL5.
+            std::printf("[main] flow: the save prompt follows\n");
         } else if (after == mdk::flow::Screen::Menu || after == mdk::flow::Screen::Fall) {
             // Kurt died in the Gunter stream: the main menu (package #20a), below. Or
             // the next level's fall (#17b, after the statistics): the front screens

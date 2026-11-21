@@ -19,6 +19,7 @@
 #include "game/briefing.h"
 #include "game/font_view.h"
 #include "game/level_flow.h"
+#include "game/save_prompt_screen.h"
 
 namespace mdk {
 namespace {
@@ -654,36 +655,11 @@ void StatsScreen::draw(MdkRenderer renderer, const ScreenView& view, const FontV
     mdk_render_canvas_end(renderer);
 }
 
-// C# SavePrompt.Draw: the prompt on black, in FONTBIG.
+// C# SavePrompt.Draw: the prompt on black, in FONTBIG -- the drawing the save
+// prompt after LEVEL8 shares (game/save_prompt_screen.h).
 void StatsScreen::drawPrompt(MdkRenderer renderer, const ScreenView& view,
                              const FontView& big) const {
-    const flow::SavePrompt* prompt = prompt_ ? prompt_.get() : closedPrompt_.get();
-    view.fillCanvas(renderer, Colour{0.0f, 0.0f, 0.0f, 1.0f});
-    if (!prompt) {
-        return;
-    }
-    struct Measure {
-        const StatsScreen* screen;
-        const FontView* font;
-        static float width(void* context, const std::string& text, bool key) {
-            const Measure* m = static_cast<const Measure*>(context);
-            if (key) {
-                const std::vector<uint8_t> bytes = m->screen->text(text.c_str());
-                return (float)m->font->width(bytes.data(), (int32_t)bytes.size());
-            }
-            return (float)m->font->width(text.c_str());
-        }
-    };
-    Measure measure = {this, &big};
-    std::vector<flow::SavePrompt::Run> runs;
-    prompt->layout(Measure::width, &measure, &runs);
-    for (size_t r = 0; r < runs.size(); r++) {
-        const std::vector<uint8_t> bytes =
-            runs[r].key ? text(runs[r].text.c_str())
-                        : std::vector<uint8_t>(runs[r].text.begin(), runs[r].text.end());
-        view.text(renderer, big, bytes.data(), (int32_t)bytes.size(), runs[r].x, runs[r].y,
-                  runs[r].scale, 1.0f);
-    }
+    drawSavePrompt(renderer, view, big, fti_, prompt_ ? prompt_.get() : closedPrompt_.get());
 }
 
 // C# Draw.

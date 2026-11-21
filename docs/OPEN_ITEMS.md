@@ -1979,9 +1979,18 @@ Still open:
   (`objects/N/variables/Push`, 600 idle steps). (LEVEL3 HMO_6's extra objects went with
   package 8's updrafts, so `L3_save_fan` is now a full golden.) These are the
   runtime's gaps, not the save's: a save carries them faithfully.
-- **The after-LEVEL8 save prompt** is still skipped (closed with Esc); a later screen draws it
-  from `SavePrompt::layout`. The statistics' before-level prompt is drawn and answered since
-  package #20b (`StatsScreen`, both frontends). The main menu's
+- ~~**The after-LEVEL8 save prompt** is still skipped~~: shown since the leftovers pass on
+  both frontends (`game/save_prompt_screen.h`, the C#'s SavePromptScreen; drawn by the same
+  `drawSavePrompt` as the statistics' prompt). Linux `--skip-save-prompt` closes it the C#'s
+  Esc way for the level chain's tests; `level_chain_test.sh` arm 4 answers it (Yes, Enter)
+  and checks 6.sav. The statistics' before-level prompt is drawn and answered since
+  package #20b (`StatsScreen`, both frontends).
+- **Vulkan: an untextured canvas quad first in a frame binds no descriptor set**
+  (`14_canvas_seam.inc`: `pc.textured == 0` skips the bind), so the validation layer reports
+  `VUID-vkCmdDraw-None-08600` on every frame of a prompt drawn on black -- the statistics'
+  prompt (measured: 79 messages over its run) as well as the after-LEVEL8 one. Pre-existing
+  (#20b); the pixels are right (the shader does not sample when untextured), so it is noise,
+  but a strict driver could refuse it. The fix is a bound dummy set for untextured quads. The main menu's
   Continue and "Saved Game" page read the saves through `flow::menuListSaves/menuPeekSave/
   menuLoadSave` in both frontends (`golden/menu_saves.txt` vs `menu_probe saves`).
 - **Not saved because the C# does not save them**: the random stream (a load reseeds), sound

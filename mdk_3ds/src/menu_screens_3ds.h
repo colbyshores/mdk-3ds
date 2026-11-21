@@ -79,8 +79,8 @@ struct FrontScreens3ds {
     const char* exitReason = nullptr;
 };
 
-// Runs the Menu, the Briefing, the Statistics, the Fall and the EndMovie
-// (whichever the flow shows) until the flow names a Level (returned) or the run
+// Runs the Menu, the Briefing, the Statistics, the Fall, the EndMovie and the
+// SavePrompt after LEVEL8 (whichever the flow shows) until the flow names a Level (returned) or the run
 // ends (Screen::None: Quit, aptMainLoop, the harness deadline, the frame budget).
 flow::Screen runFrontScreens3ds(FrontScreens3ds* front);
 

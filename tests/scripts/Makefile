@@ -159,6 +159,7 @@ SOURCES_VM := \
 	$(CORE)/game/pause_menu.cpp \
 	$(CORE)/game/briefing.cpp \
 	$(CORE)/game/stats_screen.cpp \
+	$(CORE)/game/save_prompt_screen.cpp \
 	$(CORE)/game/heads_view.cpp \
 	$(CORE)/game/slideshow.cpp \
 	$(CORE)/formats/gif.cpp \

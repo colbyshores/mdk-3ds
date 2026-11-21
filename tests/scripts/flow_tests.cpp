@@ -745,9 +745,17 @@ void testSkipTrail() {
     gunter.handle(gunter.firstEvent());
     gunter.reportLevel(result);
     gunter.handle(flow::Event::LevelEnded);
-    expect("LEVEL8 skips to LEVEL5", static_cast<long long>(gunter.skipUnported(&trail)),
+    // Since the leftovers pass the frontends SHOW the save prompt: the walk stops
+    // there, LEVEL5 already entered (EnterLastLevel), and its Esc is Play.
+    expect("LEVEL8 stops at the save prompt", static_cast<long long>(gunter.skipUnported(&trail)),
+           static_cast<long long>(flow::Screen::SavePrompt));
+    expect("one screen skipped (the stream)", trail.count, 1);
+    expect("the save prompt is shown, not skipped",
+           flow::GameFlow::screenPackage(flow::Screen::SavePrompt), 0);
+    expect("LEVEL5 before the prompt closes", gunter.state().level, 5);
+    expect("the prompt's Esc is Play, to LEVEL5",
+           static_cast<long long>(gunter.handle(gunter.skipScreen())),
            static_cast<long long>(flow::Screen::Level));
-    expect("two screens skipped (stream, save prompt)", trail.count, 2);
     expect("LEVEL5", gunter.state().level, 5);
     expect("at LEVEL8's end health", gunter.levelHealth(), 55);
     expect("the carry into LEVEL5 is that health", gunter.levelCarry().health, 55);

@@ -50,13 +50,14 @@ bad() {
 
 # level, frames (past the stream's end and the next level's first frame), and the
 # flow line the stream's end must lead to. The fall before the next level is shown
-# since package #17b and the statistics since #20b; --skip-falls and
-# --skip-statistics skip them the C#'s Esc way before their first frame
-# (as level_chain_test.sh does), so the frame numbers stay the stream's own.
+# since package #17b, the statistics since #20b and the save prompt after LEVEL8
+# since the leftovers pass; --skip-falls, --skip-statistics and --skip-save-prompt
+# skip them the C#'s Esc way before their first frame (as level_chain_test.sh
+# does), so the frame numbers stay the stream's own.
 check() {
     level=$1 frames=$2 after=$3
     log="$WORK/s$level.log"
-    timeout 600 "$BIN" --headless --fixed-step --size=320x240 --skip-falls --skip-statistics --stream="$level" --frames "$frames" \
+    timeout 600 "$BIN" --headless --fixed-step --size=320x240 --skip-falls --skip-statistics --skip-save-prompt --stream="$level" --frames "$frames" \
         >"$log" 2>&1 || bad "[L$level] exited $?"
     grep '^Stream' "$log" >"$WORK/got$level.txt"
     grep -v '^#' "$GOLDEN/stream_screen_L$level.txt" >"$WORK/want$level.txt"

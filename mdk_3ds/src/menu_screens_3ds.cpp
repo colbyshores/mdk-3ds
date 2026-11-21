@@ -27,6 +27,7 @@
 #include "game/input.h"
 #include "game/loading_screen.h"
 #include "game/main_menu.h"
+#include "game/save_prompt_screen.h"
 #include "game/movie_view.h"
 #include "game/viewer_saves.h"
 #include "game/menu_presses.h"
@@ -278,6 +279,11 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         }
         return shown;
     };
+    // THE SAVE PROMPT AFTER LEVEL8 (C# SavePromptScreen, game/save_prompt_screen.h):
+    // the Gunter stream's AfterStream shows it before LEVEL5. The D-pad chooses, A
+    // answers (yes: saved under the offered name, "6" -- there is no keyboard to
+    // type another), B says no; then LEVEL5. A harness MENU=...Menu.Back@t closes it.
+    SavePromptScreen savePrompt;
     // Package #20c: the end movies, and the pictures of the splash and the movies
     // (game/movie_view.h). The splash is the GPU cross-fade of its two pictures
     // (no per-frame expansion); a movie frame is one streamed RGB565 upload at a
@@ -318,6 +324,10 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             log3dsPrintf("flow: the end movies (%s)", endMovie->status());
         } else if (shown == flow::Screen::Briefing || shown == flow::Screen::Statistics) {
             openStats(shown);
+        } else if (shown == flow::Screen::SavePrompt) {
+            savePrompt.open(front->saves ? *front->saves : flow::SaveGames(), flow.state());
+            log3dsPrintf("flow: the save prompt before level %d (offering \"%s\")",
+                         (int)flow.state().level, savePrompt.prompt()->name().c_str());
         }
     };
     if (screen == flow::Screen::Fall) {
@@ -398,6 +408,25 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             // C# EndMovie.Frame's Back: B, and START or A as the console's skip.
             next = endMovie->frame(keys.back || keys.accept, elapsed);
             movieView.sync(front->renderer, endMovie->player(), halfRate);
+        } else if (screen == flow::Screen::SavePrompt) {
+            // C# SavePromptScreen.Frame: the D-pad, A (yes, then save under the
+            // offered name) and B (no / give up), as the statistics' prompt.
+            flow::SavePrompt::Input prompt;
+            prompt.up = keys.up;
+            prompt.down = keys.down;
+            prompt.left = keys.left;
+            prompt.right = keys.right;
+            prompt.accept = keys.accept;
+            prompt.back = keys.back;
+            next = savePrompt.frame(prompt, elapsed);
+            if (next != flow::Event::None) {
+                // C# SavePrompt.Save's line, or why it closed without one.
+                log3dsPrintf("flow: the save prompt closes at frame %lu (%s%s)",
+                             (unsigned long)*front->frame,
+                             savePrompt.prompt()->saved() ? "saved game " : "no save",
+                             savePrompt.prompt()->saved() ? savePrompt.prompt()->name().c_str()
+                                                          : "");
+            }
         } else {
             // C# StatsScreen.Frame: any button, B (Esc) skips, Fire or Jump held
             // runs it fast. The save prompt between its pages takes the D-pad, A
@@ -442,7 +471,12 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         ScreenView view;
         view.layoutInside(mdk_render_canvas_width(front->renderer), kCanvasHeight);
         const float canvasWidth = mdk_render_canvas_width(front->renderer);
-        if (screen == flow::Screen::Menu || screen == flow::Screen::EndMovie) {
+        if (screen == flow::Screen::SavePrompt) {
+            // C# SavePromptScreen.Frame: Layout(Fit.Inside), then SavePrompt.Draw.
+            mdk_render_canvas_begin(front->renderer);
+            savePrompt.draw(front->renderer, view, ui->big, &ui->fti);
+            mdk_render_canvas_end(front->renderer);
+        } else if (screen == flow::Screen::Menu || screen == flow::Screen::EndMovie) {
             mdk_render_canvas_begin(front->renderer);
             if (screen == flow::Screen::Menu && mainMenu->splashFrame()) {
                 // C# MainMenu.Frame's early return: the splash alone (black once done).
@@ -485,6 +519,8 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         // port lacks skipped.
         if (screen == flow::Screen::Fall) {
             closeFall();
+        } else if (screen == flow::Screen::SavePrompt) {
+            savePrompt.close();
         } else if (screen != flow::Screen::Menu) {
             closeStats();
         }
@@ -503,7 +539,8 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             continue;
         }
         if (shown == flow::Screen::Menu || shown == flow::Screen::Briefing ||
-            shown == flow::Screen::Statistics || shown == flow::Screen::EndMovie) {
+            shown == flow::Screen::Statistics || shown == flow::Screen::EndMovie ||
+            shown == flow::Screen::SavePrompt) {
             screen = shown;
             open(screen);
             prevHeld = 0xFFFFFFFFu;

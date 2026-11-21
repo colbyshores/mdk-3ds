@@ -798,8 +798,8 @@ int main(int argc, char** argv) {
     // =====================================================================
     // THE LEVEL LOOP (package 2, the next-level transition). One pass per level:
     // load, play, and -- when the level ends and the flow names another level
-    // (GameFlow::skipUnported: the stream, statistics, fall and save prompt this
-    // port lacks, skipped the way the C# skips them) -- tear the level down and go
+    // (GameFlow::skipUnported: the screens this port lacks, skipped the way the
+    // C# skips them; the stream, statistics, fall and save prompt are shown) -- tear the level down and go
     // round again. The C#'s Game.Show does the same between two screens: the old
     // screen disposed, every voice stopped, the renderer's scope released
     // (Game.cs:539-547), then the next Viewer built.
@@ -879,13 +879,16 @@ int main(int argc, char** argv) {
                               (int)flow.state().level, (unsigned long)frame,
                               (int)flow.levelHealth());
         } else if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall ||
-                   screen == mdk::flow::Screen::Statistics) {
+                   screen == mdk::flow::Screen::Statistics ||
+                   screen == mdk::flow::Screen::SavePrompt) {
             // Kurt died in the Gunter stream: the main menu (package #20a), below. Or
-            // the statistics (#20b), then the next level's fall (#17b): the front
-            // screens show them, then the level.
+            // the statistics (#20b), then the next level's fall (#17b); or the save
+            // prompt after the Gunter stream (C# SavePromptScreen), then LEVEL5: the
+            // front screens show them, then the level.
             mdk::log3dsPrintf("flow: the %s follow%s",
                               screen == mdk::flow::Screen::Fall         ? "fall"
                               : screen == mdk::flow::Screen::Statistics ? "statistics"
+                              : screen == mdk::flow::Screen::SavePrompt ? "save prompt"
                                                                         : "menu",
                               screen == mdk::flow::Screen::Statistics ? "" : "s");
         } else {

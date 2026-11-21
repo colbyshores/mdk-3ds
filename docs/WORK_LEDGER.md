@@ -729,3 +729,18 @@ Newest entries are at the bottom. Performance experiments keep their own table i
 - **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. Without the term, F2 on Linux or the 3DS pause menu's save during Gunter's, the dog's or a boss's cutscene wrote a save the C# refuses (Kurt frozen and hidden, the cutscene's camera mid-shot).
 - **Evidence:** `golden/L5_cut_snapshot.txt` (`cutscene_probe 5 110 at:465:-6:-2263:0,ev:40:61,ev:100:53,show:36,snap`): `can=True` before Gunter's cutscene, `False` on each of its 60 steps, `True` once 53 ends it; `tick1` prints the same bytes (`PASS L5_cut_snapshot`). The golden bites: without the term, steps 40-99 read `can=True` and the case fails at s=40.
 - **Commit:** this entry's commit.
+
+### Leftovers (2026-11-20): the save prompt after the LEVEL8 stream
+- **What:** the C#'s SavePromptScreen (`Flow/Game.cs:670-694`), shown by both frontends where they skipped it.
+  - `game/save_prompt_screen.{h,cpp}`: `SavePromptScreen` (open: `_state.Save(SaveKind.LevelStart)` offered under `LevelFlow.SaveName(level)`, "6"; frame: the prompt's Update, then `Closed ? Event.Play : Event.None`; draw) and `drawSavePrompt`, SavePrompt.Draw on black in FONTBIG. `StatsScreen::drawPrompt` now calls the same function, so the two prompts share one drawing (#20b's, unchanged).
+  - `GameFlow::skipUnported` stops at `Screen::SavePrompt` (shown, package 0); `skipScreen` keeps its Esc arm (Event.Play), as `tests/scripts/flow_probe` closes it.
+  - Linux (`menu_screens.cpp`, `main.cpp`): the prompt is a front screen after the Gunter stream (menu keys and typing, as the statistics' prompt), then LEVEL5; `--skip-save-prompt` takes the Esc arm before its first frame (a test aid, as `--skip-statistics`). 3DS (`menu_screens_3ds.cpp`, `main_3ds.cpp`): the same screen; D-pad, A (yes, then save under "6": no keyboard), B (no). A harness `MENU=...Menu.Back@t` closes it.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. After LEVEL8 the game now offers the save the original offers before LEVEL5, instead of going straight on.
+- **Evidence:**
+  - `level_chain_test.sh`: arms 1-3 pass `--skip-save-prompt` (the chain's line is now `flow: skipped SavePrompt (--skip-save-prompt)`; its frame numbers are unchanged); new arm 4 runs `--level=8 --event=1 --press=Menu.Accept@8.5,Menu.Accept@9`: the prompt opens after the Gunter stream (health 63) offering "6" at 8.15 s, Yes, Enter, `Saved game 6: level 5`, `6.sav` is the C#'s light save (`"type":3,"level":5,"health":100`), and LEVEL5 (MUSE_1) loads.
+  - `flow_tests`: LEVEL8's walk now stops at the SavePrompt with one screen skipped (the stream), LEVEL5 already entered, and the prompt's Esc is Play.
+  - A 640x480 headless capture of the prompt (Save Game? / Yes / No, "Yes" grown) looks as the statistics' prompt does.
+  - The goldens bite: with `skipUnported` skipping the prompt again, `flow_tests` fails ("LEVEL8 stops at the save prompt") and level_chain arm 4 fails (no prompt line, no 6.sav).
+  - 3DS release build compiles; no emulator run here (the parent's).
+- **Emulator check for the parent:** `make -C mdk_3ds AUTOQUIT=120 LEVEL=8 EVENT=1 FIXED=1` -- the level ends at 1 s, the Gunter stream plays (~31 s), then "flow: the save prompt before level 5 (offering "6")" and the prompt on black; with `MENU=Menu.Accept@1,Menu.Accept@2` (the menus' clock starts at the prompt) it logs "flow: the save prompt closes ... (saved game 6)" and LEVEL5 loads; `sdmc:/3ds/mdk/saves/6.sav` appears.
+- **Commit:** this entry's commit.

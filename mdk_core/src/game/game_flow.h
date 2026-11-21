@@ -42,6 +42,9 @@
 // Screen::EndMovie (game/end_movie.h), and draw Play's LoadingScreen.Show
 // (game/loading_screen.h) before they load the level Play names.
 //
+// THE SAVE PROMPT AFTER LEVEL8 (the leftovers pass): the frontends show
+// Screen::SavePrompt, the C#'s SavePromptScreen (game/save_prompt_screen.h).
+//
 // NOT PORTED, WITH CAUSE — each is the menu subsystem (package #20), not a stub:
 //   * The screens' own construction: the frontends build what they are told.
 //   * ShowStream's WatcomRandom seed is the frontend's to make (streamSeed): the
@@ -263,8 +266,9 @@ public:
     //              and nothing collected, so the carry is (100, no pickups) and
     //              Event.Play (FallScreen.Next, :120-124).
     //   SavePrompt the prompt closed without a save (Esc): Event.Play
-    //              (Game.cs:681). A frontend that draws the prompt
-    //              (game/save_prompt.h) shows it instead of skipping it.
+    //              (Game.cs:681), as tests/scripts/flow_probe closes it. The
+    //              frontends show it (game/save_prompt_screen.h); a frontend's
+    //              --skip-save-prompt takes this arm.
     //   EndMovie   skipped: Event.Menu (EndMovie.cs:58).
     // Menu, Level and None are not skipped through (Event::None).
     Event skipScreen();
@@ -272,12 +276,14 @@ public:
     // that is not skipped through, at most kMaxSkips times. Since package #20a
     // the frontends SHOW the Menu and the Briefing (game/main_menu.h,
     // game/stats_screen.h), since #17b the Fall (fall/fall_screen.h), since
-    // #20b the Statistics and since #20c the EndMovie (game/end_movie.h), so
-    // the walk stops at those as at a Level or None; skipScreen keeps the
-    // Briefing's, the Fall's, the Statistics' and the EndMovie's arms, which
-    // are the C#'s skips of them (Esc, then a key: Event.Fall for the Briefing
-    // and the Statistics, Event.Play for the Fall; a frontend's
-    // --skip-statistics and --skip-falls take them). `trail`, when given,
+    // #20b the Statistics, since #20c the EndMovie (game/end_movie.h) and since
+    // the leftovers pass the SavePrompt after LEVEL8 (game/save_prompt_screen.h),
+    // so the walk stops at those as at a Level or None; skipScreen keeps the
+    // Briefing's, the Fall's, the Statistics', the EndMovie's and the
+    // SavePrompt's arms, which are the C#'s skips of them (Esc, then a key:
+    // Event.Fall for the Briefing and the Statistics, Event.Play for the Fall
+    // and the SavePrompt; a frontend's --skip-statistics, --skip-falls and
+    // --skip-save-prompt take them). `trail`, when given,
     // receives the screens skipped in order (up to kMaxSkips of them), so the
     // frontend can log each one.
     static constexpr int32_t kMaxSkips = 8;
@@ -289,7 +295,8 @@ public:
     // The screen's name and, for one this port does not have, the gap package
     // that ports it (docs/PORT_GAPS.md), for the frontends' "flow: skipped" lines:
     // 0 for the ones the frontends show (the Level; the Menu and the Briefing
-    // since #20a; the Statistics since #20b; the EndMovie since #20c).
+    // since #20a; the Statistics since #20b; the EndMovie since #20c; the
+    // SavePrompt since the leftovers pass).
     static const char* screenName(Screen screen);
     static int32_t screenPackage(Screen screen);
 

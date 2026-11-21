@@ -27,6 +27,7 @@
 #include "game/input.h"
 #include "game/loading_screen.h"
 #include "game/main_menu.h"
+#include "game/save_prompt_screen.h"
 #include "game/movie_view.h"
 #include "game/viewer_saves.h"
 #include "game/screen_view.h"
@@ -286,6 +287,11 @@ flow::Screen runFrontScreens(FrontScreens* front) {
                 }
                 continue;
             }
+            if (shown == flow::Screen::SavePrompt && front->skipSavePrompt) {
+                std::printf("[main] flow: skipped SavePrompt (--skip-save-prompt)\n");
+                shown = flow.handle(flow.skipScreen());
+                continue;
+            }
             if (shown != flow::Screen::Fall) {
                 break;
             }
@@ -297,6 +303,16 @@ flow::Screen runFrontScreens(FrontScreens* front) {
             shown = flow.handle(flow.skipScreen());
         }
         return shown;
+    };
+    // THE SAVE PROMPT AFTER LEVEL8 (C# SavePromptScreen, game/save_prompt_screen.h):
+    // the Gunter stream's AfterStream shows it before LEVEL5; Enter saves, Esc or
+    // "No" goes on to the level. --skip-save-prompt takes its Esc before its first
+    // frame, as tests/scripts/flow_probe closes it.
+    SavePromptScreen savePrompt;
+    auto openSavePrompt = [&]() {
+        savePrompt.open(front->saves ? *front->saves : flow::SaveGames(), flow.state());
+        std::printf("[main] flow: the save prompt before level %d (offering \"%s\") at %.2f s\n",
+                    (int)flow.state().level, savePrompt.prompt()->name().c_str(), *front->time);
     };
     // Package #20c: the end movies, and the pictures of the splash and the movies
     // (the C#'s PalettedImages; game/movie_view.h -- one picture whose palette
@@ -337,6 +353,8 @@ flow::Screen runFrontScreens(FrontScreens* front) {
             std::printf("[main] flow: the end movies (%s)\n", endMovie->status());
         } else if (shown == flow::Screen::Briefing || shown == flow::Screen::Statistics) {
             openStats(shown);
+        } else if (shown == flow::Screen::SavePrompt) {
+            openSavePrompt();
         }
         // --phase is the first screen's (C# `_firstLevel ? _options.Phase : null`).
         front->statsPhase = 0;
@@ -344,7 +362,7 @@ flow::Screen runFrontScreens(FrontScreens* front) {
     screen = settle(screen);
     if (screen != flow::Screen::Menu && screen != flow::Screen::Briefing &&
         screen != flow::Screen::Statistics && screen != flow::Screen::Fall &&
-        screen != flow::Screen::EndMovie) {
+        screen != flow::Screen::EndMovie && screen != flow::Screen::SavePrompt) {
         mdk_render_release(front->renderer, scope);
         return screen;
     }
@@ -390,6 +408,33 @@ flow::Screen runFrontScreens(FrontScreens* front) {
             // C# EndMovie.Frame: Esc gives up.
             next = endMovie->frame(keys.back, elapsed);
             movieView.sync(front->renderer, endMovie->player(), false);
+        } else if (screen == flow::Screen::SavePrompt) {
+            // C# SavePromptScreen.Frame: the prompt reads the menu keys and what is
+            // typed (SavePrompt.Update), as the statistics' prompt does.
+            flow::SavePrompt::Input prompt;
+            prompt.up = keys.up;
+            prompt.down = keys.down;
+            prompt.left = keys.left;
+            prompt.right = keys.right;
+            prompt.accept = keys.accept;
+            prompt.back = keys.back;
+            prompt.home = (typingPresses & kPressHome) != 0;
+            prompt.end = (typingPresses & kPressEnd) != 0;
+            prompt.backspace = (typingPresses & kPressBackspace) != 0;
+            prompt.del = (typingPresses & kPressDelete) != 0;
+            prompt.typed = keys.typed;
+            next = savePrompt.frame(prompt, elapsed);
+            if (next != flow::Event::None && savePrompt.prompt()->saved()) {
+                // C# SavePrompt.Save's line.
+                std::printf("Saved game %s: level %d\n", savePrompt.prompt()->name().c_str(),
+                            (int)savePrompt.prompt()->save().level);
+            }
+            // The name is typed while the prompt is open.
+            const bool wantText = !front->headless && next == flow::Event::None;
+            if (wantText != textInput) {
+                windowTextInput(front->window, wantText);
+                textInput = wantText;
+            }
         } else {
             // C# StatsScreen.Frame: any key, Esc skips, Fire or Jump held runs it
             // fast; the save prompt between its pages reads the menu keys and
@@ -446,7 +491,12 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         ScreenView view;
         view.layoutInside(mdk_render_canvas_width(front->renderer), kCanvasHeight);
         const float canvasWidth = mdk_render_canvas_width(front->renderer);
-        if (screen == flow::Screen::Menu || screen == flow::Screen::EndMovie) {
+        if (screen == flow::Screen::SavePrompt) {
+            // C# SavePromptScreen.Frame: Layout(Fit.Inside), then SavePrompt.Draw.
+            mdk_render_canvas_begin(front->renderer);
+            savePrompt.draw(front->renderer, view, *ui->big, &ui->fti);
+            mdk_render_canvas_end(front->renderer);
+        } else if (screen == flow::Screen::Menu || screen == flow::Screen::EndMovie) {
             mdk_render_canvas_begin(front->renderer);
             if (screen == flow::Screen::Menu && mainMenu->splashFrame()) {
                 // C# MainMenu.Frame's early return: the splash alone (black once done).
@@ -493,6 +543,8 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         // scope, the statistics' voices), then the screens this port lacks skipped.
         if (screen == flow::Screen::Fall) {
             fall->close(front->renderer);
+        } else if (screen == flow::Screen::SavePrompt) {
+            savePrompt.close();
         } else if (screen != flow::Screen::Menu) {
             closeStats();
         }
@@ -510,7 +562,8 @@ flow::Screen runFrontScreens(FrontScreens* front) {
             continue;
         }
         if (shown == flow::Screen::Menu || shown == flow::Screen::Briefing ||
-            shown == flow::Screen::Statistics || shown == flow::Screen::EndMovie) {
+            shown == flow::Screen::Statistics || shown == flow::Screen::EndMovie ||
+            shown == flow::Screen::SavePrompt) {
             screen = shown;
             open(screen);
             continue;

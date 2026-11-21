@@ -170,6 +170,12 @@ Screen GameFlow::skipUnported(SkipTrail* trail) {
         if (skipped == Screen::Fall || skipped == Screen::Statistics) {
             break;
         }
+        // The save prompt after LEVEL8 is shown since the leftovers pass
+        // (game/save_prompt_screen.h); skipScreen keeps its arm (Esc: Event.Play,
+        // a frontend's --skip-save-prompt).
+        if (skipped == Screen::SavePrompt) {
+            break;
+        }
         const Event next = skipScreen();
         if (next == Event::None) {
             break;
@@ -201,7 +207,7 @@ int32_t GameFlow::screenPackage(Screen screen) {
     switch (screen) {
         case Screen::Stream: return 18;
         case Screen::Fall: return 17;
-        case Screen::SavePrompt: return 19;
+        case Screen::SavePrompt:
         case Screen::EndMovie:
         case Screen::Menu:
         case Screen::Briefing:
