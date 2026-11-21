@@ -602,12 +602,13 @@ void Fans::restore(const json::Document& doc, int node) {
 // ScriptRuntime
 
 bool ScriptRuntime::canSnapshot() const {
-    // C# CanSnapshot: Cutscene == 0 (no cutscenes yet, #13) && !LevelOver &&
-    // EndLevel == null && !AirStrike.IsActive() (package #14) &&
-    // Rides.Ridden == null && Kurt.Health > 0 && CurrentArena != "".
-    return !levelOver && !endLevel_ && !airStrike_.isActive() && rides_.ridden() == nullptr &&
-           player_ != nullptr &&
-           player_->health() > 0 && !currentArena_.empty();
+    // C# CanSnapshot (ScriptRuntime.Snapshot.cs:24-26), term for term: Cutscene == 0 &&
+    // !LevelOver && EndLevel == null && !AirStrike.IsActive() && Rides.Ridden == null &&
+    // Kurt.Health > 0 && CurrentArena.Length != 0. A save mid-cutscene is refused
+    // (golden/L5_cut_snapshot.txt).
+    return cutscene == 0 && !levelOver && !endLevel_ && !airStrike_.isActive() &&
+           rides_.ridden() == nullptr && player_ != nullptr && player_->health() > 0 &&
+           !currentArena_.empty();
 }
 
 std::string ScriptRuntime::snapshotHash(const std::string& text) {

@@ -29,7 +29,10 @@ using KurtT = Mdk.Game.Kurt.Kurt;
 //                   controller's: L5 MUSE_5, L7 DANT_10, L8 GUNT_10), and the C#'s --event;
 //   key:from-to     a key held over steps [from, to) (fwd, back, left, right, jump, fire);
 //   show:step       print from that step on (a long cutscene's end: the shots 1 and 2 ease in
-//                   for 1800 ticks, a minute, before their settled weights apply).
+//                   for 1800 ticks, a minute, before their settled weights apply);
+//   snap            add a `can=` column, runtime.CanSnapshot() (ScriptRuntime.Snapshot.cs:24):
+//                   whether a save may be made on that step -- refused while a cutscene runs
+//                   (Cutscene != 0). Without the token the lines are as before.
 // The goldens' schedules are in tick1.cpp's kCutsceneCases table.
 //
 // Columns: Kurt (state, feet in 1/64 units, Frozen, Visible, firing), Kurt's arena, the cutscene
@@ -76,6 +79,7 @@ var events = new List<(int Step, int Value)>();
 var feet = levelData.Dti.StartPosition;
 var yaw = levelData.Dti.StartAngle;
 var show = 1;
+var snap = false;
 foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries))
 {
     var parts = token.Split(':');
@@ -83,6 +87,12 @@ foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries)
     {
         feet = new System.Numerics.Vector3(float.Parse(parts[1]), float.Parse(parts[2]), float.Parse(parts[3]));
         yaw = float.Parse(parts[4]);
+        continue;
+    }
+
+    if (parts[0] == "snap")
+    {
+        snap = true;
         continue;
     }
 
@@ -169,5 +179,5 @@ for (var step = 1; step <= steps; step++)
         $"cut={runtime.Cutscene:x} target={target} mode={runtime.CameraMode} timer={runtime.CameraTimer} " +
         $"yaw={B(runtime.CameraYaw)} pitch={B(runtime.CameraPitch)} dist={B(runtime.CameraDistance)} " +
         $"pos={V(runtime.CameraPosition)} point={V(runtime.CameraPoint)} finished={finished} " +
-        $"objs={count} shown={shown} hid={hidden:x8} osum={sum}");
+        $"objs={count} shown={shown} hid={hidden:x8} osum={sum}" + (snap ? $" can={runtime.CanSnapshot()}" : ""));
 }

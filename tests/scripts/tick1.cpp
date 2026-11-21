@@ -3748,8 +3748,9 @@ bool levelEndDump(int level, int steps, const std::string& schedule, const MdkDa
 // Player and ScriptRuntime stepped at 1/60 s in the C# Viewer's order (Kurt, then the
 // scripts), under the probe's schedule: `at:x:y:z:yaw` (Kurt's start, the C#'s --at),
 // `ev:step:value` (special_event `value` for the controller of Kurt's arena before that step,
-// as every retail call above 50 is an arena controller's), `show:step` (print from there on)
-// and key holds. Its columns are the
+// as every retail call above 50 is an arena controller's), `show:step` (print from there on),
+// `snap` (a trailing `can=` column: canSnapshot(), the C#'s CanSnapshot) and key holds. Its
+// columns are the
 // probe's, byte for byte: Kurt (state, feet in 1/64, Frozen, Visible, firing), Kurt's arena,
 // the cutscene (state in hex, target, shot, timer, and the camera's yaw, pitch, distance,
 // stored position and point as bit patterns), GameFinished, and the objects (count, shown,
@@ -3764,6 +3765,7 @@ bool cutsceneDump(int level, int steps, const std::string& schedule, const MdkDa
     bool haveAt = false;
     float at[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     int show = 1;
+    bool snap = false;
     std::string rest;
     size_t cursor = 0;
     while (cursor <= schedule.size()) {
@@ -3789,6 +3791,8 @@ bool cutsceneDump(int level, int steps, const std::string& schedule, const MdkDa
             haveAt = true;
         } else if (token.compare(0, 5, "show:") == 0) {
             show = atoi(token.c_str() + 5);
+        } else if (token == "snap") {
+            snap = true;
         } else if (!token.empty()) {
             rest += (rest.empty() ? "" : ",") + token;
         }
@@ -3907,6 +3911,10 @@ bool cutsceneDump(int level, int steps, const std::string& schedule, const MdkDa
                  bits(point.x).c_str(), bits(point.y).c_str(), bits(point.z).c_str(),
                  runtime.gameFinished() ? 1 : 0, count, shown, (unsigned)hidden, sum);
         *out += buffer;
+        if (snap) {
+            // The probe's `can=` column: C# bool.ToString(), "True" / "False".
+            out->insert(out->size() - 1, runtime.canSnapshot() ? " can=True" : " can=False");
+        }
     }
     return true;
 }
@@ -10140,6 +10148,10 @@ int main(int argc, char** argv) {
              "at:465:-6:-2263:0,ev:30:52,ev:1000:55,ev:3720:53,show:3600",
              "the dog's a minute on: the orbit's 1800-tick ease-in runs out (timer 0) and the "
              "shot takes its settled weights (0.7/0.3 pitch, 0.3/0.7 yaw) and point"},
+            {"L5_cut_snapshot", "golden/L5_cut_snapshot.txt", 5, 110,
+             "at:465:-6:-2263:0,ev:40:61,ev:100:53,show:36,snap",
+             "CanSnapshot over Gunter's cutscene: a save allowed before it, refused on every "
+             "step it runs (Cutscene != 0), allowed again once 53 ends it"},
         };
         for (size_t i = 0; i < sizeof(kCutsceneCases) / sizeof(kCutsceneCases[0]); i++) {
             const CutsceneCase& c = kCutsceneCases[i];

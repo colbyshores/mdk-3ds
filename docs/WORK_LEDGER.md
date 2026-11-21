@@ -385,6 +385,7 @@ Newest entries are at the bottom. Performance experiments keep their own table i
 - **Emulator check for the parent (not run here):** `make -C mdk_3ds AUTOQUIT=60 FIXED=1 LEVEL=8 AT=20,3360,-427.01,123.8016 WALK='sniper@30-32;forward@40-78;fire@100-110' CAPTURE=200` -- Kurt on GUNT_10's floor facing XGUNTAM, the scope raised ~26 degrees by 38 frames of forward (the oracle hits with 37-39), one round into XGU_BODY; the capture should show the dark hole on the turret's body. Found with the C# probe (`up:160-197` / `-199` both stamp XGU_BODY; `-195` and `-201` miss).
 - **Commit:** this entry.
 - **Still open:** no capture of a hole yet; the Old-3DS cost of the re-expansion is unmeasured; L5's MUSE sites have no golden of their own (the same XGUNTAM model and path). See OPEN_ITEMS.
+
 ### Package #19: save and load
 - **What:** the C#'s saves, byte for byte, and what a death does.
   - `mdk_core/src/util/json.{h,cpp}`: JSON written as System.Text.Json writes it. Floats are the shortest round-trip decimal in .NET's form (`1E+09`, `1E-05`, `-0`), strings use JavaScriptEncoder.Default's escapes (`\u003C`, `\u002B`...). The reader acts as JsonDocument does: 64 levels deep, the last duplicate name wins, each value's raw span kept.
@@ -721,3 +722,10 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - After the rebuild it passes.
   - The suite at 2029db50, rebuilt, is green (exit 0).
 - **Commit:** this entry.
+
+### Leftovers (2026-11-20): no save while a cutscene runs
+- **What:** `ScriptRuntime::canSnapshot` (`mdk_core/src/scripts/script_snapshot.cpp`) gains the C#'s `Cutscene == 0` term. It is now `ScriptRuntime.Snapshot.cs:24-26` term for term: no cutscene, the level not over, no EndLevel, no air strike out, not riding, Kurt alive, in an arena. Package #19 had left the term out because #13's cutscenes were not in yet; they are.
+  - Test support: the cutscene probe and `tick1 dump cutscene` take a `snap` token that adds a `can=` column (`runtime.CanSnapshot()`). Without the token the lines are as before, so the existing `L*_cut_*` goldens are unchanged (re-run against the probe: identical).
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. Without the term, F2 on Linux or the 3DS pause menu's save during Gunter's, the dog's or a boss's cutscene wrote a save the C# refuses (Kurt frozen and hidden, the cutscene's camera mid-shot).
+- **Evidence:** `golden/L5_cut_snapshot.txt` (`cutscene_probe 5 110 at:465:-6:-2263:0,ev:40:61,ev:100:53,show:36,snap`): `can=True` before Gunter's cutscene, `False` on each of its 60 steps, `True` once 53 ends it; `tick1` prints the same bytes (`PASS L5_cut_snapshot`). The golden bites: without the term, steps 40-99 read `can=True` and the case fails at s=40.
+- **Commit:** this entry's commit.

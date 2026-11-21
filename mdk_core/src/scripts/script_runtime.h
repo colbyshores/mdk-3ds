@@ -947,9 +947,9 @@ public:
     // triangle groups and the level's counts. The text is the C#'s byte for byte
     // (util/json.h), so a C# save loads here and this one loads in the C#.
     //
-    // C# CanSnapshot (Snapshot.cs:24): no cutscene (#13 is unported, so none), the
-    // level not over, no EndLevel, no air strike out (#14, none), not riding, Kurt
-    // alive, and in an arena. The Viewer also refuses while Kurt snipes; that half
+    // C# CanSnapshot (Snapshot.cs:24): no cutscene running (`cutscene` == 0), the
+    // level not over, no EndLevel, no air strike out, not riding, Kurt alive, and in
+    // an arena. The Viewer also refuses while Kurt snipes; that half
     // is the frontend's (Player::sniping).
     bool canSnapshot() const;
     // C# Capture (Snapshot.cs:29): {"kurt": ..., "level": ...}. Needs the bound
