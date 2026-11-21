@@ -1443,6 +1443,10 @@ Missiles, Pickups, Radar) and FallMissile, byte-identical to the C# probe
   FallView, FallModels, FallGround (its minecrawler track and the `CentreRow` scroll, which are
   view arithmetic over `time()`), FallPalette and FallHud. None of it is ported; the sim exposes
   every field they read.
+  **Its sound on Linux:** the screen's device must be given the SDL stream the way the level's is
+  (`device.setSink(mdk::audioSink, nullptr, mdk::audioQueued)` when `mdk::audioIsOpen()`,
+  mdk_linux/src/main.cpp after the runtime is built, 2026-11-20); without that line it mixes into
+  the muted branch and is silent, which is what the level was until then.
 - **The flow (package 2) does not enter the fall.** `GameFlow::play` takes `state_.carry`'s health
   only. The fall is entered by `Event.Fall`/`Start.Fall`; on Landed the screen should store
   `FallSim::carry()` in `GameState::carry` and the level should call `fall::carryIntoLevel` on

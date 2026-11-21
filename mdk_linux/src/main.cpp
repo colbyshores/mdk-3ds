@@ -249,6 +249,13 @@ int main(int argc, char** argv) {
     // and it is the only way to run where the display server cannot present
     // a Vulkan swapchain.
     bool headless = false;
+    // --mute: no sound (the C#'s --mute, Program.cs:186 -> SoundMode.Muted ->
+    // AudioDevice(Output.Muted)). --headless implies it: a headless run is a test,
+    // and a real sink's queue drains at the wall clock's pace, so the frames each
+    // update mixes -- and with them which voices are still playing when a script
+    // asks -- would depend on the host. Muted, the device mixes `delta`'s frames,
+    // the golden's accounting (audio/sound_device.h, the `owed` branch).
+    bool mute = false;
     int maxFrames = -1;
     bool scriptSeedSet = false;
     int32_t scriptSeed = 0;
@@ -335,6 +342,8 @@ int main(int argc, char** argv) {
         const char* value = nullptr;
         if (std::strcmp(argv[i], "--headless") == 0) {
             headless = true;
+        } else if (std::strcmp(argv[i], "--mute") == 0) {
+            mute = true;
         } else if (std::strcmp(argv[i], "--fixed-step") == 0) {
             fixedStep = true;
         } else if (std::strcmp(argv[i], "--true-aspect") == 0) {
@@ -676,10 +685,16 @@ int main(int argc, char** argv) {
     std::printf("[main] backend: %s\n", mdk_render_backend_name(renderer));
     mdk_render_set_gamma(renderer, gammaValue);
 
-    // The output stream (the C#'s AudioDevice(Output.Speakers)). No audio device
-    // is not an error: the device then mixes and drops, which is the headless
-    // oracle's own shape, and the capture path runs exactly as it did before.
-    mdk::audioOpen();
+    // The output stream (the C#'s AudioDevice(Output.Speakers); Game.cs:206 picks
+    // Output.Muted for --mute instead). No audio device is not an error: the device
+    // then mixes and drops, which is the headless oracle's own shape. --headless is
+    // muted too (see `mute` above), so every test and capture runs as before.
+    if (mute || headless) {
+        std::printf("[audio] muted (%s): the mix runs and is dropped, as the C#'s "
+                    "Output.Muted\n", mute ? "--mute" : "--headless");
+    } else {
+        mdk::audioOpen();
+    }
 
     // THE SETTINGS (C# Flow/Settings.cs): the C#'s settings.cfg in the user
     // folder (menu_screens.h). The volumes reach the level's mixer, the difficulty
@@ -1277,6 +1292,24 @@ int main(int argc, char** argv) {
             // reach this one live.
             settings.applyAudio(&runtime->mixer().device());
             pauseApply.device = &runtime->mixer().device();
+            // THE LEVEL'S SOUND REACHES THE SPEAKERS. The C#'s Viewer mixes into the
+            // game's one AudioDevice (Game.cs:206, handed to the Viewer through the Ui),
+            // whose Update pushes the mix to its SDL stream (AudioDevice.cs:214-266);
+            // here each runtime's mixer owns its device, so the level's device is given
+            // the process's one stream -- the music and the effects alike, through the
+            // volumes and the filter applied just above. Until 2026-11-20 nothing on
+            // this target called setSink: the stream was opened, and every level mixed
+            // into the muted branch. A respawn's new runtime takes the same line. The
+            // queue hook is the C#'s `SDL_GetAudioStreamQueued` arm, so the device keeps
+            // the C#'s 60 ms ahead (kQueueSeconds) instead of mixing the frame's delta.
+            if (mdk::audioIsOpen()) {
+                runtime->mixer().device().setSink(mdk::audioSink, nullptr, mdk::audioQueued);
+                std::printf("[audio] the level's mixer -> the SDL stream (master %.2f, music "
+                            "%.2f, effects %.2f)\n",
+                            runtime->mixer().device().masterGain(),
+                            runtime->mixer().device().busGain(mdk::audio::SoundDevice::Music),
+                            runtime->mixer().device().busGain(mdk::audio::SoundDevice::Effects));
+            }
             // hud_message reaches the HUD (Viewer.cs:245, `_scripts.Messages`).
             runtime->hudMessages = &hud.messages();
             // Kurt's own sounds (footsteps, the chute, the guns) go through his
@@ -2293,6 +2326,15 @@ int main(int argc, char** argv) {
     // textures and palettes), newest first. The Vulkan backend retires each one to
     // its frame-completion boundary (AGENTS.md P3).
     arenaViews.clear();
+    if (runtime) {
+        // The level's sound, said once: how many voices its mixer started (ids are
+        // never reused, so the next id less one) and what reached the stream.
+        const mdk::AudioStats sent = mdk::audioStats();
+        std::printf("[audio] level %d: %d voices started; %lld frames sent to the stream "
+                    "(peak %.3f)\n",
+                    levelNumber, (int)(runtime->mixer().device().nextId() - 1),
+                    (long long)sent.frames, sent.peak);
+    }
     music.reset();
     pauseApply.device = nullptr;   // the runtime's mixer goes next
     pause = mdk::menu::PauseMenu();

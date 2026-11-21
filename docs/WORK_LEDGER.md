@@ -466,3 +466,16 @@ Newest entries are at the bottom. Performance experiments keep their own table i
 - **Emulator check for the parent (not run here):** `make -C mdk_3ds AUTOQUIT=40 FIXED=1 LEVEL=3 AT=-56,320,104,90 EVENT=0 CAPTURE=66` -- special_event 0 at one second ends the level, and its StartShake (5) shakes the view for ~32 frames: frame 66's capture is offset by a few pixels from an unshaken one (compare with `CAPTURE=58`, or the same build without the camera hook); then `LEVEL=3 AT=-60,1410,-960,0` (HMO_3) must log `sky: mode -1 (Keep)` and draw no dome while Kurt is in HMO_3.
 - **Commit:** this entry.
 - **Still open:** Vulkan draws Keep as Clear (no load-op pass); the 3DS's Sky clear stays 0xFF102030; no capture of HMO_3's glass (it needs its XG killed and three sub-objects destroyed); see OPEN_ITEMS.
+
+### Linux: the level's sound reaches the speakers
+- **What:**
+  - `mdk_linux/src/main.cpp`: each level's (and each respawn's) runtime mixer device is given the SDL stream, `setSink(audioSink, nullptr, audioQueued)`, right after the settings' volumes and music filter are applied to it. Music and effects both go through it, and the pause menu's volume changes reach the same device live.
+  - `--mute` (the C#'s option, Program.cs:186 → `Output.Muted`). `--headless` implies it, so every test and capture runs on the muted device's `owed` accounting, as before; a real queue drains at wall-clock pace and would make which voices are still playing depend on the host.
+  - `audio_sdl`: `audioStats()` (frames sent, peak sample). The log says `[audio] the level's mixer -> the SDL stream (master, music, effects)` when a level wires it, `[audio] level N: V voices started; F frames sent (peak P)` at its teardown, and the totals at close.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. Package #18b found the level silent on Linux: the stream was opened (`[audio] 44100 Hz stereo F32LE`) but nothing called `setSink`, so every level mixed into the muted branch. The C#'s Viewer mixes into the game's one `AudioDevice` (Game.cs:206), whose `Update` pushes to its SDL stream (AudioDevice.cs:214-266). The 3DS was not affected (the DSP path).
+- **Evidence:**
+  - Level 3 windowed on `DISPLAY=:99`, lavapipe, `SDL_AUDIO_DRIVER=disk`, `--fixed-step --frames 400 --walk=forward@30-200;fire@60-300;jump@200-220`: `[audio] the level's mixer -> the SDL stream (master 0.80, music 0.50, effects 0.70)`, `[audio] level 3: 7 voices started; 287318 frames sent to the stream (peak 0.592)`. The disk driver's file holds 589 824 samples, 566 596 of them non-zero, peak 0.592.
+  - Headless: `[audio] muted (--headless) ...`, `0 frames sent`.
+  - The full scripts suite is green (no golden or frame changed). `tools/check.sh`: four gates pass; core parity's only findings were package #21's new files, not yet in the Linux list in the worktree it ran on (that package's commit adds them).
+  - Frame: `docs/frames/2026-11-21-linux-level-sound.png`.
+- **Open:** the fall screen (#17b) is not in this base; when it lands on Linux its device takes the same `setSink` line (docs/OPEN_ITEMS.md, the fall's section).

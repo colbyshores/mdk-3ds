@@ -54,4 +54,13 @@ bool audioIsOpen();
 void audioSink(void* context, const float* interleaved, int32_t frames);
 int32_t audioQueued(void* context);
 
+// What the sink has pushed since the stream opened: frames, and the loudest
+// sample's magnitude (0 is silence). The run log's evidence that the level's
+// voices reach the stream; the mix itself is the device's.
+struct AudioStats {
+    int64_t frames = 0;
+    float peak = 0.0f;
+};
+AudioStats audioStats();
+
 } // namespace mdk

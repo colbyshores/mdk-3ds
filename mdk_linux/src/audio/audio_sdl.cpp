@@ -14,6 +14,8 @@ namespace {
 // AudioDevice's stream, and nothing else. One per process, as the C# has one
 // AudioDevice per game (Flow/Game.cs:206).
 SDL_AudioStream* g_stream = nullptr;
+// What audioSink pushed (audioStats).
+AudioStats g_stats;
 
 // AudioDevice.OutputChannels and OutputRate.
 constexpr int kOutputChannels = 2;
@@ -48,10 +50,13 @@ bool audioOpen() {
 
 void audioClose() {
     if (g_stream != nullptr) {
+        std::printf("[audio] closed: %lld frames sent (%.1f s), peak %.3f\n",
+                    (long long)g_stats.frames, (double)g_stats.frames / kOutputRate,
+                    (double)g_stats.peak);
         SDL_DestroyAudioStream(g_stream);
         g_stream = nullptr;
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
     }
-    SDL_QuitSubSystem(SDL_INIT_AUDIO);
 }
 
 bool audioIsOpen() { return g_stream != nullptr; }
@@ -65,7 +70,16 @@ void audioSink(void* /*context*/, const float* interleaved, int32_t frames) {
         return;
     }
     SDL_PutAudioStreamData(g_stream, interleaved, (int)(frames * kOutputChannels * sizeof(float)));
+    g_stats.frames += frames;
+    for (int32_t i = 0; i < frames * kOutputChannels; i++) {
+        const float magnitude = interleaved[i] < 0.0f ? -interleaved[i] : interleaved[i];
+        if (magnitude > g_stats.peak) {
+            g_stats.peak = magnitude;
+        }
+    }
 }
+
+AudioStats audioStats() { return g_stats; }
 
 // AudioDevice.Update's head: `SDL_GetAudioStreamQueued(_stream) / bytesPerFrame`,
 // the frames still waiting. This is the number that decides how much the device
