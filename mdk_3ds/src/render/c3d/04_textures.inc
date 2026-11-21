@@ -317,6 +317,45 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture) {
     return true;
 }
 
+// A STREAMED picture's store (C3dTexture::streamed, package #20c): RGB565, no
+// mip chain, the padding cleared once, the picture written straight into the
+// texture's own linear buffer (pica::streamTexelsRgb565) -- no expansion
+// buffer, no 16-bit pack. Wrap and filter as makeTexture's (NEAREST, CLAMP on a
+// padded axis). A full heap evicts as makeTexture does, once.
+static bool makeStreamed(RendererC3D* renderer, C3dTexture& texture) {
+    const size_t bytes = (size_t)texture.paddedWidth * (size_t)texture.paddedHeight * 2u;
+    C3D_TexInitParams params = {};
+    params.width = (u16)texture.paddedWidth;
+    params.height = (u16)texture.paddedHeight;
+    params.maxLevel = 0;
+    params.format = GPU_RGB565;
+    params.type = GPU_TEX_2D;
+    params.onVram = false;
+    if (!C3D_TexInitWithParams(&texture.tex, nullptr, params)) {
+        if (!evictTextures(renderer, bytes) ||
+            !C3D_TexInitWithParams(&texture.tex, nullptr, params)) {
+            mdk::log3dsPrintf("streamed texture %dx%d FAILED: no texture memory",
+                              (int)texture.realWidth, (int)texture.realHeight);
+            return false;
+        }
+    }
+    C3D_TexSetFilter(&texture.tex, GPU_NEAREST, GPU_NEAREST);
+    C3D_TexSetWrap(&texture.tex,
+                   texture.realWidth == texture.paddedWidth ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,
+                   texture.realHeight == texture.paddedHeight ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
+    memset(texture.tex.data, 0, bytes);
+    mdk::pica::streamTexelsRgb565(texture.source.data(), texture.realWidth, texture.realHeight,
+                                  texture.palette.data(), texture.paddedWidth,
+                                  (uint8_t*)texture.tex.data);
+    C3D_TexFlush(&texture.tex);
+    texture.valid = true;
+    texture.format = mdk::pica::TexelFormat::Rgb565;
+    texture.mipLevels = 0;
+    texture.hasHoles = false;
+    renderer->texturesMade[texelStoreIndex(texture.format)]++;
+    return true;
+}
+
 // Makes the GPU copy of a texture from the source the backend kept, and
 // fills it.
 //
@@ -338,6 +377,9 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     forgetTextureBinds(renderer);
     if (texture.compressed) {
         return importCompressed(renderer, texture);
+    }
+    if (texture.streamed) {
+        return makeStreamed(renderer, texture);
     }
     // THE MIP CHAIN (SPEC.md 7.9 enableMipmaps): made with the texture when the
     // toggle is on at that moment, so turning it on costs its memory -- a third

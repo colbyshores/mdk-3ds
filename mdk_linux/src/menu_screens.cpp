@@ -22,9 +22,12 @@
 #include "formats/mdk_data.h"
 #include "formats/file_system.h"
 #include "formats/palette.h"
+#include "game/end_movie.h"
 #include "game/font_view.h"
 #include "game/input.h"
+#include "game/loading_screen.h"
 #include "game/main_menu.h"
+#include "game/movie_view.h"
 #include "game/viewer_saves.h"
 #include "game/screen_view.h"
 #include "game/stats_screen.h"
@@ -97,7 +100,8 @@ bool loadAssets(MdkRenderer renderer, const formats::MdkData& data, UiAssets* ui
         return false;
     }
     // MDKOPT: the main menu's background when the video is missing (the C#'s
-    // fallback, and the only picture behind it here: MDK12.FLC is #20c's).
+    // fallback; MDK12.FLC plays over it, package #20c). OPTIONS.BNI also holds
+    // the INTRO1A splash the menu shows first.
     std::vector<uint8_t> optionsBytes;
     if (data.read("MISC/OPTIONS.BNI", &optionsBytes) &&
         formats::Bni::parse(&ui->options, std::move(optionsBytes))) {
@@ -176,7 +180,7 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         return flow::Screen::None;
     }
 
-    menu::MainMenu mainMenu;
+    std::unique_ptr<menu::MainMenu> mainMenu(new menu::MainMenu());
     // THE STATISTICS AND THE BRIEFING (package #20b): the C#'s StatsScreen, all
     // its pages after a level (StatsPages.All), the briefing alone for a new game
     // or a save made before a level (StatsPages.Briefing). Made when the flow
@@ -294,18 +298,43 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         }
         return shown;
     };
-    // Opens the screen the flow shows (C# Show: a new MainMenu / StatsScreen).
+    // Package #20c: the end movies, and the pictures of the splash and the movies
+    // (the C#'s PalettedImages; game/movie_view.h -- one picture whose palette
+    // follows the blend, as the C# draws it).
+    std::unique_ptr<menu::EndMovie> endMovie;
+    MovieView movieView;
+    SplashView splashView;
+    // Opens the screen the flow shows (C# Show: a new MainMenu / StatsScreen /
+    // EndMovie). The previous screen's pictures go first (C# Dispose).
     auto open = [&](flow::Screen shown) {
+        movieView.release(front->renderer);
+        splashView.release(front->renderer);
+        if (endMovie) {
+            endMovie->close();
+            endMovie.reset();
+        }
         if (shown == flow::Screen::Menu) {
-            mainMenu = menu::MainMenu();
-            menu::MenuItems& items = mainMenu.items();
+            mainMenu.reset(new menu::MainMenu());
+            menu::MenuItems& items = mainMenu->items();
             items.setFonts(ui->bigFont.get(), ui->smallFont.get());
             items.setHost(menu::Host::Console);
             items.setSettings(front->settings, applied, front);
             items.setPrint(printLine, nullptr);
-            std::printf("[main] flow: the main menu\n");
-            mainMenu.open(&ui->fti, &flow.state(), menuSavesOf(front->saves), false,
-                          menu::MenuPage::Main);
+            mainMenu->setMedia(&ui->options, &data);
+            const bool splash = flow.state().splash;
+            std::printf("[main] flow: the main menu%s\n",
+                        splash ? " (the INTRO1A splash first)" : "");
+            mainMenu->open(&ui->fti, &flow.state(), menuSavesOf(front->saves), false,
+                           menu::MenuPage::Main);
+            splashView.open(front->renderer, mainMenu->splash(), false);
+        } else if (shown == flow::Screen::EndMovie) {
+            // C# EndMovie: MDKEND.FLC, then MDKBZK.MVE, then the menu. FINISH.BNI's
+            // sounds and the MVE's stream voice are not wired (end_movie.h,
+            // video_player.h): the GOG data has neither movie.
+            endMovie.reset(new menu::EndMovie());
+            endMovie->player().setData(&data);
+            endMovie->open(menu::EndSounds());
+            std::printf("[main] flow: the end movies (%s)\n", endMovie->status());
         } else if (shown == flow::Screen::Briefing || shown == flow::Screen::Statistics) {
             openStats(shown);
         }
@@ -314,7 +343,8 @@ flow::Screen runFrontScreens(FrontScreens* front) {
     };
     screen = settle(screen);
     if (screen != flow::Screen::Menu && screen != flow::Screen::Briefing &&
-        screen != flow::Screen::Statistics && screen != flow::Screen::Fall) {
+        screen != flow::Screen::Statistics && screen != flow::Screen::Fall &&
+        screen != flow::Screen::EndMovie) {
         mdk_render_release(front->renderer, scope);
         return screen;
     }
@@ -354,7 +384,12 @@ flow::Screen runFrontScreens(FrontScreens* front) {
             }
             fall->frame(steer, elapsed);
         } else if (screen == flow::Screen::Menu) {
-            next = mainMenu.frame(keys, elapsed);
+            next = mainMenu->frame(keys, elapsed);
+            movieView.sync(front->renderer, mainMenu->video(), false);
+        } else if (screen == flow::Screen::EndMovie) {
+            // C# EndMovie.Frame: Esc gives up.
+            next = endMovie->frame(keys.back, elapsed);
+            movieView.sync(front->renderer, endMovie->player(), false);
         } else {
             // C# StatsScreen.Frame: any key, Esc skips, Fire or Jump held runs it
             // fast; the save prompt between its pages reads the menu keys and
@@ -410,11 +445,24 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         } else {
         ScreenView view;
         view.layoutInside(mdk_render_canvas_width(front->renderer), kCanvasHeight);
-        if (screen == flow::Screen::Menu) {
+        const float canvasWidth = mdk_render_canvas_width(front->renderer);
+        if (screen == flow::Screen::Menu || screen == flow::Screen::EndMovie) {
             mdk_render_canvas_begin(front->renderer);
-            view.image(front->renderer, ui->background.texture, ui->background.palette,
-                       ui->background.width, ui->background.height, 0.0f, 0.0f);
-            mainMenu.items().draw(front->renderer, view, *ui->big, *ui->small);
+            if (screen == flow::Screen::Menu && mainMenu->splashFrame()) {
+                // C# MainMenu.Frame's early return: the splash alone (black once done).
+                splashView.draw(front->renderer, mainMenu->splash(), canvasWidth);
+            } else if (screen == flow::Screen::Menu) {
+                // C#: MDKOPT only while the player has no picture, then the picture,
+                // then the items.
+                if (!mainMenu->video().playing() && !mainMenu->video().hasStill()) {
+                    view.image(front->renderer, ui->background.texture, ui->background.palette,
+                               ui->background.width, ui->background.height, 0.0f, 0.0f);
+                }
+                movieView.draw(front->renderer, mainMenu->video(), canvasWidth);
+                mainMenu->items().draw(front->renderer, view, *ui->big, *ui->small);
+            } else {
+                movieView.draw(front->renderer, endMovie->player(), canvasWidth);
+            }
             mdk_render_canvas_end(front->renderer);
         } else {
             // C# StatsScreen.Draw: the heads under the canvas, then the page (the
@@ -422,7 +470,7 @@ flow::Screen runFrontScreens(FrontScreens* front) {
             stats->draw(front->renderer, view, *ui->big, *ui->small);
         }
         mdk_render_end_frame(front->renderer);
-        if (screen != flow::Screen::Menu) {
+        if (screen == flow::Screen::Statistics || screen == flow::Screen::Briefing) {
             // Game.Run: the audio device after the screen's frame.
             stats->device().update(elapsed);
         }
@@ -462,7 +510,7 @@ flow::Screen runFrontScreens(FrontScreens* front) {
             continue;
         }
         if (shown == flow::Screen::Menu || shown == flow::Screen::Briefing ||
-            shown == flow::Screen::Statistics) {
+            shown == flow::Screen::Statistics || shown == flow::Screen::EndMovie) {
             screen = shown;
             open(screen);
             continue;
@@ -483,8 +531,36 @@ flow::Screen runFrontScreens(FrontScreens* front) {
     if (textInput) {
         windowTextInput(front->window, false);
     }
+    if (endMovie) {
+        endMovie->close();
+    }
     mdk_render_release(front->renderer, scope);
     return screen;
+}
+
+// C# Play's LoadingScreen.Show (Game.cs:478-483): one frame, drawn and
+// presented, its resources released before the level loads.
+void showLoadingScreen(MdkRenderer renderer, int32_t level, uint32_t frameIndex,
+                       const char* capturePath) {
+    const MdkScope scope = mdk_render_mark(renderer);
+    const formats::MdkData data = formats::MdkData::find(formats::fileSystem());
+    std::unique_ptr<LoadingScreen> loading(new LoadingScreen());
+    const bool ready = data.found() && loading->load(renderer, data, level);
+    MdkFrameParams params;
+    params.elapsed = 0.0f;
+    params.frame_index = frameIndex;
+    params.clear_colour = 0xFF000000u;
+    params.present = true;
+    params.screenshot_path = capturePath;
+    mdk_render_begin_frame(renderer, &params);
+    mdk_render_canvas_begin(renderer);
+    loading->draw(renderer, mdk_render_canvas_width(renderer), 0.0f);
+    mdk_render_canvas_end(renderer);
+    mdk_render_end_frame(renderer);
+    std::printf("[main] flow: the loading screen of level %d%s\n", (int)level,
+                ready ? "" : " (no LOAD_n.LBB: black)");
+    loading.reset();
+    mdk_render_release(renderer, scope);
 }
 
 } // namespace mdk

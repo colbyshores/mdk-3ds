@@ -227,6 +227,15 @@ struct C3dTexture {
     // turn the old copy draws -- the hole appears a frame or two late.
     bool restamped = false;
 
+    // A STREAMED picture (mdk_render_update_paletted, package #20c: a movie's
+    // frames, the splash): its GPU copy is an RGB565 store with no mip chain,
+    // index 0 black, rewritten IN PLACE from `source` through `palette` at a frame
+    // boundary (pica::streamTexelsRgb565), ONE streamed texture per boundary.
+    // `streamDirty`: a new picture waits for that boundary; the updates before it
+    // collapse into the newest (drop frames, never stall).
+    bool streamed = false;
+    bool streamDirty = false;
+
     // The caller released this texture while its GPU copy may still be in
     // flight. The copy waits for the next frame boundary; the id is already
     // invalid to the caller.

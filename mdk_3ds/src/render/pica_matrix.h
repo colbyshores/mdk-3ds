@@ -930,6 +930,22 @@ inline void texel16Bytes(uint8_t* dst, uint16_t word) {
     dst[1] = (uint8_t)(word >> 8);
 }
 
+// A STREAMED PICTURE (package #20c, mdk_render_update_paletted: a movie's frame,
+// the splash): `indices` (width x height) through `paletteRgba` (256 RGBA
+// entries) straight into an RGB565 store's texels, `rgb565Word` little-endian
+// (`texel16Bytes`) at `textureTexelIndex`'s slots -- the layout a made texture
+// has, so the draw path samples it the same way. Index 0 is BLACK, not
+// transparent: RGB565 has no alpha, and a streamed picture is the bottom layer
+// over the black clear, where the oracle's transparent index 0 shows black too.
+// The padding is not written (the caller cleared it when the store was made).
+//
+// IT IS THE WHOLE COST OF A MOVIE FRAME ON THE ARM11, so it is one pass: the
+// palette's 256 words first, then a table lookup and a 16-bit store per texel,
+// the tile slot from two 8-entry Morton tables (no per-texel bit loop, no
+// division: R11). Integer only.
+void streamTexelsRgb565(const uint8_t* indices, int32_t width, int32_t height,
+                        const uint8_t* paletteRgba, int32_t paddedWidth, uint8_t* out);
+
 // THE CHOICE, per texture, from its EXPANDED level 0 (`texelBytes` order, tiled,
 // `level0Texels` = paddedWidth * paddedHeight, padding included):
 //

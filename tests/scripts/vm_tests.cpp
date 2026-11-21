@@ -36,6 +36,7 @@
 #include "cheats_tests.h"
 #include "menu_tests.h"
 #include "stats_tests.h"
+#include "movie_tests.h"
 #include "save_tests.h"
 #include "input_3ds_tests.h"
 #include "heap_split_tests.h"
@@ -8224,6 +8225,19 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // `vm_tests dump-movie <section>`: the movies, the splash and the loading
+    // screen (movie_tests.h), the C++ side of tests/scripts/movie_probe -- how
+    // golden/movie_<section>.txt is diffed.
+    if (argc > 2 && strcmp(argv[1], "dump-movie") == 0) {
+        const MdkData movieData = locateData();
+        if (!movieData.found()) {
+            fprintf(stderr, "dump-movie: no MDK data (set MDK_DATA_DIR)\n");
+            return 1;
+        }
+        fputs(mdk::test::movieDump(movieData, argv[2]).c_str(), stdout);
+        return 0;
+    }
+
     // The sky inverse's exact .NET reduction order, independent of game data.
     const int numericsFailures = mdk::test::runSystemNumericsTests();
     failures += numericsFailures;
@@ -8356,6 +8370,13 @@ int main(int argc, char** argv) {
     failures += statsFailures;
     if (statsFailures == 0) {
         printf("PASS StatisticsMatchTheOracle\n");
+    }
+    // The movies, the INTRO1A splash and the loading screen against the C#
+    // probe (movie_tests.h, package #20c).
+    const int movieFailures = mdk::test::runMovieTests(data);
+    failures += movieFailures;
+    if (movieFailures == 0) {
+        printf("PASS MoviesMatchTheOracle\n");
     }
 
     const int32_t kLevel = 7;

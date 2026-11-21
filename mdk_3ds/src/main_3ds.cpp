@@ -694,6 +694,14 @@ int main(int argc, char** argv) {
     g_toggles = &enhancedToggles;
     mdk::flow::FlowOptions options;
     options.start = mdk::flow::Start::Menu;
+    // THE INTRO1A SPLASH at boot (package #20c): the C#'s default (Program.cs:241,
+    // no --menu). A harness build's `SPLASH=0` is the C#'s --menu: the menu alone,
+    // so MENU= presses reach it at once.
+    options.splash = true;
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_NOSPLASH)
+    options.splash = false;
+    mdk::log3dsPrintf("main: harness SPLASH=0 (the menu without the INTRO1A splash)");
+#endif
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_LEVEL)
     options.start = mdk::flow::Start::Level;
     // The hardware loop's level choice (`make AUTOQUIT=90 LEVEL=<n>`): the
@@ -730,7 +738,7 @@ int main(int argc, char** argv) {
     mdk::log3dsPrintf("flow: screen=%d level=%d", (int)screen, (int)flow.state().level);
     if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
         screen != mdk::flow::Screen::Briefing && screen != mdk::flow::Screen::Stream &&
-        screen != mdk::flow::Screen::Fall) {
+        screen != mdk::flow::Screen::Fall && screen != mdk::flow::Screen::EndMovie) {
         mdk::log3dsPrintf("flow asked for screen %d, which this frontend cannot show; exiting",
                           (int)screen);
         mdk_render_destroy(renderer);
@@ -758,6 +766,7 @@ int main(int argc, char** argv) {
     front.settings = &g_gameSettings;
     front.save = saveConfigNow;
     front.controls = &controls;
+    front.toggles = &enhancedToggles;
     front.now = nowSeconds;
     front.resumePending = &g_resumePending;
     front.frame = &frame;
@@ -897,6 +906,8 @@ int main(int argc, char** argv) {
         }
         heapProbe("menus-done");
     }
+    // C# Play: the loading screen's one frame, then the level (package #20c).
+    mdk::showLoadingScreen3ds(renderer, flow.state().level, frame);
     // Set when the level is left for the main menu (the START menu's MAIN MENU,
     // or a level that ends into the menu).
     bool toMenu = false;
@@ -3517,14 +3528,16 @@ int main(int argc, char** argv) {
         }
         // THE GAME-FINISHED HOOK (beside package 2's): the C#'s Game takes
         // Event.GameFinished to the end movie (Game.cs:458, MDKEND.FLC and MDKBZK.MVE,
-        // then the menu with the splash). The movies are not this package's, so the run
-        // logs the flow's answer and ends through the ordinary teardown.
+        // then the menu with the splash), which the front screens show (package #20c).
         if (gameFinishedExit) {
             screen = flow.handle(mdk::flow::Event::GameFinished);
-            mdk::log3dsPrintf("game: finished; the flow shows %s (the end movie is not "
-                              "played; exiting)",
+            mdk::log3dsPrintf("game: finished; the flow shows %s",
                               mdk::flow::GameFlow::screenName(screen));
-            exitReason = "game finished";
+            if (screen == mdk::flow::Screen::EndMovie) {
+                toMenu = true;
+            } else {
+                exitReason = "game finished";
+            }
             break;
         }
     }

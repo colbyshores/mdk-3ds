@@ -203,7 +203,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
             // HUD's digits and the fonts keep the palette's exact colours; at most
             // the first frame that draws one shows the 16-bit copy.
             if (draw->material.pass == mdk::Pass::Overlay && !resource.keepRgba8 &&
-                !resource.compressed) {
+                !resource.compressed && !resource.streamed) {
                 resource.keepRgba8 = true;
                 if (resource.valid && resource.format != mdk::pica::TexelFormat::Rgba8) {
                     resource.stale = true;

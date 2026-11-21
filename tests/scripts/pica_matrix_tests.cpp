@@ -46,6 +46,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <vector>
 
 #include "render/pica_matrix.h"
 #include "render/sun_shadow.h"
@@ -1369,6 +1370,54 @@ void testThe16BitStore() {
     PICA_CHECK(at8 == chainTexels);
 }
 
+// A STREAMED PICTURE (package #20c, streamTexelsRgb565): every texel of a 13x10
+// picture in a 16x16 store is its palette entry's rgb565Word at
+// textureTexelIndex's slot -- the made texture's layout -- index 0 is black, and
+// the padding is untouched. A 600 x 360 movie frame is the same loop.
+void testTheStreamedPicture() {
+    uint8_t palette[256 * 4];
+    for (int32_t i = 0; i < 256; i++) {
+        palette[i * 4] = (uint8_t)(i * 7);
+        palette[i * 4 + 1] = (uint8_t)(255 - i);
+        palette[i * 4 + 2] = (uint8_t)(i * 3 + 1);
+        palette[i * 4 + 3] = 255;
+    }
+    uint8_t indices[13 * 10];
+    for (int32_t i = 0; i < 13 * 10; i++) {
+        indices[i] = (uint8_t)((i * 37 + 5) % 256);
+    }
+    indices[0] = 0;
+    indices[13 * 10 - 1] = 0;
+    uint8_t store[16 * 16 * 2];
+    memset(store, 0xAB, sizeof(store));
+    mdk::pica::streamTexelsRgb565(indices, 13, 10, palette, 16, store);
+    bool texelsHold = true;
+    std::vector<bool> written(16 * 16, false);
+    for (uint32_t y = 0; y < 10; y++) {
+        for (uint32_t x = 0; x < 13; x++) {
+            const size_t slot = mdk::pica::textureTexelIndex(x, y, 16);
+            written[slot] = true;
+            const uint8_t index = indices[y * 13 + x];
+            const uint16_t expected =
+                index == 0 ? 0u
+                           : mdk::pica::rgb565Word(palette[index * 4], palette[index * 4 + 1],
+                                                   palette[index * 4 + 2]);
+            if (wordAt(store, slot) != expected) {
+                texelsHold = false;
+            }
+        }
+    }
+    PICA_CHECK(texelsHold);
+    PICA_CHECK(wordAt(store, mdk::pica::textureTexelIndex(0, 0, 16)) == 0u);
+    bool paddingKept = true;
+    for (size_t slot = 0; slot < written.size(); slot++) {
+        if (!written[slot] && wordAt(store, slot) != 0xABABu) {
+            paddingKept = false;
+        }
+    }
+    PICA_CHECK(paddingKept);
+}
+
 // KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): the rectangle a
 // padded original frame is drawn through, and what one frame costs per store --
 // the numbers the three-way A/B (RGBA8 / RGBA5551 / ETC1A4) and the start-set
@@ -2120,6 +2169,7 @@ int runPicaMatrixTests() {
     testTheMipChain();
     testThe16BitStore();
     testTheCompressedKurtFrame();
+    testTheStreamedPicture();
     testTheHdResidencyPolicy();
     testTheSunsShadow();
     return failures;

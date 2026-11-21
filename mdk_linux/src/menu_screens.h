@@ -4,7 +4,9 @@
 // menu_screens.h -- the Linux frontend's screens between levels (package #20a):
 // the main menu (game/main_menu.h), the briefing and (package #20b) the
 // statistics after a level (game/stats_screen.h, with its sounds and the
-// Score-O-matic's heads), and the settings file they share with the pause menu.
+// Score-O-matic's heads), and the settings file they share with the pause menu;
+// since #20c the INTRO1A splash and MDK12.FLC on the menu, the end movies and
+// the loading screen.
 //
 // The game starts here unless --level names a level (the C#'s `--level`: the
 // level at once; with no start option the C#'s Start.Menu). The flow decides
@@ -85,10 +87,16 @@ struct FrontScreens {
     bool skipStatistics = false;
 };
 
-// Runs the Menu, the Briefing, the Statistics (StatsScreen) and the Fall
-// (whichever the flow shows) until the flow names a Level (returned) or the run
-// ends (Screen::None: Quit, the window closed, the frame budget, the capture
-// taken).
+// Runs the Menu, the Briefing, the Statistics (StatsScreen), the Fall and the
+// EndMovie (whichever the flow shows) until the flow names a Level (returned) or
+// the run ends (Screen::None: Quit, the window closed, the frame budget, the
+// capture taken).
 flow::Screen runFrontScreens(FrontScreens* front);
+
+// C# Play's LoadingScreen.Show (package #20c, game/loading_screen.h): one frame
+// of LEVEL<level>'s loading screen, before the level loads. Not a game frame (the
+// run's frame count does not move); `capturePath` (--capture-loading) writes it.
+void showLoadingScreen(MdkRenderer renderer, int32_t level, uint32_t frameIndex,
+                       const char* capturePath);
 
 } // namespace mdk

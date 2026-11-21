@@ -53,6 +53,16 @@ void ScreenView::layoutInside(float canvasW, float canvasH) {
     originY = (canvasH - kHeight * scale) / 2.0f;
 }
 
+void ScreenView::layout(float canvasW, float canvasH, float viewW, float viewH, bool fitHeight) {
+    canvasWidth = canvasW;
+    canvasHeight = canvasH;
+    const float sx = canvasW / viewW;
+    const float sy = canvasH / viewH;
+    scale = fitHeight ? sy : (sx < sy ? sx : sy);
+    originX = (canvasW - viewW * scale) / 2.0f;
+    originY = (canvasH - viewH * scale) / 2.0f;
+}
+
 void ScreenView::text(MdkRenderer renderer, const FontView& font, const uint8_t* text,
                       int32_t length, float x, float y, float textScale, float alpha) const {
     if (!font.ready() || length <= 0) {
@@ -79,6 +89,20 @@ void ScreenView::image(MdkRenderer renderer, int32_t texture, int32_t palette, i
     const Colour white{1.0f, 1.0f, 1.0f, 1.0f};
     quad(renderer, toCanvasX(x), toCanvasY(y), (float)width * scale, (float)height * scale, white,
          texture, palette);
+}
+
+void ScreenView::image(MdkRenderer renderer, int32_t texture, int32_t palette, int32_t width,
+                       int32_t height, float x, float y, const Colour& tint) const {
+    if (texture < 0) {
+        return;
+    }
+    quad(renderer, toCanvasX(x), toCanvasY(y), (float)width * scale, (float)height * scale, tint,
+         texture, palette);
+}
+
+void ScreenView::fillCanvasRect(MdkRenderer renderer, float x, float y, float w, float h,
+                                const Colour& colour) const {
+    quad(renderer, x, y, w, h, colour, -1, -1);
 }
 
 bool loadPalettedImage(MdkRenderer renderer, const formats::Bni& bni, const char* name,

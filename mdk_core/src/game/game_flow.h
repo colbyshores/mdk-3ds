@@ -38,8 +38,12 @@
 // SaveGames the frontend hands over (setSaves); with none, the C#'s writes fail
 // quietly as a full disk's would, and the menu has no "Continue".
 //
+// THE END MOVIES AND THE LOADING SCREEN (package #20c): the frontends show
+// Screen::EndMovie (game/end_movie.h), and draw Play's LoadingScreen.Show
+// (game/loading_screen.h) before they load the level Play names.
+//
 // NOT PORTED, WITH CAUSE — each is the menu subsystem (package #20), not a stub:
-//   * Play's LoadingScreen.Show and the screens' own construction: Menu/ is cut.
+//   * The screens' own construction: the frontends build what they are told.
 //   * ShowStream's WatcomRandom seed is the frontend's to make (streamSeed): the
 //     screen itself is the frontends' (stream/stream_screen.h, package #18b).
 //   * GameOptions' window, renderer, mods, dev tools, soak keys, perf log and
@@ -267,13 +271,15 @@ public:
     // The skip for the screen shown, handled: handle(skipScreen()) until a screen
     // that is not skipped through, at most kMaxSkips times. Since package #20a
     // the frontends SHOW the Menu and the Briefing (game/main_menu.h,
-    // game/stats_screen.h), since #17b the Fall (fall/fall_screen.h) and since
-    // #20b the Statistics, so the walk stops at those as at a Level or None;
-    // skipScreen keeps the Briefing's, the Fall's and the Statistics' arms, which
-    // are the C#'s skips of them (Esc, then a key: Event.Fall for the Briefing and
-    // the Statistics, Event.Play for the Fall; a frontend's --skip-statistics and
-    // --skip-falls take them). `trail`, when given, receives the screens skipped
-    // in order (up to kMaxSkips of them), so the frontend can log each one.
+    // game/stats_screen.h), since #17b the Fall (fall/fall_screen.h), since
+    // #20b the Statistics and since #20c the EndMovie (game/end_movie.h), so
+    // the walk stops at those as at a Level or None; skipScreen keeps the
+    // Briefing's, the Fall's, the Statistics' and the EndMovie's arms, which
+    // are the C#'s skips of them (Esc, then a key: Event.Fall for the Briefing
+    // and the Statistics, Event.Play for the Fall; a frontend's
+    // --skip-statistics and --skip-falls take them). `trail`, when given,
+    // receives the screens skipped in order (up to kMaxSkips of them), so the
+    // frontend can log each one.
     static constexpr int32_t kMaxSkips = 8;
     struct SkipTrail {
         Screen skipped[kMaxSkips];
@@ -283,7 +289,7 @@ public:
     // The screen's name and, for one this port does not have, the gap package
     // that ports it (docs/PORT_GAPS.md), for the frontends' "flow: skipped" lines:
     // 0 for the ones the frontends show (the Level; the Menu and the Briefing
-    // since #20a; the Statistics since #20b).
+    // since #20a; the Statistics since #20b; the EndMovie since #20c).
     static const char* screenName(Screen screen);
     static int32_t screenPackage(Screen screen);
 

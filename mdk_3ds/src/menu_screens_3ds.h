@@ -30,8 +30,11 @@
 // level opens its own), and everything it made is released when it ends.
 //
 // DRAWN through the canvas and MDKFONT.FTI's FONTBIG/FONTSML -- the fonts the
-// START menu and the HUD already use -- over MDKOPT (the C#'s background when
-// MDK12.FLC is missing; the video is #20c's). On the 400 x 240 top screen the
+// START menu and the HUD already use -- over MDK12.FLC (package #20c: decoded on
+// the main thread, ~11 us a frame on the host, and uploaded as a streamed RGB565
+// picture at a frame boundary, render.h), MDKOPT before its first frame; the
+// INTRO1A splash first at boot, after a death and after the end movies (any
+// button skips it). The end movies skip on B, START or A. On the 400 x 240 top screen the
 // canvas is exactly the original's 600 x 360, so the layout is the C#'s at
 // scale 1 (game/screen_view.h).
 //
@@ -50,6 +53,7 @@
 namespace mdk {
 
 struct ControlBindings;
+struct EnhancedToggles;
 
 struct FrontScreens3ds {
     MdkRenderer renderer = nullptr;
@@ -63,6 +67,8 @@ struct FrontScreens3ds {
     // on every change (C# Ui.ApplySettings).
     bool (*save)() = nullptr;
     const ControlBindings* controls = nullptr;
+    // The Enhanced Mode toggles (package #20c reads movieHalfRate); null: off.
+    const EnhancedToggles* toggles = nullptr;
     // The frame clock (main_3ds.cpp's nowSeconds) and its wake flag (P1).
     double (*now)() = nullptr;
     volatile bool* resumePending = nullptr;
@@ -73,9 +79,14 @@ struct FrontScreens3ds {
     const char* exitReason = nullptr;
 };
 
-// Runs the Menu, the Briefing, the Statistics and the Fall (whichever the flow
-// shows) until the flow names a Level (returned) or the run ends (Screen::None:
-// Quit, aptMainLoop, the harness deadline, the frame budget).
+// Runs the Menu, the Briefing, the Statistics, the Fall and the EndMovie
+// (whichever the flow shows) until the flow names a Level (returned) or the run
+// ends (Screen::None: Quit, aptMainLoop, the harness deadline, the frame budget).
 flow::Screen runFrontScreens3ds(FrontScreens3ds* front);
+
+// C# Play's LoadingScreen.Show (package #20c, game/loading_screen.h): one frame
+// of LEVEL<level>'s loading screen before the level loads; it stays on the
+// screen through the load. Not a game frame (the run's frame count does not move).
+void showLoadingScreen3ds(MdkRenderer renderer, int32_t level, uint32_t frameIndex);
 
 } // namespace mdk

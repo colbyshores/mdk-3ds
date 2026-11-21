@@ -57,6 +57,9 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   Gore (`Option = ui.Settings.Gore ? 1 : 0`, Viewer.cs:234) on both frontends, still on
   by default, and Kurt's difficulty (the town timer the scripts read) has its writer
   (`Kurt::setDifficulty` from the settings, Viewer.cs:231).
+- **Movies, splash and loading screen (2026-11-20, PORT_GAPS package 20c):** no opcode
+  added or changed; the counts below stand. Opcode 131's arm 81 (`gameFinished()`) now
+  leads somewhere on both frontends: the end movies, then the menu with the splash.
 - **Combat and hazard batch (2026-11-20, PORT_GAPS package 4):** 158, 159, 167,
   172, 178 and 184 ported, with the consumer of 164's flag; recount (top-level
   `case` labels of both brace-matched spans, set semantics): C# **238**, C++ **234**,

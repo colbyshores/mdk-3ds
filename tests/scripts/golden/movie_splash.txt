@@ -1,0 +1,78 @@
+== INTRO1A: 83976 bytes palette1=510b47e7 palette2=d135a0b7 picture=934b145b
+crafted 7c7d3468 short 47923367 07070701020909040506000000000000
+blend t=0 black-one=f59c39c5 one-two=510b47e7 two-black=d135a0b7
+blend t=0.001 black-one=f59c39c5 one-two=510b47e7 two-black=d135a0b7
+blend t=0.003 black-one=f59c39c5 one-two=c7875a8d two-black=d53bd306
+blend t=0.25 black-one=fdf264d1 one-two=26ed4827 two-black=a38af826
+blend t=0.5 black-one=ef851477 one-two=de548c44 two-black=8f6c1339
+blend t=0.5019531 black-one=ef851477 one-two=de548c44 two-black=8f6c1339
+blend t=0.6 black-one=9badf9c6 one-two=75e9eeb9 two-black=15e7e23e
+blend t=0.75 black-one=c5f5737f one-two=320bc0fc two-black=2966baab
+blend t=0.998 black-one=26d6a7e8 one-two=beb0ba66 two-black=f59c39c5
+blend t=1 black-one=510b47e7 one-two=d135a0b7 two-black=f59c39c5
+flash 200 0
+flash 201 0
+flash 202 0
+flash 203 0
+flash 204 0
+flash 205 0
+flash 206 0
+flash 207 0
+flash 208 0
+flash 209 0
+flash 210 0
+flash 211 0.043137256
+flash 212 0.08627451
+flash 213 0.12941177
+flash 214 0.17254902
+flash 215 0.21568628
+flash 216 0.2627451
+flash 217 0.30588236
+flash 218 0.34901962
+flash 219 0.39215687
+flash 220 0.43529412
+flash 221 0.47843137
+flash 222 0.52156866
+flash 223 0.5647059
+flash 224 0.60784316
+flash 225 0.6509804
+flash 226 0.69411767
+flash 227 0.7372549
+flash 228 0.78431374
+flash 229 0.827451
+flash 230 0.87058824
+flash 231 0.9137255
+flash 232 0.95686275
+flash 233 1
+flash 234 0.9647059
+flash 235 0.9254902
+flash 236 0.8901961
+flash 237 0.8509804
+flash 238 0.8156863
+flash 239 0.7764706
+flash 240 0.7411765
+flash 241 0.7019608
+flash 242 0.6666667
+flash 243 0.6313726
+flash 244 0.5921569
+flash 245 0.5568628
+flash 246 0.5176471
+flash 247 0.48235294
+flash 248 0.44313726
+flash 249 0.40784314
+flash 250 0.36862746
+flash 251 0.33333334
+flash 252 0.29803923
+flash 253 0.25882354
+flash 254 0.22352941
+flash 255 0.18431373
+flash 256 0.14901961
+flash 257 0.10980392
+flash 258 0.07450981
+flash 259 0.03529412
+flash 260 0
+flash 261 0
+flash 262 0
+flash 263 0
+flash 264 0
+flash 265 0

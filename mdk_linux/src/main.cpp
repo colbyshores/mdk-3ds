@@ -404,6 +404,15 @@ int main(int argc, char** argv) {
     // (the fall probe's `chase` schedule; a test aid, so a headless run carries
     // pickups into the level).
     bool fallChase = false;
+    // Package #20c, the C#'s own options (Program.cs:223-241): --menu starts at the
+    // main menu WITHOUT the INTRO1A splash (--splash: with it, which is also the
+    // default), --end at the end movies (Start.EndMovie), and --capture-loading
+    // writes the loading screen's one frame (it is not a game frame, so
+    // --capture-frame cannot reach it).
+    bool menuOption = false;
+    bool splashOption = false;
+    bool endOption = false;
+    std::string loadingCapturePath;
     // --press: menu keys at game times (the C#'s TestPresses, game/menu_presses.h).
     mdk::MenuPresses presses;
     // --stream=N / --health=N (package #18b): start in the stream after level N.
@@ -800,6 +809,14 @@ int main(int argc, char** argv) {
             hasTypeTest = true;
             typeTestText.assign(value, (size_t)(at - value));
             typeTestTime = seconds;
+        } else if (std::strcmp(argv[i], "--menu") == 0) {
+            menuOption = true;
+        } else if (std::strcmp(argv[i], "--splash") == 0) {
+            splashOption = true;
+        } else if (std::strcmp(argv[i], "--end") == 0) {
+            endOption = true;
+        } else if ((value = optionValue(argv[i], "--capture-loading")) != nullptr) {
+            loadingCapturePath = value;
         } else if ((value = optionValue(argv[i], "--save-dir")) != nullptr) {
             saveDir = value;
         } else if ((value = optionValue(argv[i], "--load")) != nullptr) {
@@ -1012,6 +1029,12 @@ int main(int argc, char** argv) {
                         : startStream ? mdk::flow::Start::Stream
                         : levelGiven  ? mdk::flow::Start::Level
                                       : mdk::flow::Start::Menu;
+    // C# Program.cs:223 and :241: --end is Start.EndMovie (before --level, as
+    // there), and the splash shows unless --menu asks for the menu alone.
+    if (endOption) {
+        flowOptions.start = mdk::flow::Start::EndMovie;
+    }
+    flowOptions.splash = !menuOption || splashOption;
     // Without --level (or --stream, --fall) the C#'s default first level
     // (ViewerOptions, the order's first: LEVEL7), which is where the menu's "Level: 1"
     // starts.
@@ -1066,8 +1089,9 @@ int main(int argc, char** argv) {
     // #18b), --fall=N in the fall (#17b).
     if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
         screen != mdk::flow::Screen::Briefing && screen != mdk::flow::Screen::Stream &&
-        screen != mdk::flow::Screen::Fall && screen != mdk::flow::Screen::Statistics) {
-        std::fprintf(stderr, "[main] the flow did not start in a level, the menu, the briefing, the statistics, the stream or the fall\n");
+        screen != mdk::flow::Screen::Fall && screen != mdk::flow::Screen::Statistics &&
+        screen != mdk::flow::Screen::EndMovie) {
+        std::fprintf(stderr, "[main] the flow did not start in a level, the menu, the briefing, the statistics, the stream, the fall or the end movies\n");
         mdk_render_destroy(renderer);
         mdk::audioClose();
         mdk::windowDestroy(&window);
@@ -1274,6 +1298,9 @@ int main(int argc, char** argv) {
         }
     }
     levelNumber = flow.state().level;
+    // C# Play: the loading screen's one frame, then the level (package #20c).
+    mdk::showLoadingScreen(renderer, levelNumber, frame,
+                           loadingCapturePath.empty() ? nullptr : loadingCapturePath.c_str());
     // Set when the level is left for the main menu (the pause menu's "Main
     // menu", or a level that ends into the menu).
     bool toMenu = false;
@@ -2935,14 +2962,17 @@ int main(int argc, char** argv) {
         }
         // THE GAME-FINISHED HOOK (beside package 2's): the C#'s Game takes
         // Event.GameFinished to the end movie (Game.cs:458, MDKEND.FLC and MDKBZK.MVE, then
-        // the menu with the splash). The movies are not this package's, so the run ends
-        // through the ordinary teardown.
+        // the menu with the splash), which the front screens show (package #20c).
         if (gameFinishedExit) {
-            std::printf("[main] game: finished; the flow shows %s (the end movie is not "
-                        "played; exiting)\n",
-                        mdk::flow::GameFlow::screenName(
-                            flow.handle(mdk::flow::Event::GameFinished)));
-            exitReason = "game finished";
+            const mdk::flow::Screen after = flow.handle(mdk::flow::Event::GameFinished);
+            std::printf("[main] game: finished; the flow shows %s\n",
+                        mdk::flow::GameFlow::screenName(after));
+            if (after == mdk::flow::Screen::EndMovie) {
+                screen = after;
+                toMenu = true;
+            } else {
+                exitReason = "game finished";
+            }
             break;
         }
     }

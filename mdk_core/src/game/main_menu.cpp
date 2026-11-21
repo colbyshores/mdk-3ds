@@ -37,8 +37,13 @@ std::string MainMenu::text(const char* name, const char* fallback) const {
     return fti_ ? fti_->getText(name, fallback) : std::string(fallback);
 }
 
-// The C# constructor (the video, the slideshow, the splash and the song are
-// not ported: main_menu.h).
+void MainMenu::setMedia(const formats::Bni* options, const formats::MdkData* data) {
+    options_ = options;
+    data_ = data;
+}
+
+// The C# constructor (the song is not ported: main_menu.h). The video's Finished
+// starts the slideshow (C# `_video.Finished += _slideshow.Start`).
 void MainMenu::open(const formats::Fti* fti, flow::GameState* state, const MenuSaves& saves,
                     bool hasBeta, MenuPage first) {
     fti_ = fti;
@@ -46,6 +51,16 @@ void MainMenu::open(const formats::Fti* fti, flow::GameState* state, const MenuS
     saves_ = saves;
     hasBeta_ = hasBeta;
     next_ = flow::Event::None;
+    // Package #20c: the player reads the game's data; the splash when the state
+    // asks for it (C# `if (state.Splash) _splash = new IntroSplash(ui, options)`).
+    video_.setData(data_);
+    video_.setFinished(&MainMenu::videoFinished, this);
+    videoStarted_ = false;
+    splashFrame_ = false;
+    hasSplash_ = state_->splash && options_ != nullptr;
+    if (hasSplash_) {
+        splash_.open(*options_);
+    }
     state_->splash = false;
     const int32_t index = flow::indexOf(state_->level);
     levelIndex_ = index > 0 ? index : 0;
@@ -64,8 +79,32 @@ const char* MainMenu::pageName() const {
     return "?";
 }
 
-// C# Frame's input half: HandleKeys, then the items' Update.
+// C# Frame's input half: the splash's frame, or StartVideo, the video's Update,
+// HandleKeys, then the items' Update.
 flow::Event MainMenu::frame(const Keys& keys, float elapsed) {
+    splashFrame_ = hasSplash_ && !splash_.done();
+    if (splashFrame_) {
+        splash_.update(keys.any, elapsed);
+        return flow::Event::None;
+    }
+    // C# StartVideo: once per menu.
+    if (!videoStarted_) {
+        videoStarted_ = true;
+        video_.play("MISC/FLIC/MDK12.FLC");
+    }
+    video_.update(elapsed);
+    // C# `_slideshow.Update(elapsed)`, whose Next shows the image on the player;
+    // any input starts its wait again (Reset); the items show unless the bare
+    // first slide does (`_items.Visible = _slideshow.ItemsShown`).
+    const int32_t image = slideshow_.image();
+    slideshow_.update(elapsed);
+    if (slideshow_.image() != image) {
+        showSlide();
+    }
+    if (keys.any) {
+        slideshow_.reset();
+    }
+    items_.visible = slideshow_.itemsShown();
     handleKeys(keys);
     const Event event = items_.handle(keys, elapsed);
     act(event);
@@ -187,6 +226,18 @@ void MainMenu::act(const Event& event) {
     }
 }
 
+// C# Status (the slideshow's line is #20b's).
+std::string MainMenu::status() const {
+    if (hasSplash_ && !splash_.done()) {
+        return "intro splash";
+    }
+    if (!slideshow_.itemsShown()) {
+        return "main menu: slideshow";
+    }
+    std::string line = std::string("main menu: ") + pageName();
+    return video_.playing() ? line + ", video" : line;
+}
+
 bool MainMenu::hasLastGame() const {
     int32_t level = 0;
     return saves_.peek && saves_.peek(saves_.user, kLastGame, &level);
@@ -304,6 +355,40 @@ void MainMenu::nextLevel() {
     levelIndex_ = (levelIndex_ + 1) % flow::kOrderCount;
     showMain();
     items_.select(page_ == Page::Main && hasLastGame() ? 2 : 1);
+}
+
+// C# Slideshow.Start, through the player's Finished: the video's last frame is
+// kept (`_last = video.Still`), the wait starts, the slides load once.
+void MainMenu::videoFinished(void* user) {
+    MainMenu* menu = static_cast<MainMenu*>(user);
+    const VideoPlayer& video = menu->video_;
+    menu->hasLast_ = video.hasStill();
+    if (menu->hasLast_) {
+        menu->lastWidth_ = video.width();
+        menu->lastHeight_ = video.height();
+        menu->lastIndices_ = video.indices();
+        menu->lastPalette_.assign(video.paletteRgb(),
+                                  video.paletteRgb() + VideoPlayer::kPaletteBytes);
+    }
+    if (menu->data_ != nullptr) {
+        menu->slideshow_.start(*menu->data_);
+    }
+}
+
+// C# Slideshow.Next's showing half: image 0 is the video's last frame again, the
+// others the slides (VideoPlayer.ShowStill).
+void MainMenu::showSlide() {
+    const int32_t image = slideshow_.image();
+    if (image == 0) {
+        if (hasLast_) {
+            video_.showStill(lastWidth_, lastHeight_, lastIndices_.data(), lastPalette_.data());
+        }
+        return;
+    }
+    const formats::Gif* gif = slideshow_.gif(image);
+    if (gif != nullptr) {
+        video_.showStill(gif->width(), gif->height(), gif->indices(), gif->palette());
+    }
 }
 
 } // namespace menu

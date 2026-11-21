@@ -86,8 +86,9 @@ public:
         int32_t choiceCount;
     };
 
-    // The rows: RESUME, the settings, CHEATS, OPTIONS, MAIN MENU, QUIT.
-    static const int32_t kItemCount = 18;
+    // The rows: RESUME, the settings (MOVIES HALF RATE last, package #20c),
+    // CHEATS (#21), OPTIONS, MAIN MENU, QUIT.
+    static const int32_t kItemCount = 19;
     static const int32_t kResumeRow = 0;
     static const int32_t kCheatsRow = kItemCount + 1;
     static const int32_t kOptionsRow = kItemCount + 2;

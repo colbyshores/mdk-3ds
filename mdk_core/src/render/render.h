@@ -225,6 +225,24 @@ MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba256);
 void mdk_render_update_texture(MdkRenderer r, MdkTextureId texture,
                                 int32_t width, int32_t height, const uint8_t* pixels);
 
+// A STREAMED picture (package #20c: a movie's frame, the splash's palette):
+// replace an index texture's indices and/or the palette it is drawn through,
+// in place, as often as every frame (the C#'s PalettedImage.SetIndices and
+// SetPalette). `indices` (width * height, the texture's size) and
+// `rgba256` (256 RGBA entries) may each be null: that half stays.
+//
+// Vulkan updates the index image and the palette image (`palette` is the
+// palette id the draws name). The 3DS has no palette texture, so it expands the
+// picture through the palette on the CPU: the first update turns the texture
+// into a STREAMED one -- RGB565, no mip chain, index 0 black (a streamed picture
+// is the bottom layer, over the black clear) -- and each frame boundary
+// rewrites it in place, ONE streamed texture per boundary, after
+// C3D_FrameBegin's wait (AGENTS.md P3). Updates between two boundaries
+// collapse into one: the newest picture is the one drawn, the others are
+// dropped (the owner's rule: drop frames, never stall).
+void mdk_render_update_paletted(MdkRenderer r, MdkTextureId texture, MdkPaletteId palette,
+                                const uint8_t* indices, const uint8_t* rgba256);
+
 // Give a (texture, palette) pair a whole colour image instead of the
 // palette expansion (a mod's replacement: the C# Renderer's Replace). The
 // image is `frames` frames of width x height stacked downwards, RGBA8

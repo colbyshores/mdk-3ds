@@ -5,6 +5,7 @@
 #include "formats/flc.h"
 
 #include <string.h>
+#include <utility>
 
 #include "formats/bin_reader.h"
 
@@ -66,7 +67,8 @@ bool Flc::load(const uint8_t* bytes, int32_t byteCount, Flc* outFlc) {
     flc.palette_.assign(PALETTE_BYTES, 0);
     flc.rewind();
 
-    *outFlc = flc;
+    // Moved, not copied: the file's bytes are the big half (632 KB for MDK12.FLC).
+    *outFlc = std::move(flc);
     return true;
 }
 

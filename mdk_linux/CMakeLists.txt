@@ -166,6 +166,11 @@ set(SOURCES
     ${CORE}/src/game/stats_screen.cpp
     ${CORE}/src/game/heads_view.cpp
     ${CORE}/src/game/slideshow.cpp
+    ${CORE}/src/game/intro_splash.cpp
+    ${CORE}/src/game/video_player.cpp
+    ${CORE}/src/game/end_movie.cpp
+    ${CORE}/src/game/loading_screen.cpp
+    ${CORE}/src/game/movie_view.cpp
     ${CORE}/src/game/menu_presses.cpp
     ${CORE}/src/game/font_view.cpp
     ${CORE}/src/game/hd_key.cpp

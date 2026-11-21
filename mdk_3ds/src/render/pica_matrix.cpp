@@ -528,6 +528,36 @@ void packTexels16(uint8_t* chain, size_t texels, TexelFormat format) {
     }
 }
 
+void streamTexelsRgb565(const uint8_t* indices, int32_t width, int32_t height,
+                        const uint8_t* paletteRgba, int32_t paddedWidth, uint8_t* out) {
+    if (!indices || !paletteRgba || !out || width <= 0 || height <= 0 || paddedWidth < width) {
+        return;
+    }
+    uint16_t words[256];
+    words[0] = 0;   // index 0: black (see the header)
+    for (int32_t i = 1; i < 256; i++) {
+        const uint8_t* c = paletteRgba + i * 4;
+        words[i] = rgb565Word(c[0], c[1], c[2]);
+    }
+    // morton8InTile(x, y) == mortonX[x] | mortonY[y]: x's bits on the even
+    // positions, y's on the odd.
+    uint32_t mortonX[8];
+    uint32_t mortonY[8];
+    for (uint32_t v = 0; v < 8u; v++) {
+        mortonX[v] = morton8InTile(v, 0u);
+        mortonY[v] = morton8InTile(0u, v);
+    }
+    const size_t tilesPerRow = (size_t)((uint32_t)paddedWidth >> 3);
+    for (int32_t y = 0; y < height; y++) {
+        const uint8_t* row = indices + (size_t)y * (size_t)width;
+        const size_t rowBase = (size_t)((uint32_t)y >> 3) * tilesPerRow * 64u + mortonY[y & 7];
+        for (int32_t x = 0; x < width; x++) {
+            const size_t slot = rowBase + (size_t)((uint32_t)x >> 3) * 64u + mortonX[x & 7];
+            texel16Bytes(out + slot * 2u, words[row[x]]);
+        }
+    }
+}
+
 size_t mipChainTexels(int32_t paddedWidth, int32_t paddedHeight, int32_t levels) {
     size_t total = 0;
     size_t w = (size_t)paddedWidth;

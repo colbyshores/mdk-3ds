@@ -136,6 +136,37 @@ static void settleDeferredTextures(RendererC3D* renderer) {
         }
         break;
     }
+    // THE STREAMED PICTURES' BUDGET (mdk_render_update_paletted, package #20c): one
+    // a boundary, after C3D_FrameBegin's wait, so the store the last frame sampled
+    // is not rewritten under the GPU (AGENTS.md P3). A copy already in the stream
+    // store is rewritten in place (no allocation, no free); anything else (the
+    // first picture, a copy an eviction re-made the ordinary way) is made again,
+    // which makeTexture routes to the stream store.
+    for (size_t i = 0; i < renderer->textures.size(); i++) {
+        C3dTexture& texture = renderer->textures[i];
+        if (!texture.streamDirty) {
+            continue;
+        }
+        texture.streamDirty = false;
+        if (texture.source.empty()) {
+            continue;
+        }
+        if (texture.valid && texture.format == mdk::pica::TexelFormat::Rgb565 &&
+            texture.mipLevels == 0 && texture.tex.data) {
+            mdk::pica::streamTexelsRgb565(texture.source.data(), texture.realWidth,
+                                          texture.realHeight, texture.palette.data(),
+                                          texture.paddedWidth, (uint8_t*)texture.tex.data);
+            C3D_TexFlush(&texture.tex);
+        } else {
+            if (texture.valid) {
+                C3D_TexDelete(&texture.tex);
+                texture.valid = false;
+            }
+            makeTexture(renderer, texture, false);
+        }
+        texture.lastUsed = ++renderer->drawCounter;
+        break;
+    }
 }
 
 // Defined with the resource code below; the frame boundary needs them and it

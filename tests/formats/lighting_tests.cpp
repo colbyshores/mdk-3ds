@@ -442,8 +442,9 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(10), "EDGE SMOOTHING");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kQuitRow), "QUIT");
     // + OPTIONS and MAIN MENU, the C# PauseMenu's rows (package #20a).
-    // 18 settings, RESUME, CHEATS (gap package #21), OPTIONS, MAIN MENU, QUIT.
-    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 23);
+    // 19 settings (MOVIES HALF RATE the last, package #20c), RESUME, CHEATS (gap
+    // package #21), OPTIONS, MAIN MENU, QUIT.
+    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 24);
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kCheatsRow), "CHEATS");
     // Left/right on RESUME flip nothing.
     mdk::EnhancedMenu::Input left;
@@ -584,7 +585,7 @@ std::string menuValue(int32_t row, const mdk::EnhancedToggles& toggles) {
 MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
     using Action = mdk::EnhancedMenu::Action;
     using Menu = mdk::EnhancedMenu;
-    MDK_CHECK_EQ(Menu::kItemCount, 18);
+    MDK_CHECK_EQ(Menu::kItemCount, 19);   // + MOVIES HALF RATE (package #20c), row 19
     MDK_CHECK_EQ(Menu::kQuitRow, Menu::kRowCount - 1);
     // The rows after the ten toggles, in order.
     MDK_CHECK_EQ(menuRowOf("30 FPS CAP"), 11);
@@ -723,6 +724,22 @@ MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
         MDK_CHECK(menuValue(11, toggles) == "ON");
         MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
         MDK_CHECK(!toggles.cap30Fps);
+    }
+    // THE MOVIES' HALF RATE (package #20c): off by default, the last row, and a
+    // line of the config file that reads back.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        MDK_CHECK(!toggles.movieHalfRate);
+        menuSelect(&menu, &toggles, 19);
+        MDK_CHECK(menuValue(19, toggles) == "OFF");
+        MDK_CHECK(menu.handle(confirm, &toggles) == Action::Changed);
+        MDK_CHECK(toggles.movieHalfRate);
+        const std::string text = mdk::writeEnhancedConfig(toggles);
+        MDK_CHECK(text.find("movieHalfRate=1\n") != std::string::npos);
+        mdk::EnhancedToggles back;
+        MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
+        MDK_CHECK(back.movieHalfRate);
     }
 }
 

@@ -229,6 +229,16 @@ endif
 # `MENU=Menu.Accept@2` to take it, which reloads the level. `SAVETEST=1` presses the pause menu's X (a full save) at 5 s
 # and Y (its load) at 8 s, so the level reloads from the save. Only main_3ds.cpp reads
 # them: touch it after changing DIE or SAVETEST.
+# `make AUTOQUIT=90 SPLASH=0` boots into the main menu WITHOUT the INTRO1A splash
+# (package #20c; the C#'s --menu), so MENU= presses reach the menu at once. Without
+# it the splash shows first and the first press skips it, as in the C#. Only
+# main_3ds.cpp reads it: touch it after changing SPLASH.
+ifeq ($(strip $(SPLASH)),0)
+ifeq ($(strip $(AUTOQUIT)),)
+$(error SPLASH=0 needs AUTOQUIT: the splash switch is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_NOSPLASH=1
+endif
 ifneq ($(strip $(DIE)),)
 ifndef AUTOQUIT
 $(error DIE=$(DIE) needs AUTOQUIT: the test death is a harness-build feature)

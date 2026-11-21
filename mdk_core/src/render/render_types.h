@@ -331,6 +331,14 @@ struct EnhancedToggles {
     // fixed steps the wall clock owes, so the game does not slow down. Off by
     // default. The PC ignores it.
     bool cap30Fps = false;
+
+    // 3DS: the movies (MDK12.FLC behind the main menu, the end movies) upload
+    // every second decoded frame instead of every one (package #20c). Each upload
+    // is a whole 600 x 360 picture through its palette on the ARM11
+    // (pica::streamTexelsRgb565, ~10 ms on the Old 3DS by the host estimate); the
+    // decode keeps the C#'s 34 ms rate either way, so the movie keeps its length.
+    // Off by default (the C#'s rate). The PC ignores it.
+    bool movieHalfRate = false;
 };
 
 // ---------------------------------------------------------------------------

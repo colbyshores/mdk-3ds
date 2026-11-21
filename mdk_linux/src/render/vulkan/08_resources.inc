@@ -175,6 +175,54 @@ void mdk_render_update_texture(MdkRenderer r_, MdkTextureId t_, int32_t w, int32
     }
 }
 
+// A streamed picture (render.h; package #20c's movies and splash): the C#'s
+// PalettedImage.SetIndices and SetPalette, each the image re-made through the
+// staging path as update_texture does. A palette that did not change is not
+// re-made (the menu's last video frame stays for minutes).
+void mdk_render_update_paletted(MdkRenderer r_, MdkTextureId t_, MdkPaletteId p_,
+                                const uint8_t* indices, const uint8_t* rgba256) {
+    RendererVk* r = asVk(r_);
+    if (!r) {
+        return;
+    }
+    const bool hasTexture =
+        t_ >= 0 && t_ < (int32_t)r->textures.size() && r->textures[t_].used;
+    if (indices && hasTexture) {
+        mdk_render_update_texture(r_, t_, r->textures[t_].width, r->textures[t_].height,
+                                  indices);
+    }
+    if (!rgba256 || p_ < 0 || p_ >= (int32_t)r->palettes.size() || !r->palettes[p_].used) {
+        return;
+    }
+    PaletteVk& p = r->palettes[p_];
+    if (memcmp(p.rgba, rgba256, sizeof(p.rgba)) == 0) {
+        return;
+    }
+    // The cached sets name the old view (update_texture's order).
+    forgetDescriptorSets(r, -1, p_);
+    VkImage oldImage = p.image;
+    VkDeviceMemory oldMemory = p.memory;
+    VkImageView oldView = p.view;
+    p.image = VK_NULL_HANDLE;
+    p.memory = VK_NULL_HANDLE;
+    p.view = VK_NULL_HANDLE;
+    if (createHostImage(&r->ctx, 256, 1, VK_FORMAT_R8G8B8A8_UNORM, 4, rgba256, &p.image,
+                        &p.memory, &p.view, &p.mapped)) {
+        memcpy(p.rgba, rgba256, sizeof(p.rgba));
+        // The colour expansions keyed on this palette rebuild on the texture's
+        // version (getColourView), as a changed index texture's do.
+        if (hasTexture) {
+            r->textures[t_].version++;
+        }
+        retireImage(r, oldImage, oldMemory, oldView);
+    } else {
+        refused("re-made palette %d: keeping the colours it had", p_);
+        p.image = oldImage;
+        p.memory = oldMemory;
+        p.view = oldView;
+    }
+}
+
 // The 3DS HD pack's compressed replacements: this backend decodes the PC mods
 // through mdk_render_replace_colour, and no shared code hands it a .t3x.
 void mdk_render_replace_compressed(MdkRenderer, MdkTextureId, const char*) {}

@@ -147,6 +147,11 @@ SOURCES_VM := \
 	cheats_tests.cpp \
 	$(CORE)/game/cheats.cpp \
 	$(CORE)/game/cheats_menu.cpp \
+	movie_tests.cpp \
+	$(CORE)/formats/flc.cpp \
+	$(CORE)/game/intro_splash.cpp \
+	$(CORE)/game/video_player.cpp \
+	$(CORE)/game/end_movie.cpp \
 	$(CORE)/game/game_settings.cpp \
 	$(CORE)/game/screen_view.cpp \
 	$(CORE)/game/menu_items.cpp \

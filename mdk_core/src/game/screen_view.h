@@ -64,6 +64,10 @@ struct ScreenView {
 
     // C# Layout(Fit.Inside): scale to fit, centred.
     void layoutInside(float canvasW, float canvasH);
+    // C# Layout(fit, size) (package #20c): a `viewW` x `viewH` view (the 600 x
+    // 360 screen, or an MVE's 640 x 480) scaled to fit inside the canvas, or with
+    // `fitHeight` to the canvas's height (the loading screen), centred.
+    void layout(float canvasW, float canvasH, float viewW, float viewH, bool fitHeight);
 
     float toCanvasX(float x) const { return originX + x * scale; }
     float toCanvasY(float y) const { return originY + y * scale; }
@@ -79,6 +83,12 @@ struct ScreenView {
     // C# PalettedImage.Draw: an index texture at its size, at (x, y) of the view.
     void image(MdkRenderer renderer, int32_t texture, int32_t palette, int32_t width,
                int32_t height, float x, float y) const;
+    // The same in `tint` (package #20c: the 3DS splash's GPU cross-fade).
+    void image(MdkRenderer renderer, int32_t texture, int32_t palette, int32_t width,
+               int32_t height, float x, float y, const Colour& tint) const;
+    // C# Renderer.FillRect of a CANVAS rectangle (FrameRect's pieces).
+    void fillCanvasRect(MdkRenderer renderer, float x, float y, float w, float h,
+                        const Colour& colour) const;
 };
 
 // .NET's MathF.Round: to the nearest, a half to the even neighbour.

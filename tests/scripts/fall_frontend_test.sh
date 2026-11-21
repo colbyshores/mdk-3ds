@@ -79,8 +79,10 @@ for line in \
 done
 
 # --- 2. New game: the briefing, the fall, Esc ----------------------------------
+# --menu: the menu without the INTRO1A splash (package #20c), so the presses keep
+# their times.
 NEW="$WORK/newgame.log"
-run "$NEW" --press=Menu.Accept@0.5,Menu.Back@1.2,Menu.Accept@1.4,Menu.Back@3 --frames 260
+run "$NEW" --menu --press=Menu.Accept@0.5,Menu.Back@1.2,Menu.Accept@1.4,Menu.Back@3 --frames 260
 for line in \
     "flow: the briefing of level 7 (L1_MAP)" \
     "flow: the fall before level 7" \

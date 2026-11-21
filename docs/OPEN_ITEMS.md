@@ -1611,9 +1611,8 @@ Still open:
 - **The menus are silent**: SND_PUSH on a move, OPTSONG under the options, OPTBUTT on a change,
   MAINSONG under the menu. (TELETYPE in the briefing plays since #20b: the briefing is
   StatsScreen's page.)
-- **Not drawn behind the menu**: MDK12.FLC (#20c: VideoPlayer) and so the slideshow, which
-  the video's end starts (`game/slideshow` is ported, #20b); the INTRO1A splash after a death
-  or the end movies (#20c). The C#'s own fallback without the video, MDKOPT, is what is drawn.
+- ~~**Not drawn behind the menu**~~: MDK12.FLC, the slideshow it starts and the INTRO1A
+  splash are drawn since #20c and the integration of #20b and #20c (see below).
 - **The saves are #19's**: `menu::MenuSaves` (list, peek, load) is null on both frontends, so
   there is no Continue and Saved Game lists nothing; the pause menu's quick-save hint is not
   drawn.
@@ -1652,8 +1651,12 @@ Still open:
 - **The intermission's white fade** differs from the C#'s on this base by the Vulkan canvas's
   alpha-squared tint (max delta 64 at frame 15), the bug package #17b fixed in the Vulkan
   backend (26150d1); the C# and the port agree on every opaque frame.
-- **The slideshow never starts**: the C# starts it at MDK12.FLC's end (VideoPlayer.Finished),
-  which is #20c's; with no video the C# shows MDKOPT and no slide, as the frontends do.
+- ~~**The slideshow never starts**~~: since the integration of #20b and #20c the menu's
+  player's Finished starts it (`MainMenu::videoFinished`, the C#'s `_video.Finished +=
+  _slideshow.Start`), its images go to the player (`showSlide`, the C#'s Next ->
+  ShowStill) and the bare first slide hides the items. Pinned by `movie_tests`'
+  checkSlideshowStart (the C# probes stop before the first 5 s, so there is no
+  oracle golden of it); it fails with the hook removed.
 - **The 3DS save prompt offers the next level's number** and A saves under it: there is no
   keyboard to type another name (Linux types one).
 - **Not ported**: the prompt's pointer rows (the mouse).
@@ -2248,3 +2251,36 @@ Still open:
   rideable; its spawn and flight (AirStrike.cs, flags 0x85e20: not rideable) are package #14's.
 - **No emulator or hardware run here.** The harness needs `ARENA=DANT_5` (package #19) to put
   Kurt in DANT_5 with its scripts; see the commit's report for the command.
+
+## The movies, the splash and the loading screen (2026-11-20, gap package #20c): what landed, what is open
+
+Landed: `game/intro_splash`, `game/video_player`, `game/end_movie`, `game/loading_screen`,
+`game/movie_view`, the main menu's splash and MDK12.FLC, the flow showing the EndMovie, and the
+renderer seam's `mdk_render_update_paletted` (the 3DS's streamed RGB565 pictures). Pinned by
+`golden/movie_*.txt` against `tests/scripts/movie_probe`; the Linux splash and menu frames are
+byte-identical to the C#'s.
+
+Still open:
+- **No emulator or console run.** The 3DS cost of a movie frame (~10-12 ms of RGB565
+  conversion at the frame boundary, ~0.7 ms of FLC decode, by the host's 50-60x ratio) is an
+  estimate; MOVIES HALF RATE exists so the owner can A/B it on the Old 3DS. The splash's GPU
+  cross-fade is Blend's arithmetic up to the framebuffer's rounding, never compared on hardware.
+- **MDKEND.FLC and MDKBZK.MVE are not in the GOG data**, so the end movies have only ever run
+  as the C# runs them on this data (the menu at once). Their per-frame extras are pinned over
+  pie.flc; the MVE path (frame time, sound pacing) has no golden, only `mve_audio_tests`.
+- **The MVE's sound is not played**: streamed voices are not ported on either frontend
+  (`audio/sound_device.h`), so `VideoAudio`'s hooks are null and the movie is paced by its frame
+  time alone. FINISH.BNI's sounds (EndSounds) and the menus' MAINSONG are not wired either.
+- **An MVE is read whole** before it plays (as `formats::Mve` takes it); its frames stream one
+  at a time. A 3DS that met a large MDKBZK.MVE would need the decoder to read by chunk.
+- **The 1996 demo's loading screens** (`ui.Beta.LoadingScreen`) are not ported: the frontends
+  do not load the beta demo.
+- ~~**The slideshow after MDK12.FLC**~~: hooked at the integration of #20b and #20c
+  (see the statistics' section above).
+- **The 3DS loads the slides at the video's end**: Slideshow.Start reads and decodes the eight
+  MDKS_*.GIF (600x360, ~1.7 MiB of indices with their palettes) on the main thread in one frame,
+  as the C# does. A one-off stall in the menu, unmeasured on the Old 3DS (owner rule: no
+  main-thread stalls); spreading the load over frames is the fix if it shows.
+- **On the 3DS a streamed picture's index 0 is black, not transparent** (RGB565 has no alpha).
+  Every streamed picture is the bottom layer over the black clear, where the C#'s transparent
+  index 0 also shows black; a future streamed picture drawn OVER something would differ.

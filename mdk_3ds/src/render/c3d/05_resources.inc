@@ -281,6 +281,52 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     texture.restamped = true;
 }
 
+// A STREAMED picture (render.h; package #20c): the indices and/or the palette
+// taken now into the texture's system-memory source (so an eviction comes back
+// with the newest picture), the GPU copy rewritten at the next frame boundary
+// (settleDeferredTextures, one streamed texture a boundary). The first update
+// turns the texture into a streamed one (C3dTexture::streamed). The palette id's
+// bytes follow too, for any texture made from it later.
+void mdk_render_update_paletted(MdkRenderer r, MdkTextureId t, MdkPaletteId p,
+                                const uint8_t* indices, const uint8_t* rgba256) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer) {
+        return;
+    }
+    if (rgba256 && p >= 0 && (size_t)p < renderer->palettes.size() &&
+        !renderer->palettes[(size_t)p].empty()) {
+        memcpy(renderer->palettes[(size_t)p].data(), rgba256, 256 * 4);
+    }
+    if (t < 0 || (size_t)t >= renderer->textures.size()) {
+        return;
+    }
+    C3dTexture& texture = renderer->textures[(size_t)t];
+    if (!texture.indexed || texture.source.empty() || texture.releasePending ||
+        texture.compressed || (!indices && !rgba256)) {
+        return;
+    }
+    if (indices) {
+        memcpy(texture.source.data(), indices, texture.source.size());
+    }
+    if (rgba256) {
+        texture.palette.assign(rgba256, rgba256 + 256 * 4);
+    }
+    if (!texture.streamed) {
+        texture.streamed = true;
+        texture.restamped = false;
+        // The HD copy is of the first picture only (mdk_render_update_texture's rule).
+        if (texture.hdCopy >= 0 && (size_t)texture.hdCopy < renderer->hdCopies.size()) {
+            HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
+            if (--copy.links == 0) {
+                copy.unlinkedSince = renderer->frame;
+            }
+            texture.hdCopy = -1;
+        }
+        texture.hdCanvas = false;
+    }
+    texture.streamDirty = true;
+}
+
 // Links a texture to the HD copy of `path` (RendererC3D::hdCopies, one per
 // file). Recorded only: the draw that first wants it queues it, and the
 // frame-boundary pump imports it under the HD budget (04_textures.inc, THE HD
@@ -424,6 +470,8 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     std::vector<uint8_t>().swap(texture.palette);
     texture.stale = false;
     texture.restamped = false;
+    texture.streamed = false;
+    texture.streamDirty = false;
 }
 
 void mdk_render_release_palette(MdkRenderer r, MdkPaletteId p) {

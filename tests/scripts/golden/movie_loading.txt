@@ -1,0 +1,12 @@
+== loading: canvas 480x360 scale=1 origin=-60,0
+text "Loading" width=140 x=230 y=260
+bar -50,290 580x20 frame=1
+image 140,25 200x200
+LOAD_1: missing
+LOAD_2: missing
+LOAD_3: 40772 bytes 200x200 indices=adeafe81 palette=04ca9ed9 fill=0,255,0 frame=0,151,0
+LOAD_4: 40772 bytes 200x200 indices=153a4ab2 palette=6382357f fill=0,255,0 frame=0,151,0
+LOAD_5: 40772 bytes 200x200 indices=daa6cb97 palette=fe7a77af fill=0,255,0 frame=0,151,0
+LOAD_6: 40772 bytes 200x200 indices=23777ecc palette=988df66a fill=0,255,0 frame=0,151,0
+LOAD_7: 40772 bytes 200x200 indices=ac621ffa palette=bf1bd871 fill=0,255,0 frame=0,151,0
+LOAD_8: 40772 bytes 200x200 indices=03737df7 palette=86b9e248 fill=0,255,0 frame=0,151,0

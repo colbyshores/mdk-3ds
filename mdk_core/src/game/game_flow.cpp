@@ -159,8 +159,9 @@ Screen GameFlow::skipUnported(SkipTrail* trail) {
     }
     for (int32_t i = 0; i < kMaxSkips; i++) {
         const Screen skipped = screen_;
-        // The Briefing is shown since package #20a; skipScreen keeps its arm.
-        if (skipped == Screen::Briefing) {
+        // The Briefing is shown since package #20a, the EndMovie since #20c;
+        // skipScreen keeps their arms (the C#'s skips of them).
+        if (skipped == Screen::Briefing || skipped == Screen::EndMovie) {
             break;
         }
         // The Fall is shown since package #17b (fall/fall_screen.h), and the
@@ -201,7 +202,7 @@ int32_t GameFlow::screenPackage(Screen screen) {
         case Screen::Stream: return 18;
         case Screen::Fall: return 17;
         case Screen::SavePrompt: return 19;
-        case Screen::EndMovie: return 20;
+        case Screen::EndMovie:
         case Screen::Menu:
         case Screen::Briefing:
         case Screen::Statistics:

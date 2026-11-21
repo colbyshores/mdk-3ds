@@ -24,7 +24,7 @@ const char* const kMapRefreshLabels[] = {"AUTO", "1", "2", "3", "4"};
 
 // The setting rows, in order: the ten Enhanced Mode toggles in the config
 // file's order (SPEC.md 7.9's flag order), the frame cap, the look dials
-// (kLookDials' order), then the shadow map's two choices. Constant-initialised
+// (kLookDials' order), the shadow map's two choices, then the movies' rate. Constant-initialised
 // (addresses only), so no static-initialisation order is involved.
 const Item kItems[EnhancedMenu::kItemCount] = {
     {"SKY SHADOWS", Kind::Toggle, &EnhancedToggles::enableSkyShadows, nullptr, nullptr, nullptr,
@@ -57,6 +57,9 @@ const Item kItems[EnhancedMenu::kItemCount] = {
      kMapSizeLabels, 4},
     {"SHADOW REFRESH", Kind::Choice, nullptr, nullptr, &EnhancedToggles::shadowMapRefresh,
      kMapRefreshes, kMapRefreshLabels, 5},
+    // Package #20c, last so the rows above keep their numbers.
+    {"MOVIES HALF RATE", Kind::Toggle, &EnhancedToggles::movieHalfRate, nullptr, nullptr, nullptr,
+     nullptr, 0},
 };
 
 bool isItemRow(int32_t row) {

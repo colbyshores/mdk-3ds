@@ -1,0 +1,1012 @@
+== menu: no key
+f0 - status="intro splash" next=None splash=0 step=0 time=0.016666668 pal=74fa9996 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f1 - status="intro splash" next=None splash=0 step=0 time=0.033333335 pal=713e9886 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f2 - status="intro splash" next=None splash=0 step=0 time=0.050000004 pal=83ebd2a5 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f3 - status="intro splash" next=None splash=0 step=0 time=0.06666667 pal=7f717926 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f4 - status="intro splash" next=None splash=0 step=0 time=0.083333336 pal=fefcedc3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f5 - status="intro splash" next=None splash=0 step=0 time=0.1 pal=c2bb6f7b sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f6 - status="intro splash" next=None splash=0 step=0 time=0.11666667 pal=5f518df8 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f7 - status="intro splash" next=None splash=0 step=0 time=0.13333334 pal=f59770c3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f8 - status="intro splash" next=None splash=0 step=0 time=0.15 pal=9f14b4c0 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f9 - status="intro splash" next=None splash=0 step=0 time=0.16666667 pal=597d8cda sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f10 - status="intro splash" next=None splash=0 step=0 time=0.18333334 pal=126caeff sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f11 - status="intro splash" next=None splash=0 step=0 time=0.2 pal=33982c45 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f12 - status="intro splash" next=None splash=0 step=0 time=0.21666667 pal=26eedf6e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f13 - status="intro splash" next=None splash=0 step=0 time=0.23333333 pal=bea6e319 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f14 - status="intro splash" next=None splash=0 step=0 time=0.25 pal=fdf264d1 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f15 - status="intro splash" next=None splash=0 step=0 time=0.26666668 pal=ecd01da6 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f16 - status="intro splash" next=None splash=0 step=0 time=0.28333336 pal=8eff1217 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f17 - status="intro splash" next=None splash=0 step=0 time=0.30000004 pal=f4f8fbc3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f18 - status="intro splash" next=None splash=0 step=0 time=0.31666672 pal=c6773d5f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f19 - status="intro splash" next=None splash=0 step=0 time=0.3333334 pal=231b9949 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f20 - status="intro splash" next=None splash=0 step=0 time=0.35000008 pal=8421208a sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f21 - status="intro splash" next=None splash=0 step=0 time=0.36666676 pal=c581b0d4 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f22 - status="intro splash" next=None splash=0 step=0 time=0.38333344 pal=ad543a6d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f23 - status="intro splash" next=None splash=0 step=0 time=0.40000013 pal=c88322dd sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f24 - status="intro splash" next=None splash=0 step=0 time=0.4166668 pal=f028c822 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f25 - status="intro splash" next=None splash=0 step=0 time=0.4333335 pal=05e5c7ea sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f26 - status="intro splash" next=None splash=0 step=0 time=0.45000017 pal=f09fde5c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f27 - status="intro splash" next=None splash=0 step=0 time=0.46666685 pal=b61a4ac4 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f28 - status="intro splash" next=None splash=0 step=0 time=0.48333353 pal=a5ee6772 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f29 - status="intro splash" next=None splash=0 step=0 time=0.5000002 pal=ef851477 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f30 - status="intro splash" next=None splash=0 step=0 time=0.5166668 pal=2e59a4fb sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f31 - status="intro splash" next=None splash=0 step=0 time=0.5333335 pal=8665ba7f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f32 - status="intro splash" next=None splash=0 step=0 time=0.55000013 pal=869ffe8d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f33 - status="intro splash" next=None splash=0 step=0 time=0.5666668 pal=e5c5dbd3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f34 - status="intro splash" next=None splash=0 step=0 time=0.58333343 pal=0bb54ce1 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f35 - status="intro splash" next=None splash=0 step=0 time=0.6000001 pal=9badf9c6 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f36 - status="intro splash" next=None splash=0 step=0 time=0.61666673 pal=7c56c698 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f37 - status="intro splash" next=None splash=0 step=0 time=0.6333334 pal=18f11a9f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f38 - status="intro splash" next=None splash=0 step=0 time=0.65000004 pal=c3b192c3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f39 - status="intro splash" next=None splash=0 step=0 time=0.6666667 pal=267a7774 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f40 - status="intro splash" next=None splash=0 step=0 time=0.68333334 pal=e3f53d5c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f41 - status="intro splash" next=None splash=0 step=0 time=0.7 pal=486fc49c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f42 - status="intro splash" next=None splash=0 step=0 time=0.71666664 pal=664608ca sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f43 - status="intro splash" next=None splash=0 step=0 time=0.7333333 pal=3de22ce7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f44 - status="intro splash" next=None splash=0 step=0 time=0.74999994 pal=c5f5737f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f45 - status="intro splash" next=None splash=0 step=0 time=0.7666666 pal=fe7be9fc sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f46 - status="intro splash" next=None splash=0 step=0 time=0.78333324 pal=00b7cc13 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f47 - status="intro splash" next=None splash=0 step=0 time=0.7999999 pal=55c8f750 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f48 - status="intro splash" next=None splash=0 step=0 time=0.81666654 pal=a1e7e0da sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f49 - status="intro splash" next=None splash=0 step=0 time=0.8333332 pal=65bccb67 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f50 - status="intro splash" next=None splash=0 step=0 time=0.84999985 pal=d2f60f57 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f51 - status="intro splash" next=None splash=0 step=0 time=0.8666665 pal=4abfeb34 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f52 - status="intro splash" next=None splash=0 step=0 time=0.88333315 pal=e793ef51 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f53 - status="intro splash" next=None splash=0 step=0 time=0.8999998 pal=ba097e92 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f54 - status="intro splash" next=None splash=0 step=0 time=0.91666645 pal=f5617ecc sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f55 - status="intro splash" next=None splash=0 step=0 time=0.9333331 pal=2da587dd sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f56 - status="intro splash" next=None splash=0 step=0 time=0.94999975 pal=52436e34 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f57 - status="intro splash" next=None splash=0 step=0 time=0.9666664 pal=9f14403b sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f58 - status="intro splash" next=None splash=0 step=0 time=0.98333305 pal=029a8575 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f59 - status="intro splash" next=None splash=0 step=0 time=0.9999997 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f60 - status="intro splash" next=None splash=0 step=1 time=0 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f61 - status="intro splash" next=None splash=0 step=1 time=0.016666668 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f62 - status="intro splash" next=None splash=0 step=1 time=0.033333335 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f63 - status="intro splash" next=None splash=0 step=1 time=0.050000004 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f64 - status="intro splash" next=None splash=0 step=1 time=0.06666667 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f65 - status="intro splash" next=None splash=0 step=1 time=0.083333336 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f66 - status="intro splash" next=None splash=0 step=1 time=0.1 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f67 - status="intro splash" next=None splash=0 step=1 time=0.11666667 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f68 - status="intro splash" next=None splash=0 step=1 time=0.13333334 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f69 - status="intro splash" next=None splash=0 step=1 time=0.15 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f70 - status="intro splash" next=None splash=0 step=1 time=0.16666667 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f71 - status="intro splash" next=None splash=0 step=1 time=0.18333334 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f72 - status="intro splash" next=None splash=0 step=1 time=0.2 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f73 - status="intro splash" next=None splash=0 step=1 time=0.21666667 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f74 - status="intro splash" next=None splash=0 step=1 time=0.23333333 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f75 - status="intro splash" next=None splash=0 step=1 time=0.25 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f76 - status="intro splash" next=None splash=0 step=1 time=0.26666668 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f77 - status="intro splash" next=None splash=0 step=1 time=0.28333336 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f78 - status="intro splash" next=None splash=0 step=1 time=0.30000004 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f79 - status="intro splash" next=None splash=0 step=1 time=0.31666672 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f80 - status="intro splash" next=None splash=0 step=1 time=0.3333334 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f81 - status="intro splash" next=None splash=0 step=1 time=0.35000008 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f82 - status="intro splash" next=None splash=0 step=1 time=0.36666676 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f83 - status="intro splash" next=None splash=0 step=1 time=0.38333344 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f84 - status="intro splash" next=None splash=0 step=1 time=0.40000013 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f85 - status="intro splash" next=None splash=0 step=1 time=0.4166668 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f86 - status="intro splash" next=None splash=0 step=1 time=0.4333335 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f87 - status="intro splash" next=None splash=0 step=1 time=0.45000017 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f88 - status="intro splash" next=None splash=0 step=1 time=0.46666685 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f89 - status="intro splash" next=None splash=0 step=1 time=0.48333353 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f90 - status="intro splash" next=None splash=0 step=1 time=0.5000002 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f91 - status="intro splash" next=None splash=0 step=1 time=0.5166668 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f92 - status="intro splash" next=None splash=0 step=1 time=0.5333335 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f93 - status="intro splash" next=None splash=0 step=1 time=0.55000013 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f94 - status="intro splash" next=None splash=0 step=1 time=0.5666668 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f95 - status="intro splash" next=None splash=0 step=1 time=0.58333343 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f96 - status="intro splash" next=None splash=0 step=1 time=0.6000001 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f97 - status="intro splash" next=None splash=0 step=1 time=0.61666673 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f98 - status="intro splash" next=None splash=0 step=1 time=0.6333334 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f99 - status="intro splash" next=None splash=0 step=1 time=0.65000004 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f100 - status="intro splash" next=None splash=0 step=1 time=0.6666667 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f101 - status="intro splash" next=None splash=0 step=1 time=0.68333334 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f102 - status="intro splash" next=None splash=0 step=1 time=0.7 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f103 - status="intro splash" next=None splash=0 step=1 time=0.71666664 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f104 - status="intro splash" next=None splash=0 step=1 time=0.7333333 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f105 - status="intro splash" next=None splash=0 step=1 time=0.74999994 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f106 - status="intro splash" next=None splash=0 step=1 time=0.7666666 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f107 - status="intro splash" next=None splash=0 step=1 time=0.78333324 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f108 - status="intro splash" next=None splash=0 step=1 time=0.7999999 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f109 - status="intro splash" next=None splash=0 step=1 time=0.81666654 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f110 - status="intro splash" next=None splash=0 step=1 time=0.8333332 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f111 - status="intro splash" next=None splash=0 step=1 time=0.84999985 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f112 - status="intro splash" next=None splash=0 step=1 time=0.8666665 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f113 - status="intro splash" next=None splash=0 step=1 time=0.88333315 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f114 - status="intro splash" next=None splash=0 step=1 time=0.8999998 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f115 - status="intro splash" next=None splash=0 step=1 time=0.91666645 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f116 - status="intro splash" next=None splash=0 step=1 time=0.9333331 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f117 - status="intro splash" next=None splash=0 step=1 time=0.94999975 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f118 - status="intro splash" next=None splash=0 step=1 time=0.9666664 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f119 - status="intro splash" next=None splash=0 step=1 time=0.98333305 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f120 - status="intro splash" next=None splash=0 step=1 time=0.9999997 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f121 - status="intro splash" next=None splash=0 step=1 time=1.0166664 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f122 - status="intro splash" next=None splash=0 step=1 time=1.0333331 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f123 - status="intro splash" next=None splash=0 step=1 time=1.0499997 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f124 - status="intro splash" next=None splash=0 step=1 time=1.0666664 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f125 - status="intro splash" next=None splash=0 step=1 time=1.083333 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f126 - status="intro splash" next=None splash=0 step=1 time=1.0999997 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f127 - status="intro splash" next=None splash=0 step=1 time=1.1166663 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f128 - status="intro splash" next=None splash=0 step=1 time=1.133333 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f129 - status="intro splash" next=None splash=0 step=1 time=1.1499996 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f130 - status="intro splash" next=None splash=0 step=1 time=1.1666663 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f131 - status="intro splash" next=None splash=0 step=1 time=1.1833329 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f132 - status="intro splash" next=None splash=0 step=1 time=1.1999996 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f133 - status="intro splash" next=None splash=0 step=1 time=1.2166662 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f134 - status="intro splash" next=None splash=0 step=1 time=1.2333329 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f135 - status="intro splash" next=None splash=0 step=1 time=1.2499995 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f136 - status="intro splash" next=None splash=0 step=1 time=1.2666662 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f137 - status="intro splash" next=None splash=0 step=1 time=1.2833328 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f138 - status="intro splash" next=None splash=0 step=1 time=1.2999995 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f139 - status="intro splash" next=None splash=0 step=1 time=1.3166661 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f140 - status="intro splash" next=None splash=0 step=1 time=1.3333328 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f141 - status="intro splash" next=None splash=0 step=1 time=1.3499994 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f142 - status="intro splash" next=None splash=0 step=1 time=1.3666661 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f143 - status="intro splash" next=None splash=0 step=1 time=1.3833327 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f144 - status="intro splash" next=None splash=0 step=1 time=1.3999994 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f145 - status="intro splash" next=None splash=0 step=1 time=1.416666 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f146 - status="intro splash" next=None splash=0 step=1 time=1.4333327 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f147 - status="intro splash" next=None splash=0 step=1 time=1.4499993 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f148 - status="intro splash" next=None splash=0 step=1 time=1.466666 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f149 - status="intro splash" next=None splash=0 step=1 time=1.4833326 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f150 - status="intro splash" next=None splash=0 step=1 time=1.4999993 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f151 - status="intro splash" next=None splash=0 step=1 time=1.5166659 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f152 - status="intro splash" next=None splash=0 step=1 time=1.5333326 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f153 - status="intro splash" next=None splash=0 step=1 time=1.5499992 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f154 - status="intro splash" next=None splash=0 step=1 time=1.5666659 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f155 - status="intro splash" next=None splash=0 step=1 time=1.5833325 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f156 - status="intro splash" next=None splash=0 step=1 time=1.5999992 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f157 - status="intro splash" next=None splash=0 step=1 time=1.6166658 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f158 - status="intro splash" next=None splash=0 step=1 time=1.6333325 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f159 - status="intro splash" next=None splash=0 step=1 time=1.6499991 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f160 - status="intro splash" next=None splash=0 step=1 time=1.6666658 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f161 - status="intro splash" next=None splash=0 step=1 time=1.6833324 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f162 - status="intro splash" next=None splash=0 step=1 time=1.6999991 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f163 - status="intro splash" next=None splash=0 step=1 time=1.7166657 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f164 - status="intro splash" next=None splash=0 step=1 time=1.7333324 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f165 - status="intro splash" next=None splash=0 step=1 time=1.749999 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f166 - status="intro splash" next=None splash=0 step=1 time=1.7666657 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f167 - status="intro splash" next=None splash=0 step=1 time=1.7833323 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f168 - status="intro splash" next=None splash=0 step=1 time=1.799999 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f169 - status="intro splash" next=None splash=0 step=1 time=1.8166656 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f170 - status="intro splash" next=None splash=0 step=1 time=1.8333323 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f171 - status="intro splash" next=None splash=0 step=1 time=1.849999 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f172 - status="intro splash" next=None splash=0 step=1 time=1.8666656 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f173 - status="intro splash" next=None splash=0 step=1 time=1.8833323 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f174 - status="intro splash" next=None splash=0 step=1 time=1.8999989 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f175 - status="intro splash" next=None splash=0 step=1 time=1.9166656 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f176 - status="intro splash" next=None splash=0 step=1 time=1.9333322 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f177 - status="intro splash" next=None splash=0 step=1 time=1.9499989 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f178 - status="intro splash" next=None splash=0 step=1 time=1.9666655 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f179 - status="intro splash" next=None splash=0 step=1 time=1.9833322 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f180 - status="intro splash" next=None splash=0 step=1 time=1.9999988 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f181 - status="intro splash" next=None splash=0 step=1 time=2.0166655 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f182 - status="intro splash" next=None splash=0 step=1 time=2.033332 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f183 - status="intro splash" next=None splash=0 step=1 time=2.0499988 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f184 - status="intro splash" next=None splash=0 step=1 time=2.0666654 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f185 - status="intro splash" next=None splash=0 step=1 time=2.083332 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f186 - status="intro splash" next=None splash=0 step=1 time=2.0999987 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f187 - status="intro splash" next=None splash=0 step=1 time=2.1166654 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f188 - status="intro splash" next=None splash=0 step=1 time=2.133332 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f189 - status="intro splash" next=None splash=0 step=1 time=2.1499987 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f190 - status="intro splash" next=None splash=0 step=1 time=2.1666653 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f191 - status="intro splash" next=None splash=0 step=1 time=2.183332 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f192 - status="intro splash" next=None splash=0 step=1 time=2.1999986 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f193 - status="intro splash" next=None splash=0 step=1 time=2.2166653 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f194 - status="intro splash" next=None splash=0 step=1 time=2.233332 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f195 - status="intro splash" next=None splash=0 step=1 time=2.2499986 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f196 - status="intro splash" next=None splash=0 step=1 time=2.2666652 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f197 - status="intro splash" next=None splash=0 step=1 time=2.2833319 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f198 - status="intro splash" next=None splash=0 step=1 time=2.2999985 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f199 - status="intro splash" next=None splash=0 step=1 time=2.3166652 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f200 - status="intro splash" next=None splash=0 step=1 time=2.3333318 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f201 - status="intro splash" next=None splash=0 step=1 time=2.3499985 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f202 - status="intro splash" next=None splash=0 step=1 time=2.3666651 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f203 - status="intro splash" next=None splash=0 step=1 time=2.3833318 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f204 - status="intro splash" next=None splash=0 step=1 time=2.3999984 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f205 - status="intro splash" next=None splash=0 step=1 time=2.416665 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f206 - status="intro splash" next=None splash=0 step=1 time=2.4333317 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f207 - status="intro splash" next=None splash=0 step=1 time=2.4499984 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f208 - status="intro splash" next=None splash=0 step=1 time=2.466665 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f209 - status="intro splash" next=None splash=0 step=1 time=2.4833317 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f210 - status="intro splash" next=None splash=0 step=1 time=2.4999983 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f211 - status="intro splash" next=None splash=0 step=1 time=2.516665 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f212 - status="intro splash" next=None splash=0 step=1 time=2.5333316 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f213 - status="intro splash" next=None splash=0 step=1 time=2.5499983 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f214 - status="intro splash" next=None splash=0 step=1 time=2.566665 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f215 - status="intro splash" next=None splash=0 step=1 time=2.5833316 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f216 - status="intro splash" next=None splash=0 step=1 time=2.5999982 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f217 - status="intro splash" next=None splash=0 step=1 time=2.616665 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f218 - status="intro splash" next=None splash=0 step=1 time=2.6333315 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f219 - status="intro splash" next=None splash=0 step=1 time=2.6499982 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f220 - status="intro splash" next=None splash=0 step=1 time=2.6666648 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f221 - status="intro splash" next=None splash=0 step=1 time=2.6833315 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f222 - status="intro splash" next=None splash=0 step=1 time=2.6999981 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f223 - status="intro splash" next=None splash=0 step=1 time=2.7166648 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f224 - status="intro splash" next=None splash=0 step=1 time=2.7333314 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f225 - status="intro splash" next=None splash=0 step=1 time=2.749998 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f226 - status="intro splash" next=None splash=0 step=1 time=2.7666647 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f227 - status="intro splash" next=None splash=0 step=1 time=2.7833314 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f228 - status="intro splash" next=None splash=0 step=1 time=2.799998 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f229 - status="intro splash" next=None splash=0 step=1 time=2.8166647 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f230 - status="intro splash" next=None splash=0 step=1 time=2.8333313 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f231 - status="intro splash" next=None splash=0 step=1 time=2.849998 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f232 - status="intro splash" next=None splash=0 step=1 time=2.8666646 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f233 - status="intro splash" next=None splash=0 step=1 time=2.8833313 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f234 - status="intro splash" next=None splash=0 step=1 time=2.899998 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f235 - status="intro splash" next=None splash=0 step=1 time=2.9166646 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f236 - status="intro splash" next=None splash=0 step=1 time=2.9333313 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f237 - status="intro splash" next=None splash=0 step=1 time=2.949998 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f238 - status="intro splash" next=None splash=0 step=1 time=2.9666646 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f239 - status="intro splash" next=None splash=0 step=1 time=2.9833312 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f240 - status="intro splash" next=None splash=0 step=1 time=2.9999979 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f241 - status="intro splash" next=None splash=0 step=2 time=0 pal=510b47e7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f242 - status="intro splash" next=None splash=0 step=2 time=0.016666668 pal=bb7d3045 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f243 - status="intro splash" next=None splash=0 step=2 time=0.033333335 pal=cfde4a22 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f244 - status="intro splash" next=None splash=0 step=2 time=0.050000004 pal=f9cf2ddd sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f245 - status="intro splash" next=None splash=0 step=2 time=0.06666667 pal=b168c316 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f246 - status="intro splash" next=None splash=0 step=2 time=0.083333336 pal=ad80ff6e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f247 - status="intro splash" next=None splash=0 step=2 time=0.1 pal=2218109f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f248 - status="intro splash" next=None splash=0 step=2 time=0.11666667 pal=587a5c63 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f249 - status="intro splash" next=None splash=0 step=2 time=0.13333334 pal=df528254 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f250 - status="intro splash" next=None splash=0 step=2 time=0.15 pal=20e1c662 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f251 - status="intro splash" next=None splash=0 step=2 time=0.16666667 pal=93a52ffb sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f252 - status="intro splash" next=None splash=0 step=2 time=0.18333334 pal=ca1ec5f2 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f253 - status="intro splash" next=None splash=0 step=2 time=0.2 pal=9acdca14 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f254 - status="intro splash" next=None splash=0 step=2 time=0.21666667 pal=40053f0e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f255 - status="intro splash" next=None splash=0 step=2 time=0.23333333 pal=e9a2c4c0 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f256 - status="intro splash" next=None splash=0 step=2 time=0.25 pal=fc41a9d2 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f257 - status="intro splash" next=None splash=0 step=2 time=0.26666668 pal=37760403 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f258 - status="intro splash" next=None splash=0 step=2 time=0.28333336 pal=5c825974 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f259 - status="intro splash" next=None splash=0 step=2 time=0.30000004 pal=56d6ce82 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f260 - status="intro splash" next=None splash=0 step=2 time=0.31666672 pal=5472bd70 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f261 - status="intro splash" next=None splash=0 step=2 time=0.3333334 pal=41d49efa sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f262 - status="intro splash" next=None splash=0 step=2 time=0.35000008 pal=39760392 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f263 - status="intro splash" next=None splash=0 step=2 time=0.36666676 pal=09fd5a73 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f264 - status="intro splash" next=None splash=0 step=2 time=0.38333344 pal=c9a9d77a sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f265 - status="intro splash" next=None splash=0 step=2 time=0.40000013 pal=e9ce3b59 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f266 - status="intro splash" next=None splash=0 step=2 time=0.4166668 pal=8f8c1542 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f267 - status="intro splash" next=None splash=0 step=2 time=0.4333335 pal=46494ca4 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f268 - status="intro splash" next=None splash=0 step=2 time=0.45000017 pal=6afd0b55 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f269 - status="intro splash" next=None splash=0 step=2 time=0.46666685 pal=ab4ad336 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f270 - status="intro splash" next=None splash=0 step=2 time=0.48333353 pal=b51531c8 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f271 - status="intro splash" next=None splash=0 step=2 time=0.5000002 pal=26ed4827 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f272 - status="intro splash" next=None splash=0 step=2 time=0.5166668 pal=473c2d48 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f273 - status="intro splash" next=None splash=0 step=2 time=0.5333335 pal=b6dc9dda sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f274 - status="intro splash" next=None splash=0 step=2 time=0.55000013 pal=4d919480 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f275 - status="intro splash" next=None splash=0 step=2 time=0.5666668 pal=43cb5779 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f276 - status="intro splash" next=None splash=0 step=2 time=0.58333343 pal=befba397 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f277 - status="intro splash" next=None splash=0 step=2 time=0.6000001 pal=6099c3fc sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f278 - status="intro splash" next=None splash=0 step=2 time=0.61666673 pal=c8326da2 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f279 - status="intro splash" next=None splash=0 step=2 time=0.6333334 pal=d9ee6005 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f280 - status="intro splash" next=None splash=0 step=2 time=0.65000004 pal=7ccde250 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f281 - status="intro splash" next=None splash=0 step=2 time=0.6666667 pal=39db32c5 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f282 - status="intro splash" next=None splash=0 step=2 time=0.68333334 pal=fb56f950 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f283 - status="intro splash" next=None splash=0 step=2 time=0.7 pal=106f7e5a sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f284 - status="intro splash" next=None splash=0 step=2 time=0.71666664 pal=916a1656 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f285 - status="intro splash" next=None splash=0 step=2 time=0.7333333 pal=d5ccf4e1 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f286 - status="intro splash" next=None splash=0 step=2 time=0.74999994 pal=cf6462b5 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f287 - status="intro splash" next=None splash=0 step=2 time=0.7666666 pal=5b8be53e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f288 - status="intro splash" next=None splash=0 step=2 time=0.78333324 pal=a50cb420 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f289 - status="intro splash" next=None splash=0 step=2 time=0.7999999 pal=f69e78b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f290 - status="intro splash" next=None splash=0 step=2 time=0.81666654 pal=5a90c541 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f291 - status="intro splash" next=None splash=0 step=2 time=0.8333332 pal=12d90bb9 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f292 - status="intro splash" next=None splash=0 step=2 time=0.84999985 pal=6da281ab sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f293 - status="intro splash" next=None splash=0 step=2 time=0.8666665 pal=d69ade35 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f294 - status="intro splash" next=None splash=0 step=2 time=0.88333315 pal=b333c534 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f295 - status="intro splash" next=None splash=0 step=2 time=0.8999998 pal=02165262 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f296 - status="intro splash" next=None splash=0 step=2 time=0.91666645 pal=35566e35 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f297 - status="intro splash" next=None splash=0 step=2 time=0.9333331 pal=06d37972 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f298 - status="intro splash" next=None splash=0 step=2 time=0.94999975 pal=6f6f1138 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f299 - status="intro splash" next=None splash=0 step=2 time=0.9666664 pal=94d7323f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f300 - status="intro splash" next=None splash=0 step=2 time=0.98333305 pal=ece0a0da sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f301 - status="intro splash" next=None splash=0 step=2 time=0.9999997 pal=de548c44 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f302 - status="intro splash" next=None splash=0 step=2 time=1.0166664 pal=c5cc370c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f303 - status="intro splash" next=None splash=0 step=2 time=1.0333331 pal=9a8252cc sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f304 - status="intro splash" next=None splash=0 step=2 time=1.0499997 pal=645cc4e8 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f305 - status="intro splash" next=None splash=0 step=2 time=1.0666664 pal=7143c7f9 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f306 - status="intro splash" next=None splash=0 step=2 time=1.083333 pal=be8d7e7e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f307 - status="intro splash" next=None splash=0 step=2 time=1.0999997 pal=b009caa5 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f308 - status="intro splash" next=None splash=0 step=2 time=1.1166663 pal=8ad9588b sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f309 - status="intro splash" next=None splash=0 step=2 time=1.133333 pal=77bf1c68 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f310 - status="intro splash" next=None splash=0 step=2 time=1.1499996 pal=c3dd73cc sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f311 - status="intro splash" next=None splash=0 step=2 time=1.1666663 pal=b88d25cc sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f312 - status="intro splash" next=None splash=0 step=2 time=1.1833329 pal=b6cea24c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f313 - status="intro splash" next=None splash=0 step=2 time=1.1999996 pal=75e9eeb9 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f314 - status="intro splash" next=None splash=0 step=2 time=1.2166662 pal=4da7dccf sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f315 - status="intro splash" next=None splash=0 step=2 time=1.2333329 pal=6d00683e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f316 - status="intro splash" next=None splash=0 step=2 time=1.2499995 pal=5cf68481 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f317 - status="intro splash" next=None splash=0 step=2 time=1.2666662 pal=1918cc99 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f318 - status="intro splash" next=None splash=0 step=2 time=1.2833328 pal=3cb152f5 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f319 - status="intro splash" next=None splash=0 step=2 time=1.2999995 pal=3830064e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f320 - status="intro splash" next=None splash=0 step=2 time=1.3166661 pal=5e7a04f9 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f321 - status="intro splash" next=None splash=0 step=2 time=1.3333328 pal=811ef0b8 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f322 - status="intro splash" next=None splash=0 step=2 time=1.3499994 pal=5bfee999 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f323 - status="intro splash" next=None splash=0 step=2 time=1.3666661 pal=27461e8c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f324 - status="intro splash" next=None splash=0 step=2 time=1.3833327 pal=6df700cb sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f325 - status="intro splash" next=None splash=0 step=2 time=1.3999994 pal=e1cee5fb sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f326 - status="intro splash" next=None splash=0 step=2 time=1.416666 pal=107f9e10 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f327 - status="intro splash" next=None splash=0 step=2 time=1.4333327 pal=5890b302 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f328 - status="intro splash" next=None splash=0 step=2 time=1.4499993 pal=f94d69b8 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f329 - status="intro splash" next=None splash=0 step=2 time=1.466666 pal=0573263d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f330 - status="intro splash" next=None splash=0 step=2 time=1.4833326 pal=20d55bc4 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f331 - status="intro splash" next=None splash=0 step=2 time=1.4999993 pal=320bc0fc sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f332 - status="intro splash" next=None splash=0 step=2 time=1.5166659 pal=05c20db2 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f333 - status="intro splash" next=None splash=0 step=2 time=1.5333326 pal=2d744f09 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f334 - status="intro splash" next=None splash=0 step=2 time=1.5499992 pal=4f529579 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f335 - status="intro splash" next=None splash=0 step=2 time=1.5666659 pal=1172007d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f336 - status="intro splash" next=None splash=0 step=2 time=1.5833325 pal=7300388f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f337 - status="intro splash" next=None splash=0 step=2 time=1.5999992 pal=01b07c6c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f338 - status="intro splash" next=None splash=0 step=2 time=1.6166658 pal=ccb47daf sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f339 - status="intro splash" next=None splash=0 step=2 time=1.6333325 pal=e4b18746 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f340 - status="intro splash" next=None splash=0 step=2 time=1.6499991 pal=301274e3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f341 - status="intro splash" next=None splash=0 step=2 time=1.6666658 pal=154aea51 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f342 - status="intro splash" next=None splash=0 step=2 time=1.6833324 pal=46f2f72d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f343 - status="intro splash" next=None splash=0 step=2 time=1.6999991 pal=dca6d1ec sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f344 - status="intro splash" next=None splash=0 step=2 time=1.7166657 pal=76aadcab sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f345 - status="intro splash" next=None splash=0 step=2 time=1.7333324 pal=f2847a45 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f346 - status="intro splash" next=None splash=0 step=2 time=1.749999 pal=228ad4fa sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f347 - status="intro splash" next=None splash=0 step=2 time=1.7666657 pal=b6357afe sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f348 - status="intro splash" next=None splash=0 step=2 time=1.7833323 pal=56e9337d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f349 - status="intro splash" next=None splash=0 step=2 time=1.799999 pal=059aa82a sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f350 - status="intro splash" next=None splash=0 step=2 time=1.8166656 pal=ce5a08cd sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f351 - status="intro splash" next=None splash=0 step=2 time=1.8333323 pal=29580a82 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f352 - status="intro splash" next=None splash=0 step=2 time=1.849999 pal=a7619a3b sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f353 - status="intro splash" next=None splash=0 step=2 time=1.8666656 pal=fe0275d7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f354 - status="intro splash" next=None splash=0 step=2 time=1.8833323 pal=2e592346 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f355 - status="intro splash" next=None splash=0 step=2 time=1.8999989 pal=8ee303e2 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f356 - status="intro splash" next=None splash=0 step=2 time=1.9166656 pal=a3fc54b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f357 - status="intro splash" next=None splash=0 step=2 time=1.9333322 pal=6fe502a1 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f358 - status="intro splash" next=None splash=0 step=2 time=1.9499989 pal=e1c4accd sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f359 - status="intro splash" next=None splash=0 step=2 time=1.9666655 pal=974141ff sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f360 - status="intro splash" next=None splash=0 step=2 time=1.9833322 pal=124b20c3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f361 - status="intro splash" next=None splash=0 step=2 time=1.9999988 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f362 - status="intro splash" next=None splash=0 step=3 time=0 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f363 - status="intro splash" next=None splash=0 step=3 time=0.016666668 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f364 - status="intro splash" next=None splash=0 step=3 time=0.033333335 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f365 - status="intro splash" next=None splash=0 step=3 time=0.050000004 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f366 - status="intro splash" next=None splash=0 step=3 time=0.06666667 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f367 - status="intro splash" next=None splash=0 step=3 time=0.083333336 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f368 - status="intro splash" next=None splash=0 step=3 time=0.1 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f369 - status="intro splash" next=None splash=0 step=3 time=0.11666667 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f370 - status="intro splash" next=None splash=0 step=3 time=0.13333334 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f371 - status="intro splash" next=None splash=0 step=3 time=0.15 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f372 - status="intro splash" next=None splash=0 step=3 time=0.16666667 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f373 - status="intro splash" next=None splash=0 step=3 time=0.18333334 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f374 - status="intro splash" next=None splash=0 step=3 time=0.2 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f375 - status="intro splash" next=None splash=0 step=3 time=0.21666667 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f376 - status="intro splash" next=None splash=0 step=3 time=0.23333333 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f377 - status="intro splash" next=None splash=0 step=3 time=0.25 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f378 - status="intro splash" next=None splash=0 step=3 time=0.26666668 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f379 - status="intro splash" next=None splash=0 step=3 time=0.28333336 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f380 - status="intro splash" next=None splash=0 step=3 time=0.30000004 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f381 - status="intro splash" next=None splash=0 step=3 time=0.31666672 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f382 - status="intro splash" next=None splash=0 step=3 time=0.3333334 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f383 - status="intro splash" next=None splash=0 step=3 time=0.35000008 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f384 - status="intro splash" next=None splash=0 step=3 time=0.36666676 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f385 - status="intro splash" next=None splash=0 step=3 time=0.38333344 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f386 - status="intro splash" next=None splash=0 step=3 time=0.40000013 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f387 - status="intro splash" next=None splash=0 step=3 time=0.4166668 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f388 - status="intro splash" next=None splash=0 step=3 time=0.4333335 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f389 - status="intro splash" next=None splash=0 step=3 time=0.45000017 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f390 - status="intro splash" next=None splash=0 step=3 time=0.46666685 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f391 - status="intro splash" next=None splash=0 step=3 time=0.48333353 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f392 - status="intro splash" next=None splash=0 step=3 time=0.5000002 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f393 - status="intro splash" next=None splash=0 step=3 time=0.5166668 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f394 - status="intro splash" next=None splash=0 step=3 time=0.5333335 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f395 - status="intro splash" next=None splash=0 step=3 time=0.55000013 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f396 - status="intro splash" next=None splash=0 step=3 time=0.5666668 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f397 - status="intro splash" next=None splash=0 step=3 time=0.58333343 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f398 - status="intro splash" next=None splash=0 step=3 time=0.6000001 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f399 - status="intro splash" next=None splash=0 step=3 time=0.61666673 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f400 - status="intro splash" next=None splash=0 step=3 time=0.6333334 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f401 - status="intro splash" next=None splash=0 step=3 time=0.65000004 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f402 - status="intro splash" next=None splash=0 step=3 time=0.6666667 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f403 - status="intro splash" next=None splash=0 step=3 time=0.68333334 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f404 - status="intro splash" next=None splash=0 step=3 time=0.7 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f405 - status="intro splash" next=None splash=0 step=3 time=0.71666664 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f406 - status="intro splash" next=None splash=0 step=3 time=0.7333333 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f407 - status="intro splash" next=None splash=0 step=3 time=0.74999994 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f408 - status="intro splash" next=None splash=0 step=3 time=0.7666666 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f409 - status="intro splash" next=None splash=0 step=3 time=0.78333324 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f410 - status="intro splash" next=None splash=0 step=3 time=0.7999999 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f411 - status="intro splash" next=None splash=0 step=3 time=0.81666654 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f412 - status="intro splash" next=None splash=0 step=3 time=0.8333332 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f413 - status="intro splash" next=None splash=0 step=3 time=0.84999985 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f414 - status="intro splash" next=None splash=0 step=3 time=0.8666665 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f415 - status="intro splash" next=None splash=0 step=3 time=0.88333315 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f416 - status="intro splash" next=None splash=0 step=3 time=0.8999998 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f417 - status="intro splash" next=None splash=0 step=3 time=0.91666645 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f418 - status="intro splash" next=None splash=0 step=3 time=0.9333331 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f419 - status="intro splash" next=None splash=0 step=3 time=0.94999975 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f420 - status="intro splash" next=None splash=0 step=3 time=0.9666664 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f421 - status="intro splash" next=None splash=0 step=3 time=0.98333305 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f422 - status="intro splash" next=None splash=0 step=3 time=0.9999997 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f423 - status="intro splash" next=None splash=0 step=3 time=1.0166664 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f424 - status="intro splash" next=None splash=0 step=3 time=1.0333331 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f425 - status="intro splash" next=None splash=0 step=3 time=1.0499997 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f426 - status="intro splash" next=None splash=0 step=3 time=1.0666664 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f427 - status="intro splash" next=None splash=0 step=3 time=1.083333 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f428 - status="intro splash" next=None splash=0 step=3 time=1.0999997 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f429 - status="intro splash" next=None splash=0 step=3 time=1.1166663 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f430 - status="intro splash" next=None splash=0 step=3 time=1.133333 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f431 - status="intro splash" next=None splash=0 step=3 time=1.1499996 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f432 - status="intro splash" next=None splash=0 step=3 time=1.1666663 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f433 - status="intro splash" next=None splash=0 step=3 time=1.1833329 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f434 - status="intro splash" next=None splash=0 step=3 time=1.1999996 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f435 - status="intro splash" next=None splash=0 step=3 time=1.2166662 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f436 - status="intro splash" next=None splash=0 step=3 time=1.2333329 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f437 - status="intro splash" next=None splash=0 step=3 time=1.2499995 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f438 - status="intro splash" next=None splash=0 step=3 time=1.2666662 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f439 - status="intro splash" next=None splash=0 step=3 time=1.2833328 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f440 - status="intro splash" next=None splash=0 step=3 time=1.2999995 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f441 - status="intro splash" next=None splash=0 step=3 time=1.3166661 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f442 - status="intro splash" next=None splash=0 step=3 time=1.3333328 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f443 - status="intro splash" next=None splash=0 step=3 time=1.3499994 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f444 - status="intro splash" next=None splash=0 step=3 time=1.3666661 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f445 - status="intro splash" next=None splash=0 step=3 time=1.3833327 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f446 - status="intro splash" next=None splash=0 step=3 time=1.3999994 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f447 - status="intro splash" next=None splash=0 step=3 time=1.416666 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f448 - status="intro splash" next=None splash=0 step=3 time=1.4333327 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f449 - status="intro splash" next=None splash=0 step=3 time=1.4499993 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f450 - status="intro splash" next=None splash=0 step=3 time=1.466666 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f451 - status="intro splash" next=None splash=0 step=3 time=1.4833326 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f452 - status="intro splash" next=None splash=0 step=3 time=1.4999993 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f453 - status="intro splash" next=None splash=0 step=3 time=1.5166659 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f454 - status="intro splash" next=None splash=0 step=3 time=1.5333326 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f455 - status="intro splash" next=None splash=0 step=3 time=1.5499992 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f456 - status="intro splash" next=None splash=0 step=3 time=1.5666659 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f457 - status="intro splash" next=None splash=0 step=3 time=1.5833325 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f458 - status="intro splash" next=None splash=0 step=3 time=1.5999992 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f459 - status="intro splash" next=None splash=0 step=3 time=1.6166658 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f460 - status="intro splash" next=None splash=0 step=3 time=1.6333325 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f461 - status="intro splash" next=None splash=0 step=3 time=1.6499991 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f462 - status="intro splash" next=None splash=0 step=3 time=1.6666658 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f463 - status="intro splash" next=None splash=0 step=3 time=1.6833324 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f464 - status="intro splash" next=None splash=0 step=3 time=1.6999991 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f465 - status="intro splash" next=None splash=0 step=3 time=1.7166657 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f466 - status="intro splash" next=None splash=0 step=3 time=1.7333324 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f467 - status="intro splash" next=None splash=0 step=3 time=1.749999 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f468 - status="intro splash" next=None splash=0 step=3 time=1.7666657 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f469 - status="intro splash" next=None splash=0 step=3 time=1.7833323 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f470 - status="intro splash" next=None splash=0 step=3 time=1.799999 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f471 - status="intro splash" next=None splash=0 step=3 time=1.8166656 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f472 - status="intro splash" next=None splash=0 step=3 time=1.8333323 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f473 - status="intro splash" next=None splash=0 step=3 time=1.849999 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f474 - status="intro splash" next=None splash=0 step=3 time=1.8666656 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f475 - status="intro splash" next=None splash=0 step=3 time=1.8833323 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f476 - status="intro splash" next=None splash=0 step=3 time=1.8999989 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f477 - status="intro splash" next=None splash=0 step=3 time=1.9166656 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f478 - status="intro splash" next=None splash=0 step=3 time=1.9333322 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f479 - status="intro splash" next=None splash=0 step=3 time=1.9499989 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f480 - status="intro splash" next=None splash=0 step=3 time=1.9666655 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f481 - status="intro splash" next=None splash=0 step=3 time=1.9833322 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f482 - status="intro splash" next=None splash=0 step=3 time=1.9999988 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f483 - status="intro splash" next=None splash=0 step=3 time=2.0166655 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f484 - status="intro splash" next=None splash=0 step=3 time=2.033332 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f485 - status="intro splash" next=None splash=0 step=3 time=2.0499988 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f486 - status="intro splash" next=None splash=0 step=3 time=2.0666654 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f487 - status="intro splash" next=None splash=0 step=3 time=2.083332 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f488 - status="intro splash" next=None splash=0 step=3 time=2.0999987 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f489 - status="intro splash" next=None splash=0 step=3 time=2.1166654 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f490 - status="intro splash" next=None splash=0 step=3 time=2.133332 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f491 - status="intro splash" next=None splash=0 step=3 time=2.1499987 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f492 - status="intro splash" next=None splash=0 step=3 time=2.1666653 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f493 - status="intro splash" next=None splash=0 step=3 time=2.183332 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f494 - status="intro splash" next=None splash=0 step=3 time=2.1999986 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f495 - status="intro splash" next=None splash=0 step=3 time=2.2166653 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f496 - status="intro splash" next=None splash=0 step=3 time=2.233332 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f497 - status="intro splash" next=None splash=0 step=3 time=2.2499986 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f498 - status="intro splash" next=None splash=0 step=3 time=2.2666652 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f499 - status="intro splash" next=None splash=0 step=3 time=2.2833319 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f500 - status="intro splash" next=None splash=0 step=3 time=2.2999985 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f501 - status="intro splash" next=None splash=0 step=3 time=2.3166652 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f502 - status="intro splash" next=None splash=0 step=3 time=2.3333318 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f503 - status="intro splash" next=None splash=0 step=3 time=2.3499985 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f504 - status="intro splash" next=None splash=0 step=3 time=2.3666651 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f505 - status="intro splash" next=None splash=0 step=3 time=2.3833318 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f506 - status="intro splash" next=None splash=0 step=3 time=2.3999984 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f507 - status="intro splash" next=None splash=0 step=3 time=2.416665 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f508 - status="intro splash" next=None splash=0 step=3 time=2.4333317 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f509 - status="intro splash" next=None splash=0 step=3 time=2.4499984 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f510 - status="intro splash" next=None splash=0 step=3 time=2.466665 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f511 - status="intro splash" next=None splash=0 step=3 time=2.4833317 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f512 - status="intro splash" next=None splash=0 step=3 time=2.4999983 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f513 - status="intro splash" next=None splash=0 step=3 time=2.516665 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f514 - status="intro splash" next=None splash=0 step=3 time=2.5333316 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f515 - status="intro splash" next=None splash=0 step=3 time=2.5499983 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f516 - status="intro splash" next=None splash=0 step=3 time=2.566665 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f517 - status="intro splash" next=None splash=0 step=3 time=2.5833316 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f518 - status="intro splash" next=None splash=0 step=3 time=2.5999982 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f519 - status="intro splash" next=None splash=0 step=3 time=2.616665 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f520 - status="intro splash" next=None splash=0 step=3 time=2.6333315 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f521 - status="intro splash" next=None splash=0 step=3 time=2.6499982 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f522 - status="intro splash" next=None splash=0 step=3 time=2.6666648 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f523 - status="intro splash" next=None splash=0 step=3 time=2.6833315 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f524 - status="intro splash" next=None splash=0 step=3 time=2.6999981 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f525 - status="intro splash" next=None splash=0 step=3 time=2.7166648 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f526 - status="intro splash" next=None splash=0 step=3 time=2.7333314 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f527 - status="intro splash" next=None splash=0 step=3 time=2.749998 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f528 - status="intro splash" next=None splash=0 step=3 time=2.7666647 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f529 - status="intro splash" next=None splash=0 step=3 time=2.7833314 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f530 - status="intro splash" next=None splash=0 step=3 time=2.799998 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f531 - status="intro splash" next=None splash=0 step=3 time=2.8166647 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f532 - status="intro splash" next=None splash=0 step=3 time=2.8333313 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f533 - status="intro splash" next=None splash=0 step=3 time=2.849998 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f534 - status="intro splash" next=None splash=0 step=3 time=2.8666646 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f535 - status="intro splash" next=None splash=0 step=3 time=2.8833313 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f536 - status="intro splash" next=None splash=0 step=3 time=2.899998 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f537 - status="intro splash" next=None splash=0 step=3 time=2.9166646 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f538 - status="intro splash" next=None splash=0 step=3 time=2.9333313 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f539 - status="intro splash" next=None splash=0 step=3 time=2.949998 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f540 - status="intro splash" next=None splash=0 step=3 time=2.9666646 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f541 - status="intro splash" next=None splash=0 step=3 time=2.9833312 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f542 - status="intro splash" next=None splash=0 step=3 time=2.9999979 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f543 - status="intro splash" next=None splash=0 step=4 time=0 pal=d135a0b7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f544 - status="intro splash" next=None splash=0 step=4 time=0.016666668 pal=74c62978 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f545 - status="intro splash" next=None splash=0 step=4 time=0.033333335 pal=94e23d89 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f546 - status="intro splash" next=None splash=0 step=4 time=0.050000004 pal=64e353d7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f547 - status="intro splash" next=None splash=0 step=4 time=0.06666667 pal=9e269ae8 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f548 - status="intro splash" next=None splash=0 step=4 time=0.083333336 pal=051d4e09 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f549 - status="intro splash" next=None splash=0 step=4 time=0.1 pal=496be184 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f550 - status="intro splash" next=None splash=0 step=4 time=0.11666667 pal=43476837 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f551 - status="intro splash" next=None splash=0 step=4 time=0.13333334 pal=7a5bc4c9 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f552 - status="intro splash" next=None splash=0 step=4 time=0.15 pal=91dbd76b sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f553 - status="intro splash" next=None splash=0 step=4 time=0.16666667 pal=cf16969a sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f554 - status="intro splash" next=None splash=0 step=4 time=0.18333334 pal=143eaf39 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f555 - status="intro splash" next=None splash=0 step=4 time=0.2 pal=959fd2b3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f556 - status="intro splash" next=None splash=0 step=4 time=0.21666667 pal=c33032d3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f557 - status="intro splash" next=None splash=0 step=4 time=0.23333333 pal=26fe707c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f558 - status="intro splash" next=None splash=0 step=4 time=0.25 pal=a38af826 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f559 - status="intro splash" next=None splash=0 step=4 time=0.26666668 pal=70148ffd sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f560 - status="intro splash" next=None splash=0 step=4 time=0.28333336 pal=7e416015 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f561 - status="intro splash" next=None splash=0 step=4 time=0.30000004 pal=5d2c0f8d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f562 - status="intro splash" next=None splash=0 step=4 time=0.31666672 pal=0fb30be2 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f563 - status="intro splash" next=None splash=0 step=4 time=0.3333334 pal=116ed81c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f564 - status="intro splash" next=None splash=0 step=4 time=0.35000008 pal=02463218 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f565 - status="intro splash" next=None splash=0 step=4 time=0.36666676 pal=6fd11eea sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f566 - status="intro splash" next=None splash=0 step=4 time=0.38333344 pal=109591a1 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f567 - status="intro splash" next=None splash=0 step=4 time=0.40000013 pal=e8a6932f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f568 - status="intro splash" next=None splash=0 step=4 time=0.4166668 pal=0329c97d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f569 - status="intro splash" next=None splash=0 step=4 time=0.4333335 pal=f3346f8a sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f570 - status="intro splash" next=None splash=0 step=4 time=0.45000017 pal=6e8f82da sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f571 - status="intro splash" next=None splash=0 step=4 time=0.46666685 pal=72a5443b sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f572 - status="intro splash" next=None splash=0 step=4 time=0.48333353 pal=25cb22eb sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f573 - status="intro splash" next=None splash=0 step=4 time=0.5000002 pal=8f6c1339 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f574 - status="intro splash" next=None splash=0 step=4 time=0.5166668 pal=e0516ad0 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f575 - status="intro splash" next=None splash=0 step=4 time=0.5333335 pal=96dd21ac sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f576 - status="intro splash" next=None splash=0 step=4 time=0.55000013 pal=db210a1f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f577 - status="intro splash" next=None splash=0 step=4 time=0.5666668 pal=fafe19ef sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f578 - status="intro splash" next=None splash=0 step=4 time=0.58333343 pal=3d05ece6 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f579 - status="intro splash" next=None splash=0 step=4 time=0.6000001 pal=15e7e23e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f580 - status="intro splash" next=None splash=0 step=4 time=0.61666673 pal=81cfe00c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f581 - status="intro splash" next=None splash=0 step=4 time=0.6333334 pal=00eaa9d1 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f582 - status="intro splash" next=None splash=0 step=4 time=0.65000004 pal=964249f5 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f583 - status="intro splash" next=None splash=0 step=4 time=0.6666667 pal=cbd4a265 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f584 - status="intro splash" next=None splash=0 step=4 time=0.68333334 pal=bcee8059 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f585 - status="intro splash" next=None splash=0 step=4 time=0.7 pal=6e22112a sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f586 - status="intro splash" next=None splash=0 step=4 time=0.71666664 pal=97dacf8c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f587 - status="intro splash" next=None splash=0 step=4 time=0.7333333 pal=786a20da sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f588 - status="intro splash" next=None splash=0 step=4 time=0.74999994 pal=2966baab sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f589 - status="intro splash" next=None splash=0 step=4 time=0.7666666 pal=36eba2c9 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f590 - status="intro splash" next=None splash=0 step=4 time=0.78333324 pal=3d880fca sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f591 - status="intro splash" next=None splash=0 step=4 time=0.7999999 pal=eef27290 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f592 - status="intro splash" next=None splash=0 step=4 time=0.81666654 pal=224a7b60 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f593 - status="intro splash" next=None splash=0 step=4 time=0.8333332 pal=7c753a2b sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f594 - status="intro splash" next=None splash=0 step=4 time=0.84999985 pal=98bd38e4 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f595 - status="intro splash" next=None splash=0 step=4 time=0.8666665 pal=e9d29ba8 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f596 - status="intro splash" next=None splash=0 step=4 time=0.88333315 pal=2a8c92e6 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f597 - status="intro splash" next=None splash=0 step=4 time=0.8999998 pal=d8b35fe7 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f598 - status="intro splash" next=None splash=0 step=4 time=0.91666645 pal=7555d45e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f599 - status="intro splash" next=None splash=0 step=4 time=0.9333331 pal=452adc0d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f600 - status="intro splash" next=None splash=0 step=4 time=0.94999975 pal=addf8678 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f601 - status="intro splash" next=None splash=0 step=4 time=0.9666664 pal=495f3a7a sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f602 - status="intro splash" next=None splash=0 step=4 time=0.98333305 pal=5c0632c5 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f603 - status="intro splash" next=None splash=0 step=4 time=0.9999997 pal=f59c39c5 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f604 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f605 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=1 time=0.016666668 hold=0 bright=0 image=600x360 f52b55c8 6d61da41
+f606 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=1 time=0.033333335 hold=0 bright=0 image=600x360 f52b55c8 6d61da41
+f607 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=2 time=0.016000003 hold=0 bright=0 image=600x360 ae16e1a1 6d61da41
+f608 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=2 time=0.03266667 hold=0 bright=0 image=600x360 ae16e1a1 6d61da41
+f609 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=3 time=0.015333332 hold=0 bright=0 image=600x360 11f56f57 6d61da41
+f610 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=3 time=0.031999998 hold=0 bright=0 image=600x360 11f56f57 6d61da41
+f611 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=4 time=0.014666662 hold=0 bright=0 image=600x360 49bfb7ee 6d61da41
+f612 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=4 time=0.031333327 hold=0 bright=0 image=600x360 49bfb7ee 6d61da41
+f613 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=5 time=0.013999991 hold=0 bright=0 image=600x360 6a7ad0db 6d61da41
+f614 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=5 time=0.030666659 hold=0 bright=0 image=600x360 6a7ad0db 6d61da41
+f615 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=6 time=0.013333324 hold=0 bright=0 image=600x360 7e0b67b2 6d61da41
+f616 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=6 time=0.029999992 hold=0 bright=0 image=600x360 7e0b67b2 6d61da41
+f617 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=7 time=0.012666658 hold=0 bright=0 image=600x360 50949822 6d61da41
+f618 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=7 time=0.029333325 hold=0 bright=0 image=600x360 50949822 6d61da41
+f619 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=8 time=0.011999991 hold=0 bright=0 image=600x360 9e7e2c3b 6d61da41
+f620 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=8 time=0.028666658 hold=0 bright=0 image=600x360 9e7e2c3b 6d61da41
+f621 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=9 time=0.011333324 hold=0 bright=0 image=600x360 d0678e23 6d61da41
+f622 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=9 time=0.027999992 hold=0 bright=0 image=600x360 d0678e23 6d61da41
+f623 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=10 time=0.010666657 hold=0 bright=0 image=600x360 2e3faad7 6d61da41
+f624 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=10 time=0.027333325 hold=0 bright=0 image=600x360 2e3faad7 6d61da41
+f625 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=11 time=0.00999999 hold=0 bright=0 image=600x360 044c2122 6d61da41
+f626 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=11 time=0.026666658 hold=0 bright=0 image=600x360 044c2122 6d61da41
+f627 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=12 time=0.009333324 hold=0 bright=0 image=600x360 8ef446f1 6d61da41
+f628 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=12 time=0.025999991 hold=0 bright=0 image=600x360 8ef446f1 6d61da41
+f629 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=13 time=0.008666657 hold=0 bright=0 image=600x360 7f7d691c 6d61da41
+f630 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=13 time=0.025333324 hold=0 bright=0 image=600x360 7f7d691c 6d61da41
+f631 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=14 time=0.00799999 hold=0 bright=0 image=600x360 c5b42a5c 6d61da41
+f632 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=14 time=0.024666658 hold=0 bright=0 image=600x360 c5b42a5c 6d61da41
+f633 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=15 time=0.0073333234 hold=0 bright=0 image=600x360 35c071bf 6d61da41
+f634 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=15 time=0.02399999 hold=0 bright=0 image=600x360 35c071bf 6d61da41
+f635 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=16 time=0.0066666566 hold=0 bright=0 image=600x360 0885a7aa 6d61da41
+f636 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=16 time=0.023333324 hold=0 bright=0 image=600x360 0885a7aa 6d61da41
+f637 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=17 time=0.00599999 hold=0 bright=0 image=600x360 95aac89e 6d61da41
+f638 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=17 time=0.022666657 hold=0 bright=0 image=600x360 95aac89e 6d61da41
+f639 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=18 time=0.005333323 hold=0 bright=0 image=600x360 8e0e00da 6d61da41
+f640 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=18 time=0.02199999 hold=0 bright=0 image=600x360 8e0e00da 6d61da41
+f641 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=19 time=0.0046666563 hold=0 bright=0 image=600x360 c0501abc 6d61da41
+f642 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=19 time=0.021333324 hold=0 bright=0 image=600x360 c0501abc 6d61da41
+f643 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=20 time=0.0039999895 hold=0 bright=0 image=600x360 9f702511 6d61da41
+f644 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=20 time=0.020666657 hold=0 bright=0 image=600x360 9f702511 6d61da41
+f645 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=21 time=0.0033333227 hold=0 bright=0 image=600x360 bc64f836 6d61da41
+f646 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=21 time=0.01999999 hold=0 bright=0 image=600x360 bc64f836 6d61da41
+f647 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=22 time=0.002666656 hold=0 bright=0 image=600x360 6780fd57 6d61da41
+f648 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=22 time=0.019333323 hold=0 bright=0 image=600x360 6780fd57 6d61da41
+f649 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=23 time=0.0019999892 hold=0 bright=0 image=600x360 04791dd7 6d61da41
+f650 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=23 time=0.018666657 hold=0 bright=0 image=600x360 04791dd7 6d61da41
+f651 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=24 time=0.0013333224 hold=0 bright=0 image=600x360 8005a1b1 6d61da41
+f652 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=24 time=0.01799999 hold=0 bright=0 image=600x360 8005a1b1 6d61da41
+f653 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=25 time=0.0006666556 hold=0 bright=0 image=600x360 4256eb8f 6d61da41
+f654 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=25 time=0.017333323 hold=0 bright=0 image=600x360 4256eb8f 6d61da41
+f655 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=25 time=0.03399999 hold=0 bright=0 image=600x360 4256eb8f 6d61da41
+f656 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=26 time=0.016666658 hold=0 bright=0 image=600x360 15d9c354 6d61da41
+f657 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=26 time=0.033333324 hold=0 bright=0 image=600x360 15d9c354 6d61da41
+f658 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=27 time=0.015999988 hold=0 bright=0 image=600x360 b41163c9 6d61da41
+f659 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=27 time=0.032666653 hold=0 bright=0 image=600x360 b41163c9 6d61da41
+f660 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=28 time=0.015333317 hold=0 bright=0 image=600x360 c83a3458 6d61da41
+f661 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=28 time=0.031999983 hold=0 bright=0 image=600x360 c83a3458 6d61da41
+f662 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=29 time=0.014666647 hold=0 bright=0 image=600x360 b36bd868 6d61da41
+f663 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=29 time=0.031333312 hold=0 bright=0 image=600x360 b36bd868 6d61da41
+f664 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=30 time=0.013999976 hold=0 bright=0 image=600x360 a450aa83 6d61da41
+f665 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=30 time=0.030666644 hold=0 bright=0 image=600x360 a450aa83 6d61da41
+f666 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=31 time=0.013333309 hold=0 bright=0 image=600x360 ba9dca88 6d61da41
+f667 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=31 time=0.029999977 hold=0 bright=0 image=600x360 ba9dca88 6d61da41
+f668 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=32 time=0.012666643 hold=0 bright=0 image=600x360 d84368d4 6d61da41
+f669 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=32 time=0.02933331 hold=0 bright=0 image=600x360 d84368d4 6d61da41
+f670 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=33 time=0.011999976 hold=0 bright=0 image=600x360 b0594c03 6d61da41
+f671 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=33 time=0.028666643 hold=0 bright=0 image=600x360 b0594c03 6d61da41
+f672 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=34 time=0.011333309 hold=0 bright=0 image=600x360 5167290c 6d61da41
+f673 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=34 time=0.027999977 hold=0 bright=0 image=600x360 5167290c 6d61da41
+f674 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=35 time=0.010666642 hold=0 bright=0 image=600x360 6dcbc110 6d61da41
+f675 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=35 time=0.02733331 hold=0 bright=0 image=600x360 6dcbc110 6d61da41
+f676 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=36 time=0.009999976 hold=0 bright=0 image=600x360 ee36ab02 6d61da41
+f677 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=36 time=0.026666643 hold=0 bright=0 image=600x360 ee36ab02 6d61da41
+f678 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=37 time=0.009333309 hold=0 bright=0 image=600x360 d629f5a9 6d61da41
+f679 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=37 time=0.025999976 hold=0 bright=0 image=600x360 d629f5a9 6d61da41
+f680 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=38 time=0.008666642 hold=0 bright=0 image=600x360 fe640ec4 6d61da41
+f681 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=38 time=0.02533331 hold=0 bright=0 image=600x360 fe640ec4 6d61da41
+f682 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=39 time=0.007999975 hold=0 bright=0 image=600x360 cdb7b9bd 6d61da41
+f683 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=39 time=0.024666643 hold=0 bright=0 image=600x360 cdb7b9bd 6d61da41
+f684 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=40 time=0.0073333085 hold=0 bright=0 image=600x360 3bd41894 6d61da41
+f685 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=40 time=0.023999976 hold=0 bright=0 image=600x360 3bd41894 6d61da41
+f686 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=41 time=0.0066666417 hold=0 bright=0 image=600x360 29e19b72 6d61da41
+f687 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=41 time=0.02333331 hold=0 bright=0 image=600x360 29e19b72 6d61da41
+f688 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=42 time=0.005999975 hold=0 bright=0 image=600x360 aa41e813 6d61da41
+f689 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=42 time=0.022666642 hold=0 bright=0 image=600x360 aa41e813 6d61da41
+f690 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=43 time=0.005333308 hold=0 bright=0 image=600x360 527171b9 6d61da41
+f691 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=43 time=0.021999976 hold=0 bright=0 image=600x360 527171b9 6d61da41
+f692 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=44 time=0.0046666414 hold=0 bright=0 image=600x360 6fc12081 6d61da41
+f693 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=44 time=0.021333309 hold=0 bright=0 image=600x360 6fc12081 6d61da41
+f694 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=45 time=0.0039999746 hold=0 bright=0 image=600x360 1fdafa82 6d61da41
+f695 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=45 time=0.020666642 hold=0 bright=0 image=600x360 1fdafa82 6d61da41
+f696 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=46 time=0.0033333078 hold=0 bright=0 image=600x360 8b99a232 6d61da41
+f697 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=46 time=0.019999975 hold=0 bright=0 image=600x360 8b99a232 6d61da41
+f698 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=47 time=0.002666641 hold=0 bright=0 image=600x360 9f1e859e 6d61da41
+f699 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=47 time=0.019333309 hold=0 bright=0 image=600x360 9f1e859e 6d61da41
+f700 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=48 time=0.0019999743 hold=0 bright=0 image=600x360 edcee630 6d61da41
+f701 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=48 time=0.018666642 hold=0 bright=0 image=600x360 edcee630 6d61da41
+f702 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=49 time=0.0013333075 hold=0 bright=0 image=600x360 75b0a7be 6d61da41
+f703 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=49 time=0.017999975 hold=0 bright=0 image=600x360 75b0a7be 6d61da41
+f704 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=50 time=0.0006666407 hold=0 bright=0 image=600x360 13b8a09f 6d61da41
+f705 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=50 time=0.017333308 hold=0 bright=0 image=600x360 13b8a09f 6d61da41
+f706 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=50 time=0.033999976 hold=0 bright=0 image=600x360 13b8a09f 6d61da41
+f707 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=51 time=0.016666643 hold=0 bright=0 image=600x360 24a3ad08 6d61da41
+f708 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=51 time=0.03333331 hold=0 bright=0 image=600x360 24a3ad08 6d61da41
+f709 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=52 time=0.015999973 hold=0 bright=0 image=600x360 ef56eb16 6d61da41
+f710 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=52 time=0.03266664 hold=0 bright=0 image=600x360 ef56eb16 6d61da41
+f711 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=53 time=0.015333302 hold=0 bright=0 image=600x360 aa44f9a8 6d61da41
+f712 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=53 time=0.031999968 hold=0 bright=0 image=600x360 aa44f9a8 6d61da41
+f713 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=54 time=0.014666632 hold=0 bright=0 image=600x360 b18cc9f9 6d61da41
+f714 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=54 time=0.031333297 hold=0 bright=0 image=600x360 b18cc9f9 6d61da41
+f715 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=55 time=0.013999961 hold=0 bright=0 image=600x360 18116707 6d61da41
+f716 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=55 time=0.030666629 hold=0 bright=0 image=600x360 18116707 6d61da41
+f717 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=56 time=0.013333295 hold=0 bright=0 image=600x360 8dfbe94d 6d61da41
+f718 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=56 time=0.029999962 hold=0 bright=0 image=600x360 8dfbe94d 6d61da41
+f719 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=57 time=0.012666628 hold=0 bright=0 image=600x360 e870bcd9 6d61da41
+f720 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=57 time=0.029333295 hold=0 bright=0 image=600x360 e870bcd9 6d61da41
+f721 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=58 time=0.011999961 hold=0 bright=0 image=600x360 6a077d3e 6d61da41
+f722 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=58 time=0.028666629 hold=0 bright=0 image=600x360 6a077d3e 6d61da41
+f723 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=59 time=0.011333294 hold=0 bright=0 image=600x360 a125b85f 6d61da41
+f724 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=59 time=0.027999962 hold=0 bright=0 image=600x360 a125b85f 6d61da41
+f725 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=60 time=0.010666627 hold=0 bright=0 image=600x360 52ddbf1b 6d61da41
+f726 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=60 time=0.027333295 hold=0 bright=0 image=600x360 52ddbf1b 6d61da41
+f727 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=61 time=0.009999961 hold=0 bright=0 image=600x360 4464b56e 6d61da41
+f728 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=61 time=0.026666628 hold=0 bright=0 image=600x360 4464b56e 6d61da41
+f729 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=62 time=0.009333294 hold=0 bright=0 image=600x360 848cba78 6d61da41
+f730 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=62 time=0.025999961 hold=0 bright=0 image=600x360 848cba78 6d61da41
+f731 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=63 time=0.008666627 hold=0 bright=0 image=600x360 e12386f7 6d61da41
+f732 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=63 time=0.025333295 hold=0 bright=0 image=600x360 e12386f7 6d61da41
+f733 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=64 time=0.00799996 hold=0 bright=0 image=600x360 aae6dc15 6d61da41
+f734 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=64 time=0.024666628 hold=0 bright=0 image=600x360 aae6dc15 6d61da41
+f735 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=65 time=0.0073332936 hold=0 bright=0 image=600x360 fbbca17e 6d61da41
+f736 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=65 time=0.023999961 hold=0 bright=0 image=600x360 fbbca17e 6d61da41
+f737 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=66 time=0.006666627 hold=0 bright=0 image=600x360 808ca3be 6d61da41
+f738 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=66 time=0.023333294 hold=0 bright=0 image=600x360 808ca3be 6d61da41
+f739 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=67 time=0.00599996 hold=0 bright=0 image=600x360 e288091a 6d61da41
+f740 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=67 time=0.022666628 hold=0 bright=0 image=600x360 e288091a 6d61da41
+f741 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=68 time=0.005333293 hold=0 bright=0 image=600x360 22653b43 6d61da41
+f742 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=68 time=0.02199996 hold=0 bright=0 image=600x360 22653b43 6d61da41
+f743 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=69 time=0.0046666265 hold=0 bright=0 image=600x360 5928fa75 6d61da41
+f744 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=69 time=0.021333294 hold=0 bright=0 image=600x360 5928fa75 6d61da41
+f745 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=70 time=0.0039999597 hold=0 bright=0 image=600x360 9adbb472 6d61da41
+f746 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=70 time=0.020666627 hold=0 bright=0 image=600x360 9adbb472 6d61da41
+f747 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=71 time=0.003333293 hold=0 bright=0 image=600x360 0df5ed01 6d61da41
+f748 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=71 time=0.01999996 hold=0 bright=0 image=600x360 0df5ed01 6d61da41
+f749 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=72 time=0.0026666261 hold=0 bright=0 image=600x360 f2eb10fc 6d61da41
+f750 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=72 time=0.019333294 hold=0 bright=0 image=600x360 f2eb10fc 6d61da41
+f751 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=73 time=0.0019999593 hold=0 bright=0 image=600x360 17c564c6 6d61da41
+f752 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=73 time=0.018666627 hold=0 bright=0 image=600x360 17c564c6 6d61da41
+f753 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=74 time=0.0013332926 hold=0 bright=0 image=600x360 940b325d 6d61da41
+f754 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=74 time=0.01799996 hold=0 bright=0 image=600x360 940b325d 6d61da41
+f755 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=75 time=0.0006666258 hold=0 bright=0 image=600x360 22afc953 6d61da41
+f756 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=75 time=0.017333293 hold=0 bright=0 image=600x360 22afc953 6d61da41
+f757 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=75 time=0.03399996 hold=0 bright=0 image=600x360 22afc953 6d61da41
+f758 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=76 time=0.016666628 hold=0 bright=0 image=600x360 db64330c 6d61da41
+f759 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=76 time=0.033333294 hold=0 bright=0 image=600x360 db64330c 6d61da41
+f760 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=77 time=0.015999958 hold=0 bright=0 image=600x360 41801cbe 6d61da41
+f761 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=77 time=0.032666624 hold=0 bright=0 image=600x360 41801cbe 6d61da41
+f762 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=78 time=0.015333287 hold=0 bright=0 image=600x360 1a13abe2 6d61da41
+f763 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=78 time=0.031999953 hold=0 bright=0 image=600x360 1a13abe2 6d61da41
+f764 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=79 time=0.014666617 hold=0 bright=0 image=600x360 39491c7f 6d61da41
+f765 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=79 time=0.031333283 hold=0 bright=0 image=600x360 39491c7f 6d61da41
+f766 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=80 time=0.013999946 hold=0 bright=0 image=600x360 b91db15f 6d61da41
+f767 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=80 time=0.030666614 hold=0 bright=0 image=600x360 b91db15f 6d61da41
+f768 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=81 time=0.01333328 hold=0 bright=0 image=600x360 4d482dd8 6d61da41
+f769 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=81 time=0.029999947 hold=0 bright=0 image=600x360 4d482dd8 6d61da41
+f770 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=82 time=0.012666613 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f771 - status="main menu: Main, video" next=None splash=1 step=5 time=0 pal=- sel=0 playing=1 flc=82 time=0.02933328 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f772 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f773 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f774 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f775 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f776 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f777 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f778 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f779 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f780 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f781 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f782 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f783 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f784 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f785 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f786 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f787 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f788 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f789 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f790 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f791 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f792 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f793 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f794 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f795 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f796 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f797 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f798 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f799 - status="main menu: Main" next=None splash=1 step=5 time=0 pal=- sel=0 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+== menu: a key skips the splash
+f0 - status="intro splash" next=None splash=0 step=0 time=0.016666668 pal=74fa9996 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f1 - status="intro splash" next=None splash=0 step=0 time=0.033333335 pal=713e9886 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f2 - status="intro splash" next=None splash=0 step=0 time=0.050000004 pal=83ebd2a5 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f3 - status="intro splash" next=None splash=0 step=0 time=0.06666667 pal=7f717926 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f4 - status="intro splash" next=None splash=0 step=0 time=0.083333336 pal=fefcedc3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f5 - status="intro splash" next=None splash=0 step=0 time=0.1 pal=c2bb6f7b sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f6 - status="intro splash" next=None splash=0 step=0 time=0.11666667 pal=5f518df8 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f7 - status="intro splash" next=None splash=0 step=0 time=0.13333334 pal=f59770c3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f8 - status="intro splash" next=None splash=0 step=0 time=0.15 pal=9f14b4c0 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f9 - status="intro splash" next=None splash=0 step=0 time=0.16666667 pal=597d8cda sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f10 - status="intro splash" next=None splash=0 step=0 time=0.18333334 pal=126caeff sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f11 - status="intro splash" next=None splash=0 step=0 time=0.2 pal=33982c45 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f12 - status="intro splash" next=None splash=0 step=0 time=0.21666667 pal=26eedf6e sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f13 - status="intro splash" next=None splash=0 step=0 time=0.23333333 pal=bea6e319 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f14 - status="intro splash" next=None splash=0 step=0 time=0.25 pal=fdf264d1 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f15 - status="intro splash" next=None splash=0 step=0 time=0.26666668 pal=ecd01da6 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f16 - status="intro splash" next=None splash=0 step=0 time=0.28333336 pal=8eff1217 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f17 - status="intro splash" next=None splash=0 step=0 time=0.30000004 pal=f4f8fbc3 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f18 - status="intro splash" next=None splash=0 step=0 time=0.31666672 pal=c6773d5f sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f19 - status="intro splash" next=None splash=0 step=0 time=0.3333334 pal=231b9949 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f20 - status="intro splash" next=None splash=0 step=0 time=0.35000008 pal=8421208a sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f21 - status="intro splash" next=None splash=0 step=0 time=0.36666676 pal=c581b0d4 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f22 - status="intro splash" next=None splash=0 step=0 time=0.38333344 pal=ad543a6d sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f23 - status="intro splash" next=None splash=0 step=0 time=0.40000013 pal=c88322dd sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f24 - status="intro splash" next=None splash=0 step=0 time=0.4166668 pal=f028c822 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f25 - status="intro splash" next=None splash=0 step=0 time=0.4333335 pal=05e5c7ea sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f26 - status="intro splash" next=None splash=0 step=0 time=0.45000017 pal=f09fde5c sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f27 - status="intro splash" next=None splash=0 step=0 time=0.46666685 pal=b61a4ac4 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f28 - status="intro splash" next=None splash=0 step=0 time=0.48333353 pal=a5ee6772 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f29 - status="intro splash" next=None splash=0 step=0 time=0.5000002 pal=ef851477 sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f30 accept status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=0 flc=- time=0 hold=0 bright=0 image=none
+f31 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=1 time=0.016666668 hold=0 bright=0 image=600x360 f52b55c8 6d61da41
+f32 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=1 time=0.033333335 hold=0 bright=0 image=600x360 f52b55c8 6d61da41
+f33 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=2 time=0.016000003 hold=0 bright=0 image=600x360 ae16e1a1 6d61da41
+f34 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=2 time=0.03266667 hold=0 bright=0 image=600x360 ae16e1a1 6d61da41
+f35 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=3 time=0.015333332 hold=0 bright=0 image=600x360 11f56f57 6d61da41
+f36 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=3 time=0.031999998 hold=0 bright=0 image=600x360 11f56f57 6d61da41
+f37 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=4 time=0.014666662 hold=0 bright=0 image=600x360 49bfb7ee 6d61da41
+f38 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=4 time=0.031333327 hold=0 bright=0 image=600x360 49bfb7ee 6d61da41
+f39 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=5 time=0.013999991 hold=0 bright=0 image=600x360 6a7ad0db 6d61da41
+f40 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=5 time=0.030666659 hold=0 bright=0 image=600x360 6a7ad0db 6d61da41
+f41 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=6 time=0.013333324 hold=0 bright=0 image=600x360 7e0b67b2 6d61da41
+f42 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=6 time=0.029999992 hold=0 bright=0 image=600x360 7e0b67b2 6d61da41
+f43 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=7 time=0.012666658 hold=0 bright=0 image=600x360 50949822 6d61da41
+f44 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=7 time=0.029333325 hold=0 bright=0 image=600x360 50949822 6d61da41
+f45 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=8 time=0.011999991 hold=0 bright=0 image=600x360 9e7e2c3b 6d61da41
+f46 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=8 time=0.028666658 hold=0 bright=0 image=600x360 9e7e2c3b 6d61da41
+f47 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=9 time=0.011333324 hold=0 bright=0 image=600x360 d0678e23 6d61da41
+f48 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=9 time=0.027999992 hold=0 bright=0 image=600x360 d0678e23 6d61da41
+f49 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=0 playing=1 flc=10 time=0.010666657 hold=0 bright=0 image=600x360 2e3faad7 6d61da41
+f50 down status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=10 time=0.027333325 hold=0 bright=0 image=600x360 2e3faad7 6d61da41
+f51 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=11 time=0.00999999 hold=0 bright=0 image=600x360 044c2122 6d61da41
+f52 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=11 time=0.026666658 hold=0 bright=0 image=600x360 044c2122 6d61da41
+f53 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=12 time=0.009333324 hold=0 bright=0 image=600x360 8ef446f1 6d61da41
+f54 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=12 time=0.025999991 hold=0 bright=0 image=600x360 8ef446f1 6d61da41
+f55 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=13 time=0.008666657 hold=0 bright=0 image=600x360 7f7d691c 6d61da41
+f56 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=13 time=0.025333324 hold=0 bright=0 image=600x360 7f7d691c 6d61da41
+f57 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=14 time=0.00799999 hold=0 bright=0 image=600x360 c5b42a5c 6d61da41
+f58 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=14 time=0.024666658 hold=0 bright=0 image=600x360 c5b42a5c 6d61da41
+f59 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=15 time=0.0073333234 hold=0 bright=0 image=600x360 35c071bf 6d61da41
+f60 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=15 time=0.02399999 hold=0 bright=0 image=600x360 35c071bf 6d61da41
+f61 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=16 time=0.0066666566 hold=0 bright=0 image=600x360 0885a7aa 6d61da41
+f62 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=16 time=0.023333324 hold=0 bright=0 image=600x360 0885a7aa 6d61da41
+f63 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=17 time=0.00599999 hold=0 bright=0 image=600x360 95aac89e 6d61da41
+f64 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=17 time=0.022666657 hold=0 bright=0 image=600x360 95aac89e 6d61da41
+f65 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=18 time=0.005333323 hold=0 bright=0 image=600x360 8e0e00da 6d61da41
+f66 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=18 time=0.02199999 hold=0 bright=0 image=600x360 8e0e00da 6d61da41
+f67 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=19 time=0.0046666563 hold=0 bright=0 image=600x360 c0501abc 6d61da41
+f68 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=19 time=0.021333324 hold=0 bright=0 image=600x360 c0501abc 6d61da41
+f69 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=20 time=0.0039999895 hold=0 bright=0 image=600x360 9f702511 6d61da41
+f70 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=20 time=0.020666657 hold=0 bright=0 image=600x360 9f702511 6d61da41
+f71 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=21 time=0.0033333227 hold=0 bright=0 image=600x360 bc64f836 6d61da41
+f72 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=21 time=0.01999999 hold=0 bright=0 image=600x360 bc64f836 6d61da41
+f73 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=22 time=0.002666656 hold=0 bright=0 image=600x360 6780fd57 6d61da41
+f74 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=22 time=0.019333323 hold=0 bright=0 image=600x360 6780fd57 6d61da41
+f75 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=23 time=0.0019999892 hold=0 bright=0 image=600x360 04791dd7 6d61da41
+f76 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=23 time=0.018666657 hold=0 bright=0 image=600x360 04791dd7 6d61da41
+f77 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=24 time=0.0013333224 hold=0 bright=0 image=600x360 8005a1b1 6d61da41
+f78 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=24 time=0.01799999 hold=0 bright=0 image=600x360 8005a1b1 6d61da41
+f79 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=25 time=0.0006666556 hold=0 bright=0 image=600x360 4256eb8f 6d61da41
+f80 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=25 time=0.017333323 hold=0 bright=0 image=600x360 4256eb8f 6d61da41
+f81 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=25 time=0.03399999 hold=0 bright=0 image=600x360 4256eb8f 6d61da41
+f82 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=26 time=0.016666658 hold=0 bright=0 image=600x360 15d9c354 6d61da41
+f83 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=26 time=0.033333324 hold=0 bright=0 image=600x360 15d9c354 6d61da41
+f84 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=27 time=0.015999988 hold=0 bright=0 image=600x360 b41163c9 6d61da41
+f85 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=27 time=0.032666653 hold=0 bright=0 image=600x360 b41163c9 6d61da41
+f86 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=28 time=0.015333317 hold=0 bright=0 image=600x360 c83a3458 6d61da41
+f87 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=28 time=0.031999983 hold=0 bright=0 image=600x360 c83a3458 6d61da41
+f88 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=29 time=0.014666647 hold=0 bright=0 image=600x360 b36bd868 6d61da41
+f89 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=29 time=0.031333312 hold=0 bright=0 image=600x360 b36bd868 6d61da41
+f90 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=30 time=0.013999976 hold=0 bright=0 image=600x360 a450aa83 6d61da41
+f91 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=30 time=0.030666644 hold=0 bright=0 image=600x360 a450aa83 6d61da41
+f92 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=31 time=0.013333309 hold=0 bright=0 image=600x360 ba9dca88 6d61da41
+f93 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=31 time=0.029999977 hold=0 bright=0 image=600x360 ba9dca88 6d61da41
+f94 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=32 time=0.012666643 hold=0 bright=0 image=600x360 d84368d4 6d61da41
+f95 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=32 time=0.02933331 hold=0 bright=0 image=600x360 d84368d4 6d61da41
+f96 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=33 time=0.011999976 hold=0 bright=0 image=600x360 b0594c03 6d61da41
+f97 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=33 time=0.028666643 hold=0 bright=0 image=600x360 b0594c03 6d61da41
+f98 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=34 time=0.011333309 hold=0 bright=0 image=600x360 5167290c 6d61da41
+f99 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=34 time=0.027999977 hold=0 bright=0 image=600x360 5167290c 6d61da41
+f100 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=35 time=0.010666642 hold=0 bright=0 image=600x360 6dcbc110 6d61da41
+f101 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=35 time=0.02733331 hold=0 bright=0 image=600x360 6dcbc110 6d61da41
+f102 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=36 time=0.009999976 hold=0 bright=0 image=600x360 ee36ab02 6d61da41
+f103 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=36 time=0.026666643 hold=0 bright=0 image=600x360 ee36ab02 6d61da41
+f104 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=37 time=0.009333309 hold=0 bright=0 image=600x360 d629f5a9 6d61da41
+f105 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=37 time=0.025999976 hold=0 bright=0 image=600x360 d629f5a9 6d61da41
+f106 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=38 time=0.008666642 hold=0 bright=0 image=600x360 fe640ec4 6d61da41
+f107 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=38 time=0.02533331 hold=0 bright=0 image=600x360 fe640ec4 6d61da41
+f108 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=39 time=0.007999975 hold=0 bright=0 image=600x360 cdb7b9bd 6d61da41
+f109 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=39 time=0.024666643 hold=0 bright=0 image=600x360 cdb7b9bd 6d61da41
+f110 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=40 time=0.0073333085 hold=0 bright=0 image=600x360 3bd41894 6d61da41
+f111 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=40 time=0.023999976 hold=0 bright=0 image=600x360 3bd41894 6d61da41
+f112 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=41 time=0.0066666417 hold=0 bright=0 image=600x360 29e19b72 6d61da41
+f113 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=41 time=0.02333331 hold=0 bright=0 image=600x360 29e19b72 6d61da41
+f114 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=42 time=0.005999975 hold=0 bright=0 image=600x360 aa41e813 6d61da41
+f115 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=42 time=0.022666642 hold=0 bright=0 image=600x360 aa41e813 6d61da41
+f116 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=43 time=0.005333308 hold=0 bright=0 image=600x360 527171b9 6d61da41
+f117 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=43 time=0.021999976 hold=0 bright=0 image=600x360 527171b9 6d61da41
+f118 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=44 time=0.0046666414 hold=0 bright=0 image=600x360 6fc12081 6d61da41
+f119 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=44 time=0.021333309 hold=0 bright=0 image=600x360 6fc12081 6d61da41
+f120 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=45 time=0.0039999746 hold=0 bright=0 image=600x360 1fdafa82 6d61da41
+f121 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=45 time=0.020666642 hold=0 bright=0 image=600x360 1fdafa82 6d61da41
+f122 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=46 time=0.0033333078 hold=0 bright=0 image=600x360 8b99a232 6d61da41
+f123 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=46 time=0.019999975 hold=0 bright=0 image=600x360 8b99a232 6d61da41
+f124 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=47 time=0.002666641 hold=0 bright=0 image=600x360 9f1e859e 6d61da41
+f125 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=47 time=0.019333309 hold=0 bright=0 image=600x360 9f1e859e 6d61da41
+f126 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=48 time=0.0019999743 hold=0 bright=0 image=600x360 edcee630 6d61da41
+f127 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=48 time=0.018666642 hold=0 bright=0 image=600x360 edcee630 6d61da41
+f128 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=49 time=0.0013333075 hold=0 bright=0 image=600x360 75b0a7be 6d61da41
+f129 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=49 time=0.017999975 hold=0 bright=0 image=600x360 75b0a7be 6d61da41
+f130 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=50 time=0.0006666407 hold=0 bright=0 image=600x360 13b8a09f 6d61da41
+f131 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=50 time=0.017333308 hold=0 bright=0 image=600x360 13b8a09f 6d61da41
+f132 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=50 time=0.033999976 hold=0 bright=0 image=600x360 13b8a09f 6d61da41
+f133 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=51 time=0.016666643 hold=0 bright=0 image=600x360 24a3ad08 6d61da41
+f134 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=51 time=0.03333331 hold=0 bright=0 image=600x360 24a3ad08 6d61da41
+f135 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=52 time=0.015999973 hold=0 bright=0 image=600x360 ef56eb16 6d61da41
+f136 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=52 time=0.03266664 hold=0 bright=0 image=600x360 ef56eb16 6d61da41
+f137 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=53 time=0.015333302 hold=0 bright=0 image=600x360 aa44f9a8 6d61da41
+f138 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=53 time=0.031999968 hold=0 bright=0 image=600x360 aa44f9a8 6d61da41
+f139 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=54 time=0.014666632 hold=0 bright=0 image=600x360 b18cc9f9 6d61da41
+f140 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=54 time=0.031333297 hold=0 bright=0 image=600x360 b18cc9f9 6d61da41
+f141 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=55 time=0.013999961 hold=0 bright=0 image=600x360 18116707 6d61da41
+f142 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=55 time=0.030666629 hold=0 bright=0 image=600x360 18116707 6d61da41
+f143 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=56 time=0.013333295 hold=0 bright=0 image=600x360 8dfbe94d 6d61da41
+f144 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=56 time=0.029999962 hold=0 bright=0 image=600x360 8dfbe94d 6d61da41
+f145 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=57 time=0.012666628 hold=0 bright=0 image=600x360 e870bcd9 6d61da41
+f146 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=57 time=0.029333295 hold=0 bright=0 image=600x360 e870bcd9 6d61da41
+f147 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=58 time=0.011999961 hold=0 bright=0 image=600x360 6a077d3e 6d61da41
+f148 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=58 time=0.028666629 hold=0 bright=0 image=600x360 6a077d3e 6d61da41
+f149 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=59 time=0.011333294 hold=0 bright=0 image=600x360 a125b85f 6d61da41
+f150 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=59 time=0.027999962 hold=0 bright=0 image=600x360 a125b85f 6d61da41
+f151 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=60 time=0.010666627 hold=0 bright=0 image=600x360 52ddbf1b 6d61da41
+f152 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=60 time=0.027333295 hold=0 bright=0 image=600x360 52ddbf1b 6d61da41
+f153 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=61 time=0.009999961 hold=0 bright=0 image=600x360 4464b56e 6d61da41
+f154 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=61 time=0.026666628 hold=0 bright=0 image=600x360 4464b56e 6d61da41
+f155 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=62 time=0.009333294 hold=0 bright=0 image=600x360 848cba78 6d61da41
+f156 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=62 time=0.025999961 hold=0 bright=0 image=600x360 848cba78 6d61da41
+f157 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=63 time=0.008666627 hold=0 bright=0 image=600x360 e12386f7 6d61da41
+f158 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=63 time=0.025333295 hold=0 bright=0 image=600x360 e12386f7 6d61da41
+f159 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=64 time=0.00799996 hold=0 bright=0 image=600x360 aae6dc15 6d61da41
+f160 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=64 time=0.024666628 hold=0 bright=0 image=600x360 aae6dc15 6d61da41
+f161 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=65 time=0.0073332936 hold=0 bright=0 image=600x360 fbbca17e 6d61da41
+f162 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=65 time=0.023999961 hold=0 bright=0 image=600x360 fbbca17e 6d61da41
+f163 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=66 time=0.006666627 hold=0 bright=0 image=600x360 808ca3be 6d61da41
+f164 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=66 time=0.023333294 hold=0 bright=0 image=600x360 808ca3be 6d61da41
+f165 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=67 time=0.00599996 hold=0 bright=0 image=600x360 e288091a 6d61da41
+f166 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=67 time=0.022666628 hold=0 bright=0 image=600x360 e288091a 6d61da41
+f167 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=68 time=0.005333293 hold=0 bright=0 image=600x360 22653b43 6d61da41
+f168 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=68 time=0.02199996 hold=0 bright=0 image=600x360 22653b43 6d61da41
+f169 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=69 time=0.0046666265 hold=0 bright=0 image=600x360 5928fa75 6d61da41
+f170 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=69 time=0.021333294 hold=0 bright=0 image=600x360 5928fa75 6d61da41
+f171 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=70 time=0.0039999597 hold=0 bright=0 image=600x360 9adbb472 6d61da41
+f172 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=70 time=0.020666627 hold=0 bright=0 image=600x360 9adbb472 6d61da41
+f173 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=71 time=0.003333293 hold=0 bright=0 image=600x360 0df5ed01 6d61da41
+f174 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=71 time=0.01999996 hold=0 bright=0 image=600x360 0df5ed01 6d61da41
+f175 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=72 time=0.0026666261 hold=0 bright=0 image=600x360 f2eb10fc 6d61da41
+f176 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=72 time=0.019333294 hold=0 bright=0 image=600x360 f2eb10fc 6d61da41
+f177 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=73 time=0.0019999593 hold=0 bright=0 image=600x360 17c564c6 6d61da41
+f178 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=73 time=0.018666627 hold=0 bright=0 image=600x360 17c564c6 6d61da41
+f179 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=74 time=0.0013332926 hold=0 bright=0 image=600x360 940b325d 6d61da41
+f180 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=74 time=0.01799996 hold=0 bright=0 image=600x360 940b325d 6d61da41
+f181 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=75 time=0.0006666258 hold=0 bright=0 image=600x360 22afc953 6d61da41
+f182 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=75 time=0.017333293 hold=0 bright=0 image=600x360 22afc953 6d61da41
+f183 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=75 time=0.03399996 hold=0 bright=0 image=600x360 22afc953 6d61da41
+f184 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=76 time=0.016666628 hold=0 bright=0 image=600x360 db64330c 6d61da41
+f185 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=76 time=0.033333294 hold=0 bright=0 image=600x360 db64330c 6d61da41
+f186 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=77 time=0.015999958 hold=0 bright=0 image=600x360 41801cbe 6d61da41
+f187 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=77 time=0.032666624 hold=0 bright=0 image=600x360 41801cbe 6d61da41
+f188 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=78 time=0.015333287 hold=0 bright=0 image=600x360 1a13abe2 6d61da41
+f189 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=78 time=0.031999953 hold=0 bright=0 image=600x360 1a13abe2 6d61da41
+f190 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=79 time=0.014666617 hold=0 bright=0 image=600x360 39491c7f 6d61da41
+f191 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=79 time=0.031333283 hold=0 bright=0 image=600x360 39491c7f 6d61da41
+f192 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=80 time=0.013999946 hold=0 bright=0 image=600x360 b91db15f 6d61da41
+f193 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=80 time=0.030666614 hold=0 bright=0 image=600x360 b91db15f 6d61da41
+f194 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=81 time=0.01333328 hold=0 bright=0 image=600x360 4d482dd8 6d61da41
+f195 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=81 time=0.029999947 hold=0 bright=0 image=600x360 4d482dd8 6d61da41
+f196 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=82 time=0.012666613 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f197 - status="main menu: Main, video" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=1 flc=82 time=0.02933328 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f198 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f199 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f200 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f201 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f202 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f203 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f204 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f205 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f206 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f207 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f208 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41
+f209 - status="main menu: Main" next=None splash=1 step=0 time=0.5000002 pal=- sel=1 playing=0 flc=- time=0.011999946 hold=0 bright=0 image=600x360 c3ef972d 6d61da41

@@ -168,6 +168,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->kurtCompressed = value;
     } else if (keyIs(begin, keyEnd, "cap30Fps")) {
         toggles->cap30Fps = value;
+    } else if (keyIs(begin, keyEnd, "movieHalfRate")) {
+        toggles->movieHalfRate = value;
     }
 }
 
@@ -224,6 +226,8 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     out.append(size);
     // 3DS: present at 30 fps (render_types.h).
     appendToggle(&out, "cap30Fps", toggles.cap30Fps);
+    // 3DS: the movies' uploads at half rate (render_types.h).
+    appendToggle(&out, "movieHalfRate", toggles.movieHalfRate);
     // The look dials, percent of the shipped value (render_types.h).
     for (int32_t i = 0; i < kLookDialCount; i++) {
         snprintf(size, sizeof(size), "%s=%d\n", kLookDials[i].key,

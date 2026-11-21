@@ -9,6 +9,7 @@
 #include "formats/mve.h"
 
 #include <string.h>
+#include <utility>
 
 #include "formats/bin_reader.h"
 
@@ -100,7 +101,8 @@ bool Mve::load(const uint8_t* bytes, int32_t byteCount, Mve* outMve) {
     mve.palette_.assign(kPaletteBytes, 0);
     mve.pos_ = kSignatureSize;
 
-    *outMve = mve;
+    // Moved, not copied: the file's bytes are the whole movie.
+    *outMve = std::move(mve);
     return true;
 }
 
