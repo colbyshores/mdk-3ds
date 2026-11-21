@@ -1,0 +1,2065 @@
+== stats-score4: level 4, first Score, counts 0,0,5,5,7,7,20, towns 5, gore 1, canvas 480
+Statistics: Score
+Score-O-matic: 0/0, 0/100, 5/5, 100/100, 7/7, heads 20
+f0 - statistics: Score in=0.033333335 out=-1 cur=0 count=1 shown=0 ticks=0.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 9aff342c44972ffd
+    B 130.40001,36,151.20001,59.2 1,1,1,1
+    B 151.20001,42.4,168.00002,59.200005 1,1,1,1
+    B 168.00002,42.4,185.60002,59.200005 1,1,1,1
+    B 185.60002,42.4,198.40002,59.200005 1,1,1,1
+    B 198.40002,42.4,216.00003,59.200005 1,1,1,1
+    B 216.00003,46.4,231.20003,53.600002 1,1,1,1
+    B 231.20003,36,254.40002,59.2 1,1,1,1
+    B 254.40002,46.4,269.60004,53.600002 1,1,1,1
+    B 269.60004,42.4,295.20004,59.200005 1,1,1,1
+    B 295.20004,42.4,312.80005,59.200005 1,1,1,1
+    B 312.80005,38.4,324.80005,59.200005 1,1,1,1
+    B 324.80005,36.800003,332.80005,59.200005 1,1,1,1
+    B 332.80005,42.4,349.60004,59.200005 1,1,1,1
+    S 180,64,189.6,74.4 1,1,1,1
+    S 189.6,64,200,74.4 1,1,1,1
+    S 200,64,211.2,74.4 1,1,1,1
+    S 211.2,64,220,74.4 1,1,1,1
+    S 220,67.200005,223.2,74.4 1,1,1,1
+    S 226.4,64,236.79999,74.4 1,1,1,1
+    S 236.79999,66.4,244.79999,74.4 1,1,1,1
+    S 244.79999,66.4,250.4,74.4 1,1,1,1
+    S 250.4,64.8,255.2,74.4 1,1,1,1
+    S 258.4,64,268,74.4 1,1,1,1
+    S 268,66.4,276,74.4 1,1,1,1
+    S 276,66.4,284,74.4 1,1,1,1
+    S 284,64.8,288.8,74.4 1,1,1,1
+    S 288.8,64,292,74.4 1,1,1,1
+    S 292,66.4,300,74.4 1,1,1,1
+    F 0,36,480,324 0,0,0,0.96666664
+f1 - statistics: Score in=0.06666667 out=-1 cur=0 count=1 shown=0 ticks=1 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 29a5beb9c3a0159b
+f2 - statistics: Score in=0.10000001 out=-1 cur=0 count=1 shown=0 ticks=1.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 0a740b45d717ecf3
+f3 - statistics: Score in=0.13333334 out=-1 cur=0 count=1 shown=0 ticks=2 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 89a94d6c04fc5d2f
+f4 - statistics: Score in=0.16666667 out=-1 cur=0 count=1 shown=0 ticks=2.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 2d949c89c08c1af8
+f5 - statistics: Score in=0.2 out=-1 cur=0 count=1 shown=0 ticks=3 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 0a70a945d7151096
+f6 - statistics: Score in=0.23333333 out=-1 cur=0 count=1 shown=0 ticks=3.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 2d1db28658e11cf6
+f7 - statistics: Score in=0.26666668 out=-1 cur=0 count=1 shown=0 ticks=4 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 877baf1654d5b544
+f8 - statistics: Score in=0.3 out=-1 cur=0 count=1 shown=0 ticks=4.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 0a6d5345d712489d
+f9 - statistics: Score in=0.33333334 out=-1 cur=0 count=1 shown=0 ticks=5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 2bbdf77edb3f3254
+f10 - statistics: Score in=0.36666667 out=-1 cur=0 count=1 shown=0 ticks=5.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 95142ae904e358e2
+f11 - statistics: Score in=0.4 out=-1 cur=0 count=1 shown=0 ticks=6 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 0a69e945d70f5ea8
+f12 - statistics: Score in=0.43333334 out=-1 cur=0 count=1 shown=0 ticks=6.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 d1b6f27401a2bafb
+f13 - statistics: Score in=0.46666667 out=-1 cur=0 count=1 shown=0 ticks=7 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 bd0497b0b0782e19
+f14 - statistics: Score in=0.5 out=-1 cur=0 count=1 shown=0 ticks=7.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 0a667345d70c604f
+f15 - statistics: Score in=0.53333336 out=-1 cur=0 count=1 shown=0 ticks=8 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 539195820ca12f02
+f16 - statistics: Score in=0.5666667 out=-1 cur=0 count=1 shown=0 ticks=8.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 adbd722bf4ae05eb
+f17 - statistics: Score in=0.6000001 out=-1 cur=0 count=1 shown=0 ticks=9 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 1ecd772df0eeed87
+f18 - statistics: Score in=0.63333344 out=-1 cur=0 count=1 shown=0 ticks=9.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 5975010f5f83d030
+f19 - statistics: Score in=0.6666668 out=-1 cur=0 count=1 shown=0 ticks=10 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 6267b7d1e4b351b6
+f20 - statistics: Score in=0.70000017 out=-1 cur=0 count=1 shown=0 ticks=10.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 fc5f943cf873af46
+f21 - statistics: Score in=0.7333335 out=-1 cur=0 count=1 shown=0 ticks=11 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 7d4e910c7ddb0269
+f22 - statistics: Score in=0.7666669 out=-1 cur=0 count=1 shown=0 ticks=11.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 18fbb93fc0b271dd
+f23 - statistics: Score in=0.80000025 out=-1 cur=0 count=1 shown=0 ticks=12 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 b2703b2a4f6d6e94
+f24 - statistics: Score in=0.8333336 out=-1 cur=0 count=1 shown=0 ticks=12.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 e11f0d57007907a7
+f25 - statistics: Score in=0.866667 out=-1 cur=0 count=1 shown=0 ticks=13 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 8092abb7ec3d300d
+f26 - statistics: Score in=0.90000033 out=-1 cur=0 count=1 shown=0 ticks=13.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 808bbe4de665a4cb
+f27 - statistics: Score in=0.9333337 out=-1 cur=0 count=1 shown=0 ticks=14 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 7479e2775dadc112
+f28 - statistics: Score in=0.96666706 out=-1 cur=0 count=1 shown=0 ticks=14.5 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 29 91e40bf7f49d3219
+f29 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=15 row=0/0/0 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f30 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=15.5 row=0/0/0.016666668 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f31 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=16 row=0/0/0.033333335 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f32 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=16.5 row=0/0/0.050000004 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f33 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=17 row=0/0/0.06666667 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f34 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=17.5 row=0/0/0.083333336 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f35 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=18 row=0/0/0.1 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f36 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=18.5 row=0/0/0.11666667 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f37 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=19 row=0/0/0.13333334 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f38 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=19.5 row=0/0/0.15 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f39 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=20 row=0/0/0.16666667 v=0,0,0,0,0 s=-1,-1,-1,-1,-1 heads=0/0 next=None
+  quads 28 38e4855dd08cf48e
+f40 back statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=20.5 row=0/1/0 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  snd +SNIPER#1
+  quads 39 927a880979be2ed8
+f41 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=21 row=0/1/0.016666668 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f42 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=21.5 row=0/1/0.033333335 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f43 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=22 row=0/1/0.050000004 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f44 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=22.5 row=0/1/0.06666667 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f45 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=23 row=0/1/0.083333336 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f46 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=23.5 row=0/1/0.1 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f47 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=24 row=0/1/0.11666667 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f48 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=24.5 row=0/1/0.13333334 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f49 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=25 row=0/1/0.15 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f50 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=25.5 row=0/1/0.16666667 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f51 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=26 row=0/1/0.18333334 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f52 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=26.5 row=0/1/0.2 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f53 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=27 row=0/1/0.21666667 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f54 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=27.5 row=0/1/0.23333333 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f55 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=28 row=0/1/0.25 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f56 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=28.5 row=0/1/0.26666668 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f57 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=29 row=0/1/0.28333336 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f58 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=29.5 row=0/1/0.30000004 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f59 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=30 row=0/1/0.31666672 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f60 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=30.5 row=0/1/0.3333334 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f61 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=31 row=0/1/0.35000008 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f62 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=31.5 row=0/1/0.36666676 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f63 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=32 row=0/1/0.38333344 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f64 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=32.5 row=0/1/0.40000013 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f65 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=33 row=0/1/0.4166668 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f66 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=33.5 row=0/1/0.4333335 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f67 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=34 row=0/1/0.45000017 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f68 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=34.5 row=0/1/0.46666685 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f69 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=35 row=0/1/0.48333353 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f70 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=35.5 row=0/2/0.5000002 v=0,0,0,0,0 s=-0.5,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f71 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=36 row=1/0/0 v=0,0,0,0,0 s=0,-1,-1,-1,-1 heads=0/0 next=None
+  quads 39 927a880979be2ed8
+f72 back statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=36.5 row=1/1/0 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  snd +SNIPER#3
+  quads 49 b4ff783af5c5872d
+f73 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=37 row=1/1/0.016666668 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f74 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=37.5 row=1/1/0.033333335 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f75 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=38 row=1/1/0.050000004 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f76 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=38.5 row=1/1/0.06666667 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f77 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=39 row=1/1/0.083333336 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f78 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=39.5 row=1/1/0.1 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f79 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=40 row=1/1/0.11666667 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f80 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=40.5 row=1/1/0.13333334 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f81 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=41 row=1/1/0.15 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f82 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=41.5 row=1/1/0.16666667 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f83 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=42 row=1/1/0.18333334 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f84 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=42.5 row=1/1/0.2 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  snd ~#1
+  quads 49 b4ff783af5c5872d
+f85 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=43 row=1/1/0.21666667 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f86 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=43.5 row=1/1/0.23333333 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f87 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=44 row=1/1/0.25 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f88 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=44.5 row=1/1/0.26666668 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f89 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=45 row=1/1/0.28333336 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f90 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=45.5 row=1/1/0.30000004 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f91 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=46 row=1/1/0.31666672 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f92 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=46.5 row=1/1/0.3333334 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f93 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=47 row=1/1/0.35000008 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f94 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=47.5 row=1/1/0.36666676 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f95 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=48 row=1/1/0.38333344 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f96 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=48.5 row=1/1/0.40000013 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f97 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=49 row=1/1/0.4166668 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f98 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=49.5 row=1/1/0.4333335 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f99 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=50 row=1/1/0.45000017 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f100 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=50.5 row=1/1/0.46666685 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f101 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=51 row=1/1/0.48333353 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f102 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=51.5 row=1/2/0.5000002 v=0,0,0,0,0 s=1,-0.5,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f103 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=52 row=2/0/0 v=0,0,0,0,0 s=1,0,-1,-1,-1 heads=0/0 next=None
+  quads 49 b4ff783af5c5872d
+f104 back statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=52.5 row=2/1/0 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  snd +SNIPER#5
+  quads 67 673ac1a3d1ffd569
+f105 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=53 row=2/1/0.016666668 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f106 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=53.5 row=2/1/0.033333335 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f107 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=54 row=2/1/0.050000004 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f108 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=54.5 row=2/1/0.06666667 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f109 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=55 row=2/1/0.083333336 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f110 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=55.5 row=2/1/0.1 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f111 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=56 row=2/1/0.11666667 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f112 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=56.5 row=2/1/0.13333334 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f113 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=57 row=2/1/0.15 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f114 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=57.5 row=2/1/0.16666667 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f115 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=58 row=2/1/0.18333334 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f116 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=58.5 row=2/1/0.2 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  snd ~#3
+  quads 67 673ac1a3d1ffd569
+f117 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=59 row=2/1/0.21666667 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f118 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=59.5 row=2/1/0.23333333 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f119 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=60 row=2/1/0.25 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f120 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=60.5 row=2/1/0.26666668 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+    B 130.40001,36,151.20001,59.2 1,1,1,1
+    B 151.20001,42.4,168.00002,59.200005 1,1,1,1
+    B 168.00002,42.4,185.60002,59.200005 1,1,1,1
+    B 185.60002,42.4,198.40002,59.200005 1,1,1,1
+    B 198.40002,42.4,216.00003,59.200005 1,1,1,1
+    B 216.00003,46.4,231.20003,53.600002 1,1,1,1
+    B 231.20003,36,254.40002,59.2 1,1,1,1
+    B 254.40002,46.4,269.60004,53.600002 1,1,1,1
+    B 269.60004,42.4,295.20004,59.200005 1,1,1,1
+    B 295.20004,42.4,312.80005,59.200005 1,1,1,1
+    B 312.80005,38.4,324.80005,59.200005 1,1,1,1
+    B 324.80005,36.800003,332.80005,59.200005 1,1,1,1
+    B 332.80005,42.4,349.60004,59.200005 1,1,1,1
+    S 180,64,189.6,74.4 1,1,1,1
+    S 189.6,64,200,74.4 1,1,1,1
+    S 200,64,211.2,74.4 1,1,1,1
+    S 211.2,64,220,74.4 1,1,1,1
+    S 220,67.200005,223.2,74.4 1,1,1,1
+    S 226.4,64,236.79999,74.4 1,1,1,1
+    S 236.79999,66.4,244.79999,74.4 1,1,1,1
+    S 244.79999,66.4,250.4,74.4 1,1,1,1
+    S 250.4,64.8,255.2,74.4 1,1,1,1
+    S 258.4,64,268,74.4 1,1,1,1
+    S 268,66.4,276,74.4 1,1,1,1
+    S 276,66.4,284,74.4 1,1,1,1
+    S 284,64.8,288.8,74.4 1,1,1,1
+    S 288.8,64,292,74.4 1,1,1,1
+    S 292,66.4,300,74.4 1,1,1,1
+    B 104,84.8,114.4,96.4 1,1,1,1
+    B 114.4,85.2,123.200005,96.399994 1,1,1,1
+    B 123.200005,88,132,96.4 1,1,1,1
+    B 132,86,138,96.4 1,1,1,1
+    B 138,88,146,96.4 1,1,1,1
+    B 148.4,85.2,154.79999,96.399994 1,1,1,1
+    B 154.79999,85.2,158.79999,96.399994 1,1,1,1
+    B 158.79999,88,165.19998,96.4 1,1,1,1
+    B 165.19998,88,173.99998,96.4 1,1,1,1
+    B 173.99998,85.2,183.19998,96.399994 1,1,1,1
+    S 80,103.200005,89.6,114.4 1,1,1,1
+    B 301.6,85.2,313.2,96.399994 1,1,1,1
+    B 313.2,88,321.6,96.4 1,1,1,1
+    B 321.6,88,330,96.4 1,1,1,1
+    B 330,88,338.4,96.4 1,1,1,1
+    B 338.4,88,344.8,96.4 1,1,1,1
+    B 344.8,88,353.59998,96.4 1,1,1,1
+    B 353.59998,88,361.99997,96.4 1,1,1,1
+    B 361.99997,88,370.79996,98.4 1,1,1,1
+    S 260.80002,103.200005,270.40002,114.4 1,1,1,1
+    S 270.40002,104.8,281.60004,114.4 1,1,1,1
+    B 104,137.6,124.8,160.8 1,1,1,1
+    B 124.8,144,141.6,160.8 1,1,1,1
+    B 141.6,138.4,149.6,160.79999 1,1,1,1
+    B 149.6,144,167.20001,164.8 1,1,1,1
+    B 167.20001,144,184.80002,160.8 1,1,1,1
+    B 184.80002,144,197.60002,160.8 1,1,1,1
+    B 202.40002,144,215.20003,160.8 1,1,1,1
+    B 215.20003,144,232.80003,160.8 1,1,1,1
+    B 232.80003,144,249.60004,160.8 1,1,1,1
+    B 249.60004,144,266.40002,160.8 1,1,1,1
+    B 266.40002,138.4,284.80002,160.79999 1,1,1,1
+    B 284.80002,144,300.80002,160.8 1,1,1,1
+    B 305.6,138.4,318.4,160.79999 1,1,1,1
+    B 318.4,138.4,326.4,160.79999 1,1,1,1
+    B 326.4,144,339.19998,160.8 1,1,1,1
+    B 339.19998,144,356.8,160.8 1,1,1,1
+    B 356.8,138.4,375.19998,160.79999 1,1,1,1
+    S 128,174.40001,137.6,185.6 1,1,1,1
+f121 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=61 row=2/1/0.28333336 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f122 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=61.5 row=2/1/0.30000004 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f123 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=62 row=2/1/0.31666672 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f124 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=62.5 row=2/1/0.3333334 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f125 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=63 row=2/1/0.35000008 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f126 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=63.5 row=2/1/0.36666676 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f127 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=64 row=2/1/0.38333344 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f128 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=64.5 row=2/1/0.40000013 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f129 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=65 row=2/1/0.4166668 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f130 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=65.5 row=2/1/0.4333335 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f131 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=66 row=2/1/0.45000017 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f132 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=66.5 row=2/1/0.46666685 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f133 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=67 row=2/1/0.48333353 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f134 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=67.5 row=2/2/0.5000002 v=0,0,0,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  quads 67 673ac1a3d1ffd569
+f135 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=68 row=2/2/0.5166668 v=0,0,1,0,0 s=1,1,-0.5,-1,-1 heads=0/0 next=None
+  snd +CGUN#6
+  quads 68 62d98dad1e4298ab
+f136 back statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=68.5 row=3/0/0 v=0,0,5,0,0 s=1,1,0,-1,-1 heads=0/0 next=None
+  snd -#6
+  quads 68 7f983a38d0bd84ed
+f137 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=69 row=3/0/0.016666668 v=0,0,5,0,0 s=1,1,0.033333335,-1,-1 heads=0/0 next=None
+  quads 68 2d0b32032d050302
+f138 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=69.5 row=3/0/0.033333335 v=0,0,5,0,0 s=1,1,0.06666667,-1,-1 heads=0/0 next=None
+  quads 68 6eb3283cda9f6547
+f139 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=70 row=3/0/0.050000004 v=0,0,5,0,0 s=1,1,0.10000001,-1,-1 heads=0/0 next=None
+  quads 68 77fe73bcbe3397ef
+f140 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=70.5 row=3/0/0.06666667 v=0,0,5,0,0 s=1,1,0.13333334,-1,-1 heads=0/0 next=None
+  quads 68 cb4793158f2b54dc
+f141 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=71 row=3/0/0.083333336 v=0,0,5,0,0 s=1,1,0.16666667,-1,-1 heads=0/0 next=None
+  quads 68 b7a98ec7698612f4
+f142 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=71.5 row=3/0/0.1 v=0,0,5,0,0 s=1,1,0.2,-1,-1 heads=0/0 next=None
+  quads 68 ad436d29c20b7b00
+f143 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=72 row=3/0/0.11666667 v=0,0,5,0,0 s=1,1,0.23333333,-1,-1 heads=0/0 next=None
+  quads 68 7d20b7d9baed89af
+f144 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=72.5 row=3/0/0.13333334 v=0,0,5,0,0 s=1,1,0.26666668,-1,-1 heads=0/0 next=None
+  quads 68 73d3705de989be1c
+f145 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=73 row=3/0/0.15 v=0,0,5,0,0 s=1,1,0.3,-1,-1 heads=0/0 next=None
+  quads 68 f6aef2941fb32ae4
+f146 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=73.5 row=3/0/0.16666667 v=0,0,5,0,0 s=1,1,0.33333334,-1,-1 heads=0/0 next=None
+  quads 68 dc96fa7c537057ea
+f147 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=74 row=3/0/0.18333334 v=0,0,5,0,0 s=1,1,0.36666667,-1,-1 heads=0/0 next=None
+  quads 68 7e6fc578d2b88b6c
+f148 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=74.5 row=3/0/0.2 v=0,0,5,0,0 s=1,1,0.4,-1,-1 heads=0/0 next=None
+  snd ~#5
+  quads 68 dba1e7aab9e47704
+f149 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=75 row=3/0/0.21666667 v=0,0,5,0,0 s=1,1,0.43333334,-1,-1 heads=0/0 next=None
+  quads 68 6e1b7c6bb9571b89
+f150 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=75.5 row=3/0/0.23333333 v=0,0,5,0,0 s=1,1,0.46666667,-1,-1 heads=0/0 next=None
+  quads 68 b28ad310e4d38dd8
+f151 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=76 row=3/0/0.25 v=0,0,5,0,0 s=1,1,0.5,-1,-1 heads=0/0 next=None
+  quads 68 6d89c317c6559772
+f152 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=76.5 row=3/0/0.26666668 v=0,0,5,0,0 s=1,1,0.53333336,-1,-1 heads=0/0 next=None
+  quads 68 d5afc68a65ced9fb
+f153 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=77 row=3/0/0.28333336 v=0,0,5,0,0 s=1,1,0.5666667,-1,-1 heads=0/0 next=None
+  quads 68 8ce3950920900977
+f154 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=77.5 row=3/0/0.30000004 v=0,0,5,0,0 s=1,1,0.6000001,-1,-1 heads=0/0 next=None
+  quads 68 683d05a300370d79
+f155 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=78 row=3/0/0.31666672 v=0,0,5,0,0 s=1,1,0.63333344,-1,-1 heads=0/0 next=None
+  quads 68 5faa821d7bfc150f
+f156 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=78.5 row=3/0/0.3333334 v=0,0,5,0,0 s=1,1,0.6666668,-1,-1 heads=0/0 next=None
+  quads 68 b31bf43e15bec95b
+f157 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=79 row=3/0/0.35000008 v=0,0,5,0,0 s=1,1,0.70000017,-1,-1 heads=0/0 next=None
+  quads 68 5f7d9d0ebd7ae51d
+f158 back statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=79.5 row=3/1/0 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  snd +SNIPER#7
+  quads 78 f9033a0745c6f0e3
+f159 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=80 row=3/1/0.016666668 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f160 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=80.5 row=3/1/0.033333335 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f161 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=81 row=3/1/0.050000004 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f162 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=81.5 row=3/1/0.06666667 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f163 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=82 row=3/1/0.083333336 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f164 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=82.5 row=3/1/0.1 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f165 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=83 row=3/1/0.11666667 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f166 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=83.5 row=3/1/0.13333334 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f167 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=84 row=3/1/0.15 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f168 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=84.5 row=3/1/0.16666667 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f169 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=85 row=3/1/0.18333334 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f170 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=85.5 row=3/1/0.2 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f171 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=86 row=3/1/0.21666667 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f172 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=86.5 row=3/1/0.23333333 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f173 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=87 row=3/1/0.25 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f174 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=87.5 row=3/1/0.26666668 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f175 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=88 row=3/1/0.28333336 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f176 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=88.5 row=3/1/0.30000004 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f177 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=89 row=3/1/0.31666672 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f178 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=89.5 row=3/1/0.3333334 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f179 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=90 row=3/1/0.35000008 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f180 back statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=90.5 row=3/2/0.3833334 v=0,0,5,0,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 78 f9033a0745c6f0e3
+f181 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=91 row=3/2/0.4000001 v=0,0,5,1,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  snd +CGUN#8
+  quads 79 79099a4effbe3f20
+f182 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=91.5 row=3/2/0.41666678 v=0,0,5,2,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 79 9ede1305db39b2a3
+f183 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=92 row=3/2/0.43333346 v=0,0,5,3,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  snd +RICO1#9
+  quads 79 d5fa3cf47eb15169
+f184 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=92.5 row=3/2/0.45000014 v=0,0,5,4,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 79 fc75c951ac00626e
+f185 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=93 row=3/2/0.46666682 v=0,0,5,5,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 79 ea61faa66461b267
+f186 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=93.5 row=3/2/0.4833335 v=0,0,5,6,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 79 12a22f543564ac55
+f187 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=94 row=3/2/0.5000002 v=0,0,5,7,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 79 7fe55081a2ad6b08
+f188 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=94.5 row=3/2/0.5166668 v=0,0,5,8,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 79 2e02dd2a87687fa6
+f189 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=95 row=3/2/0.5333335 v=0,0,5,9,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 79 1fd38fd14aed4467
+f190 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=95.5 row=3/2/0.55000013 v=0,0,5,10,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  snd +RICO2#10
+  quads 80 488e886ab19db951
+f191 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=96 row=3/2/0.5666668 v=0,0,5,11,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 a165dd85dbd958c6
+f192 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=96.5 row=3/2/0.58333343 v=0,0,5,12,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 73c3e24844c45e8c
+f193 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=97 row=3/2/0.6000001 v=0,0,5,13,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 e72a4c8b7b621256
+f194 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=97.5 row=3/2/0.61666673 v=0,0,5,14,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 6357f759eb34ffc4
+f195 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=98 row=3/2/0.6333334 v=0,0,5,15,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 2916e4dc02e0238a
+f196 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=98.5 row=3/2/0.65000004 v=0,0,5,16,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 498564356df1e487
+f197 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=99 row=3/2/0.6666667 v=0,0,5,17,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  snd +RICO3#11
+  quads 80 5112e24fd1c46cc8
+f198 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=99.5 row=3/2/0.68333334 v=0,0,5,18,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 c8a2dc8569f21e5f
+f199 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=100 row=3/2/0.7 v=0,0,5,19,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 4a3b3aacfa304328
+f200 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=100.5 row=3/2/0.71666664 v=0,0,5,20,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 7c7644f19376f06a
+f201 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=101 row=3/2/0.7333333 v=0,0,5,21,0 s=1,1,1,-0.5,-1 heads=0/0 next=None
+  quads 80 a9bfc7615d2b39e0
+f202 back statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=101.5 row=4/0/0 v=0,0,5,100,0 s=1,1,1,0,-1 heads=0/0 next=None
+  snd -#8 ~#7
+  quads 81 5dc9a73e02a0b35a
+f203 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=102 row=4/0/0.016666668 v=0,0,5,100,0 s=1,1,1,0.033333335,-1 heads=0/0 next=None
+  quads 81 64853770d0717e02
+f204 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=102.5 row=4/0/0.033333335 v=0,0,5,100,0 s=1,1,1,0.06666667,-1 heads=0/0 next=None
+  quads 81 2a3c28708a17c5f8
+f205 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=103 row=4/0/0.050000004 v=0,0,5,100,0 s=1,1,1,0.10000001,-1 heads=0/0 next=None
+  quads 81 fdf2989601e62633
+f206 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=103.5 row=4/0/0.06666667 v=0,0,5,100,0 s=1,1,1,0.13333334,-1 heads=0/0 next=None
+  quads 81 75341843c461587a
+f207 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=104 row=4/0/0.083333336 v=0,0,5,100,0 s=1,1,1,0.16666667,-1 heads=0/0 next=None
+  quads 81 325e29a7b1f27851
+f208 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=104.5 row=4/0/0.1 v=0,0,5,100,0 s=1,1,1,0.2,-1 heads=0/0 next=None
+  quads 81 b436498876453ab6
+f209 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=105 row=4/0/0.11666667 v=0,0,5,100,0 s=1,1,1,0.23333333,-1 heads=0/0 next=None
+  quads 81 f7f935be13671f58
+f210 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=105.5 row=4/0/0.13333334 v=0,0,5,100,0 s=1,1,1,0.26666668,-1 heads=0/0 next=None
+  quads 81 16e7d3b072bab29e
+f211 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=106 row=4/0/0.15 v=0,0,5,100,0 s=1,1,1,0.3,-1 heads=0/0 next=None
+  quads 81 f287a0e2744a414f
+f212 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=106.5 row=4/0/0.16666667 v=0,0,5,100,0 s=1,1,1,0.33333334,-1 heads=0/0 next=None
+  quads 81 12faedfee3c1f0cc
+f213 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=107 row=4/0/0.18333334 v=0,0,5,100,0 s=1,1,1,0.36666667,-1 heads=0/0 next=None
+  quads 81 4068ef5086b2194e
+f214 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=107.5 row=4/0/0.2 v=0,0,5,100,0 s=1,1,1,0.4,-1 heads=0/0 next=None
+  quads 81 c2b46ff2a1870b24
+f215 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=108 row=4/0/0.21666667 v=0,0,5,100,0 s=1,1,1,0.43333334,-1 heads=0/0 next=None
+  quads 81 d184ff23c18ff08e
+f216 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=108.5 row=4/0/0.23333333 v=0,0,5,100,0 s=1,1,1,0.46666667,-1 heads=0/0 next=None
+  quads 81 4b1241ccbafc9a75
+f217 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=109 row=4/0/0.25 v=0,0,5,100,0 s=1,1,1,0.5,-1 heads=0/0 next=None
+  quads 81 ae8bbf3c893ab223
+f218 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=109.5 row=4/0/0.26666668 v=0,0,5,100,0 s=1,1,1,0.53333336,-1 heads=0/0 next=None
+  quads 81 3ca2fc897494d607
+f219 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=110 row=4/0/0.28333336 v=0,0,5,100,0 s=1,1,1,0.5666667,-1 heads=0/0 next=None
+  quads 81 ffbd469206ba6f2a
+f220 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=110.5 row=4/0/0.30000004 v=0,0,5,100,0 s=1,1,1,0.6000001,-1 heads=0/0 next=None
+  quads 81 898f8eb39d02c3be
+f221 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=111 row=4/0/0.31666672 v=0,0,5,100,0 s=1,1,1,0.63333344,-1 heads=0/0 next=None
+  snd ~#9
+  quads 81 f066d44e0f810a31
+f222 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=111.5 row=4/0/0.3333334 v=0,0,5,100,0 s=1,1,1,0.6666668,-1 heads=0/0 next=None
+  quads 81 91b330cb39ff8ec8
+f223 - statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=112 row=4/0/0.35000008 v=0,0,5,100,0 s=1,1,1,0.70000017,-1 heads=0/0 next=None
+  quads 81 d87e5282e056018e
+f224 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=112.5 row=4/0/0.3833334 v=0,0,5,100,0 s=1,1,1,0.7666668,-1 heads=0/0 next=None
+  quads 81 2f7ea779c9744159
+f225 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=113 row=4/0/0.41666675 v=0,0,5,100,0 s=1,1,1,0.8333335,-1 heads=0/0 next=None
+  quads 81 575453db88c40b06
+f226 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=113.5 row=4/0/0.45000008 v=0,0,5,100,0 s=1,1,1,0.90000015,-1 heads=0/0 next=None
+  quads 81 a5e2484df5a4e821
+f227 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=114 row=4/0/0.4833334 v=0,0,5,100,0 s=1,1,1,0.9666668,-1 heads=0/0 next=None
+  quads 81 797f027bc7fa2673
+f228 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=114.5 row=4/1/0 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  snd +SNIPER#12
+  quads 89 aebf770dfb346486
+f229 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=115 row=4/1/0.033333335 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f230 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=115.5 row=4/1/0.06666667 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f231 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=116 row=4/1/0.10000001 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f232 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=116.5 row=4/1/0.13333334 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  snd ~#11
+  quads 89 aebf770dfb346486
+f233 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=117 row=4/1/0.16666667 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f234 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=117.5 row=4/1/0.2 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f235 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=118 row=4/1/0.23333333 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f236 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=118.5 row=4/1/0.26666668 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f237 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=119 row=4/1/0.3 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f238 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=119.5 row=4/1/0.33333334 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f239 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=120 row=4/1/0.36666667 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f240 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=120.5 row=4/1/0.4 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+    B 130.40001,36,151.20001,59.2 1,1,1,1
+    B 151.20001,42.4,168.00002,59.200005 1,1,1,1
+    B 168.00002,42.4,185.60002,59.200005 1,1,1,1
+    B 185.60002,42.4,198.40002,59.200005 1,1,1,1
+    B 198.40002,42.4,216.00003,59.200005 1,1,1,1
+    B 216.00003,46.4,231.20003,53.600002 1,1,1,1
+    B 231.20003,36,254.40002,59.2 1,1,1,1
+    B 254.40002,46.4,269.60004,53.600002 1,1,1,1
+    B 269.60004,42.4,295.20004,59.200005 1,1,1,1
+    B 295.20004,42.4,312.80005,59.200005 1,1,1,1
+    B 312.80005,38.4,324.80005,59.200005 1,1,1,1
+    B 324.80005,36.800003,332.80005,59.200005 1,1,1,1
+    B 332.80005,42.4,349.60004,59.200005 1,1,1,1
+    S 180,64,189.6,74.4 1,1,1,1
+    S 189.6,64,200,74.4 1,1,1,1
+    S 200,64,211.2,74.4 1,1,1,1
+    S 211.2,64,220,74.4 1,1,1,1
+    S 220,67.200005,223.2,74.4 1,1,1,1
+    S 226.4,64,236.79999,74.4 1,1,1,1
+    S 236.79999,66.4,244.79999,74.4 1,1,1,1
+    S 244.79999,66.4,250.4,74.4 1,1,1,1
+    S 250.4,64.8,255.2,74.4 1,1,1,1
+    S 258.4,64,268,74.4 1,1,1,1
+    S 268,66.4,276,74.4 1,1,1,1
+    S 276,66.4,284,74.4 1,1,1,1
+    S 284,64.8,288.8,74.4 1,1,1,1
+    S 288.8,64,292,74.4 1,1,1,1
+    S 292,66.4,300,74.4 1,1,1,1
+    B 104,84.8,114.4,96.4 1,1,1,1
+    B 114.4,85.2,123.200005,96.399994 1,1,1,1
+    B 123.200005,88,132,96.4 1,1,1,1
+    B 132,86,138,96.4 1,1,1,1
+    B 138,88,146,96.4 1,1,1,1
+    B 148.4,85.2,154.79999,96.399994 1,1,1,1
+    B 154.79999,85.2,158.79999,96.399994 1,1,1,1
+    B 158.79999,88,165.19998,96.4 1,1,1,1
+    B 165.19998,88,173.99998,96.4 1,1,1,1
+    B 173.99998,85.2,183.19998,96.399994 1,1,1,1
+    S 80,103.200005,89.6,114.4 1,1,1,1
+    B 301.6,85.2,313.2,96.399994 1,1,1,1
+    B 313.2,88,321.6,96.4 1,1,1,1
+    B 321.6,88,330,96.4 1,1,1,1
+    B 330,88,338.4,96.4 1,1,1,1
+    B 338.4,88,344.8,96.4 1,1,1,1
+    B 344.8,88,353.59998,96.4 1,1,1,1
+    B 353.59998,88,361.99997,96.4 1,1,1,1
+    B 361.99997,88,370.79996,98.4 1,1,1,1
+    S 260.80002,103.200005,270.40002,114.4 1,1,1,1
+    S 270.40002,104.8,281.60004,114.4 1,1,1,1
+    B 76,124.8,86.4,136.40001 1,1,1,1
+    B 86.4,128,94.8,136.4 1,1,1,1
+    B 94.8,125.2,98.8,136.4 1,1,1,1
+    B 98.8,128,107.600006,138.4 1,1,1,1
+    B 107.600006,128,116.40001,136.4 1,1,1,1
+    B 116.40001,128,122.80001,136.4 1,1,1,1
+    B 125.20001,128,131.6,136.4 1,1,1,1
+    B 131.6,128,140.40001,136.4 1,1,1,1
+    B 140.40001,128,148.8,136.4 1,1,1,1
+    B 148.8,128,157.2,136.4 1,1,1,1
+    B 157.2,125.2,166.4,136.4 1,1,1,1
+    B 166.4,128,174.4,136.4 1,1,1,1
+    B 176.79999,125.2,183.19998,136.4 1,1,1,1
+    B 183.19998,125.2,187.19998,136.4 1,1,1,1
+    B 187.19998,128,193.59998,136.4 1,1,1,1
+    B 193.59998,128,202.39998,136.4 1,1,1,1
+    B 202.39998,125.2,211.59998,136.4 1,1,1,1
+    F 96,143.20001,192,156.00002 1,1,1,1
+    S 80.8,144,89.600006,154.4 1,1,1,1
+    B 301.6,125.2,313.2,136.4 1,1,1,1
+    B 313.2,128,321.6,136.4 1,1,1,1
+    B 321.6,128,330,136.4 1,1,1,1
+    B 330,128,338.4,136.4 1,1,1,1
+    B 338.4,128,344.8,136.4 1,1,1,1
+    B 344.8,128,353.59998,136.4 1,1,1,1
+    B 353.59998,128,361.99997,136.4 1,1,1,1
+    B 361.99997,128,370.79996,138.4 1,1,1,1
+    F 288,143.20001,384,156.00002 1,1,1,1
+    S 244.8,144,251.2,154.4 1,1,1,1
+    S 251.2,143.2,260.8,154.4 1,1,1,1
+    S 260.8,143.2,270.4,154.4 1,1,1,1
+    S 270.4,144.79999,281.6,154.4 1,1,1,1
+    B 208.8,194.4,231.2,216.79999 1,1,1,1
+    B 231.2,194.4,239.2,216.79999 1,1,1,1
+    B 239.2,194.4,247.2,216.79999 1,1,1,1
+    B 247.2,194.4,255.2,216.79999 1,1,1,1
+    B 255.2,200,271.2,216.8 1,1,1,1
+    S 112.8,230.40001,122.4,241.6 1,1,1,1
+    S 122.4,232,128.8,244 1,1,1,1
+    S 128.8,231.20001,137.6,241.6 1,1,1,1
+f241 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=121 row=4/1/0.43333334 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f242 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=121.5 row=4/1/0.46666667 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  snd ~#10
+  quads 89 aebf770dfb346486
+f243 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=122 row=4/2/0.5 v=0,0,5,100,0 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 89 aebf770dfb346486
+f244 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=122.5 row=4/2/0.53333336 v=0,0,5,100,2 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 90 c044aed303b3a774
+f245 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=123 row=4/2/0.5666667 v=0,0,5,100,4 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 90 166b58c07414cc8e
+f246 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=123.5 row=4/2/0.6000001 v=0,0,5,100,6 s=1,1,1,1,-0.5 heads=0/0 next=None
+  quads 90 74c5588abdae66c8
+f247 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=124 row=5/0/0 v=0,0,5,100,7 s=1,1,1,1,0 heads=0/0 next=None
+  quads 99 4f12b0f56fef46fa
+f248 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=124.5 row=5/0/0.033333335 v=0,0,5,100,7 s=1,1,1,1,0.06666667 heads=0/0 next=None
+  quads 99 61d992a9e9c983c3
+f249 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=125 row=5/0/0.06666667 v=0,0,5,100,7 s=1,1,1,1,0.13333334 heads=0/0 next=None
+  quads 99 a6342ee28364afc4
+f250 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=125.5 row=5/0/0.10000001 v=0,0,5,100,7 s=1,1,1,1,0.20000002 heads=0/0 next=None
+  quads 99 0202d31a51fa8c3d
+f251 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=126 row=5/0/0.13333334 v=0,0,5,100,7 s=1,1,1,1,0.26666668 heads=0/0 next=None
+  quads 99 6333122f96871fc2
+f252 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=126.5 row=5/0/0.16666667 v=0,0,5,100,7 s=1,1,1,1,0.33333334 heads=0/0 next=None
+  quads 99 440e27a774294b14
+f253 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=127 row=5/0/0.2 v=0,0,5,100,7 s=1,1,1,1,0.4 heads=0/0 next=None
+  quads 99 b54631c6558bd6dc
+f254 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=127.5 row=5/0/0.23333333 v=0,0,5,100,7 s=1,1,1,1,0.46666667 heads=0/0 next=None
+  quads 99 bae68b3edc972985
+f255 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=128 row=5/0/0.26666668 v=0,0,5,100,7 s=1,1,1,1,0.53333336 heads=0/0 next=None
+  quads 99 15a28b88b8d28f53
+f256 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=128.5 row=5/0/0.3 v=0,0,5,100,7 s=1,1,1,1,0.6 heads=0/0 next=None
+  quads 99 acad3507e2ebc4f5
+f257 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=129 row=5/0/0.33333334 v=0,0,5,100,7 s=1,1,1,1,0.6666667 heads=0/0 next=None
+  quads 99 b2368c2abffc782f
+f258 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=129.5 row=5/0/0.36666667 v=0,0,5,100,7 s=1,1,1,1,0.73333335 heads=0/0 next=None
+  quads 99 f443f179750e1329
+f259 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=130 row=5/0/0.4 v=0,0,5,100,7 s=1,1,1,1,0.8 heads=0/0 next=None
+  quads 99 9552e8bf71d5cf89
+f260 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=130.5 row=5/0/0.43333334 v=0,0,5,100,7 s=1,1,1,1,0.8666667 heads=0/0 next=None
+  quads 99 22f7abee84479b67
+f261 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=131 row=5/0/0.46666667 v=0,0,5,100,7 s=1,1,1,1,0.93333334 heads=0/0 next=None
+  quads 99 1b37dffd494b1468
+f262 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=131.5 row=5/1/0 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  snd +SNIPER#13
+  quads 99 6760b77dbab67783
+f263 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=132 row=5/1/0.033333335 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f264 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=132.5 row=5/1/0.06666667 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f265 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=133 row=5/1/0.10000001 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f266 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=133.5 row=5/1/0.13333334 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f267 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=134 row=5/1/0.16666667 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f268 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=134.5 row=5/1/0.2 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f269 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=135 row=5/1/0.23333333 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f270 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=135.5 row=5/1/0.26666668 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f271 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=136 row=5/1/0.3 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f272 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=136.5 row=5/1/0.33333334 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  snd ~#12
+  quads 99 6760b77dbab67783
+f273 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=137 row=5/1/0.36666667 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f274 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=137.5 row=5/1/0.4 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f275 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=138 row=5/1/0.43333334 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f276 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=138.5 row=5/1/0.46666667 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/0 next=None
+  quads 99 6760b77dbab67783
+f277 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=139 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=0/1 next=None
+  quads 99 6760b77dbab67783
+f278 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=139.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0 next=None
+  snd +XGHEAD1#14
+  heads a=0 p=0:-3
+  quads 99 6760b77dbab67783
+f279 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=140 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.033333335 next=None
+  heads a=2.6166668 p=0:-3
+  quads 99 6760b77dbab67783
+f280 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=140.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.06666667 next=None
+  heads a=5.2333336 p=0:-3
+  quads 99 6760b77dbab67783
+f281 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=141 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.10000001 next=None
+  heads a=7.8500004 p=0:-3
+  quads 99 6760b77dbab67783
+f282 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=141.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.13333334 next=None
+  heads a=10.466667 p=0:-3
+  quads 99 6760b77dbab67783
+f283 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=142 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.16666667 next=None
+  heads a=13.083334 p=0:-3
+  quads 99 6760b77dbab67783
+f284 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=142.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.2 next=None
+  heads a=15.700001 p=0:-3
+  quads 99 6760b77dbab67783
+f285 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=143 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.23333333 next=None
+  heads a=18.316668 p=0:-3
+  quads 99 6760b77dbab67783
+f286 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=143.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.26666668 next=None
+  heads a=20.933334 p=0:-3
+  quads 99 6760b77dbab67783
+f287 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=144 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.3 next=None
+  heads a=23.550001 p=0:-3
+  quads 99 6760b77dbab67783
+f288 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=144.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.33333334 next=None
+  heads a=26.166668 p=0:-3
+  quads 99 6760b77dbab67783
+f289 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=145 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.36666667 next=None
+  heads a=28.783335 p=0:-3
+  quads 99 6760b77dbab67783
+f290 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=145.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.4 next=None
+  heads a=31.400002 p=0:-3
+  quads 99 6760b77dbab67783
+f291 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=146 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.43333334 next=None
+  heads a=34.01667 p=0:-3
+  quads 99 6760b77dbab67783
+f292 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=146.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.46666667 next=None
+  heads a=36.63334 p=0:-3
+  quads 99 6760b77dbab67783
+f293 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=147 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.5 next=None
+  heads a=39.250008 p=0:-3
+  quads 99 6760b77dbab67783
+f294 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=147.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.53333336 next=None
+  heads a=41.866676 p=0:-3
+  quads 99 6760b77dbab67783
+f295 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=148 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.5666667 next=None
+  heads a=44.483345 p=0:-3
+  quads 99 6760b77dbab67783
+f296 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=148.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.6000001 next=None
+  heads a=47.100014 p=0:-3
+  quads 99 6760b77dbab67783
+f297 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=149 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.63333344 next=None
+  heads a=49.716682 p=0:-3
+  quads 99 6760b77dbab67783
+f298 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=149.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.6666668 next=None
+  heads a=52.33335 p=0:-3
+  quads 99 6760b77dbab67783
+f299 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=150 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.70000017 next=None
+  heads a=54.95002 p=0:-3
+  quads 99 6760b77dbab67783
+f300 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=150.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.7333335 next=None
+  heads a=57.56669 p=0:-3
+  quads 99 6760b77dbab67783
+f301 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=151 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.7666669 next=None
+  heads a=60.183357 p=0:-3
+  quads 99 6760b77dbab67783
+f302 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=151.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.80000025 next=None
+  heads a=62.800026 p=0:-3
+  quads 99 6760b77dbab67783
+f303 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=152 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.8333336 next=None
+  heads a=65.416695 p=0:-3
+  quads 99 6760b77dbab67783
+f304 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=152.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.866667 next=None
+  heads a=68.03336 p=0:-3
+  quads 99 6760b77dbab67783
+f305 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=153 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.90000033 next=None
+  heads a=70.65003 p=0:-3
+  quads 99 6760b77dbab67783
+f306 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=153.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.9333337 next=None
+  snd ~#13
+  heads a=73.2667 p=0:-3
+  quads 99 6760b77dbab67783
+f307 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=154 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=1/0.96666706 next=None
+  heads a=75.88337 p=0:-3
+  quads 99 6760b77dbab67783
+f308 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=154.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0 next=None
+  snd +XGHEAD2#15
+  heads a=78.50004,0 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f309 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=155 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.033333335 next=None
+  heads a=81.11671,2.6166668 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f310 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=155.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.06666667 next=None
+  heads a=83.733376,5.2333336 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f311 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=156 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.10000001 next=None
+  heads a=86.350044,7.8500004 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f312 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=156.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.13333334 next=None
+  heads a=88.96671,10.466667 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f313 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=157 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.16666667 next=None
+  heads a=91.58338,13.083334 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f314 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=157.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.2 next=None
+  heads a=94.20005,15.700001 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f315 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=158 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.23333333 next=None
+  heads a=96.81672,18.316668 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f316 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=158.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.26666668 next=None
+  heads a=99.43339,20.933334 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f317 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=159 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.3 next=None
+  heads a=102.05006,23.550001 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f318 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=159.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.33333334 next=None
+  heads a=104.666725,26.166668 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f319 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=160 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.36666667 next=None
+  heads a=107.283394,28.783335 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f320 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=160.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.4 next=None
+  heads a=109.90006,31.400002 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f321 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=161 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.43333334 next=None
+  heads a=112.51673,34.01667 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f322 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=161.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.46666667 next=None
+  heads a=115.1334,36.63334 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f323 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=162 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.5 next=None
+  heads a=117.75007,39.250008 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f324 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=162.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.53333336 next=None
+  heads a=120.36674,41.866676 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f325 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=163 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.5666667 next=None
+  heads a=122.983406,44.483345 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f326 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=163.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.6000001 next=None
+  heads a=125.600075,47.100014 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f327 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=164 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.63333344 next=None
+  heads a=128.21674,49.716682 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f328 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=164.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.6666668 next=None
+  heads a=130.8334,52.33335 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f329 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=165 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.70000017 next=None
+  heads a=133.45007,54.95002 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f330 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=165.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.7333335 next=None
+  heads a=136.06674,57.56669 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f331 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=166 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.7666669 next=None
+  heads a=138.68341,60.183357 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f332 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=166.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.80000025 next=None
+  heads a=141.30008,62.800026 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f333 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=167 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.8333336 next=None
+  heads a=143.91675,65.416695 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f334 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=167.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.866667 next=None
+  snd ~#14
+  heads a=146.53342,68.03336 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f335 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=168 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.90000033 next=None
+  heads a=149.15009,70.65003 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f336 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=168.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.9333337 next=None
+  heads a=151.76675,73.2667 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f337 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=169 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=2/0.96666706 next=None
+  snd ~#15
+  heads a=154.38342,75.88337 p=-3.3333335:-3,3.333333:-3
+  quads 99 6760b77dbab67783
+f338 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=169.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0 next=None
+  snd +XGHEAD1#16
+  heads a=157.00009,78.50004,0 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f339 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=170 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.033333335 next=None
+  heads a=159.61676,81.11671,2.6166668 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f340 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=170.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.06666667 next=None
+  heads a=162.23343,83.733376,5.2333336 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f341 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=171 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.10000001 next=None
+  heads a=164.8501,86.350044,7.8500004 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f342 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=171.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.13333334 next=None
+  heads a=167.46677,88.96671,10.466667 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f343 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=172 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.16666667 next=None
+  heads a=170.08344,91.58338,13.083334 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f344 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=172.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.2 next=None
+  heads a=172.7001,94.20005,15.700001 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f345 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=173 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.23333333 next=None
+  heads a=175.31677,96.81672,18.316668 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f346 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=173.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.26666668 next=None
+  heads a=177.93344,99.43339,20.933334 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f347 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=174 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.3 next=None
+  heads a=180.55011,102.05006,23.550001 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f348 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=174.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.33333334 next=None
+  heads a=183.16678,104.666725,26.166668 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f349 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=175 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.36666667 next=None
+  heads a=185.78345,107.283394,28.783335 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f350 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=175.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.4 next=None
+  heads a=188.40012,109.90006,31.400002 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f351 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=176 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.43333334 next=None
+  heads a=191.01678,112.51673,34.01667 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f352 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=176.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.46666667 next=None
+  heads a=193.63345,115.1334,36.63334 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f353 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=177 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.5 next=None
+  heads a=196.25012,117.75007,39.250008 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f354 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=177.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.53333336 next=None
+  heads a=198.86679,120.36674,41.866676 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f355 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=178 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.5666667 next=None
+  heads a=201.48346,122.983406,44.483345 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f356 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=178.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.6000001 next=None
+  heads a=204.10013,125.600075,47.100014 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f357 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=179 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.63333344 next=None
+  heads a=206.7168,128.21674,49.716682 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f358 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=179.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.6666668 next=None
+  heads a=209.33347,130.8334,52.33335 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f359 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=180 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.70000017 next=None
+  heads a=211.95013,133.45007,54.95002 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f360 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=180.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.7333335 next=None
+  heads a=214.5668,136.06674,57.56669 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+    B 130.40001,36,151.20001,59.2 1,1,1,1
+    B 151.20001,42.4,168.00002,59.200005 1,1,1,1
+    B 168.00002,42.4,185.60002,59.200005 1,1,1,1
+    B 185.60002,42.4,198.40002,59.200005 1,1,1,1
+    B 198.40002,42.4,216.00003,59.200005 1,1,1,1
+    B 216.00003,46.4,231.20003,53.600002 1,1,1,1
+    B 231.20003,36,254.40002,59.2 1,1,1,1
+    B 254.40002,46.4,269.60004,53.600002 1,1,1,1
+    B 269.60004,42.4,295.20004,59.200005 1,1,1,1
+    B 295.20004,42.4,312.80005,59.200005 1,1,1,1
+    B 312.80005,38.4,324.80005,59.200005 1,1,1,1
+    B 324.80005,36.800003,332.80005,59.200005 1,1,1,1
+    B 332.80005,42.4,349.60004,59.200005 1,1,1,1
+    S 180,64,189.6,74.4 1,1,1,1
+    S 189.6,64,200,74.4 1,1,1,1
+    S 200,64,211.2,74.4 1,1,1,1
+    S 211.2,64,220,74.4 1,1,1,1
+    S 220,67.200005,223.2,74.4 1,1,1,1
+    S 226.4,64,236.79999,74.4 1,1,1,1
+    S 236.79999,66.4,244.79999,74.4 1,1,1,1
+    S 244.79999,66.4,250.4,74.4 1,1,1,1
+    S 250.4,64.8,255.2,74.4 1,1,1,1
+    S 258.4,64,268,74.4 1,1,1,1
+    S 268,66.4,276,74.4 1,1,1,1
+    S 276,66.4,284,74.4 1,1,1,1
+    S 284,64.8,288.8,74.4 1,1,1,1
+    S 288.8,64,292,74.4 1,1,1,1
+    S 292,66.4,300,74.4 1,1,1,1
+    B 104,84.8,114.4,96.4 1,1,1,1
+    B 114.4,85.2,123.200005,96.399994 1,1,1,1
+    B 123.200005,88,132,96.4 1,1,1,1
+    B 132,86,138,96.4 1,1,1,1
+    B 138,88,146,96.4 1,1,1,1
+    B 148.4,85.2,154.79999,96.399994 1,1,1,1
+    B 154.79999,85.2,158.79999,96.399994 1,1,1,1
+    B 158.79999,88,165.19998,96.4 1,1,1,1
+    B 165.19998,88,173.99998,96.4 1,1,1,1
+    B 173.99998,85.2,183.19998,96.399994 1,1,1,1
+    S 80,103.200005,89.6,114.4 1,1,1,1
+    B 301.6,85.2,313.2,96.399994 1,1,1,1
+    B 313.2,88,321.6,96.4 1,1,1,1
+    B 321.6,88,330,96.4 1,1,1,1
+    B 330,88,338.4,96.4 1,1,1,1
+    B 338.4,88,344.8,96.4 1,1,1,1
+    B 344.8,88,353.59998,96.4 1,1,1,1
+    B 353.59998,88,361.99997,96.4 1,1,1,1
+    B 361.99997,88,370.79996,98.4 1,1,1,1
+    S 260.80002,103.200005,270.40002,114.4 1,1,1,1
+    S 270.40002,104.8,281.60004,114.4 1,1,1,1
+    B 76,124.8,86.4,136.40001 1,1,1,1
+    B 86.4,128,94.8,136.4 1,1,1,1
+    B 94.8,125.2,98.8,136.4 1,1,1,1
+    B 98.8,128,107.600006,138.4 1,1,1,1
+    B 107.600006,128,116.40001,136.4 1,1,1,1
+    B 116.40001,128,122.80001,136.4 1,1,1,1
+    B 125.20001,128,131.6,136.4 1,1,1,1
+    B 131.6,128,140.40001,136.4 1,1,1,1
+    B 140.40001,128,148.8,136.4 1,1,1,1
+    B 148.8,128,157.2,136.4 1,1,1,1
+    B 157.2,125.2,166.4,136.4 1,1,1,1
+    B 166.4,128,174.4,136.4 1,1,1,1
+    B 176.79999,125.2,183.19998,136.4 1,1,1,1
+    B 183.19998,125.2,187.19998,136.4 1,1,1,1
+    B 187.19998,128,193.59998,136.4 1,1,1,1
+    B 193.59998,128,202.39998,136.4 1,1,1,1
+    B 202.39998,125.2,211.59998,136.4 1,1,1,1
+    F 96,143.20001,192,156.00002 1,1,1,1
+    S 80.8,144,89.600006,154.4 1,1,1,1
+    B 301.6,125.2,313.2,136.4 1,1,1,1
+    B 313.2,128,321.6,136.4 1,1,1,1
+    B 321.6,128,330,136.4 1,1,1,1
+    B 330,128,338.4,136.4 1,1,1,1
+    B 338.4,128,344.8,136.4 1,1,1,1
+    B 344.8,128,353.59998,136.4 1,1,1,1
+    B 353.59998,128,361.99997,136.4 1,1,1,1
+    B 361.99997,128,370.79996,138.4 1,1,1,1
+    F 288,143.20001,384,156.00002 1,1,1,1
+    S 244.8,144,251.2,154.4 1,1,1,1
+    S 251.2,143.2,260.8,154.4 1,1,1,1
+    S 260.8,143.2,270.4,154.4 1,1,1,1
+    S 270.4,144.79999,281.6,154.4 1,1,1,1
+    B 224,165.2,235.2,176.4 1,1,1,1
+    B 235.2,165.2,239.2,176.4 1,1,1,1
+    B 239.2,165.2,243.2,176.4 1,1,1,1
+    B 243.2,165.2,247.2,176.4 1,1,1,1
+    B 247.2,168,255.2,176.4 1,1,1,1
+    F 192,183.2,288,196 1,1,1,1
+    S 161.6,184.00002,170.40001,194.40001 1,1,1,1
+    S 170.40001,184.8,176.8,196.8 1,1,1,1
+    S 176.8,184.00002,185.6,194.40001 1,1,1,1
+    B 160.8,218.4,181.6,240.79999 1,1,1,1
+    B 181.6,224,199.20001,240.8 1,1,1,1
+    B 199.20001,224,216.80002,240.8 1,1,1,1
+    B 216.80002,218.4,235.20001,240.79999 1,1,1,1
+    B 240.00002,224,256,240.8 1,1,1,1
+    B 256,218.4,273.6,240.79999 1,1,1,1
+    B 273.6,224,291.2,240.8 1,1,1,1
+    B 291.2,220,303.2,240.8 1,1,1,1
+    B 303.2,224,319.2,240.8 1,1,1,1
+f361 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=181 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.7666669 next=None
+  heads a=217.18347,138.68341,60.183357 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f362 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=181.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.80000025 next=None
+  heads a=219.80014,141.30008,62.800026 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f363 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=182 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.8333336 next=None
+  heads a=222.41681,143.91675,65.416695 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f364 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=182.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.866667 next=None
+  heads a=225.03348,146.53342,68.03336 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f365 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=183 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.90000033 next=None
+  heads a=227.65015,149.15009,70.65003 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f366 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=183.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.9333337 next=None
+  heads a=230.26682,151.76675,73.2667 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f367 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=184 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=3/0.96666706 next=None
+  heads a=232.88348,154.38342,75.88337 p=-5:-3,0:-3,5:-3
+  quads 99 6760b77dbab67783
+f368 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=184.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0 next=None
+  snd +XGHEAD2#17
+  heads a=235.50015,157.00009,78.50004,0 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f369 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=185 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.033333335 next=None
+  heads a=238.11682,159.61676,81.11671,2.6166668 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f370 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=185.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.06666667 next=None
+  heads a=240.73349,162.23343,83.733376,5.2333336 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f371 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=186 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.10000001 next=None
+  heads a=243.35016,164.8501,86.350044,7.8500004 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f372 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=186.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.13333334 next=None
+  heads a=245.96683,167.46677,88.96671,10.466667 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f373 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=187 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.16666667 next=None
+  heads a=248.5835,170.08344,91.58338,13.083334 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f374 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=187.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.2 next=None
+  heads a=251.20016,172.7001,94.20005,15.700001 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f375 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=188 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.23333333 next=None
+  heads a=253.81683,175.31677,96.81672,18.316668 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f376 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=188.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.26666668 next=None
+  heads a=256.4335,177.93344,99.43339,20.933334 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f377 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=189 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.3 next=None
+  heads a=259.05017,180.55011,102.05006,23.550001 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f378 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=189.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.33333334 next=None
+  heads a=261.66684,183.16678,104.666725,26.166668 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f379 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=190 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.36666667 next=None
+  heads a=264.2835,185.78345,107.283394,28.783335 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f380 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=190.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.4 next=None
+  heads a=266.90018,188.40012,109.90006,31.400002 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f381 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=191 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.43333334 next=None
+  heads a=269.51685,191.01678,112.51673,34.01667 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f382 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=191.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.46666667 next=None
+  heads a=272.1335,193.63345,115.1334,36.63334 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f383 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=192 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.5 next=None
+  heads a=274.75018,196.25012,117.75007,39.250008 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f384 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=192.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.53333336 next=None
+  heads a=277.36685,198.86679,120.36674,41.866676 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f385 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=193 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.5666667 next=None
+  heads a=279.98352,201.48346,122.983406,44.483345 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f386 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=193.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.6000001 next=None
+  heads a=282.6002,204.10013,125.600075,47.100014 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f387 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=194 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.63333344 next=None
+  heads a=285.21686,206.7168,128.21674,49.716682 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f388 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=194.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.6666668 next=None
+  heads a=287.83353,209.33347,130.8334,52.33335 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f389 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=195 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.70000017 next=None
+  heads a=290.4502,211.95013,133.45007,54.95002 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f390 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=195.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.7333335 next=None
+  heads a=293.06686,214.5668,136.06674,57.56669 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f391 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=196 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.7666669 next=None
+  heads a=295.68353,217.18347,138.68341,60.183357 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f392 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=196.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.80000025 next=None
+  heads a=298.3002,219.80014,141.30008,62.800026 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f393 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=197 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.8333336 next=None
+  heads a=300.91687,222.41681,143.91675,65.416695 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f394 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=197.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.866667 next=None
+  snd ~#16
+  heads a=303.53354,225.03348,146.53342,68.03336 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f395 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=198 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.90000033 next=None
+  heads a=306.1502,227.65015,149.15009,70.65003 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f396 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=198.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.9333337 next=None
+  heads a=308.76688,230.26682,151.76675,73.2667 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f397 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=199 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=4/0.96666706 next=None
+  snd ~#17
+  heads a=311.38354,232.88348,154.38342,75.88337 p=-6:-3,-2:-3,2:-3,6:-3
+  quads 99 6760b77dbab67783
+f398 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=199.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0 next=None
+  snd +XGHEAD1#18
+  heads a=314.0002,235.50015,157.00009,78.50004,0 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f399 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=200 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.033333335 next=None
+  heads a=316.61688,238.11682,159.61676,81.11671,2.6166668 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f400 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=200.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.06666667 next=None
+  heads a=319.23355,240.73349,162.23343,83.733376,5.2333336 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f401 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=201 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.10000001 next=None
+  heads a=321.85022,243.35016,164.8501,86.350044,7.8500004 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f402 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=201.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.13333334 next=None
+  heads a=324.4669,245.96683,167.46677,88.96671,10.466667 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f403 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=202 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.16666667 next=None
+  heads a=327.08356,248.5835,170.08344,91.58338,13.083334 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f404 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=202.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.2 next=None
+  heads a=329.70023,251.20016,172.7001,94.20005,15.700001 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f405 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=203 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.23333333 next=None
+  heads a=332.3169,253.81683,175.31677,96.81672,18.316668 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f406 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=203.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.26666668 next=None
+  heads a=334.93356,256.4335,177.93344,99.43339,20.933334 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f407 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=204 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.3 next=None
+  heads a=337.55023,259.05017,180.55011,102.05006,23.550001 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f408 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=204.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.33333334 next=None
+  heads a=340.1669,261.66684,183.16678,104.666725,26.166668 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f409 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=205 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.36666667 next=None
+  heads a=342.78357,264.2835,185.78345,107.283394,28.783335 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f410 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=205.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.4 next=None
+  heads a=345.40024,266.90018,188.40012,109.90006,31.400002 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f411 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=206 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.43333334 next=None
+  heads a=348.0169,269.51685,191.01678,112.51673,34.01667 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f412 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=206.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.46666667 next=None
+  heads a=350.63358,272.1335,193.63345,115.1334,36.63334 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f413 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=207 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.5 next=None
+  heads a=353.25024,274.75018,196.25012,117.75007,39.250008 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f414 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=207.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.53333336 next=None
+  heads a=355.8669,277.36685,198.86679,120.36674,41.866676 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f415 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=208 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.5666667 next=None
+  heads a=358.48358,279.98352,201.48346,122.983406,44.483345 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f416 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=208.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.6000001 next=None
+  heads a=361.10025,282.6002,204.10013,125.600075,47.100014 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f417 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=209 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.63333344 next=None
+  heads a=363.71692,285.21686,206.7168,128.21674,49.716682 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f418 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=209.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.6666668 next=None
+  heads a=366.3336,287.83353,209.33347,130.8334,52.33335 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f419 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=210 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.70000017 next=None
+  heads a=368.95026,290.4502,211.95013,133.45007,54.95002 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f420 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=210.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.7333335 next=None
+  heads a=371.56693,293.06686,214.5668,136.06674,57.56669 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f421 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=211 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.7666669 next=None
+  heads a=374.1836,295.68353,217.18347,138.68341,60.183357 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f422 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=211.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.80000025 next=None
+  heads a=376.80026,298.3002,219.80014,141.30008,62.800026 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f423 fire statistics: Score in=1 out=-1 cur=0 count=1 shown=0 ticks=212 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=5/0.8333336 next=None
+  heads a=379.41693,300.91687,222.41681,143.91675,65.416695 p=-6.666667:-3,-3.3333335:-3,0:-3,3.333333:-3,6.666666:-3
+  quads 99 6760b77dbab67783
+f424 back statistics: Score in=1 out=0 cur=0 count=1 shown=0 ticks=212.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 99 6760b77dbab67783
+f425 - statistics: Score in=1 out=0.033333335 cur=0 count=1 shown=0 ticks=213 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 a6db893f4e1090af
+f426 - statistics: Score in=1 out=0.06666667 cur=0 count=1 shown=0 ticks=213.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 5334fdf1985f6d20
+f427 - statistics: Score in=1 out=0.10000001 cur=0 count=1 shown=0 ticks=214 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 a3fb589e7239e405
+f428 - statistics: Score in=1 out=0.13333334 cur=0 count=1 shown=0 ticks=214.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 e37d2e479fc63afa
+f429 - statistics: Score in=1 out=0.16666667 cur=0 count=1 shown=0 ticks=215 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 e3015a8ac234ff2f
+f430 - statistics: Score in=1 out=0.2 cur=0 count=1 shown=0 ticks=215.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 ab624d15789633b3
+f431 - statistics: Score in=1 out=0.23333333 cur=0 count=1 shown=0 ticks=216 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 5b50cec990fe8ba8
+f432 - statistics: Score in=1 out=0.26666668 cur=0 count=1 shown=0 ticks=216.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 cca6de3c11f2c2e1
+f433 - statistics: Score in=1 out=0.3 cur=0 count=1 shown=0 ticks=217 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 ab5eeb1578935756
+f434 - statistics: Score in=1 out=0.33333334 cur=0 count=1 shown=0 ticks=217.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 30fde221fb2deaf8
+f435 - statistics: Score in=1 out=0.36666667 cur=0 count=1 shown=0 ticks=218 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 0fe4949c41263951
+f436 - statistics: Score in=1 out=0.4 cur=0 count=1 shown=0 ticks=218.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 ab76b51578a78d75
+f437 - statistics: Score in=1 out=0.43333334 cur=0 count=1 shown=0 ticks=219 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 4910bbcd7231fb51
+f438 - statistics: Score in=1 out=0.46666667 cur=0 count=1 shown=0 ticks=219.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 088768e831b28b84
+f439 - statistics: Score in=1 out=0.5 cur=0 count=1 shown=0 ticks=220 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 ab734b1578a4a380
+f440 - statistics: Score in=1 out=0.53333336 cur=0 count=1 shown=0 ticks=220.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 7bd7547e30cabee4
+f441 - statistics: Score in=1 out=0.5666667 cur=0 count=1 shown=0 ticks=221 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 dba48de5883e0a31
+f442 - statistics: Score in=1 out=0.6000001 cur=0 count=1 shown=0 ticks=221.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 b2a9ec89db295a92
+f443 - statistics: Score in=1 out=0.63333344 cur=0 count=1 shown=0 ticks=222 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 7c513a88c3f0ce5e
+f444 - statistics: Score in=1 out=0.6666668 cur=0 count=1 shown=0 ticks=222.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 8f612b01b015e871
+f445 - statistics: Score in=1 out=0.70000017 cur=0 count=1 shown=0 ticks=223 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 4e5ef3361b13d95e
+f446 - statistics: Score in=1 out=0.7333335 cur=0 count=1 shown=0 ticks=223.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 1bc7100cd97eb71a
+f447 - statistics: Score in=1 out=0.7666669 cur=0 count=1 shown=0 ticks=224 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 daa291ecb399089d
+f448 - statistics: Score in=1 out=0.80000025 cur=0 count=1 shown=0 ticks=224.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 4de923bddc694a10
+f449 - statistics: Score in=1 out=0.8333336 cur=0 count=1 shown=0 ticks=225 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 fe2e5ed4df553a4a
+f450 - statistics: Score in=1 out=0.866667 cur=0 count=1 shown=0 ticks=225.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 b2ddf95d2682e710
+f451 - statistics: Score in=1 out=0.90000033 cur=0 count=1 shown=0 ticks=226 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 226ce3ecf49a90ae
+f452 - statistics: Score in=1 out=0.9333337 cur=0 count=1 shown=0 ticks=226.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 8538fa36e9fca2e2
+f453 - statistics: Score in=1 out=0.96666706 cur=0 count=1 shown=0 ticks=227 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 100 41849d252ad4f13d
+f454 - save prompt prompt=Ask/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd ~#18
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 1 945151017a5e94b8
+    F 0,36,480,324 0,0,0,1
+f455 - save prompt prompt=Ask/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 15 8e821c2085631eb0
+f456 - save prompt prompt=Ask/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 15 ea7fd08f82678d60
+f457 - save prompt prompt=Ask/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 15 39492d76a6781fc4
+f458 - save prompt prompt=Ask/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 15 5a4b5a9322ecf0a5
+f459 - save prompt prompt=Ask/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 15 b224b558983db1df
+f460 - save prompt prompt=Ask/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 15 dc46373eb85f3246
+f461 accept save prompt prompt=Name/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 67a60037b2040d16
+f462 - save prompt prompt=Name/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 67a60037b2040d16
+f463 - save prompt prompt=Name/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 67a60037b2040d16
+f464 - save prompt prompt=Name/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 67a60037b2040d16
+f465 - save prompt prompt=Name/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 67a60037b2040d16
+f466 - save prompt prompt=Name/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 67a60037b2040d16
+f467 - save prompt prompt=Name/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 67a60037b2040d16
+f468 - save prompt prompt=Name/0/5/1 in=1 out=1.0000004 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 67a60037b2040d16
+Saved game 5: level 8
+Statistics: Briefing
+f469 accept statistics: Briefing in=0 out=-1 cur=0 count=1 shown=0 ticks=227.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 67a60037b2040d16
+    F 0,0,480,360 0,0,0,1
+    B 83.200005,39.200005,104.00001,61.600006 1,1,1,1
+    B 104.00001,44.800003,121.600006,61.600006 1,1,1,1
+    B 121.600006,44.800003,147.20001,61.600006 1,1,1,1
+    B 147.20001,44.800003,164.80002,61.600006 1,1,1,1
+    B 169.60002,39.200005,182.40002,61.600006 1,1,1,1
+    B 182.40002,44.800003,200.00003,61.600006 1,1,1,1
+    B 200.00003,44.800003,212.80003,61.600006 1,1,1,1
+    B 217.60004,38.4,238.40004,61.600002 1,1,1,1
+    B 238.40004,44.800003,256.00003,61.600006 1,1,1,1
+    B 256.00003,44.800003,273.60004,61.600006 1,1,1,1
+    B 273.60004,44.800003,291.20004,61.600006 1,1,1,1
+    B 291.20004,39.200005,309.60004,61.600006 1,1,1,1
+    B 314.40002,39.200005,336.00003,61.600006 1,1,1,1
+    B 336.00003,44.800003,353.60004,61.600006 1,1,1,1
+    B 353.60004,44.800003,379.20004,61.600006 1,1,1,1
+    B 379.20004,44.800003,396.80005,61.600006 1,1,1,1
+    B 152.40001,174.4,170.8,196 1,1,1,1
+f470 - statistics: Briefing in=0.033333335 out=-1 cur=0 count=1 shown=0 ticks=228 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 ec7e12079d3d938b
+f471 - statistics: Briefing in=0.06666667 out=-1 cur=0 count=1 shown=0 ticks=228.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 d6e19f2db4f85e81
+f472 - statistics: Briefing in=0.10000001 out=-1 cur=0 count=1 shown=0 ticks=229 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 43a9bd393020ff65
+f473 - statistics: Briefing in=0.13333334 out=-1 cur=0 count=1 shown=0 ticks=229.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 effdc612446487a1
+f474 - statistics: Briefing in=0.16666667 out=-1 cur=0 count=1 shown=0 ticks=230 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 5741d5c6b495a1aa
+f475 - statistics: Briefing in=0.2 out=-1 cur=0 count=1 shown=0 ticks=230.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 43a65339301e1570
+f476 - statistics: Briefing in=0.23333333 out=-1 cur=0 count=1 shown=0 ticks=231 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 dbc8c98629d4c4b0
+f477 - statistics: Briefing in=0.26666668 out=-1 cur=0 count=1 shown=0 ticks=231.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 04aa78be480481e6
+f478 - statistics: Briefing in=0.3 out=-1 cur=0 count=1 shown=0 ticks=232 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 437a35392ff8a78b
+f479 - statistics: Briefing in=0.33333334 out=-1 cur=0 count=1 shown=0 ticks=232.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 9ffad9ab070bb60a
+f480 - statistics: Briefing in=0.36666667 out=-1 cur=0 count=1 shown=0 ticks=233 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 5f208e1afad0bdd0
+    I 0,36,480,324 1,1,1,1
+    F 0,36,480,324 0,0,0,0.6333333
+f481 - statistics: Briefing in=0.4 out=-1 cur=0 count=1 shown=0 ticks=233.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 4376d3392ff5cb2e
+f482 fire statistics: Briefing in=0.46666667 out=-1 cur=0 count=1 shown=0 ticks=234 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 cca9489bbb676343
+f483 fire statistics: Briefing in=0.53333336 out=-1 cur=0 count=1 shown=0 ticks=234.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 713bb72d411c9bf0
+f484 fire statistics: Briefing in=0.6 out=-1 cur=0 count=1 shown=0 ticks=235 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 facfdc6a6d7f8e27
+f485 fire statistics: Briefing in=0.6666667 out=-1 cur=0 count=1 shown=0 ticks=235.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 790ef664c95d9f49
+f486 fire statistics: Briefing in=0.73333335 out=-1 cur=0 count=1 shown=0 ticks=236 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 984664418a371bcf
+f487 fire statistics: Briefing in=0.8 out=-1 cur=0 count=1 shown=0 ticks=236.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 6a403f7ebf220a24
+f488 fire statistics: Briefing in=0.8666667 out=-1 cur=0 count=1 shown=0 ticks=237 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 cde6dbd5d3e00c22
+f489 fire statistics: Briefing in=0.93333334 out=-1 cur=0 count=1 shown=0 ticks=237.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 2 fb04e2bff4cf5a4e
+f490 fire statistics: Briefing in=1 out=-1 cur=0 count=1 shown=0 ticks=238 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 3 f0acb47fd213fba6
+f491 fire statistics: Briefing in=1 out=-1 cur=0 count=2 shown=2 ticks=238.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#19
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 4 72923520f31bf97c
+f492 fire statistics: Briefing in=1 out=-1 cur=0 count=3 shown=3 ticks=239 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#20 -#19
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 5 5c6376f3f0f6f04b
+f493 fire statistics: Briefing in=1 out=-1 cur=0 count=4 shown=4 ticks=239.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#21 -#20
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 6 587c3671cc0c307a
+f494 fire statistics: Briefing in=1 out=-1 cur=0 count=5 shown=5 ticks=240 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#22 -#21
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 6 313f2acd80b0e07e
+f495 fire statistics: Briefing in=1 out=-1 cur=0 count=6 shown=6 ticks=240.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#23 -#22
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 7 7c4912dbba23152e
+f496 fire statistics: Briefing in=1 out=-1 cur=0 count=7 shown=7 ticks=241 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#24 -#23
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 8 55b3ef25995befed
+f497 fire statistics: Briefing in=1 out=-1 cur=0 count=8 shown=8 ticks=241.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#25 -#24
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 9 0ab108b2eb0750f9
+f498 fire statistics: Briefing in=1 out=-1 cur=0 count=9 shown=9 ticks=242 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#26 -#25
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 10 ae265a472483f88a
+f499 fire statistics: Briefing in=1 out=-1 cur=0 count=10 shown=10 ticks=242.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#27 -#26
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 11 ddd5090ffe0aacc9
+f500 fire statistics: Briefing in=1 out=-1 cur=0 count=11 shown=11 ticks=243 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#28 -#27
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 12 4f934e9a8b3f4439
+f501 fire statistics: Briefing in=1 out=-1 cur=0 count=12 shown=12 ticks=243.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#29 -#28
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 13 0b0d79ec2873c6ad
+f502 fire statistics: Briefing in=1 out=-1 cur=0 count=13 shown=13 ticks=244 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#30 -#29
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 14 7e1224556be3b85b
+f503 fire statistics: Briefing in=1 out=-1 cur=0 count=14 shown=14 ticks=244.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#31 -#30
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 15 b9e8e23e023ee6ae
+f504 fire statistics: Briefing in=1 out=-1 cur=0 count=15 shown=15 ticks=245 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#32 -#31
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 16 01d5febb079b146a
+f505 fire statistics: Briefing in=1 out=-1 cur=0 count=16 shown=16 ticks=245.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#33 -#32
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 17 6cbc664b8507d4ba
+f506 fire statistics: Briefing in=1 out=-1 cur=0 count=17 shown=17 ticks=246 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#34 -#33
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 17 6cbc664b8507d4ba
+f507 fire statistics: Briefing in=1 out=-1 cur=0 count=18 shown=18 ticks=246.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#35 -#34
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 18 b92e01397021af6c
+f508 fire statistics: Briefing in=1 out=-1 cur=0 count=19 shown=19 ticks=247 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#36 -#35
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 19 5dae68f87b561733
+f509 fire statistics: Briefing in=1 out=-1 cur=0 count=20 shown=20 ticks=247.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#37 -#36
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 20 12cdbd99404a772a
+f510 fire statistics: Briefing in=1 out=-1 cur=0 count=21 shown=21 ticks=248 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#38 -#37
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 21 a8a8288b66418ef7
+f511 fire statistics: Briefing in=1 out=-1 cur=0 count=22 shown=22 ticks=248.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#39 -#38
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 21 a8a8288b66418ef7
+f512 fire statistics: Briefing in=1 out=-1 cur=0 count=23 shown=23 ticks=249 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#40 -#39
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 22 2fb13aefc39d68a4
+f513 fire statistics: Briefing in=1 out=-1 cur=0 count=24 shown=24 ticks=249.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#41 -#40
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 23 c4ef9e35bf63efa4
+f514 fire statistics: Briefing in=1 out=-1 cur=0 count=25 shown=25 ticks=250 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#42 -#41
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 24 99ace3ef7b50cad2
+f515 fire statistics: Briefing in=1 out=-1 cur=0 count=26 shown=26 ticks=250.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#43 -#42
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 25 d4c8613a1233ae52
+f516 fire statistics: Briefing in=1 out=-1 cur=0 count=27 shown=27 ticks=251 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#44 -#43
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 25 d4c8613a1233ae52
+f517 fire statistics: Briefing in=1 out=-1 cur=0 count=28 shown=28 ticks=251.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#45 -#44
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 26 d27abada5cf9ecc2
+f518 fire statistics: Briefing in=1 out=-1 cur=0 count=29 shown=29 ticks=252 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#46 -#45
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 27 ef10b99e4be6b0a8
+f519 fire statistics: Briefing in=1 out=-1 cur=0 count=30 shown=30 ticks=252.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#47 -#46
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 28 63ea81e6a53f61d0
+f520 fire statistics: Briefing in=1 out=-1 cur=0 count=31 shown=31 ticks=253 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#48 -#47
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 29 6acada27c1e7e2f0
+f521 fire statistics: Briefing in=1 out=-1 cur=0 count=32 shown=32 ticks=253.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#49 -#48
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 30 da07665c5887e8a4
+f522 fire statistics: Briefing in=1 out=-1 cur=0 count=33 shown=33 ticks=254 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#50 -#49
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 31 22fc53f56939273e
+f523 fire statistics: Briefing in=1 out=-1 cur=0 count=34 shown=34 ticks=254.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#51 -#50
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 32 e977fb8590c5cb43
+f524 fire statistics: Briefing in=1 out=-1 cur=0 count=35 shown=35 ticks=255 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#52 -#51
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 33 2d618e2fe4e81d28
+f525 fire statistics: Briefing in=1 out=-1 cur=0 count=36 shown=36 ticks=255.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#53 -#52
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 34 12c695532d376b8e
+f526 fire statistics: Briefing in=1 out=-1 cur=0 count=37 shown=37 ticks=256 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#54 -#53
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 36 a495e6244b7942bc
+f527 fire statistics: Briefing in=1 out=-1 cur=0 count=38 shown=38 ticks=256.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#55 -#54
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 37 53848d7e383ce5e6
+f528 fire statistics: Briefing in=1 out=-1 cur=0 count=39 shown=39 ticks=257 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#56 -#55
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 37 5b381357b4bb4345
+f529 fire statistics: Briefing in=1 out=-1 cur=0 count=40 shown=40 ticks=257.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#57 -#56
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 38 c292b38a68ecd9a2
+f530 fire statistics: Briefing in=1 out=-1 cur=0 count=41 shown=41 ticks=258 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#58 -#57
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 39 eb5609fa6cff9d0d
+f531 fire statistics: Briefing in=1 out=-1 cur=0 count=42 shown=42 ticks=258.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#59 -#58
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 40 65c1bb53d135a358
+f532 fire statistics: Briefing in=1 out=-1 cur=0 count=43 shown=43 ticks=259 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#60 -#59
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 41 16c2d57fe86a3627
+f533 fire statistics: Briefing in=1 out=-1 cur=0 count=44 shown=44 ticks=259.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#61 -#60
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 42 f2c28db8ee1729be
+f534 fire statistics: Briefing in=1 out=-1 cur=0 count=45 shown=45 ticks=260 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#62 -#61
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 43 b5a5bdbef594ebd1
+f535 fire statistics: Briefing in=1 out=-1 cur=0 count=46 shown=46 ticks=260.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#63 -#62
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 44 701074f6ddd0c5c1
+f536 fire statistics: Briefing in=1 out=-1 cur=0 count=47 shown=47 ticks=261 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#64 -#63
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 45 fff1e3d8f6a95493
+f537 fire statistics: Briefing in=1 out=-1 cur=0 count=48 shown=48 ticks=261.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#65 -#64
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 45 322e2ea60c552b66
+f538 fire statistics: Briefing in=1 out=-1 cur=0 count=49 shown=49 ticks=262 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#66 -#65
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 46 5aa5ba5f0288c97d
+f539 fire statistics: Briefing in=1 out=-1 cur=0 count=50 shown=50 ticks=262.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#67 -#66
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 47 808882dc0b431df3
+f540 fire statistics: Briefing in=1 out=-1 cur=0 count=51 shown=51 ticks=263 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#68 -#67
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 48 dc87b77f62216427
+f541 fire statistics: Briefing in=1 out=-1 cur=0 count=52 shown=52 ticks=263.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#69 -#68
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 49 6451effb5a416c29
+f542 fire statistics: Briefing in=1 out=-1 cur=0 count=53 shown=53 ticks=264 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#70 -#69
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 50 e4bcd78fbfb7d683
+f543 fire statistics: Briefing in=1 out=-1 cur=0 count=54 shown=54 ticks=264.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#71 -#70
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 51 7eb59b340e8b0c13
+f544 fire statistics: Briefing in=1 out=-1 cur=0 count=55 shown=55 ticks=265 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#72 -#71
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 52 7647e7947623da99
+f545 fire statistics: Briefing in=1 out=-1 cur=0 count=56 shown=56 ticks=265.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#73 -#72
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 53 785d8e4466d33d0a
+f546 fire statistics: Briefing in=1 out=-1 cur=0 count=57 shown=57 ticks=266 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#74 -#73
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 53 29446480bb4a8eda
+f547 fire statistics: Briefing in=1 out=-1 cur=0 count=58 shown=58 ticks=266.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#75 -#74
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 54 950875729e71d188
+f548 fire statistics: Briefing in=1 out=-1 cur=0 count=59 shown=59 ticks=267 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#76 -#75
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 55 d8b3e049071d6637
+f549 fire statistics: Briefing in=1 out=-1 cur=0 count=60 shown=60 ticks=267.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#77 -#76
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 56 7f92d6233bb7fc64
+f550 fire statistics: Briefing in=1 out=-1 cur=0 count=61 shown=61 ticks=268 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#78 -#77
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 57 4535d353a0321f1b
+f551 fire statistics: Briefing in=1 out=-1 cur=0 count=62 shown=62 ticks=268.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#79 -#78
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 58 c0c490fcd5cbb8a9
+f552 fire statistics: Briefing in=1 out=-1 cur=0 count=63 shown=63 ticks=269 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#80 -#79
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 59 a2a51a408c379409
+f553 fire statistics: Briefing in=1 out=-1 cur=0 count=64 shown=64 ticks=269.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#81 -#80
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 59 61cdead688f386c9
+f554 fire statistics: Briefing in=1 out=-1 cur=0 count=65 shown=65 ticks=270 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#82 -#81
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 60 52941d4b2ff9d3fe
+f555 fire statistics: Briefing in=1 out=-1 cur=0 count=66 shown=66 ticks=270.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#83 -#82
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 61 5fe09fe6f2357039
+f556 fire statistics: Briefing in=1 out=-1 cur=0 count=67 shown=67 ticks=271 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#84 -#83
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 62 ca162777ceced14a
+f557 fire statistics: Briefing in=1 out=-1 cur=0 count=68 shown=68 ticks=271.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#85 -#84
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 63 b65ce649e19e274b
+f558 fire statistics: Briefing in=1 out=-1 cur=0 count=69 shown=69 ticks=272 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#86 -#85
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 62 41bac30616578943
+f559 fire statistics: Briefing in=1 out=-1 cur=0 count=70 shown=70 ticks=272.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#87 -#86
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 63 f535f26492a88221
+f560 fire statistics: Briefing in=1 out=-1 cur=0 count=71 shown=71 ticks=273 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#88 -#87
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 64 6ab63d012579dc2d
+f561 fire statistics: Briefing in=1 out=-1 cur=0 count=72 shown=72 ticks=273.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#89 -#88
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 65 79911f5ac76a48c9
+f562 fire statistics: Briefing in=1 out=-1 cur=0 count=73 shown=73 ticks=274 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#90 -#89
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 66 2cb57ccf54b81e97
+f563 fire statistics: Briefing in=1 out=-1 cur=0 count=74 shown=74 ticks=274.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#91 -#90
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 67 ceffed59b3027d7f
+f564 fire statistics: Briefing in=1 out=-1 cur=0 count=75 shown=75 ticks=275 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#92 -#91
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 68 d2045e165566061e
+f565 fire statistics: Briefing in=1 out=-1 cur=0 count=76 shown=76 ticks=275.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#93 -#92
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 69 e171a051ae8f159c
+f566 fire statistics: Briefing in=1 out=-1 cur=0 count=77 shown=77 ticks=276 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#94 -#93
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 69 e171a051ae8f159c
+f567 fire statistics: Briefing in=1 out=-1 cur=0 count=78 shown=78 ticks=276.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#95 -#94
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 70 241cc9672f9134a0
+f568 fire statistics: Briefing in=1 out=-1 cur=0 count=79 shown=79 ticks=277 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#96 -#95
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 71 bbe40be69f63a887
+f569 fire statistics: Briefing in=1 out=-1 cur=0 count=80 shown=80 ticks=277.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#97 -#96
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 72 cfb315eff3429fd0
+f570 fire statistics: Briefing in=1 out=-1 cur=0 count=81 shown=81 ticks=278 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#98 -#97
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 73 1e36209bcbd54184
+f571 fire statistics: Briefing in=1 out=-1 cur=0 count=82 shown=82 ticks=278.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#99 -#98
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 74 a7108de812bc2163
+f572 fire statistics: Briefing in=1 out=-1 cur=0 count=83 shown=83 ticks=279 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#100 -#99
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 75 c9a087f5ff900560
+f573 fire statistics: Briefing in=1 out=-1 cur=0 count=84 shown=84 ticks=279.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#101 -#100
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 76 899e787da945f663
+f574 fire statistics: Briefing in=1 out=-1 cur=0 count=85 shown=85 ticks=280 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#102 -#101
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 77 2a94153522c33f9f
+f575 fire statistics: Briefing in=1 out=-1 cur=0 count=86 shown=86 ticks=280.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#103 -#102
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 78 42b9dba84fb9287e
+f576 fire statistics: Briefing in=1 out=-1 cur=0 count=87 shown=87 ticks=281 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#104 -#103
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 78 42b9dba84fb9287e
+f577 fire statistics: Briefing in=1 out=-1 cur=0 count=88 shown=88 ticks=281.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#105 -#104
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 79 0fb32ad5559fc59b
+f578 fire statistics: Briefing in=1 out=-1 cur=0 count=89 shown=89 ticks=282 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#106 -#105
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 80 98779b348e1d6621
+f579 fire statistics: Briefing in=1 out=-1 cur=0 count=90 shown=90 ticks=282.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#107 -#106
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 81 c719923d31572d1f
+f580 fire statistics: Briefing in=1 out=-1 cur=0 count=91 shown=91 ticks=283 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#108 -#107
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 82 833df13abb3105b7
+f581 fire statistics: Briefing in=1 out=-1 cur=0 count=92 shown=92 ticks=283.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#109 -#108
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 82 833df13abb3105b7
+f582 fire statistics: Briefing in=1 out=-1 cur=0 count=93 shown=93 ticks=284 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#110 -#109
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 83 3dae733d307e0e14
+f583 fire statistics: Briefing in=1 out=-1 cur=0 count=94 shown=94 ticks=284.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#111 -#110
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 84 6787a5d850b2b78d
+f584 fire statistics: Briefing in=1 out=-1 cur=0 count=95 shown=95 ticks=285 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#112 -#111
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 85 8281f54e7126cb0e
+f585 fire statistics: Briefing in=1 out=-1 cur=0 count=96 shown=96 ticks=285.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#113 -#112
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 86 c96ac4c5b70ef554
+f586 fire statistics: Briefing in=1 out=-1 cur=0 count=97 shown=97 ticks=286 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#114 -#113
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 87 622b9e7347b17ff4
+f587 fire statistics: Briefing in=1 out=-1 cur=0 count=98 shown=98 ticks=286.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#115 -#114
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 88 daf57b01e7bec95b
+f588 fire statistics: Briefing in=1 out=0 cur=1 count=0 shown=0 ticks=287 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd +TELETYPE#116 -#115
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 89 f2393df9155957ff
+f589 fire statistics: Briefing in=1 out=0.06666667 cur=1 count=0 shown=0 ticks=287.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 c668398337820aec
+f590 fire statistics: Briefing in=1 out=0.13333334 cur=1 count=0 shown=0 ticks=288 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 f769f67373cf5aa6
+f591 fire statistics: Briefing in=1 out=0.20000002 cur=1 count=0 shown=0 ticks=288.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 81a8365a2022730f
+f592 fire statistics: Briefing in=1 out=0.26666668 cur=1 count=0 shown=0 ticks=289 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  snd ~#116
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 3ff539cdb12c5ec5
+f593 fire statistics: Briefing in=1 out=0.33333334 cur=1 count=0 shown=0 ticks=289.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 425589fdb4a3a934
+f594 fire statistics: Briefing in=1 out=0.4 cur=1 count=0 shown=0 ticks=290 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 7c1d4ce50f3c9e79
+f595 fire statistics: Briefing in=1 out=0.46666667 cur=1 count=0 shown=0 ticks=290.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 0e8256e1313d1fe8
+f596 fire statistics: Briefing in=1 out=0.53333336 cur=1 count=0 shown=0 ticks=291 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 a480f8117b668db8
+f597 fire statistics: Briefing in=1 out=0.6 cur=1 count=0 shown=0 ticks=291.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 7c168ce50f36ec8b
+f598 fire statistics: Briefing in=1 out=0.6666667 cur=1 count=0 shown=0 ticks=292 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 f06084f7140d0996
+f599 fire statistics: Briefing in=1 out=0.73333335 cur=1 count=0 shown=0 ticks=292.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 234cff291e323cf5
+f600 fire statistics: Briefing in=1 out=0.8 cur=1 count=0 shown=0 ticks=293 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 7c4614e50f5f4465
+    I 0,36,480,324 1,1,1,1
+    B 142.40001,41.6,149.6,61.6 1,1,1,1
+    B 149.6,41.6,156.8,61.6 1,1,1,1
+    B 156.8,41.6,164,61.6 1,1,1,1
+    B 164,40,184.8,62.4 1,1,1,1
+    B 184.8,45.6,202.40001,62.4 1,1,1,1
+    B 202.40001,45.6,228.8,62.4 1,1,1,1
+    B 228.8,45.6,244.8,62.4 1,1,1,1
+    B 244.8,40,257.6,62.4 1,1,1,1
+    B 257.6,40,265.6,62.4 1,1,1,1
+    B 265.6,45.6,283.2,62.4 1,1,1,1
+    B 283.2,45.6,299.2,62.4 1,1,1,1
+    B 299.2,40,316.80002,62.4 1,1,1,1
+    B 316.80002,41.6,324.00003,61.6 1,1,1,1
+    B 324.00003,41.6,331.20004,61.6 1,1,1,1
+    B 331.20004,41.6,338.40005,61.6 1,1,1,1
+    B 54.4,84.8,77.600006,107.200005 1,1,1,1
+    B 82.40001,84.8,100.00001,107.200005 1,1,1,1
+    B 100.00001,90.4,116.80001,107.200005 1,1,1,1
+    B 116.80001,90.4,133.6,112 1,1,1,1
+    B 133.6,90.4,151.20001,107.200005 1,1,1,1
+    B 156.00002,84.8,176.80002,107.200005 1,1,1,1
+    B 176.80002,84.8,184.80002,107.200005 1,1,1,1
+    B 184.80002,86.4,196.80002,107.200005 1,1,1,1
+    B 196.80002,90.4,214.40002,111.200005 1,1,1,1
+    B 219.20003,84.8,243.20003,107.200005 1,1,1,1
+    B 243.20003,84.8,251.20003,107.200005 1,1,1,1
+    B 251.20003,90.4,268.00003,107.200005 1,1,1,1
+    B 268.00003,90.4,285.60004,107.200005 1,1,1,1
+    B 285.60004,90.4,302.40002,107.200005 1,1,1,1
+    B 302.40002,90.4,315.2,107.200005 1,1,1,1
+    B 315.2,90.4,332.80002,107.200005 1,1,1,1
+    B 332.80002,90.4,359.2,107.200005 1,1,1,1
+    B 359.2,84.8,367.2,107.200005 1,1,1,1
+    B 367.2,90.4,384.80002,107.200005 1,1,1,1
+    B 384.80002,90.4,397.6,107.200005 1,1,1,1
+    B 402.4,84.8,410.4,107.200005 1,1,1,1
+    B 410.4,90.4,426.4,107.200005 1,1,1,1
+    B 104,113.60001,121.6,136.00002 1,1,1,1
+    B 121.6,119.20001,139.2,136.00002 1,1,1,1
+    B 139.2,119.20001,156.8,136.00002 1,1,1,1
+    B 156.8,113.60001,175.2,136.00002 1,1,1,1
+    B 175.2,119.20001,192.8,136.00002 1,1,1,1
+    B 192.8,113.60001,211.2,136.00002 1,1,1,1
+    B 216,119.20001,232,136.00002 1,1,1,1
+    B 232,115.20001,244,136.00002 1,1,1,1
+    B 244,119.20001,256.8,136.00002 1,1,1,1
+    B 256.8,119.20001,274.4,136.00002 1,1,1,1
+    B 274.4,113.60001,282.4,136.00002 1,1,1,1
+    B 282.4,119.20001,299.19998,140.80002 1,1,1,1
+    B 299.19998,113.60001,316.8,136.00002 1,1,1,1
+    B 316.8,115.20001,328.8,136.00002 1,1,1,1
+    B 333.59998,113.60001,346.39996,136.00002 1,1,1,1
+    B 346.39996,119.20001,363.99997,136.00002 1,1,1,1
+    B 363.99997,119.20001,376.79996,136.00002 1,1,1,1
+    B 120,144,132,164.8 1,1,1,1
+    B 132,142.4,149.6,164.79999 1,1,1,1
+    B 149.6,148,167.20001,164.8 1,1,1,1
+    B 172.00002,144,184.00002,164.8 1,1,1,1
+    B 184.00002,142.4,192.00002,164.79999 1,1,1,1
+    B 192.00002,148,208.80002,164.8 1,1,1,1
+    B 208.80002,148,226.40002,168.8 1,1,1,1
+    B 231.20003,148,248.80003,164.8 1,1,1,1
+    B 248.80003,142.4,256.80005,164.79999 1,1,1,1
+    B 256.80005,142.4,264.80005,164.79999 1,1,1,1
+    B 264.80005,142.4,272.80005,164.79999 1,1,1,1
+    B 272.80005,148,290.40005,164.8 1,1,1,1
+    B 290.40005,148,307.20004,169.6 1,1,1,1
+    B 307.20004,148,324.80005,164.8 1,1,1,1
+    B 329.60004,148,347.20004,164.8 1,1,1,1
+    B 347.20004,142.4,360.00003,164.79999 1,1,1,1
+    B 92,170.40001,112.8,193.6 1,1,1,1
+    B 112.8,176.8,130.40001,197.6 1,1,1,1
+    B 130.40001,176.8,148.00002,193.6 1,1,1,1
+    B 148.00002,176.8,160.80002,193.6 1,1,1,1
+    B 160.80002,176.8,173.60002,193.6 1,1,1,1
+    B 173.60002,176.8,191.20003,193.6 1,1,1,1
+    B 191.20003,176.8,217.60002,193.6 1,1,1,1
+    B 222.40002,171.2,242.40002,193.59999 1,1,1,1
+    B 242.40002,171.2,250.40002,193.59999 1,1,1,1
+    B 250.40002,172.8,262.40002,193.6 1,1,1,1
+    B 262.40002,185.6,270.40002,197.6 1,1,1,1
+    B 275.2,171.2,293.6,193.59999 1,1,1,1
+    B 293.6,176.8,310.4,193.6 1,1,1,1
+    B 310.4,176.8,327.19998,198.40001 1,1,1,1
+    B 327.19998,171.2,335.19998,193.59999 1,1,1,1
+    B 335.19998,176.8,352.8,193.6 1,1,1,1
+    B 352.8,176.8,369.59998,193.6 1,1,1,1
+    B 369.59998,171.2,387.99997,193.59999 1,1,1,1
+    F 0,36,480,324 0,0,0,0.8
+f601 fire statistics: Briefing in=1 out=0.8666667 cur=1 count=0 shown=0 ticks=293.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 0c8c0ee103400408
+f602 fire statistics: Briefing in=1 out=0.93333334 cur=1 count=0 shown=0 ticks=294 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=None
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 88c7e3f5c7ca2d0e
+f603 fire statistics: Briefing in=1 out=1 cur=1 count=0 shown=0 ticks=294.5 row=6/1/0.5 v=0,0,5,100,7 s=1,1,1,1,1 heads=20/0.8333336 next=Fall
+  heads a=382.0336,303.53354,225.03348,146.53342,68.03336,0,0,0,0,0,0,0,0,0,0,0 p=-7.7777777:-3,-5.5555553:-3,-3.3333335:-3,-1.1111107:-3,1.1111107:-3,3.333333:-3,5.5555553:-3,7.7777786:-3,-7.7777777:-4.5,-5.5555553:-4.5,-3.3333335:-4.5,-1.1111107:-4.5,1.1111107:-4.5,3.333333:-4.5,5.5555553:-4.5,7.7777786:-4.5
+  quads 90 8b2cd9f6f3fbeebe
+== end: level 8, saves 5

@@ -869,12 +869,16 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("flow: next level %d at frame %lu, entered at health %d",
                               (int)flow.state().level, (unsigned long)frame,
                               (int)flow.levelHealth());
-        } else if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall) {
+        } else if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall ||
+                   screen == mdk::flow::Screen::Statistics) {
             // Kurt died in the Gunter stream: the main menu (package #20a), below. Or
-            // the next level's fall (#17b, after the statistics): the front screens
-            // show it, then the level.
-            mdk::log3dsPrintf("flow: the %s follows",
-                              screen == mdk::flow::Screen::Fall ? "fall" : "menu");
+            // the statistics (#20b), then the next level's fall (#17b): the front
+            // screens show them, then the level.
+            mdk::log3dsPrintf("flow: the %s follow%s",
+                              screen == mdk::flow::Screen::Fall         ? "fall"
+                              : screen == mdk::flow::Screen::Statistics ? "statistics"
+                                                                        : "menu",
+                              screen == mdk::flow::Screen::Statistics ? "" : "s");
         } else {
             mdk::log3dsPrintf("flow: %s follows, which this frontend cannot show; exiting",
                               mdk::flow::GameFlow::screenName(screen));
@@ -3495,6 +3499,13 @@ int main(int argc, char** argv) {
                 // Or the next level's fall (#17b): the front screens show it.
                 mdk::log3dsPrintf("flow: the %s follows",
                                   screen == mdk::flow::Screen::Fall ? "fall" : "menu");
+                menu.setOpen(false);
+                toMenu = true;
+            } else if (screen == mdk::flow::Screen::Statistics) {
+                // The statistics follow (package #20b): the menus' screens show them
+                // (menu_screens_3ds.h), then the briefing of the next level.
+                mdk::log3dsPrintf("flow: the statistics follow at frame %lu",
+                                  (unsigned long)frame);
                 menu.setOpen(false);
                 toMenu = true;
             } else {

@@ -163,8 +163,10 @@ Screen GameFlow::skipUnported(SkipTrail* trail) {
         if (skipped == Screen::Briefing) {
             break;
         }
-        // The Fall is shown since package #17b (fall/fall_screen.h); its arm stays.
-        if (skipped == Screen::Fall) {
+        // The Fall is shown since package #17b (fall/fall_screen.h), and the
+        // Statistics since #20b (game/stats_screen.h); skipScreen keeps both arms
+        // (a frontend's --skip-falls and --skip-statistics).
+        if (skipped == Screen::Fall || skipped == Screen::Statistics) {
             break;
         }
         const Event next = skipScreen();
@@ -199,10 +201,10 @@ int32_t GameFlow::screenPackage(Screen screen) {
         case Screen::Stream: return 18;
         case Screen::Fall: return 17;
         case Screen::SavePrompt: return 19;
-        case Screen::Statistics:
         case Screen::EndMovie: return 20;
         case Screen::Menu:
         case Screen::Briefing:
+        case Screen::Statistics:
         case Screen::None:
         case Screen::Level: break;
     }

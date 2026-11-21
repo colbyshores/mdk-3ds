@@ -692,15 +692,22 @@ void testSkipTrail() {
     expect("LEVEL3 ends to the stream", static_cast<long long>(game.handle(flow::Event::LevelEnded)),
            static_cast<long long>(flow::Screen::Stream));
     flow::GameFlow::SkipTrail trail;
+    // The statistics are shown since package #20b: the walk stops there.
+    expect("skipping through LEVEL3's stream stops at the statistics",
+           static_cast<long long>(game.skipUnported(&trail)),
+           static_cast<long long>(flow::Screen::Statistics));
+    expect("one screen skipped", trail.count, 1);
+    expect("the stream", static_cast<long long>(trail.skipped[0]),
+           static_cast<long long>(flow::Screen::Stream));
+    expect("the statistics are shown, not skipped",
+           flow::GameFlow::screenPackage(flow::Screen::Statistics), 0);
+    // A frontend that skips them anyway (--skip-statistics) takes their arm.
+    game.handle(game.skipScreen());
     // Since package #17b the frontends SHOW the fall: the walk stops there.
-    expect("skipping through LEVEL3's screens stops at the fall",
+    expect("after the statistics, the walk stops at the fall",
            static_cast<long long>(game.skipUnported(&trail)),
            static_cast<long long>(flow::Screen::Fall));
-    expect("two screens skipped", trail.count, 2);
-    expect("first the stream", static_cast<long long>(trail.skipped[0]),
-           static_cast<long long>(flow::Screen::Stream));
-    expect("then the statistics", static_cast<long long>(trail.skipped[1]),
-           static_cast<long long>(flow::Screen::Statistics));
+    expect("nothing skipped on the way to it", trail.count, 0);
     expect("the level after LEVEL3 is LEVEL4", game.state().level, 4);
     // The fall lands (FallScreen.Next: Carry = (Health, Collected), Event.Play).
     game.state().carry = flow::FallCarry();
@@ -722,6 +729,8 @@ void testSkipTrail() {
     skipped.handle(skipped.firstEvent());
     skipped.reportLevel(result);
     skipped.handle(flow::Event::LevelEnded);
+    skipped.skipUnported(&trail);
+    skipped.handle(skipped.skipScreen());  // the statistics' skip (#20b): to the fall
     skipped.skipUnported(&trail);
     expect("the fall's skip is Play", static_cast<long long>(skipped.handle(skipped.skipScreen())),
            static_cast<long long>(flow::Screen::Level));

@@ -476,6 +476,21 @@ int main(int argc, char** argv) {
     // Viewer.EnterStartArena), so an arena only a teleport reaches (LEVEL3's HMO_7)
     // is entered and solid. --at alone only moves his feet.
     std::string startArenaOverride;
+    // THE STATISTICS (package #20b), the C#'s test options (Program.cs:22-23,
+    // Game.cs:405-420): --stats=N starts at the screens after level N, --phase=1-4
+    // at one of their pages (1 Score-O-matic, 2 intermission, 3 briefing, 4
+    // debriefing), --counts=shots,hits,sniper,sniper hits,kills,enemies,heads and
+    // --towns=bits (the town flags' bits 31-29) are what they show. --bloodyes /
+    // --nobloodno: gore on or off instead of the settings' (the heads' row).
+    // --skip-statistics: a level's end takes the C#'s skip of them (GameFlow::
+    // skipScreen; the level chain's tests), a test aid, not the C#'s.
+    bool statsGiven = false;
+    int statsPhase = 0;
+    std::vector<int32_t> statsCounts;
+    bool townsGiven = false;
+    int32_t towns = 0;
+    int goreOverride = -1;
+    bool skipStatistics = false;
 
     // The C#'s sniper tests (Program.cs:56-58, SniperTest.cs): --sniper[=zoom[,pitch]]
     // enters sniper mode once Kurt stands, at that zoom and pitch; --zoom=seconds holds
@@ -572,6 +587,55 @@ int main(int argc, char** argv) {
             skipFalls = true;
         } else if (std::strcmp(argv[i], "--fall-chase") == 0) {
             fallChase = true;
+        } else if ((value = optionValue(argv[i], "--stats")) != nullptr) {
+            if (!positiveCount("--stats", value, &levelNumber)) {
+                return 1;
+            }
+            if (levelNumber < 3 || levelNumber > 8) {
+                std::fprintf(stderr, "[main] --stats must be 3-8\n");
+                return 1;
+            }
+            statsGiven = true;
+        } else if ((value = optionValue(argv[i], "--phase")) != nullptr) {
+            if (!positiveCount("--phase", value, &statsPhase) || statsPhase > 4) {
+                std::fprintf(stderr, "[main] --phase must be 1-4\n");
+                return 1;
+            }
+        } else if ((value = optionValue(argv[i], "--counts")) != nullptr) {
+            // C# `counts.Split(',').Select(int.Parse)`.
+            statsCounts.clear();
+            const char* at = value;
+            for (;;) {
+                char* end = nullptr;
+                errno = 0;
+                const long count = std::strtol(at, &end, 10);
+                if (end == at || errno == ERANGE || count < INT_MIN || count > INT_MAX ||
+                    (*end != ',' && *end != '\0')) {
+                    std::fprintf(stderr, "[main] invalid --counts: %s\n", value);
+                    return 1;
+                }
+                statsCounts.push_back((int32_t)count);
+                if (*end == '\0') {
+                    break;
+                }
+                at = end + 1;
+            }
+        } else if ((value = optionValue(argv[i], "--towns")) != nullptr) {
+            char* end = nullptr;
+            errno = 0;
+            const long bits = std::strtol(value, &end, 10);
+            if (end == value || *end != '\0' || errno == ERANGE || bits < 0 || bits > 7) {
+                std::fprintf(stderr, "[main] --towns must be 0-7\n");
+                return 1;
+            }
+            towns = (int32_t)bits;
+            townsGiven = true;
+        } else if (std::strcmp(argv[i], "--bloodyes") == 0) {
+            goreOverride = 1;
+        } else if (std::strcmp(argv[i], "--nobloodno") == 0) {
+            goreOverride = 0;
+        } else if (std::strcmp(argv[i], "--skip-statistics") == 0) {
+            skipStatistics = true;
         } else if ((value = optionValue(argv[i], "--press")) != nullptr) {
             std::string error;
             if (!presses.parse(value, &error)) {
@@ -932,6 +996,10 @@ int main(int argc, char** argv) {
     // menus' options change them and save the file.
     const std::string settingsFile = mdk::settingsPath();
     mdk::GameSettings settings = mdk::loadSettings(settingsFile);
+    // --bloodyes / --nobloodno (C# GameOptions.Gore): gore instead of the settings'.
+    if (goreOverride >= 0) {
+        settings.gore = goreOverride == 1;
+    }
 
     // ---------------------------------------------------------------------
     // THE FLOW (game/game_flow.h, the C#'s Game): it decides which level plays,
@@ -950,6 +1018,17 @@ int main(int argc, char** argv) {
     if (levelGiven || startStream || fallGiven) {
         flowOptions.level = levelNumber;
     }
+    // --stats=N (C# Start.Statistics): the screens after level N, with --counts
+    // and --towns (FlowOptions, the C#'s ApplyTestCounts).
+    if (statsGiven && !levelGiven) {
+        flowOptions.start = mdk::flow::Start::Statistics;
+        flowOptions.level = levelNumber;
+    }
+    if (!statsCounts.empty()) {
+        flowOptions.setCounts(statsCounts.data(), (int32_t)statsCounts.size());
+    }
+    flowOptions.hasTowns = townsGiven;
+    flowOptions.towns = towns;
     flowOptions.load = loadName;
     flowOptions.save = saveName;
     flowOptions.hasHealth = hasStreamHealth;
@@ -982,12 +1061,13 @@ int main(int argc, char** argv) {
     };
     mdk::flow::Screen screen = flow.handle(flow.firstEvent());
     printFlowReport();
-    // --load of a before-level save starts at its briefing (the menus' screens);
-    // --stream=N starts in the stream (package #18b), --fall=N in the fall (#17b).
+    // --load of a before-level save starts at its briefing, --stats at the
+    // statistics (the menus' screens); --stream=N starts in the stream (package
+    // #18b), --fall=N in the fall (#17b).
     if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
         screen != mdk::flow::Screen::Briefing && screen != mdk::flow::Screen::Stream &&
-        screen != mdk::flow::Screen::Fall) {
-        std::fprintf(stderr, "[main] the flow did not start in a level, the menu, the briefing, the stream or the fall\n");
+        screen != mdk::flow::Screen::Fall && screen != mdk::flow::Screen::Statistics) {
+        std::fprintf(stderr, "[main] the flow did not start in a level, the menu, the briefing, the statistics, the stream or the fall\n");
         mdk_render_destroy(renderer);
         mdk::audioClose();
         mdk::windowDestroy(&window);
@@ -1015,6 +1095,10 @@ int main(int argc, char** argv) {
     front.fallChase = fallChase;
     front.fallSeedSet = scriptSeedSet || fixedStep;
     front.fallSeed = scriptSeedSet ? scriptSeed : 1;
+    // --phase: the first statistics' page (C# `_firstLevel ? _options.Phase : null`);
+    // --skip-statistics: a level's end skips them.
+    front.statsPhase = statsGiven ? statsPhase : 0;
+    front.skipStatistics = skipStatistics;
     // THE PAUSE MENU (C# PauseMenu: Esc in a level). It outlives the levels; its
     // options change `settings` and save them, and the volumes reach the live
     // mixer at once (C# Settings.Apply), through `pauseDevice`.
@@ -1040,7 +1124,8 @@ int main(int argc, char** argv) {
     printMemory("run-start", levelNumber, memorySample(renderer));
     // A run that starts at the menu hands no test option to a level (C#
     // Handle(Menu) clears _firstLevel before any level is played).
-    if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall) {
+    if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall ||
+        screen == mdk::flow::Screen::Statistics) {
         firstLevel = false;
     }
 
@@ -1126,6 +1211,19 @@ int main(int argc, char** argv) {
                         mdk::flow::GameFlow::screenName(trail.skipped[i]),
                         (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
         }
+        // The statistics after the stream (C# AfterStream -> Event.Statistics, package
+        // #20b): the front screens show them, or --skip-statistics takes the C#'s skip
+        // of them, as the level-end hook below does.
+        if (after == mdk::flow::Screen::Statistics && skipStatistics) {
+            std::printf("[main] flow: skipped Statistics (--skip-statistics)\n");
+            flow.handle(flow.skipScreen());
+            after = flow.skipUnported(&trail);
+            for (int32_t i = 0; i < trail.count; i++) {
+                std::printf("[main] flow: skipped %s (package #%d not ported)\n",
+                            mdk::flow::GameFlow::screenName(trail.skipped[i]),
+                            (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
+            }
+        }
         if (after == mdk::flow::Screen::Fall && skipFalls) {
             // --skip-falls (package #17b): the next level's fall skipped the C#'s Esc way,
             // as the level-end hook below does.
@@ -1141,6 +1239,10 @@ int main(int argc, char** argv) {
         if (after == mdk::flow::Screen::Level) {
             std::printf("[main] flow: next level %d at frame %u, entered at health %d\n",
                         (int)flow.state().level, frame, (int)flow.levelHealth());
+        } else if (after == mdk::flow::Screen::Statistics) {
+            // The statistics (package #20b): the front screens show them, then the
+            // fall and the level.
+            std::printf("[main] flow: the statistics follow\n");
         } else if (after == mdk::flow::Screen::Menu || after == mdk::flow::Screen::Fall) {
             // Kurt died in the Gunter stream: the main menu (package #20a), below. Or
             // the next level's fall (#17b, after the statistics): the front screens
@@ -2780,6 +2882,25 @@ int main(int argc, char** argv) {
                 std::printf("[main] flow: skipped %s (package #%d not ported)\n",
                             mdk::flow::GameFlow::screenName(trail.skipped[i]),
                             (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
+            }
+            // THE STATISTICS (package #20b) are the menus' screens (menu_screens.h);
+            // a run made with --skip-statistics takes the C#'s skip of them instead
+            // (GameFlow::skipScreen), as the level chain's tests do.
+            if (after == mdk::flow::Screen::Statistics && skipStatistics) {
+                std::printf("[main] flow: skipped Statistics (--skip-statistics)\n");
+                flow.handle(flow.skipScreen());
+                after = flow.skipUnported(&trail);
+                for (int32_t i = 0; i < trail.count; i++) {
+                    std::printf("[main] flow: skipped %s (package #%d not ported)\n",
+                                mdk::flow::GameFlow::screenName(trail.skipped[i]),
+                                (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
+                }
+            }
+            if (after == mdk::flow::Screen::Statistics) {
+                std::printf("[main] flow: the statistics follow\n");
+                screen = after;
+                toMenu = true;
+                break;
             }
             if (after == mdk::flow::Screen::Fall && skipFalls) {
                 // --skip-falls: the fall skipped here, the C#'s Esc way, so the run

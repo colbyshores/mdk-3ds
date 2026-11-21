@@ -22,13 +22,13 @@
 #include "formats/fti.h"
 #include "formats/mdk_data.h"
 #include "formats/palette.h"
-#include "game/briefing.h"
 #include "game/font_view.h"
 #include "game/input.h"
 #include "game/main_menu.h"
 #include "game/viewer_saves.h"
 #include "game/menu_presses.h"
 #include "game/screen_view.h"
+#include "game/stats_screen.h"
 #include "platform/controls_3ds.h"
 #include "platform/harness_3ds.h"
 #include "platform/input_3ds.h"
@@ -156,8 +156,66 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     static float pressTime = 0.0f;
 
     std::unique_ptr<menu::MainMenu> mainMenu(new menu::MainMenu());
-    Briefing briefing;
-    PalettedImage map;
+    // THE STATISTICS AND THE BRIEFING (package #20b): the C#'s StatsScreen, all its
+    // pages after a level, the briefing alone for a new game. Its renderer objects
+    // (the pages' images, the heads' model) are this function's scope's; its sound
+    // device mixes on the ARM11 into audio_3ds.cpp's one ndsp channel (a handful
+    // of voices on a screen between levels; the DSP path, audio_dsp_3ds.h, binds
+    // a level's SoundMixer and bank, which this screen has neither of), opened
+    // with the screen and closed when the flow leaves it.
+    std::unique_ptr<StatsScreen> stats(new StatsScreen());
+    bool statsOpen = false;
+    bool statsAudio = false;
+    bool promptOpen = false;
+    auto closeStats = [&]() {
+        if (!statsOpen) {
+            return;
+        }
+        // C# Dispose: every voice stopped; then the sink's channel.
+        stats->close();
+        if (statsAudio) {
+            audioClose();
+            statsAudio = false;
+        }
+        statsOpen = false;
+    };
+    auto openStats = [&](flow::Screen shown) {
+        closeStats();
+        const bool all = shown == flow::Screen::Statistics;
+        StatsScreen::Setup setup;
+        setup.fti = &ui->fti;
+        setup.stats = &ui->stats;
+        setup.systemRgb = ui->systemRgb.data();
+        setup.state = &flow.state();
+        if (front->saves) {
+            setup.saves = *front->saves;
+        }
+        setup.pages = all ? StatsPages::All : StatsPages::Briefing;
+        setup.gore = front->settings->gore;
+        // The C#'s `new Random()` picks only sounds: the system tick.
+        setup.seed = (uint32_t)svcGetSystemTick();
+        setup.print.line = printLine;
+        stats->open(setup);
+        if (all) {
+            stats->attach(front->renderer, data);
+        }
+        audio::SoundDevice& device = stats->device();
+        statsAudio = audioOpen();
+        device.setSampleMix(true);
+        if (statsAudio) {
+            device.setSink(audioSink, nullptr);
+        }
+        front->settings->applyAudio(&device);
+        statsOpen = true;
+        if (all) {
+            log3dsPrintf("flow: the statistics after level %d (from %s, heads %d, audio %d)",
+                         (int)flow.state().level, StatsScreen::phaseName(stats->phase()),
+                         stats->headsView().ready() ? 1 : 0, statsAudio ? 1 : 0);
+        } else {
+            log3dsPrintf("flow: the briefing of level %d (L%d_MAP)", (int)flow.state().level,
+                         (int)(stats->index() + 1));
+        }
+    };
     // THE FALL (package #17b): made when the flow shows it; closed -- the DSP path
     // first, while the bank it binds lives, then the screen's voices and renderer
     // scope -- when the flow leaves it.
@@ -227,19 +285,8 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             log3dsPrintf("flow: the main menu");
             mainMenu->open(&ui->fti, &flow.state(), menuSavesOf(front->saves), false,
                            menu::MenuPage::Main);
-        } else if (shown == flow::Screen::Briefing) {
-            briefing.open(&ui->fti, flow.state().level);
-            char name[24];
-            snprintf(name, sizeof(name), "L%d_MAP", (int)(briefing.index() + 1));
-            if (map.ready()) {
-                mdk_render_release_texture(front->renderer, map.texture);
-                mdk_render_release_palette(front->renderer, map.palette);
-                map = PalettedImage();
-            }
-            if (!loadPalettedImage(front->renderer, ui->stats, name, ui->systemRgb.data(), &map)) {
-                log3dsPrintf("menu: %s did not load; the briefing types on black", name);
-            }
-            log3dsPrintf("flow: the briefing of level %d (%s)", (int)flow.state().level, name);
+        } else if (shown == flow::Screen::Briefing || shown == flow::Screen::Statistics) {
+            openStats(shown);
         }
     };
     if (screen == flow::Screen::Fall) {
@@ -315,8 +362,26 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         } else if (screen == flow::Screen::Menu) {
             next = mainMenu->frame(keys, elapsed);
         } else {
-            next = briefing.frame(keys.any, keys.back,
-                                  input.isDown(kKeyFire) || input.isDown(kKeyJump), elapsed);
+            // C# StatsScreen.Frame: any button, B (Esc) skips, Fire or Jump held
+            // runs it fast. The save prompt between its pages takes the D-pad, A
+            // (yes; then save under the offered name, the next level's number --
+            // there is no keyboard to type another) and B (no / give up).
+            StatsScreen::Keys statsKeys;
+            statsKeys.any = keys.any;
+            statsKeys.back = keys.back;
+            statsKeys.fastHeld = input.isDown(kKeyFire) || input.isDown(kKeyJump);
+            statsKeys.prompt.up = keys.up;
+            statsKeys.prompt.down = keys.down;
+            statsKeys.prompt.left = keys.left;
+            statsKeys.prompt.right = keys.right;
+            statsKeys.prompt.accept = keys.accept;
+            statsKeys.prompt.back = keys.back;
+            next = stats->frame(statsKeys, elapsed);
+            if ((stats->prompt() != nullptr) != promptOpen) {
+                promptOpen = stats->prompt() != nullptr;
+                log3dsPrintf("statistics: the save prompt %s at frame %lu",
+                             promptOpen ? "opens" : "closes", (unsigned long)*front->frame);
+            }
         }
 
         MdkFrameParams params;
@@ -337,19 +402,25 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             mixer.device().update(elapsed);
             next = fall->next(&flow.state());
         } else {
-        mdk_render_canvas_begin(front->renderer);
         ScreenView view;
         view.layoutInside(mdk_render_canvas_width(front->renderer), kCanvasHeight);
         if (screen == flow::Screen::Menu) {
+            mdk_render_canvas_begin(front->renderer);
             view.image(front->renderer, ui->background.texture, ui->background.palette,
                        ui->background.width, ui->background.height, 0.0f, 0.0f);
             mainMenu->items().draw(front->renderer, view, ui->big, ui->small);
+            mdk_render_canvas_end(front->renderer);
         } else {
-            briefing.draw(front->renderer, view, ui->big, map.texture, map.palette, map.width,
-                          map.height);
+            // C# StatsScreen.Draw: the heads (meshes, queued for both eyes' replay
+            // with the camera, lighting and glow state they read set by the screen
+            // this frame), then the page on the canvas.
+            stats->draw(front->renderer, view, ui->big, ui->small);
         }
-        mdk_render_canvas_end(front->renderer);
         mdk_render_end_frame(front->renderer);
+        if (screen != flow::Screen::Menu) {
+            // Game.Run: the audio device after the screen's frame.
+            stats->device().update(elapsed);
+        }
         }
         (*front->frame)++;
         if (front->frameBudget != 0 && *front->frame >= front->frameBudget) {
@@ -360,9 +431,12 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             continue;
         }
         // C# Game.Handle (Show closes the screen that ends: the fall's output,
-        // voices and scope), then the screens this port lacks skipped.
+        // voices and scope; the statistics' voices and sink), then the screens this
+        // port lacks skipped.
         if (screen == flow::Screen::Fall) {
             closeFall();
+        } else if (screen != flow::Screen::Menu) {
+            closeStats();
         }
         flow::Screen shown = flow.handle(next);
         flow::GameFlow::SkipTrail trail;
@@ -378,7 +452,8 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             prevHeld = 0xFFFFFFFFu;
             continue;
         }
-        if (shown == flow::Screen::Menu || shown == flow::Screen::Briefing) {
+        if (shown == flow::Screen::Menu || shown == flow::Screen::Briefing ||
+            shown == flow::Screen::Statistics) {
             screen = shown;
             open(screen);
             prevHeld = 0xFFFFFFFFu;
@@ -398,6 +473,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         break;
     }
     closeFall();
+    closeStats();
     mdk_render_release(front->renderer, scope);
     return result;
 }

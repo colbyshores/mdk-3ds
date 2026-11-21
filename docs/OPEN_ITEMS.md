@@ -1597,10 +1597,11 @@ Still open:
   at 0.8 x 0.5 and 0.8 x 0.7 of what it was). It is the oracle's behaviour and the Audio page
   raises it; the owner should hear it on the console.
 - **The menus are silent**: SND_PUSH on a move, OPTSONG under the options, OPTBUTT on a change,
-  MAINSONG under the menu, TELETYPE in the briefing.
-- **Not drawn behind the menu**: MDK12.FLC and the slideshow (#20b/#20c: VideoPlayer,
-  Slideshow); the INTRO1A splash after a death or the end movies (#20c). The C#'s own fallback
-  without the video, MDKOPT, is what is drawn.
+  MAINSONG under the menu. (TELETYPE in the briefing plays since #20b: the briefing is
+  StatsScreen's page.)
+- **Not drawn behind the menu**: MDK12.FLC (#20c: VideoPlayer) and so the slideshow, which
+  the video's end starts (`game/slideshow` is ported, #20b); the INTRO1A splash after a death
+  or the end movies (#20c). The C#'s own fallback without the video, MDKOPT, is what is drawn.
 - **The saves are #19's**: `menu::MenuSaves` (list, peek, load) is null on both frontends, so
   there is no Continue and Saved Game lists nothing; the pause menu's quick-save hint is not
   drawn.
@@ -1610,6 +1611,40 @@ Still open:
   their values), and the menus' MenuPage start options (--options/--controls).
 - **Death still respawns in place** (the C# goes to the menu with the splash): #19's LASTGAME
   belongs with it.
+
+## The statistics, the heads and the slideshow (2026-11-20, package #20b): what landed, what is open
+
+Landed: StatsScreen whole (`game/stats_screen.{h,cpp}`) -- the intermission, the debriefing
+(DEB<n><result> by the town flags), the Score-O-matic's five rows and its head shots
+(`game/heads_view.{h,cpp}`, XGHEAD in 3D), the save prompt between the Score-O-matic and the
+briefing (#19's `SavePrompt`, now drawn), the next level's briefing, the TELETYPE/SNIPER/
+CGUN/RICO/ALDIE/XGHEAD sounds on the screen's own device; #20a's briefing is its Briefing page.
+The flow shows the statistics after a level (`GameFlow::skipUnported` stops there) on both
+frontends. The Slideshow (`game/slideshow.{h,cpp}`) is ported. Pinned by
+`golden/stats_{all7,score4,nogore6,slideshow}.txt` (`menu_probe`, byte for byte, the canvas's
+quads and the sounds included) and `menu_frontend_test.sh` section 5; the Linux Score-O-matic
+with its heads, the debriefing and the save prompt are byte-identical to the C# app's frames.
+
+Still open:
+- **No emulator or console run yet** of the 3DS statistics (the parent's Mandarine check). The
+  page images (L1_INTRM, L<n>_MAP) load one at a time, the last released; the heads' model,
+  palette and STATS.MTI textures live in the menus' scope.
+- **The 3DS mixes the statistics' sounds on the ARM11** (the software sink, `audio_3ds.cpp`'s
+  one ndsp channel: at most five voices on a screen between levels), not on the DSP path:
+  `audio_dsp_3ds` binds a level's SoundMixer and SNI bank, and STATS.BNI's WAVs are neither.
+  Opened with the screen, closed when it ends. Unheard on the console.
+- **The heads' inset is a projection remap, not a viewport**: neither backend implements
+  `mdk_render_begin_inset`'s rectangle, so the heads' projection is scaled into the 600 x 360
+  view's rectangle of the canvas. The same picture while the heads stay inside the view (they
+  do); identical to the C# on Linux (`pair_score`).
+- **The intermission's white fade** differs from the C#'s on this base by the Vulkan canvas's
+  alpha-squared tint (max delta 64 at frame 15), the bug package #17b fixed in the Vulkan
+  backend (26150d1); the C# and the port agree on every opaque frame.
+- **The slideshow never starts**: the C# starts it at MDK12.FLC's end (VideoPlayer.Finished),
+  which is #20c's; with no video the C# shows MDKOPT and no slide, as the frontends do.
+- **The 3DS save prompt offers the next level's number** and A saves under it: there is no
+  keyboard to type another name (Linux types one).
+- **Not ported**: the prompt's pointer rows (the mouse).
 
 ## The cutscenes (2026-11-20, package 13): what landed, what is open
 
@@ -1929,8 +1964,9 @@ Still open:
   (`objects/N/variables/Push`, 600 idle steps). (LEVEL3 HMO_6's extra objects went with
   package 8's updrafts, so `L3_save_fan` is now a full golden.) These are the
   runtime's gaps, not the save's: a save carries them faithfully.
-- **The after-LEVEL8 save prompt and the statistics' before-level prompt** are still skipped
-  (closed with Esc); a later screen draws them from `SavePrompt::layout`. The main menu's
+- **The after-LEVEL8 save prompt** is still skipped (closed with Esc); a later screen draws it
+  from `SavePrompt::layout`. The statistics' before-level prompt is drawn and answered since
+  package #20b (`StatsScreen`, both frontends). The main menu's
   Continue and "Saved Game" page read the saves through `flow::menuListSaves/menuPeekSave/
   menuLoadSave` in both frontends (`golden/menu_saves.txt` vs `menu_probe saves`).
 - **Not saved because the C# does not save them**: the random stream (a load reseeds), sound

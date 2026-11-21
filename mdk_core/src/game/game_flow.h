@@ -30,7 +30,8 @@
 // game, and flow_tests.cpp pins the inner call's view of it.
 //
 // THE MENU IS BACK (package #20a, the owner un-cut 2026-11-20): the frontends
-// show Screen::Menu (game/main_menu.h) and Screen::Briefing (game/briefing.h).
+// show Screen::Menu (game/main_menu.h) and Screen::Briefing, and since #20b
+// Screen::Statistics (both StatsScreen, game/stats_screen.h).
 //
 // THE SAVES (package #19, un-cut by the owner 2026-11-20): FirstEvent's --load
 // branch, Handle(KurtDied)'s LASTGAME write and Play's --save write go through the
@@ -266,11 +267,13 @@ public:
     // The skip for the screen shown, handled: handle(skipScreen()) until a screen
     // that is not skipped through, at most kMaxSkips times. Since package #20a
     // the frontends SHOW the Menu and the Briefing (game/main_menu.h,
-    // game/briefing.h), and since #17b the Fall (fall/fall_screen.h), so the
-    // walk stops at those as at a Level or None;
-    // skipScreen keeps the Briefing's arm, which is the C#'s skip of it (Esc,
-    // then a key: Event.Fall). `trail`, when given, receives the screens skipped in order (up to
-    // kMaxSkips of them), so the frontend can log each one.
+    // game/stats_screen.h), since #17b the Fall (fall/fall_screen.h) and since
+    // #20b the Statistics, so the walk stops at those as at a Level or None;
+    // skipScreen keeps the Briefing's, the Fall's and the Statistics' arms, which
+    // are the C#'s skips of them (Esc, then a key: Event.Fall for the Briefing and
+    // the Statistics, Event.Play for the Fall; a frontend's --skip-statistics and
+    // --skip-falls take them). `trail`, when given, receives the screens skipped
+    // in order (up to kMaxSkips of them), so the frontend can log each one.
     static constexpr int32_t kMaxSkips = 8;
     struct SkipTrail {
         Screen skipped[kMaxSkips];
@@ -280,7 +283,7 @@ public:
     // The screen's name and, for one this port does not have, the gap package
     // that ports it (docs/PORT_GAPS.md), for the frontends' "flow: skipped" lines:
     // 0 for the ones the frontends show (the Level; the Menu and the Briefing
-    // since #20a).
+    // since #20a; the Statistics since #20b).
     static const char* screenName(Screen screen);
     static int32_t screenPackage(Screen screen);
 

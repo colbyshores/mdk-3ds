@@ -46,6 +46,11 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   ported, after package #3's 114; with package 6 (28): C# **238**, C++ **237**, remaining **1** (130). Details under
   "Remaining" below.
 
+- **The statistics (2026-11-20, PORT_GAPS package 20b):** no opcode added or changed;
+  the counts below stand. The statistics read what the opcodes wrote: the level's
+  GameStats (shots, hits, sniper rounds and hits, kills, enemies, head shots) and the
+  town flags' bits 31-29 the debriefing picks its text by, kept by the flow when the
+  level ends (Game.AfterLevel).
 - **Menus and settings (2026-11-20, PORT_GAPS package 20a):** no opcode added or
   changed; the counts below stand. What changed is an INPUT the opcodes read:
   `ScriptRuntime::option` (if_option and opcode 129's gore arm) is now the settings'

@@ -35,6 +35,7 @@
 #include "flow_tests.h"
 #include "cheats_tests.h"
 #include "menu_tests.h"
+#include "stats_tests.h"
 #include "save_tests.h"
 #include "input_3ds_tests.h"
 #include "heap_split_tests.h"
@@ -8211,6 +8212,17 @@ int main(int argc, char** argv) {
         fputs(mdk::test::menuDump(menuData, argv[2]).c_str(), stdout);
         return 0;
     }
+    // `vm_tests dump-stats <section>`: the statistics (stats_tests.h), the C++ side
+    // of menu_probe's stats-* sections -- how golden/<section>.txt is diffed.
+    if (argc > 2 && strcmp(argv[1], "dump-stats") == 0) {
+        const MdkData statsData = locateData();
+        if (!statsData.found()) {
+            fprintf(stderr, "dump-stats: no MDK data (set MDK_DATA_DIR)\n");
+            return 1;
+        }
+        fputs(mdk::test::statsDump(statsData, argv[2]).c_str(), stdout);
+        return 0;
+    }
 
     // The sky inverse's exact .NET reduction order, independent of game data.
     const int numericsFailures = mdk::test::runSystemNumericsTests();
@@ -8337,6 +8349,13 @@ int main(int argc, char** argv) {
     failures += menuFailures;
     if (menuFailures == 0) {
         printf("PASS MenusMatchTheOracle\n");
+    }
+    // The statistics' pages, sounds and canvas against the C# probe
+    // (stats_tests.h): MDKFONT.FTI and STATS.BNI, so after the data check.
+    const int statsFailures = mdk::test::runStatsTests(data);
+    failures += statsFailures;
+    if (statsFailures == 0) {
+        printf("PASS StatisticsMatchTheOracle\n");
     }
 
     const int32_t kLevel = 7;

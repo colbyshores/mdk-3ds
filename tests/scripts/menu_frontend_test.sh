@@ -107,8 +107,46 @@ if has "$LOG5" "flow: the main menu"; then
     bad "[--level] a --level run showed the menu"
 fi
 
+# --- 5. The statistics after a level (package #20b) -------------------------------
+# LEVEL3 ends at 1 s (--event=1, frame 489): its stream plays (package #18b, ~2024
+# frames of the default seed's tube; the presses' clock is the level's and the
+# menus', so the stream moves no press time, only the frame budget), then the
+# statistics are shown. Accept leaves the intermission, three Escs finish the debriefing's three
+# texts, Accept leaves it; twelve Escs run the Score-O-matic's five rows (two waits
+# each, nothing to count) and the heads' two waits (no head shots), Accept leaves
+# it; the save prompt opens, Yes, then
+# Enter saves under "4" (LEVEL4's number); Esc finishes the briefing's typing,
+# Accept leaves it; the fall is skipped (--skip-falls, package #17b), and LEVEL4
+# (MEAT_1) loads.
+LOG6="$WORK/stats.log"
+BACKS=""
+for t in 12.1 12.2 12.3 12.4 12.5 12.6 12.7 12.8 12.9 13.0 13.1 13.2; do
+    BACKS="$BACKS,Menu.Back@$t"
+done
+run "$LOG6" --level=3 --event=1 --skip-falls --frames 3200 \
+    --press=Menu.Accept@9,Menu.Back@10.2,Menu.Back@10.4,Menu.Back@10.6,Menu.Accept@11$BACKS,Menu.Accept@14,Menu.Accept@15,Menu.Accept@15.2,Menu.Back@15.8,Menu.Accept@16.2
+for line in \
+    "flow: the statistics follow" \
+    "Statistics: Intermission" \
+    "flow: the statistics after level 3 (from Intermission)" \
+    "Statistics: Debriefing" \
+    "Statistics: Score" \
+    "Score-O-matic: 0/0, 0/100, 0/0, 0/100, 0/6, heads 0" \
+    "statistics: the save prompt opens" \
+    "Saved game 4: level 4" \
+    "Statistics: Briefing" \
+    "arena: MEAT_1"; do
+    has "$LOG6" "$line" || bad "[statistics] the log has no \"$line\""
+done
+[ -f "$MDK_USER_DIR/saves/4.sav" ] || bad "[statistics] the save prompt wrote no saves/4.sav"
+# --stats starts there (the C#'s --stats/--phase/--counts).
+LOG7="$WORK/stats-start.log"
+run "$LOG7" --stats=7 --phase=1 --counts=57,31,9,4,12,20,3 --frames 5
+has "$LOG7" "Score-O-matic: 57/57, 54/100, 9/9, 44/100, 12/20, heads 3" ||
+    bad "[--stats] the Score-O-matic did not start with the counts"
+
 if [ "$fail" -eq 0 ]; then
-    echo "PASS MenuFrontend (entry menu, options file, new game -> briefing -> level, pause -> menu, quit)"
+    echo "PASS MenuFrontend (entry menu, options file, new game -> briefing -> level, pause -> menu, quit, level -> statistics -> save -> next level)"
     exit 0
 fi
 echo "FAIL MenuFrontend ($fail check(s))"

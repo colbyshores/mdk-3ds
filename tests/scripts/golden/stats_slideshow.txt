@@ -1,0 +1,26 @@
+== slideshow: 8 slides
+  slide 1: 600x360 indices 9d54ea474c768808 palette b63f1dbf5d789f71
+  slide 2: 600x360 indices a7d21df54c41bf0b palette 5946b09e2254ac6a
+  slide 3: 600x360 indices f0fc6edb18338b0d palette 9842479fa0503725
+  slide 4: 600x360 indices b56658a793496e2e palette 4610cc2a94290942
+  slide 5: 600x360 indices 452fd10f885b1b62 palette eb822c37b774b19b
+  slide 6: 600x360 indices 838e7cd3ba8f6fc7 palette fb647058d7eb30ea
+  slide 7: 600x360 indices 56f3d27717f90682 palette 0ef1774248375a6f
+  slide 8: 600x360 indices 6ac7210938b027fd palette eb822c37b774b19b
+f0 - image=0 items=1 time=0.016666668
+f200 key image=0 items=1 time=0
+f500 - image=1 items=0 time=0
+f601 key image=1 items=0 time=4
+f602 - image=2 items=1 time=0
+f723 - image=3 items=1 time=0
+f844 - image=4 items=1 time=0
+f902 key image=4 items=1 time=0
+f1023 - image=5 items=1 time=0
+f1144 - image=6 items=1 time=0
+f1265 - image=7 items=1 time=0
+f1386 - image=8 items=1 time=0
+f1507 - image=0 items=1 time=0
+f1807 - image=1 items=0 time=0
+f2048 - image=2 items=1 time=0
+f2169 - image=3 items=1 time=0
+f2290 - image=4 items=1 time=0

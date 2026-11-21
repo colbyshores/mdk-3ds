@@ -34,6 +34,11 @@ using Mdk.Game.Menu;
 //       > tests/scripts/golden/menu_<section>.txt
 // for each section: settings, typeset, main, pause, briefing. No window opens
 // (offscreen), so no display is used (AGENTS.md P7).
+//
+// PACKAGE #20b added the statistics (sections stats-all7, stats-score4,
+// stats-nogore6 -> golden/stats_<name>.txt) and the slideshow (section slideshow
+// -> golden/stats_slideshow.txt), built and run the same way (2026-11-20); their
+// C++ twin is tests/scripts/stats_tests.cpp (`vm_tests dump-stats <section>`).
 CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
 CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 
@@ -332,7 +337,239 @@ if (section is "saves")
     }
 }
 
+// --- the slideshow (package #20b) ----------------------------------------------
+// The main menu's Slideshow, started as VideoPlayer.Finished starts it (no video
+// here: image 0 has no still), updated each frame and Reset on a key the way
+// MainMenu.Frame does (Update, then Reset on AnyPressed). Prints the slides it
+// loaded (size and an FNV-1a hash of the indices and the palette), then a line on
+// every key and every change of image. The C++ twin is stats_tests.cpp
+// (`vm_tests dump-stats slideshow`).
+const string SlideshowSchedule = "-:200,key:1,-:400,key:1,-:300,key:1,-:1500";
+if (section is "slideshow")
+{
+    var video = new VideoPlayer(ui);
+    var show = new Slideshow(ui, video);
+    show.Start();
+    var images = Field<List<Gif>>(show, "_images");
+    stdout.WriteLine($"== slideshow: {images.Count} slides");
+    ulong Fnv(byte[] bytes)
+    {
+        var hash = 14695981039346656037UL;
+        foreach (var b in bytes)
+        {
+            hash = (hash ^ b) * 1099511628211UL;
+        }
+
+        return hash;
+    }
+
+    for (var i = 0; i < images.Count; i++)
+    {
+        stdout.WriteLine($"  slide {i + 1}: {images[i].Width}x{images[i].Height} indices {Fnv(images[i].Indices):x16} palette {Fnv(images[i].Palette):x16}");
+    }
+
+    var frame = 0;
+    var last = -1;
+    foreach (var key in Schedule(SlideshowSchedule))
+    {
+        show.Update(Step);
+        if (key != "-")
+        {
+            show.Reset();
+        }
+
+        if (key != "-" || show.Image != last)
+        {
+            stdout.WriteLine($"f{frame} {key} image={show.Image} items={(show.ItemsShown ? 1 : 0)} time={F(Field<float>(show, "_time"))}");
+            last = show.Image;
+        }
+
+        frame++;
+    }
+
+    video.Dispose();
+}
+
+// --- the statistics (package #20b) ---------------------------------------------
+// StatsScreen's pages after a level -- the intermission, the debriefing, the
+// Score-O-matic and its heads, the save prompt, the briefing -- driven by a key
+// schedule at 1/60 s with given counts, as Game.Run drives it: the screen's
+// Frame, then the audio device's Update (muted: voices end in step with the
+// frames). Each frame prints the page's state, the sounds started (+NAME#id),
+// stopped by the screen (-#id) and ended in the mix (~#id), and the canvas the
+// frame drew, captured in the renderer's Overlay hook (which Present calls before
+// it consumes the canvas): its quad count and an FNV-1a hash of the quads, each
+// "<kind> left,top,right,bottom r,g,b,a" with the kind B (FONTBIG), S (FONTSML),
+// I (an image) or F (a fill); the quads themselves on the first frame of a page
+// and every 120th. The C#'s `new Random()` (which picks only sounds) is replaced
+// by a scripted one, (5n + 1) % max. The C++ twin is stats_tests.cpp
+// (`vm_tests dump-stats <section>`).
+//
+// Sections: stats-all7 (LEVEL7 at normal speed, gore), stats-score4 (LEVEL4 from
+// the Score-O-matic, Esc through it, 20 heads, saved "5"), stats-nogore6 (LEVEL6
+// from the debriefing, fast, no gore, the prompt refused).
+if (section.StartsWith("stats-", StringComparison.Ordinal))
+{
+    var scenarios = new (string Name, int Level, StatsScreen.Phase? First, int[] Counts, int Towns, bool Gore, string Schedule)[]
+    {
+        ("stats-all7", 7, null, [57, 31, 9, 4, 12, 20, 3], 0, true,
+            "-:59,accept:2,-:150,back:2,-:60,fire:60,-:200,fire:100,-:450,accept:2,-:45,down:3,accept:3,-:60,back:2,-:5,accept:40"),
+        ("stats-score4", 4, StatsScreen.Phase.Score, [0, 0, 5, 5, 7, 7, 20], 5, true,
+            "-:40,back:2,-:30,back:2,-:30,back:2,-:30,back:2,-:20,back:2,-:20,back:2,-:20,back:2,-:20,fire:200,back:2,-:35,accept:3,-:5,accept:3,-:10,fire:200"),
+        ("stats-nogore6", 6, StatsScreen.Phase.Debriefing, [10, 10, 0, 0, 0, 0, 2], 6, false,
+            "fire:500,-:10,back:3,-:4,fire:200"),
+    };
+    var (name, level, first, counts, towns, gore, scheduleText) = scenarios.First(s => s.Name == section);
+    stdout.WriteLine($"== {name}: level {level}, first {(first?.ToString() ?? "-")}, counts {string.Join(",", counts)}, towns {towns}, gore {(gore ? 1 : 0)}, canvas {F(renderer.CanvasWidth)}");
+    settings.Gore = gore;
+    var state = new GameState { Level = level };
+    var stats = state.Stats;
+    (stats.Shots, stats.ShotHits, stats.SniperShots, stats.SniperHits) = (counts[0], counts[1], counts[2], counts[3]);
+    (stats.Kills, stats.Enemies, stats.HeadShots) = (counts[4], counts[5], counts[6]);
+    stats.TownFlags = towns << 29;
+    var saves = SaveGames.In(user);
+    Console.SetOut(captured);
+    var screen = new StatsScreen(ui, state, saves, StatsPages.All, first);
+    Console.SetOut(stdout);
+    void FlushStats()
+    {
+        foreach (var line in captured.ToString().Split('\n'))
+        {
+            if (line.StartsWith("Statistics: ", StringComparison.Ordinal) || line.StartsWith("Score-O-matic: ", StringComparison.Ordinal)
+                || line.StartsWith("Saved game ", StringComparison.Ordinal))
+            {
+                stdout.WriteLine(line);
+            }
+        }
+
+        captured.GetStringBuilder().Clear();
+    }
+
+    FlushStats();
+    typeof(StatsScreen).GetField("_random", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(screen, new ScriptedRandom());
+    var fonts = Field<Fonts>(screen, "_fonts");
+    var bigTexture = Field<int>(fonts.Big, "_texture");
+    var smallTexture = Field<int>(fonts.Small, "_texture");
+    var sounds = Field<Dictionary<string, Sound?>>(screen, "_sounds");
+    var voices = (IDictionary)FieldObj(audio, "_voices");
+    var canvasVertices = (List<Vertex>)FieldObj(renderer, "_canvasVertices");
+    var canvasCommands = (List<(int First, int Count, Material Material)>)FieldObj(renderer, "_canvasCommands");
+    var quads = new List<string>();
+    renderer.Overlay = () =>
+    {
+        quads.Clear();
+        foreach (var (firstVertex, count, material) in canvasCommands)
+        {
+            var kind = material.Texture == bigTexture ? "B" : material.Texture == smallTexture ? "S" : material.Texture == Material.None ? "F" : "I";
+            for (var v = firstVertex; v < firstVertex + count; v += 6)
+            {
+                var a = canvasVertices[v].Position;
+                var b = canvasVertices[v + 2].Position;
+                var c = material.Colour;
+                quads.Add($"{kind} {F(a.X)},{F(a.Y)},{F(b.X)},{F(b.Y)} {F(c.X)},{F(c.Y)},{F(c.Z)},{F(c.W)}");
+            }
+        }
+    };
+
+    List<int> Ids() => voices.Keys.Cast<int>().OrderBy(i => i).ToList();
+    string NameOf(int id)
+    {
+        var sound = voices[id]!.GetType().GetField("Sound")!.GetValue(voices[id]);
+        return sounds.FirstOrDefault(p => ReferenceEquals(p.Value, sound)).Key ?? "?";
+    }
+
+    ulong Hash(List<string> lines)
+    {
+        var hash = 14695981039346656037UL;
+        foreach (var line in lines)
+        {
+            foreach (var b in Encoding.ASCII.GetBytes(line + "\n"))
+            {
+                hash = (hash ^ b) * 1099511628211UL;
+            }
+        }
+
+        return hash;
+    }
+
+    var frame = 0;
+    var lastStatus = "";
+    foreach (var key in Schedule(scheduleText))
+    {
+        Keys(key);
+        var before = Ids();
+        Console.SetOut(captured);
+        var next = screen.Frame(Step, null);
+        Console.SetOut(stdout);
+        var after = Ids();
+        audio.Update(Step);
+        var mixed = Ids();
+        var sound = new StringBuilder();
+        foreach (var id in after.Except(before))
+        {
+            sound.Append($" +{NameOf(id)}#{id}");
+        }
+
+        foreach (var id in before.Except(after))
+        {
+            sound.Append($" -#{id}");
+        }
+
+        foreach (var id in after.Except(mixed))
+        {
+            sound.Append($" ~#{id}");
+        }
+
+        FlushStats();
+        var status = screen.Status[0];
+        var prompt = FieldObj(screen, "_prompt");
+        var promptText = prompt == null ? ""
+            : $" prompt={FieldObj(prompt, "_stage")}/{Field<int>(prompt, "_selected")}/{Field<string>(prompt, "_name")}/{Field<int>(prompt, "_cursor")}";
+        string Floats(string field) => string.Join(",", Field<float[]>(screen, field).Select(F));
+        stdout.WriteLine($"f{frame} {key} {status}{promptText} in={F(Field<float>(screen, "_fadeIn"))} out={F(Field<float>(screen, "_fadeOut"))} cur={Field<int>(screen, "_current")} count={F(Field<float>(screen, "_count"))} shown={Field<int>(screen, "_shown")} ticks={F(Field<float>(screen, "_ticks"))} row={Field<int>(screen, "_row")}/{Field<int>(screen, "_rowStage")}/{F(Field<float>(screen, "_rowTime"))} v={Floats("_values")} s={Floats("_slides")} heads={Field<int>(screen, "_heads")}/{F(Field<float>(screen, "_headTime"))} next={next}");
+        if (sound.Length > 0)
+        {
+            stdout.WriteLine($"  snd{sound}");
+        }
+
+        var heads = Field<int>(screen, "_heads");
+        if (heads > 0)
+        {
+            var angles = Field<float[]>(Field<HeadsView>(screen, "_headsView"), "_angles");
+            var places = HeadsView.Places(heads, state.Stats.HeadShots).ToList();
+            stdout.WriteLine($"  heads a={string.Join(",", angles.Take(Math.Min(heads, HeadsView.MaxHeads)).Select(F))} p={string.Join(",", places.Select(p => $"{F(p.X)}:{F(p.Z)}"))}");
+        }
+
+        stdout.WriteLine($"  quads {quads.Count} {Hash(quads):x16}");
+        if (status != lastStatus || frame % 120 == 0)
+        {
+            foreach (var quad in quads)
+            {
+                stdout.WriteLine($"    {quad}");
+            }
+        }
+
+        lastStatus = status;
+        frame++;
+        if (next != Event.None)
+        {
+            break;
+        }
+    }
+
+    stdout.WriteLine($"== end: level {state.Level}, saves {string.Join(",", saves.List())}");
+    screen.Dispose();
+}
+
 audio.Dispose();
 renderer.Dispose();
 window.Dispose();
 Directory.Delete(user, true);
+
+/// <summary>The statistics' scripted Random (only sounds draw on it): (5n + 1) % max.</summary>
+sealed class ScriptedRandom : Random
+{
+    private int _n;
+
+    public override int Next(int maxValue) => (_n++ * 5 + 1) % maxValue;
+}

@@ -2,8 +2,9 @@
 
 // ============================================================================
 // menu_screens.h -- the Linux frontend's screens between levels (package #20a):
-// the main menu (game/main_menu.h) and the briefing (game/briefing.h), and the
-// settings file they share with the pause menu.
+// the main menu (game/main_menu.h), the briefing and (package #20b) the
+// statistics after a level (game/stats_screen.h, with its sounds and the
+// Score-O-matic's heads), and the settings file they share with the pause menu.
 //
 // The game starts here unless --level names a level (the C#'s `--level`: the
 // level at once; with no start option the C#'s Start.Menu). The flow decides
@@ -77,11 +78,17 @@ struct FrontScreens {
     bool skipFalls = false;
     // --fall-chase: steer onto the first pickup under its chute (a test aid).
     bool fallChase = false;
+    // THE STATISTICS (package #20b): --phase's page for the first statistics
+    // shown (consumed by it; 0 none), and --skip-statistics (the C#'s skip of
+    // them, GameFlow::skipScreen, instead of the screen).
+    int statsPhase = 0;
+    bool skipStatistics = false;
 };
 
-// Runs the Menu, the Briefing and the Fall (whichever the flow shows) until the
-// flow names a Level (returned) or the run ends (Screen::None: Quit, the window
-// closed, the frame budget, the capture taken).
+// Runs the Menu, the Briefing, the Statistics (StatsScreen) and the Fall
+// (whichever the flow shows) until the flow names a Level (returned) or the run
+// ends (Screen::None: Quit, the window closed, the frame budget, the capture
+// taken).
 flow::Screen runFrontScreens(FrontScreens* front);
 
 } // namespace mdk

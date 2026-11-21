@@ -153,6 +153,11 @@ SOURCES_VM := \
 	$(CORE)/game/main_menu.cpp \
 	$(CORE)/game/pause_menu.cpp \
 	$(CORE)/game/briefing.cpp \
+	$(CORE)/game/stats_screen.cpp \
+	$(CORE)/game/heads_view.cpp \
+	$(CORE)/game/slideshow.cpp \
+	$(CORE)/formats/gif.cpp \
+	stats_tests.cpp \
 	$(CORE)/game/enhanced_menu.cpp \
 	$(CORE)/game/enhanced_config.cpp \
 	save_tests.cpp \

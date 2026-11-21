@@ -2,7 +2,12 @@
 
 // ============================================================================
 // menu_screens_3ds.h -- the 3DS frontend's screens between levels (package
-// #20a): the main menu (game/main_menu.h) and the briefing (game/briefing.h).
+// #20a): the main menu (game/main_menu.h), the briefing and (package #20b) the
+// statistics after a level (game/stats_screen.h: the intermission, the
+// debriefing, the Score-O-matic and its 3D heads, the save prompt, the next
+// briefing, with STATS.BNI's sounds). The statistics take any button to move
+// on, B to skip, Fire or Jump held to run fast; the save prompt the D-pad, A
+// and B.
 //
 // THE ENTRY SCREEN. A release build boots into the main menu, as the C#'s game
 // does; a harness build with LEVEL=<n> still boots straight into that level
@@ -68,9 +73,9 @@ struct FrontScreens3ds {
     const char* exitReason = nullptr;
 };
 
-// Runs the Menu, the Briefing and the Fall (whichever the flow shows) until the
-// flow names a Level (returned) or the run ends (Screen::None: Quit, aptMainLoop,
-// the harness deadline, the frame budget).
+// Runs the Menu, the Briefing, the Statistics and the Fall (whichever the flow
+// shows) until the flow names a Level (returned) or the run ends (Screen::None:
+// Quit, aptMainLoop, the harness deadline, the frame budget).
 flow::Screen runFrontScreens3ds(FrontScreens3ds* front);
 
 } // namespace mdk

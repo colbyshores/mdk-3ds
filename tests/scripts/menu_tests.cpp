@@ -7,6 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@
 #include "game/menu_items.h"
 #include "game/pause_menu.h"
 #include "game/save_games.h"
+#include "game/stats_screen.h"
 #include "game/viewer_saves.h"
 #include "render/render.h"
 
@@ -360,18 +362,29 @@ std::string dumpBriefing(Fonts* fonts) {
     for (int l = 0; l < 2; l++) {
         snprintf(line, sizeof(line), "== briefing LEVEL%d\n", (int)levels[l]);
         out += line;
-        Briefing briefing;
-        briefing.open(&fonts->fti, levels[l]);
+        // C# StatsScreen(..., StatsPages.Briefing, null): the briefing alone,
+        // which is StatsScreen's Briefing page since package #20b.
+        flow::GameState state;
+        state.level = levels[l];
+        StatsScreen::Setup setup;
+        setup.fti = &fonts->fti;
+        setup.state = &state;
+        setup.pages = StatsPages::Briefing;
+        std::unique_ptr<StatsScreen> briefing(new StatsScreen());
+        briefing->open(setup);
         const std::vector<std::string> frames = schedule(kBriefingSchedule);
         for (size_t i = 0; i < frames.size(); i++) {
             const menu::Keys keys = keysOf(frames[i]);
-            const flow::Event next =
-                briefing.frame(keys.any, keys.back, frames[i] == "fire", kStep);
+            StatsScreen::Keys statsKeys;
+            statsKeys.any = keys.any;
+            statsKeys.back = keys.back;
+            statsKeys.fastHeld = frames[i] == "fire";
+            const flow::Event next = briefing->frame(statsKeys, kStep);
             snprintf(line, sizeof(line), "f%d %s in=%s out=%s current=%d count=%s shown=%d ticks=%s next=%s\n",
-                     (int)i, frames[i].c_str(), f(briefing.fadeIn()).c_str(),
-                     f(briefing.fadeOut()).c_str(), (int)briefing.current(),
-                     f(briefing.count()).c_str(), (int)briefing.shown(),
-                     f(briefing.ticks()).c_str(), eventName(next));
+                     (int)i, frames[i].c_str(), f(briefing->fadeIn()).c_str(),
+                     f(briefing->fadeOut()).c_str(), (int)briefing->current(),
+                     f(briefing->count()).c_str(), (int)briefing->shown(),
+                     f(briefing->ticks()).c_str(), eventName(next));
             out += line;
             if (next != flow::Event::None) {
                 break;

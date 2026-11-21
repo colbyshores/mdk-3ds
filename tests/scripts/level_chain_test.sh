@@ -14,9 +14,10 @@
 #      log must name each skipped screen (Statistics, Fall; after 8's Gunter stream
 #      the save prompt) and each next level -- LEVEL5 entered at the Gunter stream's
 #      end health, 63.
-#      The fall is shown since package #17b; every arm passes --skip-falls (a test
-#      aid: each fall skipped the C#'s Esc way before its first frame), so the
-#      frame numbers below are the ones the stream's package wrote.
+#      The statistics are shown since package #20b and the fall since #17b; every
+#      arm passes --skip-statistics and --skip-falls (test aids: each skipped the
+#      C#'s Esc way before its first frame), so the frame numbers below are the
+#      ones the stream's package wrote.
 #
 #   2. A CLEAN RELOAD. The frame the chained run draws 111 frames into level 4 must be
 #      BYTE-IDENTICAL to the frame a run started directly in level 4 draws at its own
@@ -68,7 +69,7 @@ bad() {
 run() {
     log=$1
     shift
-    timeout 600 "$BIN" --headless --fixed-step --size=320x240 --seed 1 --skip-falls "$@" >"$log" 2>&1
+    timeout 600 "$BIN" --headless --fixed-step --size=320x240 --seed 1 --skip-falls --skip-statistics "$@" >"$log" 2>&1
 }
 
 # has <log> <text>: the log holds this line fragment (grep -F, no pipe).
@@ -85,7 +86,7 @@ for line in \
     "flow: level 3 ended (health 100); the flow shows Stream" \
     "Stream ended after LEVEL3: Survived, health 1, segment 185, 33.7 s" \
     "flow: the stream after level 3 ended (health 1); the flow shows Statistics" \
-    "flow: skipped Statistics (package #20 not ported)" \
+    "flow: skipped Statistics (--skip-statistics)" \
     "flow: skipped Fall (--skip-falls)" \
     "flow: next level 4 at frame 2513, entered at health 100" \
     "Stream ended after LEVEL4: Survived, health 1, segment 187, 33.9 s" \
@@ -109,7 +110,7 @@ done
 # chained frame index F is level-local index F - start; --capture-frame is 1-based.
 compare() {
     label=$1 chained=$2 level=$3 direct=$4
-    run "$WORK/c$chained.log" --level=3 --event=1 --event-every-level \
+    run "$WORK/c$chained.log" --level=3 --event=1 --event-every-level --skip-statistics \
         --capture="$WORK/chain$chained.bmp" --capture-frame="$chained" ||
         bad "[$label] the chained capture run failed"
     run "$WORK/d$direct.log" --level="$level" --event=1 \

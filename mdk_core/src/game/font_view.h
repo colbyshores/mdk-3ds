@@ -29,6 +29,8 @@ public:
               const uint8_t* paletteRgba);
 
     bool ready() const { return texture_ >= 0; }
+    // The atlas's texture id (the statistics' goldens tell the fonts' quads apart).
+    int32_t texture() const { return texture_; }
     // The font the atlas was built from (the menus measure their rows in it).
     const formats::Font& font() const { return font_; }
 
