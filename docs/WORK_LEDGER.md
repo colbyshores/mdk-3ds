@@ -783,3 +783,14 @@ Newest entries are at the bottom. Performance experiments keep their own table i
 - **Why:** the owner's direction to finish testing in the emulator before the end-of-project hardware session, now that every C# system is ported.
 - **Evidence:** `docs/evidence/2026-11-21-mandarine-pass.md`, section "Level-by-level playthrough (Sonnet pass)" (a table per level with the exact commands). The ledge grab ends at the C# golden's feet (-1638.6,239.0,-653.3). The chain runs reach every screen between levels. The menu run after the fix shows the slides over the menu (`/tmp/kilo/mdk-play-menu3.png`). The game's chain order is the C#'s 7, 6, 3, 4, 8, 5.
 - **Commit:** this entry's commit.
+
+### Hardware session (2026-11-21): the baseline, E11/E14 on the console, and a MONO=1 harness switch
+- **What:** step 1 is the Old-3DS baseline of levels 3/4/8/5/6/7, with a capture of level 3. Step 2 is E11 (baked light) and E14 (workers on core 1), each replayed onto the tip on a throwaway branch and profiled. New: `make -C mdk_3ds AUTOQUIT=90 MONO=1`, which draws one eye whatever the 3D slider says (`03_frame.inc` passes slider 0 to `pica::eyePlan`; the profile line reports `stereo=off(MONO=1, slider ignored)`). It is harness-only, like DRAWDEDUPE=0.
+- **Why:** the owner's end-of-project hardware session (full test, profile, the parked A/Bs, then optimisation). Step 2 showed the frame's 13–16 ms `end` span is the per-eye command replay, CPU work that stereo doubles. The appliance's slider is up and nobody is there to move it, so the stereo cost needs a build switch.
+- **Evidence:** `docs/evidence/2026-11-21-hardware-session.md` steps 1–2:
+  - all runs FRESH;
+  - baseline steady means 35.6/16.7/42.5/33.5/22.3/26.9 ms;
+  - E11 looks the same on hardware (mean diff 0.31) but moves the frame by −1.4 to +0.9 ms, inside the run-to-run spread, so it stays parked;
+  - E14 runs on core 1 (cores 2 and 3 refused on the Old 3DS) with no frame gain at idle.
+  - A MONO=1 PROFILE build compiles; all five gates are green.
+- **Commit:** this entry's commit.

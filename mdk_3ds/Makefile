@@ -132,6 +132,15 @@ $(error CAPTURE=$(CAPTURE) needs AUTOQUIT: the capture is a harness-build featur
 endif
 DEFINES += -DMDK_HW_CAPTURE=$(CAPTURE)
 endif
+# `make AUTOQUIT=90 MONO=1` draws one eye whatever the 3D slider says (the
+# renderer's eyePlan sees slider 0): the stereo-cost A/B on the appliance,
+# whose slider is up and out of reach. Harness-only; `make clean` after flipping it.
+ifeq ($(strip $(MONO)),1)
+ifndef AUTOQUIT
+$(error MONO=1 needs AUTOQUIT: the A/B switch is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_MONO=1
+endif
 # `make AUTOQUIT=90 LEVEL=<3..8>` starts the run in that level instead of the
 # flow's first (7): the per-level hardware baselines of the arena-streaming
 # plan. Only main_3ds.cpp reads it, so after changing LEVEL `touch

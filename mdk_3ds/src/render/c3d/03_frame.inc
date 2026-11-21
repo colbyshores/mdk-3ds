@@ -1278,7 +1278,16 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // from exactly that: an unclamped depth became an eye separation of
     // billions of units and the screen went black. The clamp, the sign of each
     // eye and the mono skip are pica::eyePlan, which a host test pins.
-    r->eyes = mdk::pica::eyePlan((float)osGet3DSliderState(), r->eyeSeparation);
+    //
+    // A harness build may force mono (`make AUTOQUIT=90 MONO=1`): the slider
+    // reads as 0, so one pass, for the owner's stereo-cost A/B on a console
+    // whose slider nobody is there to move.
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_MONO)
+    const float slider = 0.0f;
+#else
+    const float slider = (float)osGet3DSliderState();
+#endif
+    r->eyes = mdk::pica::eyePlan(slider, r->eyeSeparation);
 
     // Both eye buffers are cleared here, whether or not both get drawn: a buffer
     // that is not cleared keeps the previous frame's picture, and the right

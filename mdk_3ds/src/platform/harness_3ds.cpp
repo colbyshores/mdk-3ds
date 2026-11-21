@@ -288,7 +288,10 @@ void harnessProfileFrame(double periodSeconds) {
     }
     if (us > 16667) g_over17++;
     if (us > 33333) g_over34++;
+#ifndef MDK_HW_MONO
+    // (MONO=1 forces one eye whatever the slider says: the report says off.)
     if (osGet3DSliderState() > 0.0f) g_stereoSeen = true;
+#endif
     // The arena-entry table's newest frame (the one that just ended) gets its
     // period now: in the ring, and in the table if its window kept it.
     if (g_arenaRingNewest >= 0) {
@@ -592,7 +595,11 @@ void harnessProfileReport() {
                       "percentiles are 0.1 ms bucket upper edges)",
                       (unsigned)model, oldFamily ? "old3ds" : (model == 0xFF ? "unknown" : "new3ds"),
                       oldFamily ? "268MHz(by-model)" : "unverified", oldFamily ? "none(by-model)" : "unverified",
+#ifdef MDK_HW_MONO
+                      "off(MONO=1, slider ignored)");
+#else
                       g_stereoSeen ? "on" : "off");
+#endif
 #ifdef MDK_HW_WALK
     // The walk's segment starts, held back from the measured frames.
     for (int32_t i = 0; i < g_walkStartCount; i++) {
