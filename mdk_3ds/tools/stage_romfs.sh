@@ -86,6 +86,19 @@ stage_dir() {
 # The MISC folder: the font, the movies, the sound banks, the stats.
 stage_dir misc "$SRC/MISC"
 
+# MISC/FLIC: stage_dir is one level deep, so the main menu's video never reached
+# the RomFS and the menu stayed on MDKOPT with no slideshow (the slideshow starts
+# when MDK12.FLC ends). Only MDK12.FLC (632 KB) is read by the game; pie.flc and
+# shiny.flc (16 MB) are not, and MDKEND.FLC/MDKBZK.MVE are not in the GOG data.
+mdk12="$(find "$SRC/MISC" -maxdepth 2 -ipath '*/flic/mdk12.flc' -print -quit)"
+if [ -n "$mdk12" ]; then
+    mkdir -p "$OUT/misc/flic"
+    ln "$mdk12" "$OUT/misc/flic/mdk12.flc" 2>/dev/null || cp "$mdk12" "$OUT/misc/flic/mdk12.flc"
+    echo "stage_romfs:   misc/flic (mdk12.flc)"
+else
+    echo "stage_romfs:   (skip) misc/flic -- MDK12.FLC not present; the menu has no video"
+fi
+
 # The levels. The game's level data lives in TRAVERSE/LEVELn.
 for level in "$SRC"/TRAVERSE/LEVEL*; do
     [ -d "$level" ] || continue

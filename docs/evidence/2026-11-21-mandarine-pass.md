@@ -27,3 +27,104 @@ The console was lent to ../forsaken, so 3DS checks ran in Mandarine r1.2.1 (md5 
 - package 15 on main (edc63b3), lighting off: L3 EVENT=0 -- special_event at frame 60 (the end-of-level shake), level ended at 459 as before, no crash. L3 AT=-60,1410,-960,0 ARENA=HMO_3 -- "sky: mode -1 (Keep) at frame 1" (opcode 202's consumer on the 3DS: no sky dome, depth-only clear). Shake offsets not captured (pinned by L3_screen_town / L3_screen_hmo3).
 - package 21 on main (a94ffa9c), L3 NOCLIP=1 jump then forward, lighting off: "cheats: god off, noclip on"; Kurt rises z 193 -> 253 while jump is held, then flies forward (y 0 -> 278) at constant height through the first room.
 - smoke pass at c9b7292e: (1) boot -> INTRO1A splash -> menu -> New Game -> L1_MAP briefing -> fall (skipped) -> loading screen -> level 7, played to autoquit at frame 8575, no crash; (2) LEVEL=3 EVENT=1 -> stream (Bones' rescue, survived health 1) -> statistics intermission (waits for keys) -> autoquit at 9604.
+
+## The set pieces with the harness shortcuts (281b251b)
+- **Bomber:** L7 ARENA=DANT_5 RIDE=XE. The harness calls the XE (hitting DANT_5 group 16) and mounts XE_9000 at 9.88 s.
+- **XD2:** L7 ARENA=DANT_9 RIDE=XD2. Kurt is mounted on XD2_1002 at 1.02 s; the capture shows the XD2 from behind, with Kurt inside.
+- **Air strike:** L5 GIVE=SW_BONES AIM=0,1.25, sniper then fire. The CAPTURE=200 frame shows the X_STRIKB plane mid-flight over the sky alone, which is the strike scene. This was inconclusive before the shortcuts.
+- **Save prompt after the L8 stream:** L8 EVENT=1 MENU=Accept,Accept. The flow goes stream → "the save prompt before level 5 (offering "6")" → "saved game 6" → level 5 at frame 2487.
+- **Bullet-hole turret:** L8 ARENA=GUNT_10 AIM=123.80164,-26.158365, sniper then fire. INCONCLUSIVE ON BOTH PLATFORMS:
+  - The scope reaches the turret on the 3DS, and Linux shows the same view.
+  - No hole is visible at the crosshair in either capture (frames 185 and 260 on Linux, 260 on the 3DS). The red circle is the scope's target highlight.
+  - The stamp lands on the nearest face (the C#'s approximation), which may be out of view. The goldens pin the stamp; a hand check goes on the hardware list.
+- **Slideshow:** SPLASH=0. Not reached: MDK12.FLC was still playing at the 90 s deadline, and the slides start when it ends. Pinned by `movie_tests`. Needs a longer run.
+
+## Level-by-level playthrough (Sonnet pass)
+
+2026-11-21, branch of 281b251b, Mandarine r1.2.1 (md5 0d2adab6), emu_one.sh (one emulator, serial, DISPLAY=:99, llvmpipe, mono), every run `TOGGLES=enableLighting=0` and, for the gameplay runs, `FIXED=1` (guest logs under `/tmp/mdk-emurun.*`, shots `/tmp/kilo/mdk-play-<slug>.png`). Emulator only; nothing here is a hardware result or a timing.
+
+How it was run. A blind walk cannot follow a level's critical path (it stops at the first wall: the routes need turns, and the 3DS trig rounding is accepted), so each level was covered by (a) its start arena with `forward+turbo` and `fire` held, and (b) the arenas that matter, entered with `AT=` and `ARENA=` at an interior point read from the DTI (portals, fans = type 7, turrets and enemies, pickups), with `GOD=1` and the same walk. A run passes when the arena loads, its objects spawn (`objects=` in the frame line), the chain gun's fire plays and the object count falls as enemies die, Kurt stands on a floor (a z that keeps falling means a bad teleport point), and there is no crash and no REFUSED/FAIL line. The game's chain order is the C#'s `GameState.Order = 7, 6, 3, 4, 8, 5`, not 3,4,8,5,6,7.
+
+Classes: PASS works; EMU emulator limit; WALK a blind walk or a teleport point did not do what was wanted (not a bug); BUG.
+
+### Ledge grab (asked for by name)
+| Arena / scene | Command | Class | Note |
+|---|---|---|---|
+| L6 OLYM_3 ledge | `AUTOQUIT=60 LEVEL=6 AT=-1649,239,-669.9,0 ARENA=OLYM_3 WALK='forward@9-59;jump@11-29' FIXED=1` | PASS | Kurt ends at feet (-1638.6,239.0,-653.3), the C# probe golden's value (`L6_ledge_climb` step 60 area: feet64 -104871,15296,-41814 at the end), z up 16.7 (the 16-unit wall), standing on the platform in the shot. |
+
+### Menu slideshow (asked for by name)
+| Arena / scene | Command | Class | Note |
+|---|---|---|---|
+| Main menu video + slides | `SPLASH=0 AUTOQUIT=200` (also 170) | **BUG, fixed** | The menu stayed on the bare MDKOPT image for 200 s: no video, no slideshow, nothing logged. Cause: `mdk_3ds/tools/stage_romfs.sh`'s `stage_dir` is one directory deep, so `MISC/FLIC/` (Mdk12.flc) never reached the RomFS and the main menu never got the video whose end starts the slideshow. Fix: stage `misc/flic/mdk12.flc` (632 KB; pie.flc and shiny.flc are not read by the game, MDKEND.FLC and MDKBZK.MVE are not in the GOG data at all). After the fix, `SPLASH=0 AUTOQUIT=100` at 45 s shows an MDKS gameplay slide with the menu items over it (`mdk-play-menu3.png`), and at 80 s the video's last frame again (`mdk-play-menu4.png`): the cycle runs. Open nit: the "menu: slides loading off the main thread" / "loaded" log lines never print although the slides show, so that commit's ledger check cannot be read off the log. |
+
+### Level 3 (HMO_*)
+| Arena / scene | Command | Class | Note |
+|---|---|---|---|
+| Start HMO_1 | `AUTOQUIT=120 LEVEL=3 WALK='forward+turbo@30-7000;fire@40-7000' FIXED=1 GOD=1` | PASS | Loads (17 arenas); objects 11 -> 28 as HMO_2 streams in; fire kills (objects 29 -> 21, debris in the shot); Kurt walks 400 units to a wall at (-46,399,104). |
+| HMO_2 (doors, z 133) | `AT=42,720,140,90 ARENA=HMO_2` + same walk | PASS | Loads, 12 objects, Kurt on the 133 floor. |
+| HMO_6 (12 type-8) | `AT=-65,2261,-405,90 ARENA=HMO_6` | PASS | Spawns; objects 13 -> 10 under fire. |
+| HMO_8 -> CHMO_6 fan | `AT=378,2419,-250,90 ARENA=HMO_8` | PASS | The arena hands over to CHMO_6 at the portal; Kurt drops to the corridor floor (z -397). |
+| HMO_9 (XGS) | `AT=-189,2520,-295,90 ARENA=HMO_9` | PASS | 1 object left after fire. |
+| Level end -> stream -> statistics -> save prompt -> fall -> L4 | `LEVEL=3 EVENT=1 EVENT_EVERY=1 FIXED=1 GOD=1 MENU=Menu.Accept@3,...` | PASS | `special_event` at 60, level ended 459, stream (Bones at segment 163, survived health 1, 33.7 s), Statistics Intermission -> Debriefing -> Score -> save prompt "Saved game 4: level 4" (frames 3623-4193) -> Briefing -> Fall (health 100 -> 29, unsteered) -> level 4 at frame 7105. |
+
+### Level 4 (MEAT_*)
+| Arena / scene | Command | Class | Note |
+|---|---|---|---|
+| Start MEAT_1 | `LEVEL=4 WALK=forward+turbo,fire` | PASS | Loads; Kurt falls 374 -> 221 into the teal tube and stops at y 24 (objects 0: the arena has none). |
+| MEAT_4 | `AT=275,7378,-1130,90 ARENA=MEAT_4` | PASS | 5 objects, 4 after fire. |
+| MEAT_6 | `AT=-132,13650,-2030,90 ARENA=MEAT_6` | PASS | Spawns, fire plays. |
+| MEAT_7, first try | `AT=8,14333,-165,90 ARENA=MEAT_7` | WALK | That point is the arena's far portal; Kurt dropped into CMEAT_6 and kept falling (z -6928, GOD on). |
+| MEAT_7 | `AT=-7,14674,10,90 ARENA=MEAT_7` | PASS | 18 objects, Kurt on the floor, plays 254 -> 351. |
+| MEAT_10 | `AT=-227,23903,-1300,90 ARENA=MEAT_10` | PASS | 25 objects, 21 after fire. |
+| Board ride, hazards | not rerun | - | Covered in the 2026-11-20 section (package 10). |
+| Level end -> stream -> statistics | chain run | PASS | Level 4 ended at 7564 -> stream (survived, health 1) -> Statistics Intermission. |
+
+### Level 8 (GUNT_*)
+| Arena / scene | Command | Class | Note |
+|---|---|---|---|
+| Start GUNT_1 | `LEVEL=8 WALK=forward+turbo,fire` | PASS | 22 objects, 20 voices, 435 plays; Kurt at y 251. |
+| GUNT_3 | `AT=-304,962,85,90 ARENA=GUNT_3` | PASS | Loads, Kurt on the floor, 7 objects. |
+| GUNT_6 (12 type-5) | `AT=129,2300,-250,90 ARENA=GUNT_6` | PASS | 18 -> 23 objects, 450 plays. |
+| GUNT_7 (XFORKs) | `AT=23,2643,-290,90 ARENA=GUNT_7` | PASS | 27 objects, 216 plays. |
+| GUNT_8 | `AT=-324,3022,-290,90 ARENA=GUNT_8` | PASS | Kurt drops to z -377 (the arena's lower level), 11-12 objects. |
+| GUNT_10 sniper at the turret | `AT=20,3360,-360,0 ARENA=GUNT_10 AIM=123.80164,-26.158365 WALK='sniper@150-152;fire@190-200'` (3 runs) | INCONCLUSIVE | The scope screen draws, health 100 -> 91 (the turret hits Kurt), but the scope shows a ceiling pattern, no turret is in view and no stamp is logged; the BHOLE stamp stays unseen. Needs the C# viewer's frame at this aim to compare. |
+| Level end -> stream (Gunter) -> save prompt -> L5 | `LEVEL=8 EVENT=1 EVENT_EVERY=1 MENU=Menu.Accept@3,@7,...` | PASS | Ended 459 -> stream (Gunter, survived health 63) -> "save prompt before level 5 (offering 6)", closes "saved game 6" -> level 5. |
+
+### Level 5 (MUSE_*)
+| Arena / scene | Command | Class | Note |
+|---|---|---|---|
+| Start MUSE_1 | `LEVEL=5 WALK=forward+turbo,fire` | PASS | 13 objects, 643 plays. |
+| MUSE_2 (146 records) | `AT=197,-10,-520,90 ARENA=MUSE_2` | PASS | 9 objects, Kurt on the -580 floor. |
+| MUSE_3 | `AT=141,382,-1070,90 ARENA=MUSE_3` | PASS | 4 objects, fire plays. |
+| MUSE_5 (4 fans) | `AT=391,203,-2250,90 ARENA=MUSE_5` | PASS | Kurt rises z -2250 -> -2220: the fans lift him, as CHMO_6's did. |
+| Level end -> Menu | `LEVEL=5 EVENT=1` (inside the L8 chain) | PASS | Ended -> "the flow shows Menu" -> main menu (INTRO1A splash first, "Level: 6"). |
+| Game end | `LEVEL=5 AT=465,-6,-2263,0 EVENT=81 MENU=...` | PASS | Event 81 -> "the end movies (done)" -> main menu -> New Game -> briefing L6_MAP -> fall -> level 5 again (the flow's last index), as the C# order says. |
+
+### Level 6 (OLYM_*)
+| Arena / scene | Command | Class | Note |
+|---|---|---|---|
+| Start OLYM_1 | `LEVEL=6 WALK=forward+turbo,fire` | PASS | 5 objects; Kurt walks 88 units to the start room's wall. |
+| OLYM_5 (fans) | `AT=-1648,159,-1650,90 ARENA=OLYM_5` | PASS | 24-28 objects, Kurt on a floor. |
+| OLYM_6 (37 type-8) | `AT=-1912,3448,-2100,90 ARENA=OLYM_6` | PASS | 20 objects, 154 draws. |
+| OLYM_7 (XT) | `AT=-2191,2445,-2910,90 ARENA=OLYM_7` | PASS | 22 objects, 320 plays. |
+| OLYM_8 (XTR) | `AT=-2374,2950,-2230,90 ARENA=OLYM_8` | WALK | No floor under that point (a long bridge arena); Kurt fell to z -15000 under GOD. |
+| OLYM_10 (XB2 boss) -> COLYM_8 | `AT=3274,2479,-2350,90 ARENA=OLYM_10` | PASS | The arena hands over to COLYM_8, 7 objects, Kurt standing. |
+| OLYM_3 ledge | see the top table | PASS | |
+| Level end | not reached | - | Needs the level's own route. |
+
+### Level 7 (DANT_*)
+| Arena / scene | Command | Class | Note |
+|---|---|---|---|
+| Start DANT_1 | `LEVEL=7 WALK=forward+turbo,fire` | PASS | Kurt stops at the locked door, y 478.4 z 15.0 (the 2026-11-20 figure), 20 objects. |
+| DANT_3, first try | `AT=208,1442,-100,90 ARENA=DANT_3` | WALK | At the portal edge: Kurt fell through the corridor (z -5800), GOD on. |
+| DANT_3 | `AT=280,1000,-60,90 ARENA=DANT_3` | PASS | 33 objects, 24 after fire. |
+| DANT_7 (12 type-8) | `AT=381,4513,-85,90 ARENA=DANT_7` | PASS | 16 -> 15 objects. |
+| DANT_10, first try (z 15) | `AT=482,5001,15,90 ARENA=DANT_10` | WALK | Below the arena's floor (z 20): fell. |
+| DANT_10 boss arena | `AT=489,5010,32,90 ARENA=DANT_10` | PASS | Lands on z 20, 4 objects. |
+| Bomber / XD2 / tube | not rerun | - | Covered in the 2026-11-20 section. |
+
+### Not reached
+- Level 6's and level 7's ends, and the 7 -> 6 -> 3 links, by playing the levels: blind walks cannot take the routes. The links ride the same `LevelFlow` code as the chain runs that passed.
+- A hand-aimed bullet-hole stamp (GUNT_10) and the destroyed-turret texture rebuild.
+- Doors, lifts and pickups were not exercised by a walk (teleports skip the trigger geometry); they stay pinned by the goldens (`L7_plat_door`, `L4_plat_trigger`, ...).
+- Many surfaces render black or near-black even with lighting off (DANT_7, GUNT_7, the first arena of L4): Mandarine has no geometry shader; judge on hardware.
