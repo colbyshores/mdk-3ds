@@ -11,9 +11,9 @@
 //   feet ──► box (0.6,0.6,2.5) at feet+0.5 (walk) │ (0.4,0.4,2.5) at feet+0.01 (fall)
 //        ──► Kurt's arena: 4 slides ──free?──► the other arena: no slide ──► new feet
 //
-// The solid-object pass is below (package #3); the ledge probes (ArenaSpace.Probes.cs)
-// land with the entities and camera ports; this is the BSP move Kurt needs to
-// walk and fall.
+// The solid-object pass is below (package #3), and so are the probes of
+// ArenaSpace.Probes.cs: the camera's (sight, crosses), the fall-out's (bottom) and
+// the ledge grab's (floorCrossing, edge, free; package #12).
 // ============================================================================
 
 #include <stdint.h>
@@ -54,6 +54,10 @@ public:
     struct Floor {
         Vec point;
         Vec normal;
+        // The arena and the triangle crossed (C# Surface.Bsp, Surface.Triangle): the
+        // ledge grab's edge() reads the faces of the triangle's node (package #12).
+        Bsp* bsp = nullptr;
+        int triangle = Bsp::kNone;
     };
 
     // Adds an arena once (a teleport may add one no connection leads to).
@@ -132,6 +136,16 @@ public:
     // second (C# ArenaSpace.FloorCrossing). Writes the crossing point and
     // the face's normal when one is found.
     bool floorCrossing(Vec from, Vec to, Floor* out);
+
+    // ---- The ledge probes (package #12: ArenaSpace.Probes.cs:35-44) ----
+    // C# ArenaSpace.Edge: the edge of a surface floorCrossing found, crossed by the
+    // line from its point back to `back` -- the point on it and its direction.
+    // False when no edge of its node's faces is crossed.
+    static bool edge(const Floor& surface, Vec back, Vec* outPoint, Vec* outDirection);
+    // C# ArenaSpace.Free: whether a box of half extents `half` sweeps from `from` to
+    // `to` (centres) through Kurt's arena without a hit. No arena is free.
+    bool free(Vec from, Vec to, Vec half);
+    // ---- end of the ledge probes ----
 
     // The NEAREST up-facing face a segment crosses (C# ArenaSpace.Floor, 0x421708),
     // written to *out. This is a DIFFERENT probe from floorCrossing and not a

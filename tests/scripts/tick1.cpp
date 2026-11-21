@@ -4814,6 +4814,132 @@ bool kurtWindDump(int level, int steps, const std::string& at, const std::string
     return true;
 }
 
+// ---- The ledges (package #12) -------------------------------------------------------
+// Kurt's ledge grab, hang and climb, end to end against the oracle probe
+// (tests/scripts/ledge_probe): the C++ Player, ScriptRuntime and FollowCamera stepped at
+// 1/60 s in the C# Viewer's order (Kurt, the scripts, ArenaSpace.SetSolid(SolidArenas),
+// then the camera), under the probe's schedule -- platform_probe's key holds and
+// `tp:step:ARENA:x:y:z:yaw` teleports. It pins Kurt.Ledge.cs (game/player_ledge.cpp) and
+// the probes under it (ArenaSpace floorCrossing / edge / free, Bsp::edge). Its columns
+// are the probe's, byte for byte:
+//
+//   arena state feet64 yaw   the current arena, Kurt's state, feet (1/64 units), yaw.
+//   v                        forward, strafe and vertical speed: the grab zeroes them.
+//   floor chute              onFloor (the grab clears it), chuteOpen.
+//   frame climb              the animation frame (K_HANG's, a frame per two climb ticks)
+//                            and Kurt._climbTicks.
+//   hp                       health.
+//   cam                      FollowCamera's climb (the smoothed rise of the feet the hang
+//                            and the climb move), air pitch and arena pitch. The camera's
+//                            position is not printed: its trig is the LUT.
+//   voices                   the mixer's voices.
+bool kurtLedgeDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                   const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<PlatformTeleport> teleports;
+    if (!parsePlatformSchedule(schedule, &holds, &teleports)) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    for (size_t i = 0; i < teleports.size(); i++) {
+        if (teleports[i].spawn) {
+            *why = "the ledge schedule has no spawn: " + schedule;
+            return false;
+        }
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+    // Viewer.cs:237: the follow camera over the same space (no ClipView in either tree).
+    FollowCamera follow;
+    Camera camera;
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    char buffer[768];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < teleports.size(); i++) {
+            if (teleports[i].step == step) {
+                runtime.teleportKurt(teleports[i].arena, teleports[i].at, teleports[i].yaw);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        space.setSolid(runtime.solidArenas());
+        const float goal = runtime.cameraTrackTicks > 0
+                               ? runtime.cameraTrackPitch
+                               : levelData.arenaPitch(runtime.currentArena());
+        follow.update(&camera, &space, player, goal, 1.0f / 60.0f, 4.0f / 3.0f);
+
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d arena=%s state=%s feet64=%d,%d,%d yaw=%.4f v=%.4f,%.4f,%.4f floor=%d "
+                 "chute=%d frame=%.4f climb=%d hp=%d cam=%.4f,%.4f,%.4f voices=",
+                 step, runtime.currentArena().empty() ? "-" : runtime.currentArena().c_str(),
+                 kurtStateName(player.state()), p64(player.feet.x), p64(player.feet.y),
+                 p64(player.feet.z), player.yaw, player.forwardSpeed, player.strafeSpeed,
+                 player.verticalSpeed, player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0,
+                 player.animationFrame(), (int)player.climbTicks(), player.health(),
+                 follow.climb(), follow.airPitch(), follow.arenaPitch());
+        *out += buffer;
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& live = runtime.mixer().voices();
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) {
+                voices += ",";
+            }
+            voices += live[i].name;
+        }
+        *out += voices.empty() ? "-" : voices;
+        *out += "\n";
+    }
+    return true;
+}
+// ---- end of the ledges (package #12) ------------------------------------------------
+
 // Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
 // the ScriptRuntime bound to the Player it drives. Shared by the golden and by
 // `tick1 dump hurt`, so a failing golden diffs the same text it compares.
@@ -6777,6 +6903,19 @@ int main(int argc, char** argv) {
             std::string why;
             if (!kurtWindDump(level, ticks, argc > 5 ? argv[5] : "", argc > 6 ? argv[6] : "",
                               data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
+        if (what == "ledge") {
+            // `tick1 dump ledge <level> <steps> <schedule>`: kurtLedgeDump's text, the C++
+            // side of the ledge probe (tests/scripts/ledge_probe), package #12.
+            std::string got;
+            std::string why;
+            if (!kurtLedgeDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                               &why)) {
                 printf("%s\n", why.c_str());
                 return 1;
             }
@@ -8797,6 +8936,64 @@ int main(int argc, char** argv) {
             }
         }
     }
+
+    // ---- The ledges (package #12) ----
+    // Kurt's ledge grab, hang and climb against the C# probe tests/scripts/ledge_probe
+    // (see kurtLedgeDump for the columns): Kurt.Ledge.cs and ArenaSpace.Probes.cs's
+    // FloorCrossing / Edge / Free. The ledges were found by the probe's `scan` (an edge
+    // along +Y, so the grab leaves Kurt at a yaw of exactly 0, where the port's LUT facing
+    // is MathF's). The schedules are the probe's arguments, byte for byte.
+    {
+        struct LedgeCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const LedgeCase kLedgeCases[] = {
+            {"L6_ledge_climb", "golden/L6_ledge_climb.txt", 6, 140,
+             "tp:1:OLYM_3:-1649:239:-669.9:0,fwd:10-60,jump:12-30",
+             "OLYM_3: a running jump at a 16-unit wall, the hands cross its top falling at step "
+             "56, Kurt hangs 1 before the edge (K_HANG, speeds zeroed), climbs by the tables "
+             "for 31 ticks and stands on the top at step 120"},
+            {"L4_ledge_climb", "golden/L4_ledge_climb.txt", 4, 140,
+             "tp:1:MEAT_3:285:4166:-547.9:0,fwd:10-60,jump:12-30,fire:30-60",
+             "MEAT_3: the same grab on a 17-unit wall with the chain gun firing; the grab "
+             "stops MULTIFIRE (StopFiring) and the gun stays off through the hang, the fire key "
+             "still held (no UpdateFiring while climbing)"},
+            {"L4_ledge_short", "golden/L4_ledge_short.txt", 4, 100,
+             "tp:1:MEAT_3:293.5:4166:-547.9:0,fwd:10-60,jump:12-30",
+             "MEAT_3 from 1.5 before the wall: the jump into it leaves the hands short of the "
+             "top, no surface is crossed and Kurt falls back to the floor"},
+            {"L6_ledge_letgo", "golden/L6_ledge_letgo.txt", 6, 120,
+             "tp:1:OLYM_3:-1649:239:-669.9:0,fwd:10-48,jump:12-30",
+             "OLYM_3's jump with the forward key released before the fall: the same arc to step "
+             "55, but GrabLedge refuses without forward and Kurt falls back"},
+        };
+        for (size_t i = 0; i < sizeof(kLedgeCases) / sizeof(kLedgeCases[0]); i++) {
+            const LedgeCase& c = kLedgeCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!kurtLedgeDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+    // ---- end of the ledges (package #12) ----
 
     // The state half of the same guard (review-11 R11-3). Kurt.Hurt declines a hurt
     // while the entity is Dead, Knocked, GetUp or HardLand (Kurt.Combat.cs:125), and

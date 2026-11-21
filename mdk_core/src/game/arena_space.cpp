@@ -226,10 +226,34 @@ bool ArenaSpace::floorCrossing(Vec from, Vec to, Floor* out) {
         const formats::BspNode& plane = bsp->planeOf(triangle);
         out->point = point;
         out->normal = Vec{plane.normal[0], plane.normal[1], plane.normal[2]};
+        out->bsp = bsp;
+        out->triangle = triangle;
         return true;
     }
     return false;
 }
+
+// ---- The ledge probes (package #12) -----------------------------------------
+
+bool ArenaSpace::edge(const Floor& surface, Vec back, Vec* outPoint, Vec* outDirection) {
+    // C# ArenaSpace.Edge (ArenaSpace.Probes.cs:35-36): the surface's arena's Bsp.Edge.
+    return surface.bsp != nullptr &&
+           surface.bsp->edge(surface.triangle, surface.point, back, outPoint, outDirection);
+}
+
+bool ArenaSpace::free(Vec from, Vec to, Vec half) {
+    // C# ArenaSpace.Free (ArenaSpace.Probes.cs:40-44): Kurt's arena only (the first
+    // solid one, else the smallest around `from`), one pass, no slide.
+    Bsp* own = kurt(from);
+    if (own == nullptr) {
+        return true;
+    }
+    Vec end;
+    int node = Bsp::kNone;
+    return own->sweepBox(from, to, half, 0, 0.0f, &end, &node) == Bsp::kNone;
+}
+
+// ---- end of the ledge probes ------------------------------------------------
 
 bool ArenaSpace::floor(Vec from, Vec to, Vec* out) {
     // C# ArenaSpace.Floor (ArenaSpace.cs:191), line for line: the arenas around BOTH

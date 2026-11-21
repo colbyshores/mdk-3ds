@@ -234,6 +234,10 @@ public:
     // host harness pins the oracle's NaN propagation at this camera's MathF.Max.
     float airPitch() const { return _airPitch; }
 
+    // The smoothed rise of the feet per tick (C# FollowCamera._climb). Read-only for the
+    // host harness: the ledge goldens (package #12) pin it through a hang and a climb.
+    float climb() const { return _climb; }
+
     // One step of the climb (C# FollowCamera.Climb). The oracle's method is public,
     // so this one is too; the host harness uses it to pin the MathF.Min/Max arms.
     static float climbStep(float climb, float rise, float ticks);

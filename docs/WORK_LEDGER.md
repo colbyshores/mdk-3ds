@@ -536,3 +536,19 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - No emulator or hardware run (the parent runs Mandarine).
 - **Commit:** this entry's commit.
 - **Still open:** `docs/OPEN_ITEMS.md`, "Sniper mode's frontends and screen".
+
+### Ledges: the grab, the hang and the climb (PORT_GAPS package 12)
+- **What:** ported, operation for operation:
+  - `Kurt.Ledge.cs` whole into the new `mdk_core/src/game/player_ledge.cpp`: `grabLedge` (GrabLedge, Kurt.Ledge.cs:52-74), `hangFrom` (HangFrom, :77-103) and `updateClimb` (UpdateClimb, :106-129), with the climb tables and `Wrap180`. The hang's yaw is `atan2f` (the oracle's MathF.Atan2) converted as .NET's RadiansToDegrees, pinned R6 as the slide's heading is.
+  - Wired where `Kurt.Update` has them: `Current is Hang or HardLand` -> `UpdateSpecial` (Kurt.cs:190, after the sniper and slide steps of packages 5 and 8), `UpdateSpecial`'s Hang arm (Kurt.cs:598), and `GrabLedge(before, forward)` after the fall, `StayOnKeeper` and `UpdateTouched` (Kurt.cs:237), with `before` taken where the C# takes it (Kurt.cs:220).
+  - `ArenaSpace.Probes.cs`'s `Edge` and `Free` (:35-44) as `ArenaSpace::edge` / `free`; `ArenaSpace::Floor` (the C#'s Surface) now carries the arena and triangle `floorCrossing` found. `Bsp.Edge` and `Bsp.Crossing` (Bsp.cs:368-423) as `Bsp::edge`. Each in a delimited block (packages 3 and 8 edited these files).
+  - Solid objects: the C#'s grab is BSP-only (FloorCrossing, Edge, Free), so no solid object stops a grab here either.
+  - `FollowCamera::climb()` (read-only, for the goldens). The camera's climb support was already the C#'s generic rise of the feet; it needed nothing.
+- **Why:** the owner's 2026-11-20 direction to port all gameplay from the C#. Without it Kurt fell back from every wall top his jump reached, so ledges the levels expect him to climb (LEVEL4's MEAT_3, LEVEL6's OLYM_3 and others) were unreachable that way.
+- **Evidence:**
+  - The C# probe `tests/scripts/ledge_probe` and its twin `tick1 dump ledge` (Kurt's arena, state, feet, yaw, speeds, floor/chute, frame, climb ticks, hp, the camera's climb / air pitch / arena pitch, the voices) match byte for byte on four goldens: `L6_ledge_climb` (OLYM_3: a running jump at a 16-unit wall, hang at step 56, a 31-tick climb, standing at 120), `L4_ledge_climb` (MEAT_3, 17 units, the chain gun firing: the grab stops MULTIFIRE), `L4_ledge_short` (MEAT_3 from 1.5 before the wall: the hands stay short, no grab) and `L6_ledge_letgo` (the OLYM_3 jump with forward released before the fall: no grab). The ledges come from the probe's `scan`, which keeps to edges along +Y so the grab leaves Kurt at a yaw of exactly 0, where the LUT facing (kept: owner decision 2026-11-20) is exact.
+  - The goldens bite: no forward test (L6_ledge_letgo), the climb moving forward instead of back (both climb goldens), no StopFiring (L4_ledge_climb), the grab not wired (both climb goldens), `free` inverted (both climb goldens), hands at 6.0 instead of 4.6 (both climb goldens and L4_ledge_short). Every existing golden still passes.
+  - 3DS harness: the scan (`ledge_probe scan <level> <arena> any`, any edge and facing) found no ledge in any level's start arena, and `AT=` keeps the start arena, so there is no harness walk that shows a grab yet (`docs/OPEN_ITEMS.md`, "Ledges").
+  - Gates: `make -C mdk_3ds`, `tests/formats`, the Linux build, `make -C tests/scripts test` and `tools/check.sh` (see the commit). No emulator or hardware run.
+- **Commit:** this entry's commit.
+- **Still open:** `docs/OPEN_ITEMS.md`, "Ledges: what the goldens cannot see".

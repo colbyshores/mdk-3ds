@@ -171,6 +171,7 @@ set(SOURCES
     ${CORE}/src/game/object_draw.cpp
     ${CORE}/src/game/object_view.cpp
     ${CORE}/src/game/player.cpp
+    ${CORE}/src/game/player_ledge.cpp
     ${CORE}/src/game/player_sniper.cpp
     ${CORE}/src/game/scope.cpp
     ${CORE}/src/game/sniper_overlay.cpp

@@ -307,9 +307,11 @@ void Player::update(const Input& input, float delta) {
     if (updateSniper(input, input.isDown(kKeyTurbo), delta) || updateSlide(input, delta)) {
         return;
     }
-    if (state() == Kurt::HardLand) {
-        // A hard landing owns the step until K_CRASHL is done (C#
-        // UpdateSpecial). It also stops the ordinary walk state machine.
+    if (state() == Kurt::Hang || state() == Kurt::HardLand) {
+        // C# Kurt.cs:190-195, states from 800 on: no walking (damp_control). A hard
+        // landing owns the step until K_CRASHL is done, and a ledge's climb until
+        // K_HANG is (C# UpdateSpecial's two arms). It also stops the ordinary walk
+        // state machine.
         updateSpecial(delta);
         return;
     }
@@ -342,6 +344,8 @@ void Player::update(const Input& input, float delta) {
     // -- the same variable its Accelerate calls just used.
     _cameraRoll.walk(-turn, forward, delta);
 
+    // C# Kurt.cs:220: where the step started, for the ledge grab's hands (package #12).
+    const Vec3 before = feet;
     const Vec3 f = facing();
     const Vec3 r = right();
     // C# Kurt.cs:221-234: the move captures the current (pre-drain)
@@ -367,9 +371,11 @@ void Player::update(const Input& input, float delta) {
     // C# Kurt.cs:235-236: on the keeping platform's XY, then the objects he touches.
     stayOnKeeper();
     updateTouched();
-    // C# Kurt.Update returns after a hard landing, before UpdateState. The
-    // landing set the state, and the next step runs UpdateSpecial instead.
-    if (state() == Kurt::HardLand) {
+    // C# Kurt.cs:237: `if (Current == State.HardLand || GrabLedge(before, forward))
+    // return;` -- after a hard landing, or a ledge grabbed at the end of this step's
+    // fall (game/player_ledge.cpp, package #12), no items, gun or state machine; the
+    // landing or the grab set the state, and the next step runs UpdateSpecial instead.
+    if (state() == Kurt::HardLand || grabLedge(before, forward)) {
         return;
     }
     // C# Kurt.cs:242-245, in that order: UpdateItems (which may start THROW, or use an
@@ -693,6 +699,11 @@ void Player::updateState(float forward, float strafe, float delta) {
 }
 
 void Player::updateSpecial(float delta) {
+    // C# Kurt.UpdateSpecial's first arm (Kurt.cs:598-601): climbing a ledge.
+    if (state() == Kurt::Hang) {
+        updateClimb(delta);
+        return;
+    }
     // C# Kurt.UpdateSpecial for K_CRASHL: gravity and the fall continue, and
     // the animation advances at two original ticks per frame. It is held at
     // tick eight while Kurt is still falling.

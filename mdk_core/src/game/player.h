@@ -13,11 +13,13 @@
 // UpdateMuzzle and the SHOT / RUN_FIRE states; the hits are the scripts
 // runtime's ScriptRuntime::fireChainGun), and the items (Kurt.UpdateItems and the
 // THROW state, whose ItemUsed reaches the scripts runtime's Items through
-// ItemHooks). The states whose branches belong to other subsystems (the
-// ledges, the ride, the beta moves) are not reachable here, and the C#'s branches on
-// them are taken the way they are false. The fans' updraft (Kurt.Updraft.cs) and the
-// wind zones' slide (Kurt.Slide.cs) are ported (package 8): the scripts runtime answers
-// the updraft through UpdraftHook and starts, pushes and stops the slide.
+// ItemHooks). The states whose branches belong to other subsystems (the ride,
+// the beta moves) are not reachable here, and the C#'s branches on them are taken
+// the way they are false. The fans' updraft (Kurt.Updraft.cs) and the wind zones'
+// slide (Kurt.Slide.cs) are ported (package 8): the scripts runtime answers the
+// updraft through UpdraftHook and starts, pushes and stops the slide. The ledges
+// (Kurt.Ledge.cs: the grab, the hang and the climb) are ported in
+// game/player_ledge.cpp (package 12).
 //
 // Units and convention match the C#: world units, Z up; Yaw in degrees,
 // counter-clockwise, Facing = (cos yaw, sin yaw, 0); the follow camera's pitch
@@ -79,8 +81,9 @@ public:
     // Health and death (C# Kurt.Combat). What is ported here is the health, the death
     // beat, the knock-down (K_BANG, K_BFLIP and the way back), the hurt and white flashes,
     // the invulnerability timer and the recent-damage counter that decides a knock-down.
-    // What is NOT is the rest of that class: weapons and difficulty scaling, riding, and
-    // grabbing ledges (the Frozen branch landed with the end of a level, `frozen` above). What this half needs is
+    // What is NOT is the rest of that class: weapons and difficulty scaling and riding
+    // (the Frozen branch landed with the end of a level, `frozen` above; the ledges are
+    // Kurt.Ledge.cs, game/player_ledge.cpp). What this half needs is
     // narrow: a hard landing damages Kurt and a fall out of the arena kills him. health 0
     // on the floor is death (C# "health 0 --on the floor--> DEAD"); update() then runs the
     // C#'s UpdateDeath (the corpse falls on and the death frame advances) and stops once
@@ -385,7 +388,23 @@ public:
     // C# Kurt.AddVerticalSpeed (Kurt.cs:278): wind zones and push_kurt.
     void addVerticalSpeed(float speed) { verticalSpeed += speed; }
 
+    // ---- Ledges (C# Kurt.Ledge.cs, damp_ledge_grab 0x469868; game/player_ledge.cpp) ----
+    // The climb's tick counter (C# Kurt._climbTicks), for the goldens.
+    int32_t climbTicks() const { return _climbTicks; }
+    // ---- end of ledges ----
+
 private:
+    // ---- Ledges (package #12, game/player_ledge.cpp) ----
+    // C# Kurt.GrabLedge: after a step that started at `before` with the forward key
+    // `forward`, Kurt hangs from a flat top his hands crossed. True when he hangs.
+    bool grabLedge(const Vec3& before, float forward);
+    // C# Kurt.HangFrom: hangs from the edge of `top` towards Kurt (`ahead` back).
+    bool hangFrom(const ArenaSpace::Floor& top, const Vec3& ahead);
+    // C# Kurt.UpdateClimb: K_HANG at 2 ticks a frame, moved by the climb tables.
+    void updateClimb(float delta);
+    int32_t _climbTicks = 0;  // C# Kurt._climbTicks
+    // ---- end of ledges ----
+
     // Sniper mode's step (Kurt.Sniper.cs): the sniper key, the ways out, then the
     // controls, the sidestep and the clip. True when the step was a sniper one (the C#'s
     // Update returns after it).

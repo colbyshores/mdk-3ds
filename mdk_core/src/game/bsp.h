@@ -63,6 +63,13 @@ public:
     // The plane of the node whose list holds the triangle.
     const formats::BspNode& planeOf(int triangle) const;
 
+    // ---- The ledge grab's edge (package #12: Bsp.cs Edge / Crossing) ----
+    // The edge of the faces in `triangle`'s node list that the line from `point` to
+    // `back` crosses (in XY) farthest towards `back` (damp_ledge_grab 0x469868): the
+    // point on it and its direction (the triangle's winding). False when none does.
+    bool edge(int triangle, Vec point, Vec back, Vec* outPoint, Vec* outDirection) const;
+    // ---- end of the ledge grab's edge ----
+
 private:
     void sweepNode(int index);
     int sides(float distance) const;

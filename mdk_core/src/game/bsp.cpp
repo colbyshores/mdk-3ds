@@ -338,6 +338,59 @@ int Bsp::segmentWithGroup(Vec a, Vec b, SegmentMode mode, Vec* point, Clip clip,
 
 const formats::BspNode& Bsp::planeOf(int triangle) const { return arena_->nodes()[nodeOf(triangle)]; }
 
+// ---- The ledge grab's edge (package #12) -----------------------------------
+
+namespace {
+
+// C# Bsp.Crossing (Bsp.cs:413-423, 0x469e68): where the segment p1->p2 crosses the
+// line q1->q2 in XY, as a fraction of p1->p2 within 0-1, or -1. The operations and
+// their order are the oracle's.
+float crossingXY(Vec p1, Vec p2, Vec q1, Vec q2) {
+    const float denominator = (q2.x - q1.x) * (p2.y - p1.y) - (q2.y - q1.y) * (p2.x - p1.x);
+    if (denominator == 0.0f) {
+        return -1.0f;
+    }
+    const float t = ((p1.x - q1.x) * (q2.y - q1.y) - (p1.y - q1.y) * (q2.x - q1.x)) / denominator;
+    return t >= 0.0f && t <= 1.0f ? t : -1.0f;
+}
+
+} // namespace
+
+bool Bsp::edge(int triangle, Vec point, Vec back, Vec* outPoint, Vec* outDirection) const {
+    // C# Bsp.Edge (Bsp.cs:368-394), line for line: the triangle's own list (front when
+    // it is in the front range, else back), every edge of every face in it, and the one
+    // the line crosses farthest along it. A later edge wins only when strictly farther
+    // (`along <= best` skips it), so a tie keeps the first.
+    const formats::BspNode& n = arena_->nodes()[nodeOf(triangle)];
+    const bool front = triangle >= n.frontFirst && triangle < n.frontFirst + n.frontCount;
+    const int first = front ? n.frontFirst : n.backFirst;
+    const int count = front ? n.frontCount : n.backCount;
+    const std::vector<formats::Vec3f>& vertices = arena_->vertices();
+    const std::vector<int32_t>& indices = arena_->triangleIndices();
+    float best = -1.0f;
+    bool found = false;
+    for (int t = first; t < first + count; t++) {
+        for (int k = 0; k < 3; k++) {
+            const Vec a = vertices[indices[t * 3 + k]];
+            const Vec b = vertices[indices[t * 3 + (k + 1) % 3]];
+            const float along = crossingXY(point, back, a, b);
+            const float at = crossingXY(a, b, point, back);
+            if (along <= best || at < 0.0f) {
+                continue;
+            }
+            best = along;
+            found = true;
+            // C# `(a + (b - a) * at, b - a)`.
+            const Vec d = vSub(b, a);
+            *outPoint = vAdd(a, vScale(d, at));
+            *outDirection = d;
+        }
+    }
+    return found;
+}
+
+// ---- end of the ledge grab's edge -------------------------------------------
+
 // The node whose front or back list holds the triangle.
 int Bsp::nodeOf(int triangle) const {
     const auto& nodes = arena_->nodes();

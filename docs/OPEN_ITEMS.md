@@ -350,8 +350,9 @@ original's own lookup (0x431590 searches the SNI directory) and none here.
   muzzle flash (`K_MUZZF`) are loaded but never selected, and `Kurt.Visible` is absent
   so the C#'s early return there is the false branch. Sniper mode hides him
   (`KurtSprite::draw` reads `Player::sniping()`, gap package #7: the frame is the scope's). The
-  knock-down, throw, ledge and helmet states have no writer for the same
+  knock-down, throw and helmet states have no writer for the same
   reason. Whoever ports each one sets `Player`'s state and the frame counts follow.
+  (The ledge's K_HANG has its writer since package #12, `game/player_ledge.cpp`.)
 - `KurtSprite` (like `HudView`) has no release path for its palette and mesh:
   `load()` re-creates them, and a second `load()` (a level change) leaks both.
   The frames themselves are released now — `load()` releases the previous
@@ -1532,6 +1533,31 @@ pinned by `golden/L*_wind_*.txt`. Left open, each measured:
 - **3DS**: K_SLIP/K_SLIDE/K_FSLIDE/K_BSLIDE are not in Kurt's start sprite set, so their
   first frames stream (the held frame shows meanwhile). The FAN/BUTSLIDE/BUTBRAKE loops and
   `setPitch` go through the shared mixer; not yet heard on hardware or Mandarine.
+
+## Ledges: what the goldens cannot see (2026-11-20, package #12)
+
+Package 12 (`docs/PORT_GAPS.md`): `Kurt.Ledge.cs` in `game/player_ledge.cpp`, the probes
+`ArenaSpace::edge` / `free` and `Bsp::edge`, pinned by `golden/L{4,6}_ledge_*.txt`
+(`tests/scripts/ledge_probe`). Left open, each measured:
+
+- **Only yaw-0 grabs are byte-pinned.** The grab turns Kurt to the edge's direction - 90
+  degrees, and the climb then moves him along `Player::facing()`, the trig LUT (which stays:
+  owner decision 2026-11-20, rounding is not a bug). The probe's `scan` keeps to edges along
+  +Y, where the new yaw is exactly 0 and the LUT is MathF; a grab at any other angle is
+  ported line for line and differs from the oracle by the table's rounding only, which no
+  golden measures. `atan2f` (the oracle's MathF.Atan2) sets the new yaw, pinned R6.
+- **Two of GrabLedge's refusals have no golden of their own**: the 30-degree facing test
+  and the room-above test (`ArenaSpace::free`). The scan found no retail ledge at yaw 0
+  where either refuses; inverting `free` is caught (both climb goldens), but a ledge whose
+  room is blocked has not been run against the oracle.
+- **No ledge in any start arena.** `ledge_probe scan <level> <arena> any` (any edge, Kurt
+  faced square at it, seven distances x four jump steps) found no grab in HMO_1, MEAT_1,
+  MUSE_1, OLYM_1, DANT_1 or GUNT_1. The 3DS harness's `AT=` places Kurt but keeps the
+  level's start arena (the scripts' current arena and the pinned collision arena), so the
+  ledges the goldens use (LEVEL4 MEAT_3, LEVEL6 OLYM_3) cannot be shown in Mandarine by a
+  harness walk until `AT=` can enter another arena (or a walk is long enough to reach one).
+- **3DS**: K_HANG is a TRAVSPRT animation (16 frames), loaded with Kurt's other states; not
+  yet seen on hardware or Mandarine.
 
 ## The menus, the briefing and the settings (2026-11-20, package #20a): what landed, what is open
 

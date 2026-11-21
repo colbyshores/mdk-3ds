@@ -34,6 +34,8 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   along path 109157). The rounds are also the last writer of 81's `hit_direction` and 195's
   `hit_type` (weapon types 0-4) that was missing. Recount after package 8 too: C# **238**, C++ **237**, remaining
   **1** (130).
+- **Ledges (2026-11-20, PORT_GAPS package 12):** no opcode added or changed; the counts
+  stand. The ledge grab is Kurt's own (`Kurt.Ledge.cs`), not a script's.
 - **Updrafts, slide and wind (2026-11-20, PORT_GAPS package 8):** 224 (`wind_zone`)
   ported, after package #3's 114; with package 6 (28): C# **238**, C++ **237**, remaining **1** (130). Details under
   "Remaining" below.
