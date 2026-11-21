@@ -87,7 +87,7 @@ struct HarnessArenaFrame {
     int32_t texturesMade = 0;    // render_c3d_stats.h (cumulative)
     int32_t hdImported = 0;      // render_c3d_stats.h (cumulative)
     int32_t kurtReads = 0;       // KurtSprite::StreamStats::reads (cumulative)
-    int32_t kurtStandIns = 0;    // KurtSprite::StreamStats::standIns (cumulative)
+    int32_t kurtHolds = 0;       // KurtSprite::StreamStats holds + holdMisses (cumulative): draws whose wanted frame was still being read
     uint32_t logLines = 0;       // log3dsLinesWritten() (cumulative SD log writes)
 };
 void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& sample);

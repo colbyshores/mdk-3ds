@@ -772,3 +772,9 @@ Newest entries are at the bottom. Performance experiments keep their own table i
   - the air strike: `make -C mdk_3ds AUTOQUIT=60 LEVEL=5 AT=250,121,-1622,0 GIVE=SW_BONES AIM=0,1.25 FIXED=1 WALK='sniper@20-22;fire@80-82'` -- X_STRIKB full screen from frame ~81.
   - the bullet holes: `make -C mdk_3ds AUTOQUIT=60 LEVEL=8 AT=20,3360,-360,0 ARENA=GUNT_10 AIM=123.80164,-26.158365 FIXED=1 WALK='sniper@150-152;fire@190-200'` -- BHOLE stamped on XGUNTAM's body.
 - **Commit:** this entry's commit.
+
+### Hardware session (2026-11-21): the PROFILE=1 build compiles again (Kurt's held draws in the arena table)
+- **What:** the owner handed the Old 3DS appliance back for the end-of-project hardware session. Its first OG profile build (`make -C mdk_3ds AUTOQUIT=90 LEVEL=3 PROFILE=1`) did not compile: `main_3ds.cpp` read `KurtSprite::StreamStats::standIns`, which E12 (e8c49e4e) replaced with the hold (`holds`, `holdMisses`). The arena-entry table's `kSI` column now counts Kurt's held draws (`holds + holdMisses`: draws whose wanted frame was still being read); `HarnessArenaSample::kurtStandIns` is renamed `kurtHolds` and the table's legend says "Kurt held draws".
+- **Why:** every OG profile of the session needs this build; and the gates build the release and harness variants but never `PROFILE=1`, so the merge's bit-rot went unseen for a day. (Open: a compile-only gate for the PROFILE/CAPTURE variants.)
+- **Evidence:** `make -C mdk_3ds AUTOQUIT=90 LEVEL=3 PROFILE=1` builds; the profile runs that followed came back FRESH on old3ds-lan167 (CFGU model 0, 268 MHz, L2 off, stereo on). All five gates green.
+- **Commit:** this entry's commit.

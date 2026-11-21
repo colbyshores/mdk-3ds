@@ -179,7 +179,7 @@ struct ArenaRow {
     uint32_t steps;
     uint32_t streamBytes;   // read by the arena stream this frame
     float streamMs, viewsMs;
-    uint16_t viewsBuilt, textures, hd, kurtReads, kurtStandIns, logLines;
+    uint16_t viewsBuilt, textures, hd, kurtReads, kurtHolds, logLines;
     uint8_t flags;
 };
 struct ArenaEvent {
@@ -208,7 +208,7 @@ char g_arenaName[kArenaName];
 char g_arenaSecond[kArenaName];
 bool g_arenaSecondActive = false;
 int32_t g_arenaPrevSwitches = 0, g_arenaPrevStalls = 0, g_arenaPrevTextures = 0;
-int32_t g_arenaPrevHd = 0, g_arenaPrevKurtReads = 0, g_arenaPrevKurtStandIns = 0;
+int32_t g_arenaPrevHd = 0, g_arenaPrevKurtReads = 0, g_arenaPrevKurtHolds = 0;
 int64_t g_arenaPrevBytes = 0;
 uint32_t g_arenaPrevLog = 0;
 
@@ -363,7 +363,7 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
         g_arenaPrevTextures = s.texturesMade;
         g_arenaPrevHd = s.hdImported;
         g_arenaPrevKurtReads = s.kurtReads;
-        g_arenaPrevKurtStandIns = s.kurtStandIns;
+        g_arenaPrevKurtHolds = s.kurtHolds;
         g_arenaPrevLog = s.logLines;
     }
     ArenaRow row;
@@ -382,7 +382,7 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
     row.textures = clamp16((int64_t)s.texturesMade - g_arenaPrevTextures);
     row.hd = clamp16((int64_t)s.hdImported - g_arenaPrevHd);
     row.kurtReads = clamp16((int64_t)s.kurtReads - g_arenaPrevKurtReads);
-    row.kurtStandIns = clamp16((int64_t)s.kurtStandIns - g_arenaPrevKurtStandIns);
+    row.kurtHolds = clamp16((int64_t)s.kurtHolds - g_arenaPrevKurtHolds);
     row.logLines = clamp16((int64_t)s.logLines - (int64_t)g_arenaPrevLog);
     const bool arenaChanged = strncmp(g_arenaName, arena, kArenaName - 1) != 0;
     const bool secondChanged = strncmp(g_arenaSecond, second, kArenaName - 1) != 0 ||
@@ -398,7 +398,7 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
     g_arenaPrevTextures = s.texturesMade;
     g_arenaPrevHd = s.hdImported;
     g_arenaPrevKurtReads = s.kurtReads;
-    g_arenaPrevKurtStandIns = s.kurtStandIns;
+    g_arenaPrevKurtHolds = s.kurtHolds;
     g_arenaPrevLog = s.logLines;
 
     if (row.flags != 0) {
@@ -495,14 +495,14 @@ void arenaReport(uint32_t steadyUs) {
     mdk::log3dsPrintf("profile: arena  frame period    sim(st)  begin   draw    end  "
                       "strmKB strmMs views viewMs  tex  hd kRd kSI log flags "
                       "(ms; period = this frame's start to the next's; tex/hd/kRd/kSI/log = "
-                      "textures made, HD imports, Kurt animations read, Kurt stand-ins, SD "
+                      "textures made, HD imports, Kurt animations read, Kurt held draws, SD "
                       "log lines, this frame)");
     const double msPerTick = 1000.0 / (double)SYSCLOCK_ARM11;
     uint32_t hidden = 0;
     for (uint32_t i = 0; i < g_arenaRowCount; i++) {
         const ArenaRow& r = g_arenaRows[i];
         const bool work = r.streamBytes != 0 || r.viewsBuilt != 0 || r.textures != 0 ||
-                          r.hd != 0 || r.kurtReads != 0 || r.kurtStandIns != 0 ||
+                          r.hd != 0 || r.kurtReads != 0 || r.kurtHolds != 0 ||
                           r.logLines != 0;
         const bool slow = slowUs == 0u || r.periodUs == 0u || r.periodUs > slowUs;
         if (r.flags == 0 && !work && !slow) {
@@ -519,7 +519,7 @@ void arenaReport(uint32_t steadyUs) {
                           (double)r.endT * msPerTick, (unsigned long)(r.streamBytes / 1024u),
                           (double)r.streamMs, (unsigned)r.viewsBuilt, (double)r.viewsMs,
                           (unsigned)r.textures, (unsigned)r.hd, (unsigned)r.kurtReads,
-                          (unsigned)r.kurtStandIns, (unsigned)r.logLines, flags);
+                          (unsigned)r.kurtHolds, (unsigned)r.logLines, flags);
     }
     mdk::log3dsPrintf("profile: arena table end (%lu kept rows hidden: unflagged, not slow, "
                       "no first-use work)",

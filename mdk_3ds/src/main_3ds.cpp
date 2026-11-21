@@ -3354,7 +3354,9 @@ int main(int argc, char** argv) {
             sample.hdImported = made.hdImported;
             if (kurtSpriteReady) {
                 sample.kurtReads = kurtSprite.streamStats().reads;
-                sample.kurtStandIns = kurtSprite.streamStats().standIns;
+                // E12 replaced the 16-bit stand-in with the HOLD (KurtSprite::chooseFrame):
+                // a draw whose frame is still being read shows the last frame, or none.
+                sample.kurtHolds = kurtSprite.streamStats().holds + kurtSprite.streamStats().holdMisses;
             }
             sample.logLines = mdk::log3dsLinesWritten();
             mdk::harnessArenaFrame(frame, sample);
