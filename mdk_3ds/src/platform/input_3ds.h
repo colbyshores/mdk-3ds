@@ -126,6 +126,15 @@ constexpr float kMaxLookStep = 0.1f;
 void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& bindings,
                    Input* input);
 
+// THE SCOPE'S BUTTONS (owner 2026-11-21). In sniper mode the C# reads forward/back
+// as the scope's tilt (Kurt.SniperControls); on the 3DS the circle pad already
+// tilts it, and the zoom keys default to forward's and back's buttons (X in, B
+// out). So while the scope is up, forward and back read only their buttons that
+// are NOT also a zoom key's: X zooms and does not tilt as well. A binding with no
+// overlap (controls.ini) is untouched. The caller runs it after input3dsApply
+// with the same held mask, only on frames Kurt is sniping.
+void input3dsScopeButtons(uint32_t held, const ControlBindings& bindings, Input* input);
+
 // The libctru service: ONE hidScanInput, the reads, and input3dsApply. Returns
 // the frame's held mask so the caller can act on it without scanning HID a
 // second time (see the trap above). `input` must be the frame's own — the mouse

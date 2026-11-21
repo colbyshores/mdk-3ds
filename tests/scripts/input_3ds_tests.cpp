@@ -85,18 +85,20 @@ HidFrame buttons(uint32_t held) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. The digital map. For each button, exactly the action it binds and nothing
-//    else is down.
+// 1. The digital map. For each button, exactly the actions it binds and nothing
+//    else is down. X and B are also the scope's zoom (owner 2026-11-21), which
+//    only the scope reads (input3dsScopeButtons decides in sniper mode).
 // ---------------------------------------------------------------------------
 void testDigitalMap() {
     struct Row {
         uint32_t held;
         int key; // -1: no action at all
         const char* what;
+        int also = -1; // a second action the same button binds
     };
     const Row rows[] = {
-        {kHidX, kKeyForward, "X walks forward"},
-        {kHidB, kKeyBack, "B walks back"},
+        {kHidX, kKeyForward, "X walks forward (and is zoom in)", kKeyZoomIn},
+        {kHidB, kKeyBack, "B walks back (and is zoom out)", kKeyZoomOut},
         {kHidY, kKeyStrafeLeft, "Y strafes left"},
         {kHidA, kKeyStrafeRight, "A strafes right"},
         {kHidL, kKeyJump, "L jumps"},
@@ -114,7 +116,7 @@ void testDigitalMap() {
     for (const Row& row : rows) {
         const Input input = applied(buttons(row.held), kStep);
         for (int key = 0; key < kKeyCount; key++) {
-            const bool want = (key == row.key);
+            const bool want = (key == row.key) || (key == row.also);
             if (input.down[key] != want) {
                 printf("  FAIL: %s -- action %d was %d, expected %d\n", row.what, key,
                        (int)input.down[key], (int)want);
@@ -308,8 +310,8 @@ void testTheDefaults() {
     expect("sniper = D-pad up", d.buttons[kKeySniper], kHidDUp);
     expect("use item = D-pad down", d.buttons[kKeyUseItem], kHidDDown);
     expect("turbo = ZL", d.buttons[kKeyTurbo], kHidZL);
-    expect("the zoom keys are unbound (the owner picks them)",
-           d.buttons[kKeyZoomIn] | d.buttons[kKeyZoomOut], 0);
+    expect("zoom in = X (owner 2026-11-21)", d.buttons[kKeyZoomIn], kHidX);
+    expect("zoom out = B (owner 2026-11-21)", d.buttons[kKeyZoomOut], kHidB);
     expect("noclip's down is unbound (package #21; the owner picks it)", d.buttons[kKeyDown], 0);
     expect("the turn axes have no buttons", d.buttons[kKeyTurnLeft] | d.buttons[kKeyTurnRight], 0);
     expect("escape has none (START is the pause menu)", d.buttons[kKeyEscape], 0);
@@ -321,8 +323,37 @@ void testTheDefaults() {
     expect("no default binds START or SELECT", all & (kHidStart | kHidSelect), 0);
     expectText("the boot log's line", describeControls(d),
                "forward=X back=B strafe_left=Y strafe_right=A jump=L fire=R+ZR "
-               "item_previous=DLEFT item_next=DRIGHT sniper=DUP zoom_in=none zoom_out=none "
+               "item_previous=DLEFT item_next=DRIGHT sniper=DUP zoom_in=X zoom_out=B "
                "use_item=DDOWN turbo=ZL down=none");
+}
+
+// THE SCOPE'S BUTTONS (owner 2026-11-21): in sniper mode X zooms in and B zooms
+// out without tilting; outside it X and B are forward and back as always.
+void testTheScopeButtons() {
+    const ControlBindings d = defaultControlBindings();
+    Input input;
+    HidFrame frame;
+    frame.held = kHidX;
+    input3dsApply(frame, kStep, d, &input);
+    expect("walking: X is forward", input.down[kKeyForward] ? 1 : 0, 1);
+    input3dsScopeButtons(frame.held, d, &input);
+    expect("scope: X does not tilt", input.down[kKeyForward] ? 1 : 0, 0);
+    expect("scope: X zooms in", input.down[kKeyZoomIn] ? 1 : 0, 1);
+    expect("scope: X does not zoom out", input.down[kKeyZoomOut] ? 1 : 0, 0);
+    frame.held = kHidB;
+    input3dsApply(frame, kStep, d, &input);
+    input3dsScopeButtons(frame.held, d, &input);
+    expect("scope: B does not tilt", input.down[kKeyBack] ? 1 : 0, 0);
+    expect("scope: B zooms out", input.down[kKeyZoomOut] ? 1 : 0, 1);
+    // A controls.ini that gives the zoom its own buttons keeps forward's tilt.
+    ControlBindings own = d;
+    own.buttons[kKeyZoomIn] = kHidL;
+    own.buttons[kKeyZoomOut] = kHidDDown;
+    frame.held = kHidX | kHidL;
+    input3dsApply(frame, kStep, own, &input);
+    input3dsScopeButtons(frame.held, own, &input);
+    expect("own zoom buttons: X still tilts", input.down[kKeyForward] ? 1 : 0, 1);
+    expect("own zoom buttons: L zooms in", input.down[kKeyZoomIn] ? 1 : 0, 1);
 }
 
 // The default file, written and read back, is the defaults; a file of only
@@ -443,6 +474,7 @@ int runInput3dsTests() {
     failures = 0;
     testDigitalMap();
     testTheDefaults();
+    testTheScopeButtons();
     testTheRoundTrip();
     testBadAndUnknownLines();
     testTheBindingsThroughTheMapping();

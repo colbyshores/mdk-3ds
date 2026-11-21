@@ -280,7 +280,11 @@ fi
 # started before the push expires while the game is still running and reads
 # exactly like a failed run.
 WAIT=${MDK_HW_WAIT:-600}
-PULL=/tmp/mdk-hw-cycle.pull
+# The pull lands beside THIS run's --out, never at a fixed path: two cycles at
+# once (the selftest on 127.0.0.1 and a real console run, 2026-11-21) shared
+# /tmp/mdk-hw-cycle.pull, and the console run read the fake console's log as
+# its own (FRESH, then PROFILE MISSING).
+PULL="$OUT.pull"
 rm -f "$PULL"
 PULL_FAILS=0
 GOT=0

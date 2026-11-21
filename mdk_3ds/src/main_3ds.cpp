@@ -2134,6 +2134,10 @@ int main(int argc, char** argv) {
         // runs zero steps.
         mdk::Input input;
         const u32 held = mdk::input3dsPoll(&input, elapsed, controls);
+        // In sniper mode X and B zoom instead of tilting (input_3ds.h).
+        if (playerReady && player.sniping()) {
+            mdk::input3dsScopeButtons(held, controls, &input);
+        }
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
         // The scripted walk owns the actions, after the poll and before the game
         // reads them (harness_3ds.h). A refused script stops the run at once.
