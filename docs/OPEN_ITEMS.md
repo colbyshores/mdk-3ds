@@ -2286,10 +2286,25 @@ Still open:
   do not load the beta demo.
 - ~~**The slideshow after MDK12.FLC**~~: hooked at the integration of #20b and #20c
   (see the statistics' section above).
-- **The 3DS loads the slides at the video's end**: Slideshow.Start reads and decodes the eight
-  MDKS_*.GIF (600x360, ~1.7 MiB of indices with their palettes) on the main thread in one frame,
-  as the C# does. A one-off stall in the menu, unmeasured on the Old 3DS (owner rule: no
-  main-thread stalls); spreading the load over frames is the fix if it shows.
+- ~~**The 3DS loads the slides at the video's end**~~ (leftovers pass): the 3DS lends the main
+  menu its file thread (`game/async_read.h`; render.h's `mdk_render_read_file_async`, the
+  reader's new `kChannelFile`). The slides are read AND decoded there (`Gif::decodePacked`,
+  1.4-2.1 ms each on the host, so ~70-120 ms each on an Old 3DS), one in flight, and the menu
+  takes at most one decoded slide a frame (a copy); a slide not here when due leaves the
+  current image up. MDK12.FLC (632 KB, read at the splash's end) comes the same way, MDKOPT
+  showing until it does. Linux and the host tests read at once, as the C#. Pinned by
+  `movie_tests`' checkLentReader with a fake reader; the 3DS thread's new pollTag/discard and
+  the worker's work step are unrun here (the parent's emulator run: the log's "menu: slides
+  loading off the main thread" then "menu: slides loaded").
+- **The menus' other one-frame loads on the 3DS (found, not changed)**: every entry to the
+  front screens (boot, each level's end, a death) reads and parses MDKFONT.FTI (160 KB),
+  OPTIONS.BNI (1.16 MB) and STATS.BNI (1.39 MB) in `menu_screens_3ds.cpp`'s `loadAssets`,
+  and the statistics load XGHEAD (`StatsScreen::attach`), the fall its assets, and the end
+  movie its FLC/MVE (absent from the GOG data), each when its screen opens. Those are screen
+  transitions (the last frame stays up, nothing animates), not stalls inside a running screen.
+  Inside a screen the statistics decode and upload one STATS.BNI picture per page change (from
+  memory, one 600x360 image), as the C#'s LoadImage. Moving `loadAssets` to the file thread is
+  the next step if the transition shows on hardware.
 - **On the 3DS a streamed picture's index 0 is black, not transparent** (RGB565 has no alpha).
   Every streamed picture is the bottom layer over the black clear, where the C#'s transparent
   index 0 also shows black; a future streamed picture drawn OVER something would differ.

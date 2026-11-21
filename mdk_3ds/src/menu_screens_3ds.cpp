@@ -22,6 +22,7 @@
 #include "formats/fti.h"
 #include "formats/mdk_data.h"
 #include "formats/palette.h"
+#include "game/async_read.h"
 #include "game/end_movie.h"
 #include "game/font_view.h"
 #include "game/input.h"
@@ -108,6 +109,26 @@ bool loadAssets(MdkRenderer renderer, const formats::MdkData& data, UiAssets* ui
         formats::Bni::parse(&ui->stats, std::move(statsBytes));
     }
     return true;
+}
+
+// THE LENT FILE READER (game/async_read.h): the renderer's file thread
+// (render.h's mdk_render_read_file_async, platform/async_file_reader.h's
+// kChannelFile). The main menu reads MDK12.FLC and the slideshow's eight GIFs
+// (~632 KB and ~650 KB of files, ~1.7 MiB decoded) through it instead of on the
+// main thread in one frame (the owner's rule: no main-thread stalls), and the
+// GIFs are decoded there too (1.4-2.1 ms each on the host, so ~70-120 ms each on
+// an Old 3DS by the usual 50-60x ratio: one long hitch per slide on the main
+// thread even spread one a frame).
+bool lentRequest(void* user, int32_t tag, const char* path, AsyncWork work) {
+    return mdk_render_read_file_async(static_cast<MdkRenderer>(user), tag, path, work);
+}
+
+bool lentPoll(void* user, int32_t tag, uint8_t** bytes, uint32_t* size, bool* ok) {
+    return mdk_render_poll_file_read(static_cast<MdkRenderer>(user), tag, bytes, size, ok);
+}
+
+void lentCancel(void* user, int32_t tag) {
+    mdk_render_cancel_file_read(static_cast<MdkRenderer>(user), tag);
 }
 
 // The harness's menu keys (MENU=..., game/menu_presses.h), parsed once; the
@@ -309,8 +330,19 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             items.setSettings(front->settings, applied, front);
             items.setPrint(printLine, nullptr);
             mainMenu->setMedia(&ui->options, &data);
-            log3dsPrintf("flow: the main menu%s",
-                         flow.state().splash ? " (the INTRO1A splash first)" : "");
+            // Without a running file thread the menu reads at once, as the C#.
+            const bool lent = mdk_render_has_file_reader(front->renderer);
+            if (lent) {
+                AsyncRead reader;
+                reader.request = lentRequest;
+                reader.poll = lentPoll;
+                reader.cancel = lentCancel;
+                reader.user = front->renderer;
+                mainMenu->setReader(reader);
+            }
+            log3dsPrintf("flow: the main menu%s%s",
+                         flow.state().splash ? " (the INTRO1A splash first)" : "",
+                         lent ? "" : " (no file thread: the video and slides read at once)");
             mainMenu->open(&ui->fti, &flow.state(), menuSavesOf(front->saves), false,
                            menu::MenuPage::Main);
             splashView.open(front->renderer, mainMenu->splash(), true);
@@ -340,6 +372,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     open(screen);
 
     double last = front->now();
+    bool slidesLoading = false;
     // Every button counts as held on the first frame: the press that left the
     // last screen (A on the START menu's MAIN MENU) must not choose here too.
     u32 prevHeld = 0xFFFFFFFFu;
@@ -404,6 +437,14 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         } else if (screen == flow::Screen::Menu) {
             next = mainMenu->frame(keys, elapsed);
             movieView.sync(front->renderer, mainMenu->video(), halfRate);
+            // The lent reader's slide load, for the log: its start and its end.
+            if (mainMenu->slideshow().loading() != slidesLoading) {
+                slidesLoading = mainMenu->slideshow().loading();
+                log3dsPrintf("menu: slides %s at frame %lu (%d loaded)",
+                             slidesLoading ? "loading off the main thread" : "loaded",
+                             (unsigned long)*front->frame,
+                             (int)mainMenu->slideshow().slideCount());
+            }
         } else if (screen == flow::Screen::EndMovie) {
             // C# EndMovie.Frame's Back: B, and START or A as the console's skip.
             next = endMovie->frame(keys.back || keys.accept, elapsed);

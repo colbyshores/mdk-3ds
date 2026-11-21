@@ -114,6 +114,20 @@ bool mdk_render_poll_range_read(MdkRenderer, int32_t*, uint8_t**, uint32_t*, boo
     return false;
 }
 
+bool mdk_render_has_file_reader(MdkRenderer) {
+    return false;
+}
+
+bool mdk_render_read_file_async(MdkRenderer, int32_t, const char*, MdkFileWork) {
+    return false;
+}
+
+bool mdk_render_poll_file_read(MdkRenderer, int32_t, uint8_t**, uint32_t*, bool*) {
+    return false;
+}
+
+void mdk_render_cancel_file_read(MdkRenderer, int32_t) {}
+
 MdkPaletteId mdk_render_create_palette(MdkRenderer, const uint8_t*) {
     mdk_test_palettes++;
     return 7;

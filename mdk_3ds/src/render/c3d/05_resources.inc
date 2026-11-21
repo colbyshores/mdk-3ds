@@ -411,6 +411,48 @@ bool mdk_render_poll_range_read(MdkRenderer r, int32_t* tag, uint8_t** bytes, ui
     return true;
 }
 
+// THE MENUS' WHOLE-FILE READS through the same thread (render.h): kChannelFile,
+// taken by tag. Only the main thread calls these (the reader's slots are locked).
+bool mdk_render_has_file_reader(MdkRenderer r) {
+    RendererC3D* renderer = asC3d(r);
+    return renderer != nullptr && renderer->hdReader.running();
+}
+
+bool mdk_render_read_file_async(MdkRenderer r, int32_t tag, const char* path, MdkFileWork work) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || !path || !*path) {
+        return false;
+    }
+    return renderer->hdReader.requestFile(mdk::AsyncFileReader::kChannelFile, tag, path, work);
+}
+
+bool mdk_render_poll_file_read(MdkRenderer r, int32_t tag, uint8_t** bytes, uint32_t* size,
+                               bool* ok) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || !bytes || !size || !ok) {
+        return false;
+    }
+    size_t length = 0;
+    if (!renderer->hdReader.pollTag(mdk::AsyncFileReader::kChannelFile, tag, bytes, &length,
+                                    ok)) {
+        return false;
+    }
+    *size = (uint32_t)length;
+    if (!*ok) {
+        free(*bytes);
+        *bytes = nullptr;
+        *size = 0;
+    }
+    return true;
+}
+
+void mdk_render_cancel_file_read(MdkRenderer r, int32_t tag) {
+    RendererC3D* renderer = asC3d(r);
+    if (renderer) {
+        renderer->hdReader.discard(mdk::AsyncFileReader::kChannelFile, tag);
+    }
+}
+
 // The HD pack's compressed replacement for an index texture: recorded only.
 // The draw that first wants it queues it, and the frame-boundary pump imports
 // it under the HD budget (04_textures.inc, THE HD STREAM).

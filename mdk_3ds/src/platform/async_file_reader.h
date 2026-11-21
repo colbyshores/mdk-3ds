@@ -28,6 +28,13 @@
 // -- a finished read is never handed to the other's importer -- and counts only
 // its own slots (busy). The pack stream keeps at most one read in flight, so the
 // HD stream always has the other slots.
+//
+// A THIRD CHANNEL, kChannelFile: whole files for the menu screens (the
+// slideshow's GIFs, MDK12.FLC; game/async_read.h through render.h's
+// mdk_render_read_file_async). Its users take their reads BY TAG (pollTag), so two
+// of them never take each other's, and drop one they no longer want (discard):
+// a finished read is freed at once, a read in progress when the worker ends it.
+// They keep one or two reads in flight, never all the slots.
 // ============================================================================
 
 #include <3ds.h>
@@ -43,6 +50,7 @@ public:
     static constexpr size_t kStackBytes = 16 * 1024;
     static constexpr int32_t kChannelHd = 0;
     static constexpr int32_t kChannelPack = 1;
+    static constexpr int32_t kChannelFile = 2;
     // The largest range read: more than any animation's frames (K_CHUTEC's 12
     // are 163,536 bytes); a corrupt index cannot size a bigger allocation.
     static constexpr uint32_t kMaxRangeBytes = 1u << 20;
@@ -69,12 +77,32 @@ public:
     bool requestRange(int32_t channel, int32_t tag, const char* path, uint32_t offset,
                       uint32_t length);
 
+    // Work the worker runs on a whole file's bytes before handing them back
+    // (kChannelFile's GIF decode): it returns a malloc'd block and its size, or
+    // null (ok=false). The worker frees the bytes it read.
+    typedef uint8_t* (*Work)(const uint8_t* bytes, uint32_t size, uint32_t* outSize);
+    // Asks for the whole of `path` under `tag` on `channel`, `work` (null: none)
+    // run on it on the worker. False as request.
+    bool requestFile(int32_t channel, int32_t tag, const char* path, Work work);
+
     // Takes one finished read on `channel`, if any: its tag, the path it read
     // (into `path`, kPathMax bytes -- a tag can be reused before its old read
     // finishes, and the path is what tells the two apart), and either the bytes
     // (malloc'd; the caller frees them) and their size, or ok=false (the file
     // could not be read). False when nothing on that channel is finished.
     bool poll(int32_t channel, int32_t* tag, char* path, uint8_t** bytes, size_t* size, bool* ok);
+
+    // Takes the finished read under `tag` on `channel`, if it is finished: its
+    // bytes (malloc'd; the caller frees them) and size, or ok=false. False while
+    // it is not (or there is no such read).
+    bool pollTag(int32_t channel, int32_t tag, uint8_t** bytes, size_t* size, bool* ok);
+
+    // Drops every read under `tag` on `channel`: a queued one is forgotten, a
+    // finished one's bytes freed, one in progress freed by the worker when it
+    // ends. Its slot is free again either way.
+    void discard(int32_t channel, int32_t tag);
+
+    bool running() const { return running_; }
 
     // Slots of `channel` holding a request, a read in progress or an untaken
     // result.
@@ -102,8 +130,14 @@ private:
         uint8_t* bytes = nullptr;
         size_t size = 0;
         bool ok = false;
+        // discard() on a read in progress: the worker frees it when it ends.
+        bool discarded = false;
+        Work work = nullptr;
     };
 
+
+    bool queue(int32_t channel, int32_t tag, const char* path, uint32_t offset, uint32_t length,
+               Work work);
 
     Slot slots_[kSlots];
     LightLock lock_;

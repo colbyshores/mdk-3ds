@@ -33,15 +33,24 @@
 // decoded one at a time into one buffer -- an FLC frame is a delta of the one
 // before, so they cannot be skipped -- never preloaded.
 //
+// THE READ, ON THE 3DS (owner rule: no main-thread stalls): with a reader lent
+// (setReader, game/async_read.h: the 3DS's file thread), play() only asks for
+// the FLC; update() takes it when it has arrived and starts it there, as play()
+// would have (its first frame at once). Until then nothing plays and nothing is
+// shown, so the menu keeps MDKOPT, as the C#'s does before the video's first
+// frame. Without a reader (the desktop, the host tests) play() reads at once.
+//
 // Cold code (menus). No virtuals, no templates, no exceptions (AGENTS.md §10).
 // ============================================================================
 
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "formats/mve.h"
+#include "game/async_read.h"
 
 namespace mdk {
 
@@ -82,6 +91,8 @@ public:
     // The game's data (the C#'s ui.Data), where play() reads its files.
     void setData(const formats::MdkData* data) { data_ = data; }
     void setAudio(const VideoAudio& audio) { audio_ = audio; }
+    // The frontend's file reader for play()'s FLC (see the header).
+    void setReader(const AsyncRead& reader) { reader_ = reader; }
     // C# FrameShown: a frame was shown, its number (from 1).
     void setFrameShown(void (*fn)(void* user, int32_t frame), void* user) {
         frameShown_ = fn;
@@ -94,8 +105,11 @@ public:
     }
 
     // C# Play: starts an FLC (relative to the game's data), its first frame
-    // shown at once. False when it can't be read.
+    // shown at once. False when it can't be read. With a reader lent: asked for,
+    // started by the update() it arrives in (pending() until then).
     bool play(const char* path);
+    // Whether play()'s FLC is still being read by the lent reader.
+    bool pending() const { return pending_; }
     // C# PlayMovie: starts an MVE with its sound. False when it can't be read.
     bool playMovie(const char* path);
     // C# Hold: stays on the current frame for `seconds`.
@@ -141,6 +155,11 @@ public:
     int32_t flcFrame() const;
 
 private:
+    // The tag of play()'s read (the slideshow's are below 1000).
+    static const int32_t kReadTag = 1000;
+
+    bool start(const uint8_t* bytes, int32_t size);
+    void cancelRead();
     void showNext();
     void updateMovie(float delta);
     bool nextMovieFrame();
@@ -151,6 +170,10 @@ private:
 
     const formats::MdkData* data_ = nullptr;
     VideoAudio audio_;
+    AsyncRead reader_;
+    bool pending_ = false;
+    bool requested_ = false;
+    std::string pendingPath_;
     void (*frameShown_)(void*, int32_t) = nullptr;
     void* frameShownUser_ = nullptr;
     void (*finished_)(void*) = nullptr;

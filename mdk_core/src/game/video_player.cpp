@@ -4,6 +4,7 @@
 #include "game/video_player.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "formats/flc.h"
@@ -24,7 +25,18 @@ const int32_t kMaxColour = 255;
 } // namespace
 
 VideoPlayer::VideoPlayer() {}
-VideoPlayer::~VideoPlayer() {}
+VideoPlayer::~VideoPlayer() {
+    cancelRead();
+}
+
+// A read still out is dropped (the menu closed before the FLC arrived).
+void VideoPlayer::cancelRead() {
+    if (pending_ && requested_ && reader_.cancel) {
+        reader_.cancel(reader_.user, kReadTag);
+    }
+    pending_ = false;
+    requested_ = false;
+}
 
 int32_t VideoPlayer::flcFrame() const {
     return flc_ ? flc_->frame() : -1;
@@ -37,9 +49,28 @@ bool VideoPlayer::read(const char* path, std::vector<uint8_t>* bytes) const {
 
 // C# Play.
 bool VideoPlayer::play(const char* path) {
+    cancelRead();
+    if (reader_.active() && data_ != nullptr) {
+        // The lent reader: asked for now (again each update while the reader is
+        // full), started by the update() it arrives in.
+        flc_.reset();
+        pendingPath_ = data_->pathOf(path);
+        pending_ = true;
+        requested_ = reader_.request(reader_.user, kReadTag, pendingPath_.c_str(), nullptr);
+        return true;
+    }
     std::vector<uint8_t> bytes;
+    if (!read(path, &bytes)) {
+        flc_.reset();
+        return false;
+    }
+    return start(bytes.data(), (int32_t)bytes.size());
+}
+
+// C# Play's half after the read: the FLC loaded, the clock at 0, its first frame.
+bool VideoPlayer::start(const uint8_t* bytes, int32_t size) {
     std::unique_ptr<formats::Flc> flc(new formats::Flc());
-    if (!read(path, &bytes) || !formats::Flc::load(bytes.data(), (int32_t)bytes.size(), flc.get())) {
+    if (bytes == nullptr || !formats::Flc::load(bytes, size, flc.get())) {
         flc_.reset();
         return false;
     }
@@ -114,6 +145,7 @@ void VideoPlayer::showStill(int32_t width, int32_t height, const uint8_t* indice
 
 // C# Stop.
 void VideoPlayer::stop() {
+    cancelRead();
     flc_.reset();
     mve_.reset();
     if (audio_.stop) {
@@ -124,6 +156,27 @@ void VideoPlayer::stop() {
 
 // C# Update.
 void VideoPlayer::update(float delta) {
+    if (pending_) {
+        // play()'s FLC from the lent reader: started as play() starts it, then this
+        // update runs on it as the C#'s does after Play.
+        if (!requested_) {
+            requested_ = reader_.request(reader_.user, kReadTag, pendingPath_.c_str(), nullptr);
+            return;
+        }
+        uint8_t* bytes = nullptr;
+        uint32_t size = 0;
+        bool ok = false;
+        if (!reader_.poll(reader_.user, kReadTag, &bytes, &size, &ok)) {
+            return;
+        }
+        pending_ = false;
+        requested_ = false;
+        const bool started = ok && start(bytes, (int32_t)size);
+        free(bytes);
+        if (!started) {
+            return;
+        }
+    }
     if (mve_) {
         updateMovie(delta);
         return;

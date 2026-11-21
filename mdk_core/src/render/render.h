@@ -217,6 +217,26 @@ bool mdk_render_read_range_async(MdkRenderer r, int32_t tag, const char* path, u
 bool mdk_render_poll_range_read(MdkRenderer r, int32_t* tag, uint8_t** bytes, uint32_t* size,
                                 bool* ok);
 
+// THE SAME READER, lent for WHOLE FILES to the menu screens (game/async_read.h:
+// the slideshow's GIFs and MDK12.FLC, which the C# reads on the frame that wants
+// them). The 3DS reads them on its file thread, on a channel of their own
+// (platform/async_file_reader.h's kChannelFile), and hands each back BY TAG, so
+// two users never take each other's reads. has: whether the backend lends a
+// reader at all (the desktop: false -- its screens read at once). read: asks for
+// `path` (resolved) under `tag`; false when it cannot be queued now (ask again).
+// poll: the read under `tag`, once finished -- its bytes (malloc'd; the caller
+// free()s them) or ok=false with null bytes; false while it is not. cancel: the
+// read under `tag` dropped, whatever its state.
+// `work` (null: none) runs on the reader's thread on the bytes read and replaces
+// them with what it returns (malloc'd, its size in *outSize; null: ok=false) --
+// the slideshow's GIF decode leaves the main thread that way.
+typedef uint8_t* (*MdkFileWork)(const uint8_t* bytes, uint32_t size, uint32_t* outSize);
+bool mdk_render_has_file_reader(MdkRenderer r);
+bool mdk_render_read_file_async(MdkRenderer r, int32_t tag, const char* path, MdkFileWork work);
+bool mdk_render_poll_file_read(MdkRenderer r, int32_t tag, uint8_t** bytes, uint32_t* size,
+                               bool* ok);
+void mdk_render_cancel_file_read(MdkRenderer r, int32_t tag);
+
 // Create a 256x1 RGBA palette.
 MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba256);
 

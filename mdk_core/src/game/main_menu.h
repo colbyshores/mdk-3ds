@@ -101,6 +101,14 @@ public:
     // the player reads MDK12.FLC), BEFORE open. Either may be null: no splash, no
     // video.
     void setMedia(const formats::Bni* options, const formats::MdkData* data);
+    // The frontend's file reader (game/async_read.h), BEFORE open: MDK12.FLC and
+    // the slideshow's GIFs are then read off the main thread (the 3DS's rule: no
+    // main-thread stalls), the menu showing MDKOPT / the frame it has until they
+    // arrive. Without it they are read at once, as the C# reads them.
+    void setReader(const AsyncRead& reader) {
+        video_.setReader(reader);
+        slideshow_.setReader(reader);
+    }
 
     // C# Frame's input half: the splash while it shows (it takes the frame: no
     // keys reach the menu); else the video started and updated, the keys

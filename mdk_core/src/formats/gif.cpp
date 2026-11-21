@@ -4,6 +4,8 @@
 
 #include "formats/gif.h"
 
+#include <stdlib.h>
+
 #include <string.h>
 
 #include "formats/bin_reader.h"
@@ -280,6 +282,56 @@ bool Gif::load(const uint8_t* bytes, int32_t byteCount, Gif* outGif) {
 
     // The file has no image descriptor at all.
     return false;
+}
+
+} // namespace formats
+} // namespace mdk
+
+namespace mdk {
+namespace formats {
+
+namespace {
+const uint32_t kPackedHeader = 8;     // width, height
+const uint32_t kPackedPalette = 768;  // 256 RGB entries
+} // namespace
+
+uint8_t* Gif::decodePacked(const uint8_t* bytes, uint32_t byteCount, uint32_t* outSize) {
+    Gif gif;
+    if (!bytes || !outSize || !load(bytes, (int32_t)byteCount, &gif) ||
+        gif.palette_.size() != kPackedPalette) {
+        return nullptr;
+    }
+    const uint32_t size = kPackedHeader + kPackedPalette + (uint32_t)gif.indices_.size();
+    uint8_t* packed = static_cast<uint8_t*>(malloc(size));
+    if (!packed) {
+        return nullptr;
+    }
+    memcpy(packed, &gif.width_, 4);
+    memcpy(packed + 4, &gif.height_, 4);
+    memcpy(packed + kPackedHeader, gif.palette_.data(), kPackedPalette);
+    if (!gif.indices_.empty()) {
+        memcpy(packed + kPackedHeader + kPackedPalette, gif.indices_.data(), gif.indices_.size());
+    }
+    *outSize = size;
+    return packed;
+}
+
+bool Gif::fromPacked(const uint8_t* packed, uint32_t size, Gif* outGif) {
+    if (!packed || !outGif || size < kPackedHeader + kPackedPalette) {
+        return false;
+    }
+    Gif gif;
+    memcpy(&gif.width_, packed, 4);
+    memcpy(&gif.height_, packed + 4, 4);
+    const uint32_t count = size - kPackedHeader - kPackedPalette;
+    if (gif.width_ < 0 || gif.height_ < 0 ||
+        (uint64_t)gif.width_ * (uint64_t)gif.height_ != (uint64_t)count) {
+        return false;
+    }
+    gif.palette_.assign(packed + kPackedHeader, packed + kPackedHeader + kPackedPalette);
+    gif.indices_.assign(packed + kPackedHeader + kPackedPalette, packed + size);
+    *outGif = gif;
+    return true;
 }
 
 } // namespace formats

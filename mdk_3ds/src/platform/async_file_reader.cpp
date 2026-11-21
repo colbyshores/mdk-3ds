@@ -123,6 +123,15 @@ bool AsyncFileReader::request(int32_t tag, const char* path) {
 
 bool AsyncFileReader::requestRange(int32_t channel, int32_t tag, const char* path,
                                    uint32_t offset, uint32_t length) {
+    return queue(channel, tag, path, offset, length, nullptr);
+}
+
+bool AsyncFileReader::requestFile(int32_t channel, int32_t tag, const char* path, Work work) {
+    return queue(channel, tag, path, 0, 0, work);
+}
+
+bool AsyncFileReader::queue(int32_t channel, int32_t tag, const char* path, uint32_t offset,
+                            uint32_t length, Work work) {
     if (!running_ || !path || strlen(path) >= kPathMax || length > kMaxRangeBytes) {
         return false;
     }
@@ -135,6 +144,7 @@ bool AsyncFileReader::requestRange(int32_t channel, int32_t tag, const char* pat
             slots_[i].tag = tag;
             slots_[i].offset = offset;
             slots_[i].length = length;
+            slots_[i].work = work;
             snprintf(slots_[i].path, kPathMax, "%s", path);
             queued = true;
             break;
@@ -170,6 +180,48 @@ bool AsyncFileReader::poll(int32_t channel, int32_t* tag, char* path, uint8_t** 
     return found;
 }
 
+bool AsyncFileReader::pollTag(int32_t channel, int32_t tag, uint8_t** bytes, size_t* size,
+                              bool* ok) {
+    if (!running_) {
+        return false;
+    }
+    bool found = false;
+    LightLock_Lock(&lock_);
+    for (int32_t i = 0; i < kSlots; i++) {
+        if (slots_[i].state == Done && slots_[i].channel == channel && slots_[i].tag == tag &&
+            !slots_[i].discarded) {
+            *bytes = slots_[i].bytes;
+            *size = slots_[i].size;
+            *ok = slots_[i].ok;
+            slots_[i] = Slot();
+            found = true;
+            break;
+        }
+    }
+    LightLock_Unlock(&lock_);
+    return found;
+}
+
+void AsyncFileReader::discard(int32_t channel, int32_t tag) {
+    if (!running_) {
+        return;
+    }
+    LightLock_Lock(&lock_);
+    for (int32_t i = 0; i < kSlots; i++) {
+        Slot& slot = slots_[i];
+        if (slot.state == Free || slot.channel != channel || slot.tag != tag) {
+            continue;
+        }
+        if (slot.state == Reading) {
+            slot.discarded = true;   // the worker frees it when the read ends
+        } else {
+            free(slot.bytes);        // Requested (no bytes yet) or Done
+            slot = Slot();
+        }
+    }
+    LightLock_Unlock(&lock_);
+}
+
 int32_t AsyncFileReader::busy(int32_t channel) {
     int32_t count = 0;
     LightLock_Lock(&lock_);
@@ -200,6 +252,7 @@ void AsyncFileReader::run() {
         int32_t slot = -1;
         uint32_t offset = 0;
         uint32_t length = 0;
+        Work work = nullptr;
         LightLock_Lock(&lock_);
         if (exit_) {
             LightLock_Unlock(&lock_);
@@ -211,6 +264,7 @@ void AsyncFileReader::run() {
                 memcpy(path, slots_[i].path, kPathMax);
                 offset = slots_[i].offset;
                 length = slots_[i].length;
+                work = slots_[i].work;
                 slot = i;
                 break;
             }
@@ -222,11 +276,25 @@ void AsyncFileReader::run() {
         }
         size_t size = length;
         uint8_t* bytes = length > 0 ? readRange(path, offset, length) : readWhole(path, &size);
+        if (bytes && work) {
+            // The request's work, here on the worker (the slideshow's GIF decode).
+            uint32_t worked = 0;
+            uint8_t* result = work(bytes, (uint32_t)size, &worked);
+            free(bytes);
+            bytes = result;
+            size = result ? worked : 0;
+        }
         LightLock_Lock(&lock_);
-        slots_[slot].bytes = bytes;
-        slots_[slot].size = bytes ? size : 0;
-        slots_[slot].ok = bytes != nullptr;
-        slots_[slot].state = Done;
+        if (slots_[slot].discarded) {
+            // discard() while it was read: nobody wants it.
+            free(bytes);
+            slots_[slot] = Slot();
+        } else {
+            slots_[slot].bytes = bytes;
+            slots_[slot].size = bytes ? size : 0;
+            slots_[slot].ok = bytes != nullptr;
+            slots_[slot].state = Done;
+        }
         LightLock_Unlock(&lock_);
     }
 }

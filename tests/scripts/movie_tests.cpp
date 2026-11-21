@@ -4,6 +4,7 @@
 #include "movie_tests.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <algorithm>
@@ -23,7 +24,9 @@
 #include "game/game_settings.h"
 #include "game/intro_splash.h"
 #include "game/loading_screen.h"
+#include "game/async_read.h"
 #include "game/main_menu.h"
+#include "game/slideshow.h"
 #include "game/screen_view.h"
 #include "game/video_player.h"
 
@@ -615,6 +618,212 @@ void checkSlideshowStart(const formats::MdkData& data) {
     delete small;
 }
 
+// THE LENT READER (the 3DS's file thread, game/async_read.h), faked: each read
+// lands `kLatency` polls after it was asked for, read whole from the host's file;
+// `hold` keeps everything in flight (a slow card). Pins the owner's rule: nothing
+// read or decoded on the main thread at the video's end, at most one slide decoded
+// a frame, the video's last frame kept up until slide 1 is here, the same slides
+// as the C#'s Load, and a read still out dropped when the menu goes.
+struct FakeReader {
+    static const int kLatency = 3;
+    struct Read {
+        int32_t tag;
+        std::string path;
+        AsyncWork work;
+        int polls;
+    };
+    std::vector<Read> reads;
+    int requests = 0;
+    int cancels = 0;
+    int worked = 0;
+    bool hold = false;
+
+    static bool request(void* user, int32_t tag, const char* path, AsyncWork work) {
+        FakeReader* self = static_cast<FakeReader*>(user);
+        Read read = {tag, path, work, 0};
+        self->reads.push_back(read);
+        self->requests++;
+        return true;
+    }
+    static bool poll(void* user, int32_t tag, uint8_t** bytes, uint32_t* size, bool* ok) {
+        FakeReader* self = static_cast<FakeReader*>(user);
+        for (size_t i = 0; i < self->reads.size(); i++) {
+            Read& read = self->reads[i];
+            if (read.tag != tag || self->hold || ++read.polls < kLatency) {
+                continue;
+            }
+            *bytes = nullptr;
+            *size = 0;
+            *ok = false;
+            FILE* file = fopen(read.path.c_str(), "rb");
+            if (file) {
+                std::vector<uint8_t> data;
+                uint8_t chunk[4096];
+                size_t n;
+                while ((n = fread(chunk, 1, sizeof(chunk), file)) > 0) {
+                    data.insert(data.end(), chunk, chunk + n);
+                }
+                fclose(file);
+                if (read.work) {
+                    // The request's work, as the reader's thread runs it.
+                    *bytes = read.work(data.data(), (uint32_t)data.size(), size);
+                    self->worked++;
+                } else {
+                    *bytes = static_cast<uint8_t*>(malloc(data.size()));
+                    memcpy(*bytes, data.data(), data.size());
+                    *size = (uint32_t)data.size();
+                }
+                *ok = *bytes != nullptr;
+            }
+            self->reads.erase(self->reads.begin() + (long)i);
+            return true;
+        }
+        return false;
+    }
+    static void cancel(void* user, int32_t tag) {
+        FakeReader* self = static_cast<FakeReader*>(user);
+        for (size_t i = 0; i < self->reads.size(); i++) {
+            if (self->reads[i].tag == tag) {
+                self->reads.erase(self->reads.begin() + (long)i);
+                self->cancels++;
+                return;
+            }
+        }
+    }
+    AsyncRead hooks() {
+        AsyncRead r;
+        r.request = request;
+        r.poll = poll;
+        r.cancel = cancel;
+        r.user = this;
+        return r;
+    }
+};
+
+void checkLentReader(const formats::MdkData& data) {
+    formats::Bni options;
+    loadOptions(data, &options);
+    std::vector<uint8_t> ftiBytes;
+    std::vector<uint8_t> bigBytes;
+    std::vector<uint8_t> smallBytes;
+    formats::Fti* fti = new formats::Fti();
+    formats::Font* big = new formats::Font();
+    formats::Font* small = new formats::Font();
+    if (!data.read("MISC/MDKFONT.FTI", &ftiBytes) ||
+        !formats::Fti::parse(fti, ftiBytes.data(), (int32_t)ftiBytes.size()) ||
+        !fti->getBytes("FONTBIG", &bigBytes) || !fti->getBytes("FONTSML", &smallBytes) ||
+        !formats::Font::parse(bigBytes.data(), (int32_t)bigBytes.size(), 6, big) ||
+        !formats::Font::parse(smallBytes.data(), (int32_t)smallBytes.size(), 4, small)) {
+        printf("  FAIL: lent reader: MDKFONT.FTI did not load\n");
+        failures++;
+        delete fti;
+        delete big;
+        delete small;
+        return;
+    }
+    // The C#'s Load, at once: what the lent reader must end up with.
+    Slideshow* reference = new Slideshow();
+    reference->start(data);
+
+    FakeReader reader;
+    flow::GameState state;
+    state.splash = false;
+    GameSettings settings;
+    menu::MainMenu* menu = new menu::MainMenu();
+    menu->items().setFonts(big, small);
+    menu->items().setHost(menu::Host::Oracle);
+    menu->items().setSettings(&settings, noApply, nullptr);
+    menu->items().setPrint(noPrint, nullptr);
+    menu->setMedia(&options, &data);
+    menu->setReader(reader.hooks());
+    menu->open(fti, &state, menu::MenuSaves(), false, menu::MenuPage::Main);
+    const menu::Keys none;
+    // MDK12.FLC: asked for, not read; MDKOPT shows until it is here.
+    menu->frame(none, kStep);
+    expectTrue("lent reader: MDK12.FLC is asked for, not read",
+               reader.requests == 1 && menu->video().pending() && !menu->video().playing());
+    expectTrue("lent reader: nothing shown while it comes (MDKOPT stays)",
+               !menu->video().hasStill());
+    int frames = 1;
+    while (!menu->video().playing() && frames < 10) {
+        menu->frame(none, kStep);
+        frames++;
+    }
+    expectTrue("lent reader: the FLC starts when it arrives",
+               menu->video().playing() && frames == FakeReader::kLatency &&
+                   menu->video().hasStill());
+    while (menu->video().playing() && frames < 2000) {
+        menu->frame(none, kStep);
+        frames++;
+    }
+    expectTrue("lent reader: the video ends", !menu->video().playing());
+    expectTrue("lent reader: no slide read or decoded at the video's end",
+               menu->slideshow().running() && menu->slideshow().loading() &&
+                   menu->slideshow().slideCount() == 0);
+    int most = 0;
+    int last = 0;
+    int waited = 0;
+    while (menu->slideshow().loading() && waited < 200) {
+        menu->frame(none, kStep);
+        waited++;
+        const int count = menu->slideshow().slideCount();
+        most = std::max(most, count - last);
+        last = count;
+    }
+    expectTrue("lent reader: the load ends", !menu->slideshow().loading());
+    expectTrue("lent reader: at most one slide decoded a frame", most == 1);
+    bool same = menu->slideshow().slideCount() == reference->slideCount() &&
+                reference->slideCount() >= 2;
+    for (int32_t i = 1; same && i <= reference->slideCount(); i++) {
+        const formats::Gif* a = menu->slideshow().gif(i);
+        const formats::Gif* b = reference->gif(i);
+        same = a->indexCount() == b->indexCount() &&
+               memcmp(a->indices(), b->indices(), (size_t)a->indexCount()) == 0 &&
+               memcmp(a->palette(), b->palette(), 768) == 0;
+    }
+    expectTrue("lent reader: the C#'s slides, in Load's order", same);
+    expectTrue("lent reader: each slide decoded on the reader's thread (its work), not the menu's",
+               reader.worked == reference->slideCount());
+    expectTrue("lent reader: all of them in before the first is due (5 s)",
+               menu->slideshow().image() == 0);
+    delete menu;
+
+    // A slow card: the first slide's 5 s pass with it still out, so the video's
+    // last frame stays; it shows the frame it arrives.
+    FakeReader slow;
+    slow.hold = true;
+    Slideshow* show = new Slideshow();
+    show->setReader(slow.hooks());
+    show->start(data);
+    for (int i = 0; i < 400; i++) {
+        show->update(kStep);
+    }
+    expectTrue("lent reader: a slide not here yet is not shown (image 0 stays)",
+               show->image() == 0 && show->slideCount() == 0);
+    slow.hold = false;
+    for (int i = 0; i < FakeReader::kLatency; i++) {
+        show->update(kStep);
+    }
+    expectTrue("lent reader: it shows the frame it arrives", show->image() == 1);
+    delete show;
+    expectTrue("lent reader: the next read, still out, is dropped with the slideshow",
+               slow.cancels == 1 && slow.reads.empty());
+    // The same for the FLC when the menu goes before it arrives.
+    FakeReader early;
+    early.hold = true;
+    menu::VideoPlayer* player = new menu::VideoPlayer();
+    player->setData(&data);
+    player->setReader(early.hooks());
+    player->play("MISC/FLIC/MDK12.FLC");
+    delete player;
+    expectTrue("lent reader: the FLC's read is dropped with the player",
+               early.cancels == 1 && early.reads.empty());
+    delete reference;
+    delete fti;
+    delete big;
+    delete small;
+}
+
 } // namespace
 
 std::string movieDump(const formats::MdkData& data, const char* section) {
@@ -633,6 +842,7 @@ int runMovieTests(const formats::MdkData& data) {
         checkGolden(data, sections[i]);
     }
     checkSlideshowStart(data);
+    checkLentReader(data);
     return failures;
 }
 

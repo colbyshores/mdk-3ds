@@ -65,6 +65,22 @@ bool mdk_render_poll_range_read(MdkRenderer, int32_t*, uint8_t**, uint32_t*, boo
     return false;
 }
 
+// NO LENT FILE READER ON THE DESKTOP: its menu screens read at once, as the C#'s
+// (render.h).
+bool mdk_render_has_file_reader(MdkRenderer) {
+    return false;
+}
+
+bool mdk_render_read_file_async(MdkRenderer, int32_t, const char*, MdkFileWork) {
+    return false;
+}
+
+bool mdk_render_poll_file_read(MdkRenderer, int32_t, uint8_t**, uint32_t*, bool*) {
+    return false;
+}
+
+void mdk_render_cancel_file_read(MdkRenderer, int32_t) {}
+
 // No per-texture answer here: callers fall back to mdk_render_index_texture_bytes,
 // which is the desktop's exact cost of an index texture (render.h).
 int32_t mdk_render_texture_bytes(MdkRenderer, MdkTextureId) {

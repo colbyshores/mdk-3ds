@@ -51,6 +51,15 @@ public:
     // (the second through an exception from Span.CopyTo).
     static bool load(const uint8_t* bytes, int32_t byteCount, Gif* outGif);
 
+    // load() for a worker thread (the 3DS's file reader, game/async_read.h):
+    // the file decoded into one malloc'd block -- width, height (int32 each),
+    // the 768-byte palette, the indices -- that the main thread only copies
+    // (fromPacked). Null when load() refuses the file. No shared state: safe off
+    // the main thread.
+    static uint8_t* decodePacked(const uint8_t* bytes, uint32_t byteCount, uint32_t* outSize);
+    // The Gif a decodePacked block holds. False when the block is not one.
+    static bool fromPacked(const uint8_t* packed, uint32_t size, Gif* outGif);
+
 private:
     int32_t width_ = 0;
     int32_t height_ = 0;
