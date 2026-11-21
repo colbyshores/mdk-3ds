@@ -102,6 +102,13 @@ public:
     // (the C# returns there too).
     bool tear(const std::string& arena, const std::vector<int32_t>& torn);
 
+    // A group of the arena took another texture (group_set_texture; the C#'s
+    // TriangleGroups.Changed -> LevelView.Rebuild, package #15): its view, if it has one,
+    // is rebuilt (LevelView::refresh). Call it between frames, as sync() is. False when
+    // the rebuilt mesh was refused (the view then draws nothing until the next refresh or
+    // reload, which the frontend logs); true otherwise, and when the arena has no view.
+    bool refresh(const std::string& arena);
+
     // An arena's view, or null.
     const LevelView* find(const std::string& name) const;
 

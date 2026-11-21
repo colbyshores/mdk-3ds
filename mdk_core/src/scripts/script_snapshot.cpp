@@ -33,6 +33,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
+
 #include "game/player.h"
 #include "util/json.h"
 #include "util/sha256.h"
@@ -1023,6 +1025,12 @@ bool ScriptRuntime::load(const std::string& text, std::string* why) {
                 mesh->clearGroupMaterial(number);
             } else {
                 mesh->setGroupMaterial(number, doc.intOr(material, 0));
+                // SetFlags' Changed -> LevelView.Rebuild, which rebuilds a group that has
+                // a material (package #15): the frontends rebuild the arena's view.
+                if (std::find(retextured_.begin(), retextured_.end(), doc.name(a)) ==
+                    retextured_.end()) {
+                    retextured_.push_back(doc.name(a));
+                }
             }
             applyGroupFlags(doc.name(a), number, (uint32_t)doc.intOr(doc.at(g, 0), 0));
         }

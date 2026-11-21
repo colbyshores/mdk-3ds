@@ -997,3 +997,99 @@ MDK_TEST(ATornArenaIsRewrittenEveryFrameWithItsTrianglesCollapsed) {
     views.clear();
 }
 
+
+// A RETEXTURED GROUP REBUILDS ITS ARENA'S VIEW (package #15). group_set_texture (opcode 140)
+// gives a triangle group another material, and the C#'s TriangleGroups.Changed ->
+// LevelView.Rebuild draws the group with it. The frontends' path is ArenaViews::refresh ->
+// LevelView::refresh: level 3's HMO_3 retextures groups 2, 9, 10, 11 and 12 to -1027 (the
+// glass) before it shatters them, and here group 2 is given -1027 and its arena's view
+// refreshed. The claims: the rebuilt view's group-2 batches carry exactly the surface the
+// resolver gives -1027 (and did not before), no other group's batches change, the old mesh
+// is released and one new one made, and an arena with no view has nothing to rebuild.
+MDK_TEST(ARetexturedGroupRebuildsItsArenasView) {
+    const MdkData game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    mdk::LevelData level;
+    MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
+    const std::string name = "HMO_3";
+    mdk::formats::Arena* arena = level.arenaNamedMutable(name);
+    MDK_CHECK(arena != nullptr && arena->hasGroup(2));
+    if (arena == nullptr) {
+        return;
+    }
+    const MdkRenderer renderer = reinterpret_cast<MdkRenderer>(static_cast<uintptr_t>(1));
+    mdk::SurfaceCache surfaces(renderer);
+    mdk::ArenaViews views;
+    views.start(renderer, &level, &surfaces, mdk::Shading::Original);
+    const std::vector<std::string> drawn(1, name);
+    level.stream().update(name, std::string(), false, drawn);
+    views.sync(name, std::string(), drawn);
+    const mdk::LevelView* view = views.find(name);
+    MDK_CHECK(view != nullptr);
+    if (view == nullptr) {
+        return;
+    }
+    const auto groupSurfaces = [&](int32_t group, bool wanted) {
+        std::vector<std::string> out;
+        for (size_t i = 0; i < view->scene().batches.size(); i++) {
+            const mdk::ArenaBatch& batch = view->scene().batches[i];
+            if ((batch.group == group) == wanted) {
+                char text[160];
+                snprintf(text, sizeof(text), "%d:%d:%s:%d:%.4f,%.4f,%.4f", (int)batch.group,
+                         (int)batch.count, batch.surface.name.c_str(), (int)batch.surface.pass,
+                         batch.surface.colour.r, batch.surface.colour.g, batch.surface.colour.b);
+                out.push_back(text);
+            }
+        }
+        return out;
+    };
+    const std::vector<std::string> othersBefore = groupSurfaces(2, false);
+    const std::vector<std::string> groupBefore = groupSurfaces(2, true);
+    MDK_CHECK(!groupBefore.empty());
+
+    mdk::MaterialResolver resolver(&level.dti(), mdk::Shading::Original);
+    mdk::Surface glass;
+    MDK_CHECK(resolver.resolve(-1027, arena->materials(), level.paletteOf(arena),
+                               level.archivesOf(arena), &glass));
+    const auto isGlass = [&](const mdk::ArenaBatch& batch) {
+        return batch.surface.texture == glass.texture && batch.surface.name == glass.name &&
+               batch.surface.pass == glass.pass && batch.surface.colour.r == glass.colour.r &&
+               batch.surface.colour.g == glass.colour.g && batch.surface.colour.b == glass.colour.b;
+    };
+    bool glassBefore = true;
+    for (size_t i = 0; i < view->scene().batches.size(); i++) {
+        if (view->scene().batches[i].group == 2 && !isGlass(view->scene().batches[i])) {
+            glassBefore = false;
+        }
+    }
+    MDK_CHECK(!glassBefore);
+
+    const int meshes0 = mdk_test_meshes;
+    const int released0 = mdk_test_meshesReleased;
+    arena->setGroupMaterial(2, -1027);
+    MDK_CHECK(views.refresh(name));
+    view = views.find(name);
+    MDK_CHECK(view != nullptr);
+    if (view == nullptr) {
+        return;
+    }
+    MDK_CHECK_EQ(mdk_test_meshes, meshes0 + 1);
+    MDK_CHECK_EQ(mdk_test_meshesReleased, released0 + 1);
+    int glassBatches = 0;
+    for (size_t i = 0; i < view->scene().batches.size(); i++) {
+        const mdk::ArenaBatch& batch = view->scene().batches[i];
+        if (batch.group == 2) {
+            MDK_CHECK(isGlass(batch));
+            glassBatches++;
+        }
+    }
+    MDK_CHECK(glassBatches > 0);
+    MDK_CHECK(groupSurfaces(2, false) == othersBefore);
+
+    // No view, nothing to rebuild: true, and no mesh made.
+    MDK_CHECK(views.refresh("NO_SUCH_ARENA"));
+    MDK_CHECK_EQ(mdk_test_meshes, meshes0 + 1);
+    views.clear();
+}

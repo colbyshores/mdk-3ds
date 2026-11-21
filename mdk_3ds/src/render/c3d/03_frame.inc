@@ -1267,15 +1267,24 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // DEPTH24_STENCIL8 buffer (measured: C3D_FrameBufClear passes
     // `clearDepth` straight to GX_MemoryFill as the fill value), and
     // 0x00FFFFFF is the 24-bit maximum under either byte order of the word.
-    C3D_RenderTargetClear(r->targetLeft, C3D_CLEAR_ALL, clear,
+    //
+    // THE BACKDROP KEEP (the scripts' sky mode -1, e.g. level 3's closed HMO_3; C#
+    // Backdrop.Keep loads the scene target instead of clearing it; package #15): each
+    // eye's colour buffer keeps the last frame, so only the depth is cleared. The right
+    // eye then also keeps its own last picture, which is the one it showed.
+    const bool keepColour = params && params->backdrop == mdk::Backdrop::Keep;
+    C3D_RenderTargetClear(r->targetLeft, keepColour ? C3D_CLEAR_DEPTH : C3D_CLEAR_ALL, clear,
                           mdk::pica::kDepthClearValue);
     // At edge-smoothing scale 2 the right eye's depth is the LEFT eye's buffer,
     // just filled above and filled again before the right eye draws (installEye),
     // so only its colour is cleared here: a third 1.5 MB depth fill is wasted fill
-    // bandwidth on the Old 3DS.
-    C3D_RenderTargetClear(r->targetRight,
-                          r->targetsShareDepth ? C3D_CLEAR_COLOR : C3D_CLEAR_ALL, clear,
-                          mdk::pica::kDepthClearValue);
+    // bandwidth on the Old 3DS. (Under Keep there is then nothing to clear on it.)
+    if (!(keepColour && r->targetsShareDepth)) {
+        C3D_RenderTargetClear(r->targetRight,
+                              keepColour ? C3D_CLEAR_DEPTH
+                                         : (r->targetsShareDepth ? C3D_CLEAR_COLOR : C3D_CLEAR_ALL),
+                              clear, mdk::pica::kDepthClearValue);
+    }
 }
 
 // Report one censused frame. Cold: called once per process, from the end of the

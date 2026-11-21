@@ -131,6 +131,18 @@ bool ArenaViews::tear(const std::string& arena, const std::vector<int32_t>& torn
     return true;
 }
 
+bool ArenaViews::refresh(const std::string& arena) {
+    // C# LevelView.Rebuild (LevelView.cs:251), the Changed subscriber: a built view is
+    // rebuilt from the group materials now in the arena. An arena with no view has
+    // nothing to rebuild -- its view is built from the same materials when it loads.
+    for (size_t i = 0; i < views_.size(); i++) {
+        if (views_[i].name == arena) {
+            return views_[i].view->refresh();
+        }
+    }
+    return true;
+}
+
 const LevelView* ArenaViews::find(const std::string& name) const {
     for (size_t i = 0; i < views_.size(); i++) {
         if (views_[i].name == name) {

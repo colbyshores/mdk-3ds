@@ -36,7 +36,8 @@ measured or cited reason, and the batch that closes one should delete its entry.
   `/tmp/.X11-unix`. Do not simplify any of them.
 - `--level=N` (3-8) selects the level in `LevelData::load`, `LEVEL%d.CMI` and
   `SoundBank::forLevel`; the default remains 3. No `GameEngine` exists to wire
-  opcode 140 — do not fake call-site wiring.
+  opcode 140 — do not fake call-site wiring. (CLOSED 2026-11-20 by package 15: the runtime
+  records the retextured arena and the frontends rebuild its view through `ArenaViews::refresh`.)
 
 ## The arenas' own sounds are played by nobody: an ORACLE gap (found 2026-11-18, arena streaming Phase 5)
 
@@ -1290,7 +1291,8 @@ CLOSED 2026-11-20 (the follow-up):
   through the effects mesh. Golden `L8_ribbon_tornado` (`Probe ribbon`).
 
 Still open:
-- **The town message** (`ScriptRuntime.FlattenTown`'s OOT_L* push) waits for FlattenTown.
+- ~~**The town message**~~ (`ScriptRuntime.FlattenTown`'s OOT_L* push): CLOSED 2026-11-20 by package
+  15 (see "The town timer, the shake, the sky modes and the group textures" below).
 - **The slot keys 1-5** (`Key.Item1-5`) have no action in `input.h`; the mouse wheel's item
   keys are not bound on Linux; the 3DS bindings are the input owner's.
 - ~~**The sniper's ammo selection** (`SelectAmmo`/`UseAmmo`/`NextAmmo`)~~: landed with sniper
@@ -1389,7 +1391,8 @@ runs special_event like the C#'s `--event`):
 Still open:
 - ~~**Package 2**~~: landed 2026-11-20 -- see "The next level (package 2)" below.
 - ~~**Package 13**~~: landed 2026-11-20 -- see "The cutscenes (2026-11-20, package 13)" below.
-  `GameOver.Yes` (the town flattened) is package 15.
+  `GameOver.Yes` (the town flattened): package 15 found the C# never raises it (FlattenTown only
+  shakes, messages and sets the flags), so the port does not either -- an oracle gap.
 - **Unpinned**: FollowCamera's clearance skip while Frozen. No reachable golden blocks the
   camera's sight during the rise (searched: levels 3, 4, 6, 8, eight turns each), so removing
   the skip does not fail a golden. The C#'s `!Dead` arm of the same guard is still not
@@ -1915,3 +1918,54 @@ Still open:
 - **The 3DS harness cannot hand Kurt SW_BONES**, so Bones' strike is shown in the emulator only
   where a level places the pickup; event 51 (`EVENT=51`) shows the scene directly.
 - **The C# carries `StrikeUsed` only on a death** (see the skipped screens above): ported as it is.
+
+
+## The town timer, the shake, the sky modes and the group textures (2026-11-20, gap package #15): what landed, what is open
+
+Landed, operation for operation, pinned by `golden/L3_screen_town.txt`, `L3_screen_hmo3.txt`,
+`L4_screen_second.txt` and `L5_screen_last.txt` (byte-identical to the C# probe
+`tests/scripts/screen_probe/`, `tick1 dump screen`), `screen_retextured_arenas` (tick1 suite)
+and `ARetexturedGroupRebuildsItsArenasView` (tests/formats):
+
+- The town timer (ScriptRuntime.cs:38-47, 366-370, 901-908, 2139-2154): `townTicks` from
+  Kurt's difficulty when the runtime is built (none in the last level of the order), counted
+  down in `runTick` after `updateBar`, and `flattenTown` at 0: `raiseShake(5)`, OOT_L<n> (or
+  OOT_L<n>A with FlagSecondTown) zoomed in front for 5 s, FlagTownFlattened or
+  FlagSecondTownFlattened (which `endTheLevel` copies into `stats.townFlags`). The C# raises no
+  GameOver for it, and neither does the port.
+- The shake: `raiseShake` raises the C#'s ShakeRaised (`setShakeRaisedHook`), bound by both
+  frontends to `FollowCamera::raiseShakeHook`; `FollowCamera::updateShake` (UpdateShake: a new
+  offset each tick while above 1, ±1.64 x the shake clamped to ±19/±59 px and rounded half to
+  even, drained 0.25 a tick) and `followCameraTurn` (Turn's shake half, then the roll about the
+  turned axes) in `update` and `blend`. The C#'s camera Random is `new Random()`, time-seeded;
+  the port's is `mdk::Random` (the oracle's SEEDED generator) seeded by the frontend with the
+  scripts' seed, and the probe seeds the C#'s by reflection, so the goldens pin the offsets
+  exactly.
+- The sky modes: `game/sky_modes.h` (SkyModes.BackdropOf/ClearOf, Viewer.SkyColour) feeds
+  `MdkFrameParams::backdrop` and the clear colour on both frontends. Linux: the sky only under
+  Sky, the clear the DTI's sky colour (black in mode 1). 3DS: the dome only under Sky, black in
+  mode 1, and under Keep no colour clear (the target keeps the last frame).
+- The group textures: `setGroupTexture` records the arena (`retexturedArenas`), and both
+  frontends rebuild its view after `sync` (`ArenaViews::refresh` -> `LevelView::refresh`, the
+  C#'s LevelView.Rebuild; the old mesh goes at the backend's completion boundary).
+- Fixed on the way: the 3DS frontend reset its follow camera AFTER binding the runtime's
+  ClipView to it (package #3's object pass was dropped on every spawn there); the reset now
+  comes before the runtime binds the clip view, the shake and the seed.
+
+Still open:
+- **Vulkan draws Keep as Clear**: the C# loads the scene target instead of clearing it; this
+  backend's render passes always clear, so where nothing is drawn Keep shows the clear colour,
+  not the last frame. The retail arenas that set -1 (L3 HMO_3, L4 MEAT_3, L7 DANT_5) are closed
+  rooms, where nothing is uncovered. A load-op pass (with the scene image's layout tracked
+  across the stereo, gamma and post paths) is the fix if a frame ever shows it.
+- **The 3DS's Sky clear stays 0xFF102030**, not the C#'s DTI sky colour: the dome's caps cover
+  the panel, and `tools/panel_geom.py`'s census is defined on that colour.
+- **Not pinned by a golden**: `followCameraTurn`'s view (the matrices; the shake's OFFSETS are
+  pinned, the view's turn by them goes through the LUT's tangent, R6), and the frames: no capture
+  of a shake, a black sky or HMO_3's glass yet (the parent's Mandarine run, see WORK_LEDGER).
+- **The save/load snapshot** (#19, landed alongside) carries `town_ticks`, `sky_mode` and the
+  groups' materials; a restored group with a material now records its arena for the views'
+  rebuild too (the C#'s Restore -> SetFlags -> Changed -> Rebuild). No golden loads a save with a
+  retextured group (only L3 HMO_3 has one).
+- **`hp:` cannot kill**: a probe that sets an object's health to 0 does not run its death script
+  (only `Kill` does), so the goldens use `kill:step:ID`.

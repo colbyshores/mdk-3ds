@@ -59,6 +59,7 @@
 #include "game/input.h"
 #include "game/arena_space.h"
 #include "game/arena_views.h"
+#include "game/sky_modes.h"
 #include "game/walk_script.h"
 #include "formats/mdk_data.h"
 #include "formats/bni.h"
@@ -1287,6 +1288,12 @@ int main(int argc, char** argv) {
             // _scripts.ClipView, package #3).
             follow.clipView.context = runtime.get();
             follow.clipView.clip = &mdk::scripts::ScriptRuntime::clipViewTrampoline;
+            // The scripts shake the camera (Viewer.cs:238, `ShakeRaised +=
+            // _follow.RaiseShake`; package #15). The C#'s camera draws its offsets from a
+            // time-seeded Random; this one takes the scripts' seed, so --seed replays a
+            // shake as it replays the scripts.
+            runtime->setShakeRaisedHook(&mdk::FollowCamera::raiseShakeHook, &follow);
+            follow.seedShake(runtimeSeed);
             player.setMixer(&runtime->mixer());
             std::printf("[main] scripts: runtime ready (seed %d)\n", runtimeSeed);
             // The level starts in Kurt's arena, its music at once (C#
@@ -1886,6 +1893,18 @@ int main(int argc, char** argv) {
                             (int)(arenaViews.stats().released - releasedBefore),
                             (int)arenaViews.count());
             }
+            // The groups the steps retextured (group_set_texture, opcode 140; package
+            // #15): the C#'s TriangleGroups.Changed -> LevelView.Rebuild, each arena's
+            // view built again from its groups' materials.
+            if (runtime) {
+                const std::vector<std::string>& retextured = runtime->retexturedArenas();
+                for (size_t i = 0; i < retextured.size(); i++) {
+                    const bool rebuilt = arenaViews.refresh(retextured[i]);
+                    std::printf("[main] views: %s retextured, %s\n", retextured[i].c_str(),
+                                rebuilt ? "rebuilt" : "its mesh was REFUSED");
+                }
+                runtime->clearRetexturedArenas();
+            }
 
             // THE MUSIC OF THE ARENA THAT IS LOADING (docs/ARENA_STREAMING_SPEC.md
             // Phase 5; the original's arena_load -> 0x4192c4, a step a frame at
@@ -1909,6 +1928,25 @@ int main(int argc, char** argv) {
             }
         }
 
+        // The background the scripts want (C# Viewer.Background, Viewer.cs:1105; package
+        // #15): the sky mode (opcode 202) picks the backdrop, and the clear colour is the
+        // DTI's sky colour, black in mode 1. Without scripts the mode is the C#'s 0.
+        if (arena) {
+            const int32_t skyMode = runtime ? runtime->skyMode : mdk::sky_modes::kShown;
+            params.backdrop = mdk::sky_modes::backdropOf(skyMode);
+            params.clear_colour =
+                mdk::sky_modes::clearOf(skyMode, mdk::sky_modes::skyColour(level.dti()));
+            // Said when it changes (the C# prints `sky {mode} ({backdrop})`, Viewer.cs:543):
+            // the retail arenas that black or hide the sky are closed rooms, so the log is
+            // where a run shows it.
+            static int32_t loggedSkyMode = mdk::sky_modes::kShown;
+            if (skyMode != loggedSkyMode) {
+                static const char* const kBackdropNames[] = {"Sky", "Clear", "Keep"};
+                std::printf("[main] sky: mode %d (%s) at frame %u\n", (int)skyMode,
+                            kBackdropNames[(int)params.backdrop], frame);
+                loggedSkyMode = skyMode;
+            }
+        }
         mdk_render_begin_frame(renderer, &params);
         // The arenas the scripts say are drawn: Kurt's and the active second
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until

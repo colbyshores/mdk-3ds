@@ -1,0 +1,36 @@
+level=3 steps=80 seed=1 schedule=diff:0,town:5:7
+start town=81000 sky=0 skycolour=63ADCEFF
+s=1 arena= town=81000 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=0
+s=2 arena=HMO_1 town=80999 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=11
+s=4 arena=HMO_1 town=80998 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=11
+s=5 arena=HMO_1 town=7 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=11
+s=6 arena=HMO_1 town=6 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=11
+s=8 arena=HMO_1 town=5 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=11
+s=10 arena=HMO_1 town=4 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=11
+s=12 arena=HMO_1 town=3 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=11
+s=14 arena=HMO_1 town=2 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=11
+s=16 arena=HMO_1 town=1 gflags=00000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=11
+s=18 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=40A00000 cam=40A00000 off=0,0 objs=11
+  raise 40A00000
+  msg 3:Alas Poor/Livingston!#40A00000
+s=19 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=40A00000 cam=40980000 off=-4,-6 objs=11
+s=20 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40980000 off=-4,-6 objs=11
+s=21 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40900000 off=-1,4 objs=11
+s=23 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40880000 off=2,-1 objs=11
+s=25 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40800000 off=-2,6 objs=11
+s=27 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40700000 off=-5,2 objs=11
+s=29 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40600000 off=-6,-3 objs=11
+s=31 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40500000 off=-2,6 objs=11
+s=33 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40400000 off=2,2 objs=14
+s=35 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40300000 off=-2,1 objs=14
+s=37 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40200000 off=2,2 objs=14
+s=39 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40100000 off=4,-3 objs=14
+s=41 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=40000000 off=-3,-1 objs=14
+s=43 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=3FE00000 off=2,-2 objs=14
+s=45 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=3FC00000 off=2,-1 objs=14
+s=47 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=3FA00000 off=2,2 objs=14
+s=49 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=3F800000 off=0,1 objs=14
+s=51 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=3F400000 off=0,0 objs=14
+s=53 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=3F000000 off=0,0 objs=14
+s=55 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=3E800000 off=0,0 objs=14
+s=57 arena=HMO_1 town=0 gflags=40000000 sky=0 backdrop=Sky clear=63ADCEFF shake=00000000 cam=00000000 off=0,0 objs=14

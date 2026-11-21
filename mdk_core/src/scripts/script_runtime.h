@@ -247,6 +247,15 @@ public:
     int32_t hitGroup(const std::string& arena, int32_t group, int32_t amount, int32_t kind,
                      int32_t weapon);
     void setGroupTexture(const std::string& arena, int32_t group, int32_t value);
+    // ---- Package #15: the group textures' consumer ----
+    // C# TriangleGroups.Changed -> LevelView.Rebuild (LevelView.cs:251), as a list the
+    // frontend takes once a step instead of an event: the arenas a group_set_texture
+    // retextured since clearRetexturedArenas(), each once. The frontend rebuilds their
+    // views (ArenaViews::refresh -> LevelView::refresh). Nothing in the simulation reads it.
+    // (A group_set_state needs no rebuild: the views read Hidden at draw time, which is
+    // the same picture the C#'s Rebuild-on-every-Changed draws.)
+    const std::vector<std::string>& retexturedArenas() const { return retextured_; }
+    void clearRetexturedArenas() { retextured_.clear(); }
 
     // C# Kill (ScriptRuntime.cs:1678, object_kill 0x43d670): the object switches to its
     // death script if it has one, otherwise it explodes, the explosion facing `yaw`.
@@ -441,9 +450,30 @@ public:
     // and [n, a, up] shoves Kurt away from the object at a u/s with args[2] up.
     void pushKurt(MdkObject* obj, const std::vector<formats::ScriptValue>& args);
     // RaiseShake (ScriptRuntime.cs:1986): the strongest screen shake requested
-    // during the current tick. The renderer-side camera consumer is a later
-    // slice; this records the oracle's per-tick state.
+    // during the current tick, and the C#'s ShakeRaised event for the follow camera
+    // (Viewer.cs:238, `ShakeRaised += _follow.RaiseShake`; package #15).
     void raiseShake(float amount);
+    // C# ShakeRaised (ScriptRuntime.cs:218), raised synchronously by every raiseShake
+    // with the amount asked: the frontends bind FollowCamera::raiseShakeHook with their
+    // camera. Null by default (the C#'s event with no subscriber).
+    typedef void (*ShakeRaisedHook)(void* user, float amount);
+    void setShakeRaisedHook(ShakeRaisedHook hook, void* user) {
+        shakeRaisedHook_ = hook;
+        shakeRaisedUser_ = user;
+    }
+
+    // ---- Package #15: the town timer's end (ScriptRuntime.cs:43-47, 901-908, 2139) ----
+    // (The timer itself, townTicks, is package #19's member below: set from Kurt's
+    // difficulty when the runtime is built, counted down in runTick.)
+    // C# FlagSecondTown / FlagTownFlattened / FlagSecondTownFlattened: global flags -- the
+    // minecrawler went for the second town (set by the game), the first or the second town
+    // was flattened (read by the debriefing through GameStats.TownFlags).
+    static const int32_t kFlagSecondTown = (int32_t)0x80000000u;
+    static const int32_t kFlagTownFlattened = 1 << 30;
+    static const int32_t kFlagSecondTownFlattened = 1 << 29;
+    // C# TownShake / TownMessageSeconds.
+    static constexpr float kTownShake = 5.0f;
+    static constexpr float kTownMessageSeconds = 5.0f;
 
     // ---- Package 8 (scripts/updraft_wind.cpp): Kurt's updraft, the fans' sparks and
     // the wind zones ----
@@ -716,9 +746,9 @@ public:
     int32_t alarmTicks = 0;
     // How the sky is drawn (C# ScriptRuntime.SkyMode, opcode 202): 0 shows
     // the sky, 1 clears to black, and any other value keeps the last frame.
-    // The renderer-side backdrop consumer and the save/load snapshot consumer
-    // are later slices; the VM writes this shared level state exactly as the
-    // oracle does.
+    // Both frontends draw their backdrop from it (game/sky_modes.h, the C#'s
+    // SkyModes.BackdropOf / ClearOf in Viewer.Background; package #15); the
+    // save/load snapshot consumer waits for the snapshot slice.
     int32_t skyMode = 0;
     // camera_track (C# ScriptRuntime.CameraTrackPitch/CameraTrackTicks,
     // opcode 203): the requested follow-camera pitch and how many more ticks
@@ -945,8 +975,9 @@ public:
 
     // C# TownTicks (ScriptRuntime.cs:255): the town's timer, set from the
     // difficulty when the runtime is made (not on the last level) and counted down
-    // once a tick. A save carries it. Its consumer at 0, FlattenTown (the shake,
-    // the OOT_L message and the global flag), is package #15's.
+    // once a tick. A save carries it. At 0, FlattenTown (package #15: the shake,
+    // the OOT_L message and the global flag); the C# never raises GameOver for it,
+    // so a flattened town does not end the game.
     int32_t townTicks = 0;
     // (C# AirStrike.UsedUp is airStrike().usedUp since package #14; a save carries it.)
     // The arenas' states in the order they were made (the C#'s Dictionary order,
@@ -1092,6 +1123,12 @@ private:
     // the first of the arena's archives (LevelData::archivesOf) that has it, or the
     // level's when the arena is not the level's. Writable: special_130 stamps it.
     formats::Texture* arenaTexture(const std::string& arena, const std::string& name);
+    // C# FlattenTown (ScriptRuntime.cs:2139, package #15): the minecrawler reached the town.
+    void flattenTown();
+    // The arenas setGroupTexture retextured and the frontend has not taken (package #15).
+    std::vector<std::string> retextured_;
+    ShakeRaisedHook shakeRaisedHook_ = nullptr;
+    void* shakeRaisedUser_ = nullptr;
     // The textures stampBulletHole changed and the frontend has not taken (package #16).
     std::vector<const formats::Texture*> stamped_;
     TextureStampedHook textureStampedHook_ = nullptr;

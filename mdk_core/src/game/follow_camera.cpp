@@ -143,6 +143,38 @@ void followCameraRoll(const Vec3& forward, Vec3* up, float rollDegrees) {
                before.z * cosine + right.z * sine};
 }
 
+void followCameraTurn(Vec3* forward, Vec3* up, float shakeX, float shakeY, float rollDegrees) {
+    // C# FollowCamera.Turn (FollowCamera.cs:194-213). No shake: the roll alone, which is
+    // what this function was before package #15 (the C#'s `shake != Vector2.Zero`).
+    if (shakeX == 0.0f && shakeY == 0.0f) {
+        followCameraRoll(*forward, up, rollDegrees);
+        return;
+    }
+    // Forward = Normalize(Forward + Right·tan(x) + Up·tan(y)), Right being Orient's
+    // Normalize(Cross(Forward, UnitZ)); then Right = Normalize(Cross(Forward, Up)) and
+    // Up = Normalize(Cross(Right, Forward)). The shake is at most 59 px of 71.5° over 360,
+    // 0.2 rad, so the tangent is the table's sine over its cosine (R6).
+    const Vec3 right0 = normalize(cross(*forward, Vec3{0.0f, 0.0f, 1.0f}));
+    const float tanX = fastSin(shakeX) / fastCos(shakeX);
+    const float tanY = fastSin(shakeY) / fastCos(shakeY);
+    const Vec3 f = normalize(Vec3{forward->x + right0.x * tanX + up->x * tanY,
+                                  forward->y + right0.y * tanX + up->y * tanY,
+                                  forward->z + right0.z * tanX + up->z * tanY});
+    const Vec3 right = normalize(cross(f, *up));
+    const Vec3 u = normalize(cross(right, f));
+    *forward = f;
+    *up = u;
+    if (rollDegrees == 0.0f) {
+        return;
+    }
+    // The roll about the turned axes: Up = up·cos + right·sin (FollowCamera.cs:210).
+    const float radians = follow_camera::degreesToRadians(rollDegrees);
+    const float cosine = fastCos(radians);
+    const float sine = fastSin(radians);
+    *up = Vec3{u.x * cosine + right.x * sine, u.y * cosine + right.y * sine,
+               u.z * cosine + right.z * sine};
+}
+
 bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
                        float pitchDegrees, float pivot, float aspect,
                        float rollDegrees) {
@@ -219,7 +251,8 @@ Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera,
 
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect,
-                              float rollDegrees, const ClipViewHook* clip) {
+                              float rollDegrees, const ClipViewHook* clip,
+                              float shakeX, float shakeY) {
     const float pitch = follow_camera::degreesToRadians(clampViewPitch(pitchDegrees));
     const Vec3 facing = player.facing();
     Vec3 position = followCameraPoint(player.feet, facing, pitch, pivot);
@@ -227,7 +260,7 @@ bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
     Vec3 forward;
     Vec3 up;
     followCameraOrient(facing, pitch, &forward, &up);
-    followCameraRoll(forward, &up, rollDegrees);
+    followCameraTurn(&forward, &up, shakeX, shakeY, rollDegrees);
     if (!buildLookAtCamera(camera, position,
                            Vec3{position.x + forward.x, position.y + forward.y,
                                 position.z + forward.z},
@@ -378,6 +411,65 @@ void FollowCamera::updateClimb(float feetZ, float delta) {
     _climb = climbStep(_climb, rise, ticks);
 }
 
+void FollowCamera::raiseShake(float amount) {
+    // C# RaiseShake: `_shake = MathF.Max(_shake, amount)`.
+    _shake = mathMax(_shake, amount);
+}
+
+void FollowCamera::raiseShakeHook(void* camera, float amount) {
+    static_cast<FollowCamera*>(camera)->raiseShake(amount);
+}
+
+float FollowCamera::shakeTurnX() const {
+    // C# `ShakeOffset * float.DegreesToRadians(FieldOfView) / ViewHeight`, per component.
+    return _shakeOffsetX * follow_camera::degreesToRadians(follow_camera::kFieldOfView) /
+           follow_camera::kViewHeight;
+}
+
+float FollowCamera::shakeTurnY() const {
+    return _shakeOffsetY * follow_camera::degreesToRadians(follow_camera::kFieldOfView) /
+           follow_camera::kViewHeight;
+}
+
+void FollowCamera::updateShake(float delta) {
+    // C# UpdateShake (FollowCamera.cs:216-242): a new random offset each tick (the
+    // original's 30 a second) while the shake is above 1; it drains by 0.25 a tick and
+    // stops below that.
+    if (_shake <= 0.0f) {
+        _shakeOffsetX = 0.0f;
+        _shakeOffsetY = 0.0f;
+        return;
+    }
+    _shakeTime += delta * follow_camera::kTicks;
+    // The C#'s `while (_shakeTime >= 1f) _shakeTime -= 1f;` as a whole tick count (T2:
+    // no float loop condition). Taking 1 off a float of at least 1 is exact (and the
+    // shipped step adds exactly 0.5), so subtracting the floor once leaves the same
+    // remainder the repeated subtraction does.
+    const float whole = floorf(_shakeTime);
+    _shakeTime -= whole;
+    const int32_t ticks = (int32_t)whole;
+    for (int32_t i = 0; i < ticks; i++) {
+        _shakeOffsetX = 0.0f;
+        _shakeOffsetY = 0.0f;
+        if (_shake > follow_camera::kShakeMin) {
+            // `new Vector2(Random(amplitude), Random(amplitude))`: X's draw first (C#
+            // arguments run left to right); Random(a) = (NextSingle() * 2 - 1) * a. Then
+            // Vector2.Round(Vector2.Clamp(offset, -limit, limit)), rounding half to even.
+            const float amplitude = _shake * follow_camera::kShakeScale;
+            const float x = (_random.nextSingle() * 2.0f - 1.0f) * amplitude;
+            const float y = (_random.nextSingle() * 2.0f - 1.0f) * amplitude;
+            _shakeOffsetX = nearbyintf(clampf(x, -follow_camera::kShakeLimitX,
+                                              follow_camera::kShakeLimitX));
+            _shakeOffsetY = nearbyintf(clampf(y, -follow_camera::kShakeLimitY,
+                                              follow_camera::kShakeLimitY));
+        }
+        _shake -= follow_camera::kShakeDrain;
+        if (_shake < follow_camera::kShakeDrain) {
+            _shake = 0.0f;
+        }
+    }
+}
+
 void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, float arenaPitchTarget,
                           float delta, float aspect) {
     // Ease the arena pitch toward its target: C# `float.Lerp(target, old, Pow(ease,
@@ -415,8 +507,13 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     // is read off it here exactly as the C# reads it off Kurt (FollowCamera.cs:139).
     const float degrees =
         _arenaPitch + _lookOffset + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt;
+    // C# FollowCamera.cs:137-139: Orient, UpdateShake, then Turn by the shake and the roll.
+    // The shake's update reads nothing the placement writes, so it runs before the build
+    // that does Point, Clear, Orient and Turn together.
+    updateShake(delta);
     buildFollowCameraCleared(camera, space, player, degrees, player.cameraPivot,
-                             aspect, player.cameraRoll().roll(), &clipView);
+                             aspect, player.cameraRoll().roll(), &clipView, shakeTurnX(),
+                             shakeTurnY());
 
     // The Aim the next Blend interpolates (C# FollowCamera.cs:141-143): the
     // pitch WITHOUT the mouse look (Blend adds the current look on top), the
@@ -452,7 +549,9 @@ bool FollowCamera::blend(Camera* camera, const Vec3& feet, float yaw, float alph
     Vec3 forward;
     Vec3 up;
     followCameraOrient(facing, pitch, &forward, &up);
-    followCameraRoll(forward, &up, frame_blend::lerp(_previousAim.roll, _aim.roll, alpha));
+    // C# Blend's Turn: the last step's shake offset, the blended roll.
+    followCameraTurn(&forward, &up, shakeTurnX(), shakeTurnY(),
+                     frame_blend::lerp(_previousAim.roll, _aim.roll, alpha));
     if (!buildLookAtCamera(camera, position,
                            Vec3{position.x + forward.x, position.y + forward.y,
                                 position.z + forward.z},

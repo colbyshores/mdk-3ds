@@ -57,6 +57,7 @@
 #include "game/messages.h"
 #include "game/object_view.h"
 #include "game/player.h"
+#include "game/sky_modes.h"
 #include "render/arena_scene.h"
 #include "render/material_resolver.h"
 #include "scripts/script_runtime.h"
@@ -2762,6 +2763,392 @@ bool kurtCorridorDump(int level, int steps, const std::string& at, const std::st
                  runtime.secondActive() ? "+" : "", solidText.empty() ? "-" : solidText.c_str(),
                  player.feet.x, player.feet.y, player.feet.z, player.yaw, wall.c_str());
         *out += buffer;
+    }
+    return true;
+}
+
+// THE SCREEN (golden/L*_screen_*.txt; PORT_GAPS package #15) against the oracle probe
+// tests/scripts/screen_probe: the C++ Player, ScriptRuntime and FollowCamera stepped at 1/60 s
+// in the C# Viewer's order (Kurt, the scripts, the camera), the camera shaken by the scripts
+// (ShakeRaised) and seeded as the probe seeds the C#'s (`camseed:N`, default 1), the HUD's
+// message stream bound. A line for every step whose state differs from the last printed one
+// (Kurt's arena, the town timer, the global flags, the sky mode with its backdrop and clear
+// colour, the runtime's shake, the camera's shake and offset), then the step's events: each
+// ShakeRaised (`raise`), each group whose state or material changed (`group`, the level's
+// arenas in order, groups ascending), the message queue when it changed (`msg`). The schedule:
+// key holds (fwd, back, left, right, jump, fire), `diff:N` (before the runtime), `camseed:N`,
+// and before a step `tp:step:ARENA:x:y:z`, `town:step:N`, `gflag:step:HEX`, `hp:step:ID:N`,
+// `kill:step:ID`, `avar:step:ARENA:I:V` (the probe's own `list:step` is not a golden token).
+struct ScreenRaised {
+    std::vector<float> amounts;
+};
+
+void screenShakeRaised(void* user, float amount) {
+    static_cast<ScreenRaised*>(user)->amounts.push_back(amount);
+}
+
+// Both of the C#'s ShakeRaised subscribers, in the order Viewer and the probe add them: the
+// camera, then the probe's record.
+struct ScreenShakeFanout {
+    FollowCamera* camera;
+    ScreenRaised* raised;
+};
+
+void screenShakeFanout(void* user, float amount) {
+    ScreenShakeFanout* fanout = static_cast<ScreenShakeFanout*>(user);
+    FollowCamera::raiseShakeHook(fanout->camera, amount);
+    screenShakeRaised(fanout->raised, amount);
+}
+
+std::string screenMessage(const Messages::Message& m) {
+    std::string text = std::to_string(m.flags) + ":";
+    for (int32_t line = 0; line < m.lineCount; line++) {
+        if (line) {
+            text += "/";
+        }
+        for (int32_t i = 0; i < m.length[line]; i++) {
+            const uint8_t b = m.text[line][i];
+            if (b >= 32 && b <= 126) {
+                text += (char)b;
+            } else {
+                char escape[8];
+                snprintf(escape, sizeof(escape), "\\x%02X", b);
+                text += escape;
+            }
+        }
+    }
+    return text + "#" + hexBits(m.time);
+}
+
+bool screenDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    struct Hold {
+        Key key;
+        int from;
+        int to;
+    };
+    struct StepInt {
+        int step;
+        int a;
+        int b;
+    };
+    struct StepArena {
+        int step;
+        std::string arena;
+        Vec3 at;
+        int index;
+        float value;
+    };
+    static const struct {
+        const char* name;
+        Key key;
+    } kKeys[] = {{"fwd", kKeyForward},     {"back", kKeyBack}, {"left", kKeyTurnLeft},
+                 {"right", kKeyTurnRight}, {"jump", kKeyJump}, {"fire", kKeyFire}};
+    std::vector<Hold> holds;
+    std::vector<StepArena> teleports;
+    std::vector<StepInt> towns;
+    std::vector<StepInt> gflags;
+    std::vector<StepInt> healths;
+    std::vector<StepInt> kills;
+    std::vector<StepArena> avars;
+    int difficulty = (int)Kurt::Normal;
+    int camSeed = 1;
+    {
+        size_t start = 0;
+        while (start < schedule.size()) {
+            size_t end = schedule.find(',', start);
+            if (end == std::string::npos) {
+                end = schedule.size();
+            }
+            const std::string token = schedule.substr(start, end - start);
+            start = end + 1;
+            if (token.empty()) {
+                continue;
+            }
+            std::vector<std::string> parts;
+            size_t at = 0;
+            while (true) {
+                const size_t next = token.find(':', at);
+                parts.push_back(token.substr(at, next == std::string::npos ? std::string::npos
+                                                                         : next - at));
+                if (next == std::string::npos) {
+                    break;
+                }
+                at = next + 1;
+            }
+            const std::string& head = parts[0];
+            bool ok = true;
+            if (head == "diff" && parts.size() == 2) {
+                difficulty = atoi(parts[1].c_str());
+            } else if (head == "camseed" && parts.size() == 2) {
+                camSeed = atoi(parts[1].c_str());
+            } else if (head == "tp" && parts.size() == 6) {
+                StepArena t;
+                t.step = atoi(parts[1].c_str());
+                t.arena = parts[2];
+                t.at = Vec3{(float)atof(parts[3].c_str()), (float)atof(parts[4].c_str()),
+                            (float)atof(parts[5].c_str())};
+                t.index = 0;
+                t.value = 0.0f;
+                teleports.push_back(t);
+            } else if (head == "town" && parts.size() == 3) {
+                towns.push_back(StepInt{atoi(parts[1].c_str()), atoi(parts[2].c_str()), 0});
+            } else if (head == "gflag" && parts.size() == 3) {
+                gflags.push_back(StepInt{atoi(parts[1].c_str()),
+                                         (int)(uint32_t)strtoul(parts[2].c_str(), nullptr, 16), 0});
+            } else if (head == "hp" && parts.size() == 4) {
+                healths.push_back(StepInt{atoi(parts[1].c_str()), atoi(parts[2].c_str()),
+                                          atoi(parts[3].c_str())});
+            } else if (head == "kill" && parts.size() == 3) {
+                kills.push_back(StepInt{atoi(parts[1].c_str()), atoi(parts[2].c_str()), 0});
+            } else if (head == "avar" && parts.size() == 5) {
+                StepArena v;
+                v.step = atoi(parts[1].c_str());
+                v.arena = parts[2];
+                v.at = Vec3{0.0f, 0.0f, 0.0f};
+                v.index = atoi(parts[3].c_str());
+                v.value = (float)atof(parts[4].c_str());
+                avars.push_back(v);
+            } else if (parts.size() == 2) {
+                ok = false;
+                const size_t dash = parts[1].find('-');
+                for (size_t k = 0; k < sizeof(kKeys) / sizeof(kKeys[0]); k++) {
+                    if (head == kKeys[k].name && dash != std::string::npos) {
+                        holds.push_back(Hold{kKeys[k].key, atoi(parts[1].substr(0, dash).c_str()),
+                                             atoi(parts[1].substr(dash + 1).c_str())});
+                        ok = true;
+                    }
+                }
+            } else {
+                ok = false;
+            }
+            if (!ok) {
+                *why = "the schedule did not parse: " + token;
+                return false;
+            }
+        }
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    std::vector<uint8_t> ftiBytes;
+    Fti fti;
+    if (!data.read("MISC/MDKFONT.FTI", &ftiBytes) ||
+        !Fti::parse(&fti, ftiBytes.data(), (int32_t)ftiBytes.size())) {
+        *why = "MDKFONT.FTI did not load";
+        return false;
+    }
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    // Viewer.cs:232: the difficulty decides the town's timer, before the scripts.
+    player.combat().setDifficulty((Kurt::Difficulty)difficulty);
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+    // Viewer.cs:237-238: the follow camera over the space, shaken by the scripts.
+    FollowCamera follow;
+    follow.seedShake(camSeed);
+    ScreenRaised raised;
+    ScreenShakeFanout fanout{&follow, &raised};
+    runtime.setShakeRaisedHook(screenShakeFanout, &fanout);
+    // The HUD's message stream (Viewer.cs:245).
+    Messages messages;
+    messages.setTexts(fti);
+    runtime.hudMessages = &messages;
+    Camera camera;
+
+    const auto clearText = [](uint32_t argb) {
+        char text[16];
+        snprintf(text, sizeof(text), "%02X%02X%02X%02X", (unsigned)((argb >> 16) & 0xFFu),
+                 (unsigned)((argb >> 8) & 0xFFu), (unsigned)(argb & 0xFFu),
+                 (unsigned)(argb >> 24));
+        return std::string(text);
+    };
+    const char* const kBackdrops[] = {"Sky", "Clear", "Keep"};
+    const uint32_t skyColour = sky_modes::skyColour(levelData.dti());
+
+    // Objects numbered in the order first seen (the probe's Id pass).
+    std::map<const scripts::MdkObject*, int> ids;
+    const auto id = [&ids](const scripts::MdkObject* obj) {
+        std::map<const scripts::MdkObject*, int>::iterator found = ids.find(obj);
+        if (found != ids.end()) {
+            return found->second;
+        }
+        const int next = (int)ids.size();
+        ids[obj] = next;
+        return next;
+    };
+    const auto objectNumbered = [&ids, &runtime](int wanted) -> scripts::MdkObject* {
+        std::deque<scripts::MdkObject>& list = runtime.objects();
+        for (size_t o = 0; o < list.size(); o++) {
+            std::map<const scripts::MdkObject*, int>::iterator found = ids.find(&list[o]);
+            if (found != ids.end() && found->second == wanted) {
+                return &list[o];
+            }
+        }
+        return nullptr;
+    };
+    // Every arena's groups (the top bytes of its triangles' flags), ascending, and their
+    // (state, material) as the level loaded.
+    const auto groupText = [](const Arena* arena, int32_t group) {
+        int32_t material = 0;
+        const bool has = arena->groupMaterial(group, &material);
+        return "state=" + std::to_string((int)arena->groupState(group)) +
+               " mat=" + (has ? std::to_string(material) : std::string("-"));
+    };
+    std::vector<std::vector<int32_t> > groupNumbers(arenas.size());
+    std::vector<std::vector<std::string> > groupSeen(arenas.size());
+    for (size_t a = 0; a < arenas.size(); a++) {
+        std::set<int32_t> numbers;
+        const std::vector<uint32_t>& flags = arenas[a]->triangleFlags();
+        for (size_t t = 0; t < flags.size(); t++) {
+            numbers.insert((int32_t)(flags[t] >> 24));
+        }
+        groupNumbers[a].assign(numbers.begin(), numbers.end());
+        for (size_t g = 0; g < groupNumbers[a].size(); g++) {
+            groupSeen[a].push_back(groupText(arenas[a], groupNumbers[a][g]));
+        }
+    }
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    *out += "start town=" + std::to_string(runtime.townTicks) + " sky=" +
+            std::to_string(runtime.skyMode) + " skycolour=" + clearText(skyColour) + "\n";
+    std::string lastState;
+    std::string lastQueue = "-";
+    char buffer[512];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < teleports.size(); i++) {
+            if (teleports[i].step == step) {
+                runtime.teleportKurt(teleports[i].arena, teleports[i].at, 0.0f);
+            }
+        }
+        for (size_t i = 0; i < towns.size(); i++) {
+            if (towns[i].step == step) {
+                runtime.townTicks = towns[i].a;
+            }
+        }
+        for (size_t i = 0; i < gflags.size(); i++) {
+            if (gflags[i].step == step) {
+                runtime.globalFlags |= gflags[i].a;
+            }
+        }
+        for (size_t i = 0; i < healths.size(); i++) {
+            if (healths[i].step == step) {
+                if (scripts::MdkObject* obj = objectNumbered(healths[i].a)) {
+                    obj->health = healths[i].b;
+                }
+            }
+        }
+        for (size_t i = 0; i < kills.size(); i++) {
+            if (kills[i].step == step) {
+                if (scripts::MdkObject* obj = objectNumbered(kills[i].a)) {
+                    runtime.kill(obj);
+                }
+            }
+        }
+        for (size_t i = 0; i < avars.size(); i++) {
+            if (avars[i].step == step) {
+                runtime.getArenaState(avars[i].arena).variables[(size_t)avars[i].index] =
+                    avars[i].value;
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        const float goal = runtime.cameraTrackTicks > 0
+                               ? runtime.cameraTrackPitch
+                               : levelData.arenaPitch(runtime.currentArena());
+        follow.update(&camera, &space, player, goal, 1.0f / 60.0f, 4.0f / 3.0f);
+        const std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            if (!objects[i].dead) {
+                id(&objects[i]);
+            }
+        }
+
+        const Backdrop backdrop = sky_modes::backdropOf(runtime.skyMode);
+        snprintf(buffer, sizeof(buffer),
+                 "arena=%s town=%d gflags=%08X sky=%d backdrop=%s clear=%s shake=%s cam=%s "
+                 "off=%d,%d",
+                 runtime.currentArena().c_str(), (int)runtime.townTicks,
+                 (unsigned)runtime.globalFlags, (int)runtime.skyMode,
+                 kBackdrops[(int)backdrop],
+                 clearText(sky_modes::clearOf(runtime.skyMode, skyColour)).c_str(),
+                 hexBits(runtime.shake).c_str(), hexBits(follow.shake()).c_str(),
+                 (int)follow.shakeOffsetX(), (int)follow.shakeOffsetY());
+        const std::string state = buffer;
+        std::vector<std::string> events;
+        for (size_t i = 0; i < raised.amounts.size(); i++) {
+            events.push_back("  raise " + hexBits(raised.amounts[i]));
+        }
+        raised.amounts.clear();
+        for (size_t a = 0; a < arenas.size(); a++) {
+            for (size_t g = 0; g < groupNumbers[a].size(); g++) {
+                const std::string text = groupText(arenas[a], groupNumbers[a][g]);
+                if (text != groupSeen[a][g]) {
+                    groupSeen[a][g] = text;
+                    events.push_back("  group " + arenas[a]->name() + " " +
+                                     std::to_string(groupNumbers[a][g]) + " " + text);
+                }
+            }
+        }
+        std::string queue;
+        for (int32_t i = 0; i < messages.queued(); i++) {
+            queue += (i ? "|" : "") + screenMessage(messages.queuedAt(i));
+        }
+        if (queue.empty()) {
+            queue = "-";
+        }
+        if (queue != lastQueue) {
+            lastQueue = queue;
+            events.push_back("  msg " + queue);
+        }
+        if (state != lastState || !events.empty()) {
+            *out += "s=" + std::to_string(step) + " " + state + " objs=" +
+                    std::to_string(runtime.objectCount()) + "\n";
+            lastState = state;
+            for (size_t i = 0; i < events.size(); i++) {
+                *out += events[i] + "\n";
+            }
+        }
     }
     return true;
 }
@@ -5962,6 +6349,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "screen") {
+            // `tick1 dump screen <level> <steps> <schedule>`: screenDump's text, the C++
+            // side of the screen probe (package #15).
+            std::string got;
+            std::string why;
+            if (!screenDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                            &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "sniper") {
             // `tick1 dump sniper <level> <steps>`: kurtSniperDump's text, the C++ side of
             // the sniper probe.
@@ -6998,6 +7398,102 @@ int main(int argc, char** argv) {
                 printf("PASS %s: %s\n", c.name, c.pass);
             } else {
                 printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The screen (package #15: the town timer, the shake, the sky mode, the group textures),
+    // end to end against the oracle probe (tests/scripts/screen_probe; see screenDump for the
+    // lines). The schedules are the probe's arguments, byte for byte: each golden's first line
+    // repeats its schedule. The shake's offsets are the oracle's to the bit because the probe
+    // seeds the C# camera's Random as screenDump seeds this one (camseed, default 1).
+    {
+        struct ScreenCase {
+            const char* name;
+            const char* path;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* pass;
+        };
+        static const ScreenCase kScreenCases[] = {
+            {"L3_screen_town", "golden/L3_screen_town.txt", 3, 80, "diff:0,town:5:7",
+             "Easy's 81000-tick town timer, set to 7 and counted down a tick at a time; at 0 "
+             "FlattenTown: shake 5 (the camera's offsets and drain), OOT_L3 zoomed in front for "
+             "5 s, FlagTownFlattened"},
+            {"L3_screen_hmo3", "golden/L3_screen_hmo3.txt", 3, 320,
+             "tp:5:HMO_3:-60:1410:-960,kill:20:17,avar:120:HMO_3:0:3",
+             "HMO_3's sky mode -1 (Keep) on entry; its XG's death script raises shake 2 "
+             "(opcode 135) and drops group 1; at arena var 0 = 3 groups 2, 9-12 take -1027 "
+             "(opcode 140) and shatter one by one"},
+            {"L4_screen_second", "golden/L4_screen_second.txt", 4, 70,
+             "diff:2,camseed:7,tp:5:MEAT_6:-120:13600:-1990,gflag:8:80000000,town:10:5",
+             "Hard's 36000 ticks; MEAT_6's sky mode 1 (Clear, black); with FlagSecondTown the "
+             "town flattens as OOT_L4A, FlagSecondTownFlattened; camera seed 7"},
+            {"L5_screen_last", "golden/L5_screen_last.txt", 5, 6, "",
+             "the last level of the order has no town (TownTicks 0, never counted)"},
+        };
+        for (size_t i = 0; i < sizeof(kScreenCases) / sizeof(kScreenCases[0]); i++) {
+            const ScreenCase& c = kScreenCases[i];
+            std::string expected;
+            if (!readText(c.path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.name, c.path);
+                failures++;
+                continue;
+            }
+            std::string got;
+            std::string why;
+            if (!screenDump(c.level, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.name, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.name, c.pass);
+            } else {
+                printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // A retextured group is recorded for the frontends once per arena (package #15: the C#'s
+    // TriangleGroups.Changed -> LevelView.Rebuild becomes ScriptRuntime::retexturedArenas,
+    // which the frontends hand to ArenaViews::refresh): group 0 and a group the arena does
+    // not have are SetMaterial's early return and record nothing.
+    {
+        const char* name = "screen_retextured_arenas";
+        LevelData level3;
+        char cmiPath[64];
+        snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL3/LEVEL3.CMI");
+        std::vector<uint8_t> cmiBytes;
+        Cmi cmi3;
+        audio::SoundBank bank3;
+        bool ok = LevelData::load(&level3, &data, 3) && data.read(cmiPath, &cmiBytes) &&
+                  Cmi::parse(&cmi3, cmiBytes.data(), (int32_t)cmiBytes.size()) &&
+                  audio::SoundBank::forLevel(&bank3, data, 3);
+        if (!ok) {
+            printf("FAIL %s: level 3 did not load\n", name);
+            failures++;
+        } else {
+            scripts::ScriptRuntime runtime(&level3, &cmi3, 1, &bank3, nullptr, spritesArg);
+            runtime.setGroupTexture("HMO_3", 0, -1027);
+            runtime.setGroupTexture("HMO_3", 250, -1027);
+            const bool none = runtime.retexturedArenas().empty();
+            runtime.setGroupTexture("HMO_3", 2, -1027);
+            runtime.setGroupTexture("HMO_3", 9, -1027);
+            int32_t material = 0;
+            const Arena* hmo3 = level3.arenaNamed("HMO_3");
+            const bool stored = hmo3 && hmo3->groupMaterial(9, &material) && material == -1027;
+            const bool once = runtime.retexturedArenas().size() == 1 &&
+                              runtime.retexturedArenas()[0] == "HMO_3";
+            runtime.clearRetexturedArenas();
+            const bool taken = runtime.retexturedArenas().empty();
+            if (none && stored && once && taken) {
+                printf("PASS %s: group 0 and a missing group record nothing; two groups of "
+                       "HMO_3 record it once, until taken\n", name);
+            } else {
+                printf("FAIL %s: none=%d stored=%d once=%d taken=%d\n", name, none ? 1 : 0,
+                       stored ? 1 : 0, once ? 1 : 0, taken ? 1 : 0);
                 failures++;
             }
         }

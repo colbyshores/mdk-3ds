@@ -103,6 +103,7 @@
 #include "platform/filesystem_romfs.h"
 #include "platform/harness_3ds.h"
 #include "render/sky_dome.h"
+#include "game/sky_modes.h"
 #include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
@@ -1466,7 +1467,11 @@ int main(int argc, char** argv) {
         mdk::audioDspDetach();
         music.reset();   // its voices are the runtime's mixer's
         musicPrefetchedFor.clear();
-        follow.clipView = mdk::ClipViewHook();  // its context is the runtime going now
+        // A fresh camera with the fresh level (its clip view's context is the runtime
+        // going now). It is reset HERE, before the runtime below binds its clip view, its
+        // shake and its seed to it: reset after them, as it was until package #15, it
+        // dropped the clip view package #3 bound.
+        follow = mdk::FollowCamera();
         runtime.reset();
         mix = &mixer;
         // THE CACHES THAT KEY ON A MODEL ADDRESS DIE WITH THE RUNTIME, and this is
@@ -1512,6 +1517,12 @@ int main(int argc, char** argv) {
             // _scripts.ClipView, package #3).
             follow.clipView.context = runtime.get();
             follow.clipView.clip = &mdk::scripts::ScriptRuntime::clipViewTrampoline;
+            // The scripts shake the camera (Viewer.cs:238, `ShakeRaised +=
+            // _follow.RaiseShake`; package #15), whose offsets take the scripts' seed:
+            // the C#'s camera Random is time-seeded, and a WALK harness build replays
+            // its fixed seed.
+            runtime->setShakeRaisedHook(&mdk::FollowCamera::raiseShakeHook, &follow);
+            follow.seedShake(seed);
             player.setMixer(&runtime->mixer());
             mix = &runtime->mixer();
             g_gameSettings.applyAudio(&mix->device());
@@ -1529,7 +1540,7 @@ int main(int argc, char** argv) {
         if (kurtSpriteReady) {
             player.setFrameCounts(kurtSprite.frameCounts());
         }
-        follow = mdk::FollowCamera();
+        // (The follow camera was reset above, before the runtime bound itself to it.)
         cutsceneCamera = mdk::CutsceneCamera();
         // Pin Kurt's arena to the one around the spawn, as the fresh level's start.
         // The step loop refreshes it from here on (from the runtime's DRAWN LIST --
@@ -2543,6 +2554,19 @@ int main(int argc, char** argv) {
                                   (int)arenaViews.count());
                 lastViewsReleased = arenaViews.stats().released;
             }
+            // The groups the steps retextured (group_set_texture, opcode 140; package
+            // #15): the C#'s TriangleGroups.Changed -> LevelView.Rebuild, each arena's
+            // view built again from its groups' materials, here between frames as sync
+            // builds them (the old mesh goes at the backend's completion boundary).
+            if (runtime) {
+                const std::vector<std::string>& retextured = runtime->retexturedArenas();
+                for (size_t i = 0; i < retextured.size(); i++) {
+                    const bool rebuilt = arenaViews.refresh(retextured[i]);
+                    mdk::log3dsPrintf("views: %s retextured, %s", retextured[i].c_str(),
+                                      rebuilt ? "rebuilt" : "its mesh was REFUSED");
+                }
+                runtime->clearRetexturedArenas();
+            }
 
             // THE MUSIC OF THE ARENA THAT IS LOADING (docs/ARENA_STREAMING_SPEC.md
             // Phase 5). The original starts an arena's music preload when the
@@ -2641,6 +2665,29 @@ int main(int argc, char** argv) {
         params.elapsed = elapsed;
         params.frame_index = frame;
         params.clear_colour = 0xFF102030u;
+        // The background the scripts want (C# Viewer.Background; package #15): the sky
+        // mode (opcode 202) picks the backdrop -- the dome below is drawn only under Sky,
+        // mode 1 clears to black and any other keeps the last frame (no colour clear).
+        // Under Sky the clear stays this frontend's 0xFF102030 rather than the C#'s DTI
+        // sky colour: the dome's caps cover the panel, and tools/panel_geom.py's census
+        // is defined on this exact colour.
+        const int32_t frameSkyMode = runtime ? runtime->skyMode : mdk::sky_modes::kShown;
+        params.backdrop = mdk::sky_modes::backdropOf(frameSkyMode);
+        if (frameSkyMode == mdk::sky_modes::kBlack) {
+            params.clear_colour = mdk::sky_modes::clearOf(frameSkyMode, params.clear_colour);
+        }
+        // Said when it changes (the C#'s `sky {mode} ({backdrop})`, Viewer.cs:543): the
+        // retail arenas that black or hide the sky are closed rooms, so the log is where a
+        // run shows it.
+        {
+            static int32_t loggedSkyMode = mdk::sky_modes::kShown;
+            if (frameSkyMode != loggedSkyMode) {
+                static const char* const kBackdropNames[] = {"Sky", "Clear", "Keep"};
+                mdk::log3dsPrintf("sky: mode %d (%s) at frame %lu", (int)frameSkyMode,
+                                  kBackdropNames[(int)params.backdrop], (unsigned long)frame);
+                loggedSkyMode = frameSkyMode;
+            }
+        }
         params.present = true;
         params.screenshot_path = capturePath[0] ? capturePath : nullptr;
 
@@ -2679,8 +2726,9 @@ int main(int argc, char** argv) {
             }
         }
 
-        // The sky first (see SkyRange): centred on the camera, DoubleSided.
-        if (skyMesh >= 0) {
+        // The sky first (see SkyRange): centred on the camera, DoubleSided -- only when
+        // the scripts' sky mode shows it (C# `Backdrop == Backdrop.Sky`).
+        if (skyMesh >= 0 && params.backdrop == mdk::Backdrop::Sky) {
             for (int32_t i = 0; i < skyRangeCount; i++) {
                 const SkyRange& range = skyRanges[i];
                 if (range.texture < 0 || range.count <= 0) {

@@ -166,6 +166,12 @@ struct Material {
 // Panorama (the sky)
 // ---------------------------------------------------------------------------
 
+// What the scene is drawn over (C# Mdk.Engine.Render.Backdrop, Renderer.cs:78):
+// the sky panorama, a clear to the frame's clear colour, or the last frame kept
+// (no colour clear). The scripts choose it through the sky mode (opcode 202,
+// game/sky_modes.h); the frontends pass it in MdkFrameParams.
+enum class Backdrop { Sky, Clear, Keep };
+
 // The sky is a screen-filling panorama scrolled by yaw and pitch. The
 // original's backdrop is a 2D image, not a 3D dome, and the mirror surfaces
 // show a second one.

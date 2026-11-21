@@ -89,6 +89,12 @@ struct MdkFrameParams {
     // paints the frame with the alpha byte as red, which is measured, not
     // theoretical — see the declaration there for the before/after pixels.
     uint32_t clear_colour = 0xFF000000u;
+    // What the scene is drawn over (C# Renderer.Backdrop, which Viewer.Background sets
+    // from the scripts' sky mode; package #15): Sky draws the panorama over the clear,
+    // Clear only clears, Keep leaves the last frame's colour (no colour clear; the depth
+    // is still cleared). A frontend that draws its own sky (the 3DS's dome) draws it
+    // only under Sky.
+    mdk::Backdrop backdrop = mdk::Backdrop::Sky;
     bool present = true;          // false for a frame the frontend does not show
     const char* screenshot_path = nullptr;   // Linux only; nullptr elsewhere
 };

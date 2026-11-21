@@ -2,6 +2,22 @@
 
 Method and reachability evidence in the final Phase 2 report. Summary:
 
+- **Town timer, shake, sky modes, group textures (2026-11-20, PORT_GAPS package 15):** no
+  opcode added (the count stays C# **238**, C++ **238**); three dispatches gain the consumers
+  they were partial for. 135 (`raise_573aa8`): `ScriptRuntime::raiseShake` now raises the
+  C#'s ShakeRaised, which the follow camera takes (`FollowCamera::raiseShake` / UpdateShake /
+  Turn) -- **complete**. 140 (`group_set_texture`): the arena is recorded
+  (`retexturedArenas`) and both frontends rebuild its view (`ArenaViews::refresh` ->
+  `LevelView::refresh`, the C#'s LevelView.Rebuild) -- **complete**. 202 (`set_574304`): both
+  frontends draw their backdrop from `skyMode` (`game/sky_modes.h`, the C#'s SkyModes in
+  Viewer.Background) -- partial now only for the save/load snapshot's `sky_mode`, as 203 is.
+  Pinned end to end by `golden/L3_screen_hmo3.txt` (HMO_3's 202 -1, its XG's 135 2, the 140s
+  on groups 2 and 9-12), `L4_screen_second.txt` (MEAT_6's 202 1) and the town goldens
+  (`L3_screen_town`, `L5_screen_last`), byte-identical to `tests/scripts/screen_probe`.
+  Retail sites (the C++ decoder over every reachable script): 140 only in L3 HMO_3 (groups 2-12,
+  all to -1027, the glass); 202 in L3 HMO_3/HMO_4/HMO_10/CHMO_9, L4 MEAT_3/5/6/7/10/CMEAT_5,
+  L6 OLYM_3, L7 DANT_3/4/5/CDANT_3/4; 135 in every level.
+
 - **Bullet holes (2026-11-20, PORT_GAPS package 16):** 130 (`special_130`) ported:
   `ScriptRuntime::stampBulletHole` (scripts/bullet_holes.cpp, BulletHoles.cs whole), pinned
   end to end by `golden/L8_holes_guntam.txt` and `golden/L6_holes_xb2.txt` (sniper rounds hit
@@ -595,11 +611,11 @@ Opcode 170 is a faithful dispatch over the borrowed live `Player` source, now
 realized by the Linux frontend integration.)
 
 **Partial — faithful dispatch, effect gated behind a partial/unported subsystem
-(9 cases), each verified against the code. The rule is consistent for input
+(7 cases since package 15 completed 135 and 140), each verified against the code. The rule is consistent for input
 fields and output consumers: a required input with no reachable writer, or an
 output with no consumer, is partial even when the dispatch itself is exact.
 Thus 81/174/195 are partial for unwritten inputs, and
-135/202/203 for missing visual, snapshot or movement consumers. (16/56, 165/166
+202/203 for missing snapshot consumers (135 and 140 left the table with package 15: the camera shakes and the views rebuild). (16/56, 165/166
 and 215 left this table on 2026-11-20, re-verified with the combat and hazard
 batch: `kill` runs Explode's sound, flash, break-up and explosion
 (`ScriptRuntime::explode`); `itemsBomb` is written by the Items slice
@@ -616,16 +632,15 @@ portable with no new subsystem, and it is ported.)**
 | Opcode | Name | Gating subsystem (verified) |
 |---|---|---|
 | 81 | push_hit_dir | reads `hit_direction`; the chain gun, the blast, the mortar, Twister, touch_damage and the sniper rounds (package 6, `SniperRounds::hitObject`) write it |
-| 135 | raise_573aa8 | writes the runtime's per-tick maximum, but the C# `ShakeRaised` follow-camera consumer is not ported |
-| 140 | group_set_texture | sets the group material VM state; the renderer ignores it (open item 1, dynamic scene updates) |
 | 174 | if_ammo | reads `Kurt`'s super-chain-gun timer and five sniper-ammo entries; the pickups write them and sniper mode's clip spends them (`Kurt::useAmmo`, 2026-11-20) |
-| 202 | set_574304 | writes the runtime's shared `skyMode`, but the renderer's `SkyModes.BackdropOf` and save/load snapshot consumers are not ported |
+| 202 | set_574304 | writes the runtime's shared `skyMode`, which both frontends' backdrop reads (package 15, `game/sky_modes.h`); the save/load snapshot's `sky_mode` is not ported |
 | 203 | camera_track | writes the runtime's `cameraTrackPitch`/`cameraTrackTicks`, and the Linux follow camera consumes them, but the save/load snapshot's `camera_track_*` fields are not ported |
 | 131 | special_event | ported whole: the <= 50 arm (package 1), the arms above 50 (package 13) and 51's strike scene (package 14); none counts as unimplemented |
 | 195 | if_hit_weapon | reads `hit_type`; the chain gun, the blast, the mortar, the cow, touch_damage, `hitGroup` and the sniper rounds (package 6: the round's type on an object, the type as the group hit's weapon) write it |
 | 248 | push_kurt | knocks Kurt down and shoves him, from the object's frame or away from it (golden/L3_kurt_push.txt); the C#'s `StopFiring()` inside KnockDown is inert because the firing/muzzle subsystem is not ported |
 
-**Complete — effect realized with the subsystems present (225 cases):** every
+**Complete — effect realized with the subsystems present (225 cases, plus 135 and 140
+since package 15):** every
 owned case not in the partial table above (234 true dispatches − 9 = 225, recounted
 2026-11-20 after package 1's 131 and package 4). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
@@ -645,7 +660,7 @@ conditions/flags/variables
 9, 12, 64, 94, 95, 125, 183); explicit no-ops (77, 239); group state (98, 99, 162, 163, 168, 194); spawn
 (113, 149, 150, 152, 153, 156, 206); partner links (179, 180, 228); chain links
 (29, 49 — with movement command 30, which moves the chain); alarm state (15, 27). The authoritative complete set is the owned set minus
-the 9 partial cases in the table above, not this illustrative grouping. (121 joined the conditions group with the floor-below batch; 192 joined it with the no-flat-floor batch; 206 joined the spawn group with the 206 batch; 217 joined the new stats-counters group with the stats slice; 243 joins the conditions group with the vision-condition batch. 81, 174 and 195 are partial until their input writers exist; 135 and 203 are partial until their remaining camera/snapshot consumers exist; 170, 219 and 220 joined the complete set when the Linux frontend constructed `ScriptRuntime` and bound the live `Player`.)
+the 7 partial cases in the table above, not this illustrative grouping. (121 joined the conditions group with the floor-below batch; 192 joined it with the no-flat-floor batch; 206 joined the spawn group with the 206 batch; 217 joined the new stats-counters group with the stats slice; 243 joins the conditions group with the vision-condition batch. 81, 174 and 195 are partial until their input writers exist; 202 and 203 are partial until their snapshot consumers exist (135 and 140 joined the complete set with package 15); 170, 219 and 220 joined the complete set when the Linux frontend constructed `ScriptRuntime` and bound the live `Player`.)
 
 All three oracle `Linked` writers are now ported: `find_object` (245),
 `spawn_partner` (179), and `link_partners` (228). The partner-condition cases

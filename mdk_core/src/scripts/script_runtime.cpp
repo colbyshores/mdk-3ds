@@ -348,7 +348,7 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
     // The town's timer, by the difficulty, except on the last level (Gunter's) and
     // in the 1996 demo, which this runtime does not load (ScriptRuntime.cs:367-370;
     // TownTicksByDifficulty :38, LastLevelIndex :40). Package #19 carries it in a
-    // save; its consumer is #15's.
+    // save; FlattenTown at 0 is #15's (runTick).
     static const int32_t kTownTicksByDifficulty[3] = {81000, 54000, 36000};
     static const int32_t kLastLevelIndex = 5;
     if (flow::indexOf(level_->number()) != kLastLevelIndex) {
@@ -668,10 +668,13 @@ void ScriptRuntime::runTick() {
     shake = 0.0f;
     // The health bar's second runs out, or its object died (ScriptRuntime.cs:900).
     updateBar();
-    // The town's timer (ScriptRuntime.cs:901-908). FlattenTown at 0 is package #15's;
-    // the count is here because a save carries it (package #19).
+    // The town's timer (ScriptRuntime.cs:901-908, package #15): at 0 the minecrawler
+    // has reached the town.
     if (townTicks > 0) {
         townTicks--;
+        if (townTicks == 0) {
+            flattenTown();
+        }
     }
 
     // The first tick has no movement to observe (ScriptRuntime.cs:911-917,
@@ -2427,16 +2430,24 @@ void ScriptRuntime::setGroupState(const std::string& arena, int32_t group, int32
     }
 }
 
-// C# SetGroupTexture (ScriptRuntime.cs:1983) → TriangleGroups.SetMaterial: the
+// C# SetGroupTexture (ScriptRuntime.cs:1983) -> TriangleGroups.SetMaterial: the
 // group must exist and not be group 0; it stores the group's material. The
-// scene reads it when it is built — a group retextured mid-play needs a scene
-// rebuild to show it (open rendering-integration item).
+// scene reads it when it is built, and the C#'s Changed event rebuilds a built
+// one (LevelView.Rebuild): here the arena is recorded for the frontend, which
+// rebuilds its view (retexturedArenas, package #15).
 void ScriptRuntime::setGroupTexture(const std::string& arena, int32_t group, int32_t value) {
     formats::Arena* mesh = level_->arenaNamedMutable(arena);
-    if (mesh == nullptr) {
+    if (mesh == nullptr || group == 0 || !mesh->hasGroup(group)) {
         return;
     }
     mesh->setGroupMaterial(group, value);
+    // SetMaterial's Changed?.Invoke(arena, number): each arena once until taken.
+    for (size_t i = 0; i < retextured_.size(); i++) {
+        if (retextured_[i] == arena) {
+            return;
+        }
+    }
+    retextured_.push_back(arena);
 }
 
 
@@ -3822,10 +3833,31 @@ void ScriptRuntime::hurtKurt(int32_t damage) {
 
 // RaiseShake (ScriptRuntime.cs:1986, 0x467f7c): keep the strongest request
 // made during this tick. MathF.Max propagates NaN; mathMax preserves that.
-// The C# also raises its ShakeRaised event for the follow camera. The C++
-// camera's shake consumer is not ported yet, so this records the runtime half.
+// Then the C#'s ShakeRaised event with the amount asked, which the follow camera
+// takes (Viewer.cs:238: FollowCamera.RaiseShake; package #15).
 void ScriptRuntime::raiseShake(float amount) {
     shake = mathMax(shake, amount);
+    if (shakeRaisedHook_ != nullptr) {
+        shakeRaisedHook_(shakeRaisedUser_, amount);
+    }
+}
+
+// C# FlattenTown (ScriptRuntime.cs:2139-2154, package #15): the minecrawler reached the
+// town -- the screen shakes and a message says which town is gone (OOT_L1, "There goes
+// Laguna Beach!", or OOT_L1A for the second town), and the global flags record which one
+// for the debriefing (GameStats.TownFlags, copied when the level ends). The C# raises no
+// GameOver: the level goes on.
+void ScriptRuntime::flattenTown() {
+    raiseShake(kTownShake);
+    std::string text = "OOT_L" + std::to_string(flow::indexOf(level_->number()) + 1);
+    if ((globalFlags & kFlagSecondTown) != 0) {
+        text += "A";
+        globalFlags |= kFlagSecondTownFlattened;
+    } else {
+        globalFlags |= kFlagTownFlattened;
+    }
+    // Messages?.Push(text, FlagZoom | FlagFront, TownMessageSeconds).
+    pushMessage(text, Messages::kFlagZoom | Messages::kFlagFront, kTownMessageSeconds);
 }
 
 // C# SpecialEvent (ScriptRuntime.cs:1007-1076, opcode 131 special_event, 0x4456d2): 50 and

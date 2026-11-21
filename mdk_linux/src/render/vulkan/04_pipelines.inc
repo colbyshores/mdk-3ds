@@ -388,6 +388,14 @@ void drawSky(RendererVk* r) {
     if (r->panorama.sky < 0 || r->panorama.palette < 0) {
         return;
     }
+    // C# Renderer: `if (Panorama != null && Backdrop == Backdrop.Sky) DrawSky(...)` --
+    // the scripts' sky mode 1 (black) and -1 (the last frame) draw none (package #15).
+    // The C# draws Keep by LOADING the scene target instead of clearing it; this
+    // backend's passes always clear, so Keep shows the clear colour where nothing is
+    // drawn (in the retail arenas that set it, closed rooms, nothing is uncovered).
+    if (r->backdrop != mdk::Backdrop::Sky) {
+        return;
+    }
     if (!r->skyPipeline) {
         r->skyPipeline = createSkyPipeline(r);
         if (!r->skyPipeline) {

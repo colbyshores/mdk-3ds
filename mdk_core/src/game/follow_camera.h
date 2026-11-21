@@ -16,6 +16,7 @@
 
 #include "game/input.h"
 #include "render/render_types.h"
+#include "util/random.h"
 
 namespace mdk {
 
@@ -64,6 +65,16 @@ constexpr float kClimbClamp = 0.5f;
 constexpr float kClimbKeep = 0.97f;
 constexpr float kClimbReturn = 0.02f;
 constexpr float kClimbPitch = 40.0f;
+// The screen shake (C# FollowCamera, 0x573aa8; package #15): each tick above 1 the
+// view turns by up to ±1.64 × the shake in pixels of the 360-high view (at most ±19
+// across, ±59 up and down); it drains by 0.25 per tick. 16384 × 0.0001 is a power-of-two
+// scaling of 0.0001f, so the product is exact either way it is folded.
+constexpr float kShakeScale = 16384.0f * 0.0001f;
+constexpr float kShakeLimitX = 19.0f;
+constexpr float kShakeLimitY = 59.0f;
+constexpr float kShakeDrain = 0.25f;
+constexpr float kShakeMin = 1.0f;
+constexpr float kViewHeight = 360.0f;
 
 // C# float.DegreesToRadians (Single.DegreesToRadians): multiply by the float
 // pi, then divide by 180 -- TWO roundings, left-associative. This is the one
@@ -88,10 +99,16 @@ void followCameraOrient(const Vec3& facing, float pitch, Vec3* forward, Vec3* up
 // vector about the forward by rollDegrees (positive banks the view to the right;
 // Kurt's moves write it). Forward is untouched, so the picture banks without
 // turning, and a roll of exactly zero leaves the axes alone exactly as the C#'s
-// early return does. The shake half of Turn is not ported (see the note on
-// FollowCamera below): the oracle draws its shake from a time-seeded
-// System.Random, so there is no reproducible oracle value to pin a shake against.
+// early return does. followCameraTurn below is the whole of Turn, shake included.
 void followCameraRoll(const Vec3& forward, Vec3* up, float rollDegrees);
+
+// C# FollowCamera.Turn whole (FollowCamera.cs:194-213; package #15): first the shake
+// turns the view by `shakeX` across and `shakeY` up (radians) -- forward leans along
+// Orient's right and up by their tangents, then right and up are made square to it again
+// -- then the roll, about the turned axes. With no shake it is followCameraRoll exactly
+// (the C#'s `shake != Vector2.Zero` test), so a still view is bit-for-bit what it was.
+// The camera's tangents go through the project's one trig path (R6), as Orient's do.
+void followCameraTurn(Vec3* forward, Vec3* up, float shakeX, float shakeY, float rollDegrees);
 
 // The camera's clearance (C# FollowCamera.Clear, camera_clearance 0x417ee8): a
 // wall between Kurt's head (feet + 5.5) and the camera pushes Kurt d·n away
@@ -121,9 +138,11 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
 // As buildFollowCamera, but placed from the player and run through the camera
 // clearance (C# FollowCamera.Update: Point then Clear). The clearance may move
 // the player (Kurt is shoved off a wall) and the camera with him.
+// `shakeX`/`shakeY` are the shake's turn in radians (followCameraTurn), 0 for none.
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect,
-                              float rollDegrees, const ClipViewHook* clip = nullptr);
+                              float rollDegrees, const ClipViewHook* clip = nullptr,
+                              float shakeX = 0.0f, float shakeY = 0.0f);
 
 // ---- Sniper mode's view (FollowCamera.cs:381-430) ----
 // The frontends draw the world through these while Player::sniping() (C#
@@ -166,11 +185,30 @@ bool buildSniperCamera(Camera* camera, const Player& player, float aspect);
 // C# reads it off Kurt. The between-step blend is ported for the camera's own
 // Aim triple; wiring it to a frontend still needs FrameBlend's Kurt pose. Its
 // sniper guards are ported (no clearance and no mouse look while Kurt snipes; the
-// scope's own view is buildSniperCamera above). The shake and the top-down view
-// are not ported (they need the scripts and the moves); where the C# branches on
-// them this takes the false side.
+// scope's own view is buildSniperCamera above). The shake is ported (package #15:
+// RaiseShake, UpdateShake and Turn's shake half, in update and blend). The top-down
+// view is not (it needs the moves); where the C# branches on it this takes the false
+// side.
 class FollowCamera {
 public:
+    // C# FollowCamera.RaiseShake (FollowCamera.cs:94, 0x467f7c, opcode 135): shake the
+    // screen at least this much. MathF.Max, NaN-propagating as the C#'s.
+    void raiseShake(float amount);
+    // The scripts' ShakeRaised subscriber (Viewer.cs:238, `ShakeRaised +=
+    // _follow.RaiseShake`): bound with ScriptRuntime::setShakeRaisedHook, `camera` is the
+    // FollowCamera. Its address must outlive the binding (the frontends' camera does).
+    static void raiseShakeHook(void* camera, float amount);
+    // The shake's random: the C#'s `_random` is a time-seeded `new Random()`, so its
+    // offsets are not reproducible there; here it is the oracle's seeded generator
+    // (util/random.h) with a seed the caller injects. The frontends seed it as they seed
+    // the scripts (a clock, or a fixed one in harness runs); a fresh camera has seed 0.
+    void seedShake(int32_t seed) { _random = Random(seed); }
+    // The shake left (C#'s private _shake) and this tick's offset (C# ShakeOffset, whole
+    // pixels of the 360-high view), for the goldens.
+    float shake() const { return _shake; }
+    float shakeOffsetX() const { return _shakeOffsetX; }
+    float shakeOffsetY() const { return _shakeOffsetY; }
+
     // The per-frame mouse look up/down (C# FollowCamera.MouseLook): the look
     // offset, clamped against the eased arena pitch and the air tilt.
     void mouseLook(Input& input);
@@ -220,6 +258,12 @@ private:
 
     void updateAirTime(const Player& player, float delta);
     void updateClimb(float feetZ, float delta);
+    // C# FollowCamera.UpdateShake (FollowCamera.cs:216-242).
+    void updateShake(float delta);
+    // The shake's turn this tick in radians (ShakeOffset × DegreesToRadians(FieldOfView)
+    // / ViewHeight).
+    float shakeTurnX() const;
+    float shakeTurnY() const;
 
     float _arenaPitch = follow_camera::kDefaultPitch;
     float _lookOffset = 0.0f;
@@ -229,6 +273,11 @@ private:
     bool _haveLastFeetZ = false;
     float _lastFeetZ = 0.0f;
     float _climbTime = 0.0f;
+    float _shake = 0.0f;
+    float _shakeTime = 0.0f;
+    float _shakeOffsetX = 0.0f;
+    float _shakeOffsetY = 0.0f;
+    Random _random{0};
     Aim _previousAim;
     Aim _aim;
     bool _haveAim = false;

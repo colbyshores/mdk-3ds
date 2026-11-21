@@ -16,6 +16,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
 
     const uint32_t clear = params ? params->clear_colour : 0xFF000000u;
     r->clearColour = clear;
+    r->backdrop = params ? params->backdrop : mdk::Backdrop::Sky;
 
     // The frame's first pass targets the scene target, or the left eye's
     // when stereo is on; the active camera follows the same choice. A

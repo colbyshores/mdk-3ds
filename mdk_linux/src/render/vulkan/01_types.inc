@@ -248,6 +248,9 @@ struct RendererVk {
     mdk::StereoSettings stereo;
     mdk::Camera activeCamera;
     uint32_t clearColour = 0xFF000000u;
+    // The frame's backdrop (MdkFrameParams::backdrop; the C#'s Renderer.Backdrop): the
+    // sky is drawn only under Sky. Keep is drawn as Clear here (see drawSky).
+    mdk::Backdrop backdrop = mdk::Backdrop::Sky;
     bool replayingEyes = false;
     VkShaderModule stereoVertModule = VK_NULL_HANDLE;
     VkShaderModule stereoFragModule = VK_NULL_HANDLE;
