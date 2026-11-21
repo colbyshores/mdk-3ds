@@ -449,8 +449,18 @@ const int kAlphaTestHalfCover = 127;
 // the inventory box (0.5) and the skull's fade are all canvas quads whose
 // fragments sit below half cover; cutting them deletes them (review of the
 // filtering batch, F1).
+//
+// NOR FOR A BLENDED DRAW (package #18b). A Blended surface's alpha is its
+// TRANSLUCENCY, not a cover: on the PC the glass's alpha is the material's
+// colour (the texel is white, so enhanced.frag's HALF_COVER test on the texel
+// passes it) and the stream's tube is vertex colours through palette.frag, which
+// has no half cover at all. Here both carry their alpha in the texel (the
+// glass's one-pixel colour texture; the tube's colour table, stream_view.h, all
+// of whose alphas are 0x0F-0x5A), so the half cover deleted them whenever
+// filtering was on. The oracle's > 0 still discards index 0.
 inline int alphaTestReferenceFor(bool filtering, Pass pass) {
-    return (filtering && pass != Pass::Overlay) ? kAlphaTestHalfCover : kAlphaTestReference;
+    return (filtering && pass != Pass::Overlay && pass != Pass::Blended) ? kAlphaTestHalfCover
+                                                                        : kAlphaTestReference;
 }
 
 // The oracle's `if (index == 0) discard;` (shaders/palette.hlsl), as a

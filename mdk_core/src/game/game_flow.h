@@ -39,9 +39,8 @@
 //
 // NOT PORTED, WITH CAUSE — each is the menu subsystem (package #20), not a stub:
 //   * Play's LoadingScreen.Show and the screens' own construction: Menu/ is cut.
-//   * ShowStream's WatcomRandom seed (the C#'s Environment.TickCount for a stream
-//     started from the command line): the stream screen is cut, so there is no
-//     random to seed yet. kStreamDefaultSeed is the C#'s DefaultSeed, ready for it.
+//   * ShowStream's WatcomRandom seed is the frontend's to make (streamSeed): the
+//     screen itself is the frontends' (stream/stream_screen.h, package #18b).
 //   * GameOptions' window, renderer, mods, dev tools, soak keys, perf log and
 //     screenshot plumbing: desktop-only, and each belongs to a frontend.
 //
@@ -208,6 +207,19 @@ public:
     // The health the stream was opened with (C# ShowStream's argument, and what
     // AfterStream reads back off the stream screen).
     int32_t streamHealth() const { return streamHealth_; }
+    // THE STREAM SCREEN'S HALF OF THE FLOW (package #18b). The C#'s ShowStream
+    // seeds the stream's WatcomRandom with DefaultSeed when the stream was started
+    // directly (`_firstLevel && _options.Start == Start.Stream`, Game.cs:515-516)
+    // and with Environment.TickCount otherwise; streamSeed() is that choice, the
+    // tick count being the frontend's clock (or, in a fixed-step harness run, a
+    // constant, so the run is reproducible).
+    bool streamDirect() const { return streamDirect_; }
+    uint32_t streamSeed(uint32_t tickCount) const { return streamDirect_ ? kStreamDefaultSeed : tickCount; }
+    // The health the stream ENDED with (C# AfterStream's
+    // `(_screen as StreamScreen)?.Health`, Game.cs:531): the frontend that showed
+    // the stream sets it from Flight::health() before it handles the stream's
+    // Event, and the LEVEL5 entry after the Gunter stream takes it.
+    void setStreamHealth(int32_t health) { streamHealth_ = health; }
     // Whether a level is in play, which is the C#'s `_viewer != null`: the C# sets
     // it inside Play, so it is true from the moment a level is shown and NOT only
     // once the level has reported. play() therefore clears the remembered result
@@ -321,6 +333,7 @@ private:
     Screen screen_ = Screen::None;
     bool firstLevel_ = true;
     int32_t streamHealth_ = kFullHealth;
+    bool streamDirect_ = false;
     bool hasLevel_ = false;
     LevelResult level_;
     SaveGames saves_;

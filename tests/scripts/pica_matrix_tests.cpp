@@ -969,11 +969,16 @@ void testTheFilteredEdge() {
     // filtered SCENE draw; and never for the canvas, which enhanced.frag returns
     // from before its HALF_COVER discard (the hurt flash is alpha 0.4).
     using mdk::Pass;
-    const Pass scene[5] = {Pass::Solid, Pass::DoubleSided, Pass::Mirror, Pass::Blended, Pass::OnTop};
-    for (int i = 0; i < 5; i++) {
+    const Pass scene[4] = {Pass::Solid, Pass::DoubleSided, Pass::Mirror, Pass::OnTop};
+    for (int i = 0; i < 4; i++) {
         PICA_CHECK(mdk::pica::alphaTestReferenceFor(false, scene[i]) == mdk::pica::kAlphaTestReference);
         PICA_CHECK(mdk::pica::alphaTestReferenceFor(true, scene[i]) == 127);
     }
+    // A Blended draw's alpha is its translucency (the glass, the stream's tube at
+    // 0x0F-0x5A), never a cover: the half cover would delete it (package #18b).
+    PICA_CHECK(mdk::pica::alphaTestReferenceFor(true, Pass::Blended) == mdk::pica::kAlphaTestReference);
+    PICA_CHECK(mdk::pica::alphaTestReferenceFor(false, Pass::Blended) == mdk::pica::kAlphaTestReference);
+    PICA_CHECK(0x0F > mdk::pica::alphaTestReferenceFor(true, Pass::Blended));  // the tube's far level survives
     PICA_CHECK(mdk::pica::alphaTestReferenceFor(true, Pass::Overlay) == mdk::pica::kAlphaTestReference);
     PICA_CHECK(mdk::pica::alphaTestReferenceFor(false, Pass::Overlay) == mdk::pica::kAlphaTestReference);
     const int half = mdk::pica::alphaTestReferenceFor(true, Pass::Solid);

@@ -109,6 +109,7 @@
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
 #include "menu_screens_3ds.h"
+#include "stream_3ds.h"
 
 namespace {
 
@@ -700,6 +701,13 @@ int main(int argc, char** argv) {
     options.level = (int32_t)(MDK_HW_LEVEL);
     mdk::log3dsPrintf("main: harness level override LEVEL=%d", (int)(MDK_HW_LEVEL));
 #endif
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_STREAM)
+    // The harness's direct stream (`make AUTOQUIT=60 STREAM=1 LEVEL=<n>`): the C#'s
+    // --stream=N, the stream after level N first, its tube the default seed's.
+    options.start = mdk::flow::Start::Stream;
+    mdk::log3dsPrintf("main: harness stream override STREAM=1 (the stream after level %d)",
+                      (int)options.level);
+#endif
     mdk::flow::GameFlow flow(options);
     // THE SAVES (package #19): sdmc:/3ds/mdk/saves, an explicit path (AGENTS.md P5),
     // the C#'s `<user folder>/saves`. LASTGAME goes at start, as the C#'s Game
@@ -712,7 +720,7 @@ int main(int argc, char** argv) {
     mdk::flow::Screen screen = flow.handle(flow.firstEvent());
     mdk::log3dsPrintf("flow: screen=%d level=%d", (int)screen, (int)flow.state().level);
     if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
-        screen != mdk::flow::Screen::Briefing) {
+        screen != mdk::flow::Screen::Briefing && screen != mdk::flow::Screen::Stream) {
         mdk::log3dsPrintf("flow asked for screen %d, which this frontend cannot show; exiting",
                           (int)screen);
         mdk_render_destroy(renderer);
@@ -793,6 +801,76 @@ int main(int argc, char** argv) {
     // packages edit).
     // =====================================================================
     for (;;) {
+    // THE STREAM (package #18b), when the flow shows one: after a level's end (the
+    // level-end hook goes round the loop for it, after the level's teardown) or
+    // first, from the harness's STREAM=1. Its own renderer scope and the same two
+    // empty frames a level's teardown gets; then its Event is handled, the screens
+    // this port still lacks are skipped, and the level that follows loads below.
+    if (flow.screen() == mdk::flow::Screen::Stream) {
+        const MdkScope streamScope = mdk_render_mark(renderer);
+        // C# ShowStream's seed: DefaultSeed for a direct stream, else
+        // Environment.TickCount -- the console's tick counter, except in the
+        // harness's FIXED=1 runs, whose every stream takes the default seed.
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_FIXED)
+        const uint32_t clockSeed = mdk::flow::kStreamDefaultSeed;
+#else
+        const uint32_t clockSeed = (uint32_t)svcGetSystemTick();
+#endif
+        const int32_t streamLevel = flow.state().level;
+        int32_t streamEndHealth = flow.streamHealth();
+        const char* streamExit = exitReason;
+        mdk::flow::Event streamEvent = mdk::flow::Event::Quit;
+        {
+            const mdk::formats::MdkData streamData =
+                mdk::formats::MdkData::find(mdk::formats::fileSystem());
+            mdk::Stream3dsFrontend streamFrontend;
+            streamFrontend.renderer = renderer;
+            streamFrontend.controls = &controls;
+            streamFrontend.frame = &frame;
+            streamFrontend.frameBudget = g_frameBudget;
+            streamFrontend.resumePending = &g_resumePending;
+            streamFrontend.heapProbe = heapProbe;
+            streamFrontend.difficulty = (mdk::Kurt::Difficulty)g_gameSettings.difficulty;
+            streamEvent = mdk::runStream3ds(streamFrontend, streamData, streamLevel,
+                                            flow.streamHealth(), flow.streamSeed(clockSeed),
+                                            &streamEndHealth, &streamExit);
+        }
+        mdk_render_release(renderer, streamScope);
+        mdk::streamBlankFrames3ds(renderer, frame, 2);
+        heapProbe("stream-teardown");
+        if (streamEvent == mdk::flow::Event::Quit) {
+            exitReason = streamExit;
+            break;
+        }
+        // C# AfterStream reads the stream screen's Health before it shows the next.
+        flow.setStreamHealth(streamEndHealth);
+        screen = flow.handle(streamEvent);
+        mdk::log3dsPrintf("flow: the stream after level %d ended (health %d); the flow shows %s",
+                          (int)streamLevel, (int)streamEndHealth,
+                          mdk::flow::GameFlow::screenName(screen));
+        mdk::flow::GameFlow::SkipTrail trail;
+        screen = flow.skipUnported(&trail);
+        for (int32_t i = 0; i < trail.count; i++) {
+            mdk::log3dsPrintf("flow: skipped %s (package #%d not ported)",
+                              mdk::flow::GameFlow::screenName(trail.skipped[i]),
+                              (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
+        }
+        if (screen == mdk::flow::Screen::Level) {
+            mdk::log3dsPrintf("flow: next level %d at frame %lu, entered at health %d",
+                              (int)flow.state().level, (unsigned long)frame,
+                              (int)flow.levelHealth());
+        } else if (screen == mdk::flow::Screen::Menu) {
+            // Kurt died in the Gunter stream: the main menu (package #20a), below.
+            mdk::log3dsPrintf("flow: the menu follows");
+        } else {
+            mdk::log3dsPrintf("flow: %s follows, which this frontend cannot show; exiting",
+                              mdk::flow::GameFlow::screenName(screen));
+            exitReason = "stream ended";
+            break;
+        }
+        // C# Handle clears _firstLevel after the stream's event.
+        firstLevel = false;
+    }
     // THE MENU AND THE BRIEFING (package #20a), until the flow names a level.
     if (screen != mdk::flow::Screen::Level) {
         screen = mdk::runFrontScreens3ds(&front);
@@ -3237,7 +3315,8 @@ int main(int argc, char** argv) {
 
         // THE LEVEL-END HOOK (package 2). Game.cs takes Event.LevelEnded to AfterLevel
         // (:442, :499-512): the level's counts and Kurt's health are kept (the C# reads
-        // them off `_viewer`), and the flow says what follows. The stream, the
+        // them off `_viewer`), and the flow says what follows. The stream is played
+        // (package #18b: the loop's top, after this level's teardown); the
         // statistics, the fall and the save prompt are not ported, so they are skipped
         // the way the C# skips them (GameFlow::skipScreen, pinned against the C# by
         // golden/flow_next_level.txt), each one logged. A level at the end of that
@@ -3294,6 +3373,12 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("flow: level %d ended (health %d); the flow shows %s",
                               (int)flow.state().level, (int)result.health,
                               mdk::flow::GameFlow::screenName(screen));
+            if (screen == mdk::flow::Screen::Stream) {
+                // The stream is shown (package #18b): the level is torn down first,
+                // and the level loop's top plays it.
+                nextLevel = true;
+                break;
+            }
             mdk::flow::GameFlow::SkipTrail trail;
             screen = flow.skipUnported(&trail);
             for (int32_t i = 0; i < trail.count; i++) {

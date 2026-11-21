@@ -200,6 +200,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh linux_arg_parse_test.sh
 	@sh level_chain_test.sh
 	@sh menu_frontend_test.sh
+	@sh stream_screen_test.sh
 	@sh panel_geom_test.sh
 	@bash emurun_harness_test.sh
 	@bash frame_gate_test.sh

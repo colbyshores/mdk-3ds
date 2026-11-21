@@ -76,6 +76,7 @@
 #include "game/save_games.h"
 #include "game/save_prompt.h"
 #include "game/viewer_saves.h"
+#include "stream/stream_screen.h"
 #include "util/math_lut.h"
 #include "menu_screens.h"
 
@@ -243,6 +244,120 @@ void printMemory(const char* tag, int level, const MemorySample& sample) {
                 sample.heap, sample.fds, sample.logged);
 }
 
+// The stream screen's report lines (C# StreamScreen's Console.WriteLine), printed
+// as the C# prints them so the two runs' lines compare as text.
+void printStreamLine(void*, const char* line) {
+    std::printf("%s\n", line);
+}
+
+// THE STREAM SCREEN (package #18b; stream/stream_screen.h). Everything a stream
+// needs from this frontend: the window's input, the frame, the run's frame count
+// with its --frames bound and --capture frame, and the sound's output.
+struct StreamFrontend {
+    MdkRenderer renderer = nullptr;
+    mdk::Window* window = nullptr;
+    bool headless = false;
+    bool fixedStep = false;
+    float step = 1.0f / 60.0f;
+    const mdk::WalkScript* walk = nullptr;   // --walk steers the stream too
+    uint32_t* frame = nullptr;
+    int maxFrames = -1;
+    int captureFrame = 0;
+    const std::string* capturePath = nullptr;
+    // The settings' difficulty (C# StreamScreen: ui.Settings.Difficulty).
+    mdk::Kurt::Difficulty difficulty = mdk::Kurt::Normal;
+};
+
+// One stream, from its first frame to its Event (C# Game.Run's loop over a
+// StreamScreen). Returns Event::Quit when the RUN ends inside it -- the window
+// closed, --frames reached, the --capture frame taken -- with `exitReason` set;
+// otherwise the screen's Event and, in `health`, Kurt's health at its end (the
+// C#'s StreamScreen.Health, which AfterStream reads).
+mdk::flow::Event runStreamScreen(const StreamFrontend& f, const mdk::formats::MdkData& data,
+                                 int32_t level, int32_t health, uint32_t seed, int32_t* endHealth,
+                                 const char** exitReason) {
+    *endHealth = health;
+    // The screen and its StreamRun on the heap (stream_screen.h: MEMORY).
+    std::unique_ptr<mdk::stream::StreamScreen> screen(new mdk::stream::StreamScreen());
+    mdk::stream::StreamScreen::Setup setup;
+    setup.renderer = f.renderer;
+    setup.data = &data;
+    setup.level = level;
+    setup.health = health;
+    setup.difficulty = f.difficulty;
+    setup.seed = seed;
+    setup.log = printStreamLine;
+    std::printf("[main] stream: after level %d, health %d, seed %u\n", (int)level, (int)health,
+                (unsigned)seed);
+    if (!screen->open(setup)) {
+        std::printf("[main] stream: could not open; it ends at once with health %d\n", (int)health);
+    }
+    // The sound to the speakers when there is a window (a headless test run stays
+    // silent, as the level's mix does here).
+    if (!f.headless && mdk::audioIsOpen()) {
+        screen->mixer().device().setSink(mdk::audioSink, nullptr, mdk::audioQueued);
+    }
+
+    mdk::Input input;
+    bool escapeWasDown = false;
+    auto last = std::chrono::steady_clock::now();
+    for (;;) {
+        const auto now = std::chrono::steady_clock::now();
+        const float elapsed = f.fixedStep ? f.step : std::chrono::duration<float>(now - last).count();
+        last = now;
+        if (!f.headless && !mdk::windowPump(f.window, &input)) {
+            *exitReason = "window closed";
+            return mdk::flow::Event::Quit;
+        }
+        if (f.walk != nullptr) {
+            mdk::applyWalk(*f.walk, *f.frame, &input);
+        }
+        // C# input.WasPressed(MenuKey.Back): Esc, on its press.
+        const bool escapeDown = input.isDown(mdk::kKeyEscape);
+        const bool back = escapeDown && !escapeWasDown;
+        escapeWasDown = escapeDown;
+
+        MdkFrameParams params;
+        params.elapsed = elapsed;
+        params.frame_index = *f.frame;
+        params.clear_colour = 0xFF000000u;   // C# Ui.Black
+        params.present = true;
+        const bool captureThisFrame =
+            f.captureFrame > 0 && static_cast<int>(*f.frame) + 1 == f.captureFrame;
+        params.screenshot_path = captureThisFrame && f.capturePath && !f.capturePath->empty()
+                                     ? f.capturePath->c_str()
+                                     : nullptr;
+        // The screen's update first (it sets the camera the frame is drawn with),
+        // then the frame.
+        const mdk::flow::Event next = screen->update(elapsed, mdk::stream::steeringOf(input), back);
+        mdk_render_begin_frame(f.renderer, &params);
+        screen->draw();
+        // C# Game.Run: the device after the screen, with the same elapsed.
+        screen->mixer().update(elapsed);
+        screen->mixer().device().update(elapsed);
+        mdk_render_end_frame(f.renderer);
+        (*f.frame)++;
+        if ((*f.frame % 600u) == 0u) {
+            char status[128];
+            screen->status(status, (int32_t)sizeof(status));
+            std::printf("[main] stream: frame %u: %s\n", *f.frame, status);
+        }
+
+        if (captureThisFrame) {
+            *exitReason = "capture";
+            return mdk::flow::Event::Quit;
+        }
+        if (f.maxFrames > 0 && (int)*f.frame >= f.maxFrames) {
+            *exitReason = "frame budget reached";
+            return mdk::flow::Event::Quit;
+        }
+        if (next != mdk::flow::Event::None) {
+            *endHealth = screen->health();
+            return next;
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -277,6 +392,10 @@ int main(int argc, char** argv) {
     bool levelGiven = false;
     // --press: menu keys at game times (the C#'s TestPresses, game/menu_presses.h).
     mdk::MenuPresses presses;
+    // --stream=N / --health=N (package #18b): start in the stream after level N.
+    bool startStream = false;
+    bool hasStreamHealth = false;
+    int streamHealthOption = 0;
     bool fixedStep = false;
     bool hasStartOverride = false;
     mdk::Vec3 startOverride{};
@@ -384,6 +503,23 @@ int main(int argc, char** argv) {
             }
             hiddenWidth = w;
             hiddenHeight = h;
+        } else if ((value = optionValue(argv[i], "--stream")) != nullptr) {
+            // The C#'s --stream=N (Program.cs:28): the stream after level N, started
+            // directly, its tube the WatcomRandom's default seed's.
+            if (!positiveCount("--stream", value, &levelNumber)) {
+                return 1;
+            }
+            if (levelNumber < 3 || levelNumber > 8) {
+                std::fprintf(stderr, "[main] --stream must be 3-8\n");
+                return 1;
+            }
+            startStream = true;
+        } else if ((value = optionValue(argv[i], "--health")) != nullptr) {
+            // The C#'s --health=N: Kurt's health in a stream started directly.
+            if (!positiveCount("--health", value, &streamHealthOption)) {
+                return 1;
+            }
+            hasStreamHealth = true;
         } else if ((value = optionValue(argv[i], "--level")) != nullptr) {
             // Parse first, then bound. Before this, atoi turned "abc" into 0 and
             // the range check rejected it with a message about the range for a
@@ -739,14 +875,17 @@ int main(int argc, char** argv) {
     // menu without it (Start::Menu, package #20a).
     // ---------------------------------------------------------------------
     mdk::flow::FlowOptions flowOptions;
-    flowOptions.start = levelGiven ? mdk::flow::Start::Level : mdk::flow::Start::Menu;
-    // Without --level the C#'s default first level (ViewerOptions, the order's
-    // first: LEVEL7), which is where the menu's "Level: 1" starts.
-    if (levelGiven) {
+    flowOptions.start = startStream ? mdk::flow::Start::Stream
+                        : (levelGiven ? mdk::flow::Start::Level : mdk::flow::Start::Menu);
+    // Without --level (or --stream) the C#'s default first level (ViewerOptions, the
+    // order's first: LEVEL7), which is where the menu's "Level: 1" starts.
+    if (levelGiven || startStream) {
         flowOptions.level = levelNumber;
     }
     flowOptions.load = loadName;
     flowOptions.save = saveName;
+    flowOptions.hasHealth = hasStreamHealth;
+    flowOptions.health = streamHealthOption;
     mdk::flow::GameFlow flow(flowOptions);
     if (saveDir.empty()) {
         const char* user = std::getenv("MDK_USER_DIR");
@@ -775,10 +914,11 @@ int main(int argc, char** argv) {
     };
     mdk::flow::Screen screen = flow.handle(flow.firstEvent());
     printFlowReport();
-    // --load of a before-level save starts at its briefing (the menus' screens).
+    // --load of a before-level save starts at its briefing (the menus' screens);
+    // --stream=N starts in the stream (package #18b).
     if (screen != mdk::flow::Screen::Level && screen != mdk::flow::Screen::Menu &&
-        screen != mdk::flow::Screen::Briefing) {
-        std::fprintf(stderr, "[main] the flow did not start in a level or the menu\n");
+        screen != mdk::flow::Screen::Briefing && screen != mdk::flow::Screen::Stream) {
+        std::fprintf(stderr, "[main] the flow did not start in a level, the menu, the briefing or the stream\n");
         mdk_render_destroy(renderer);
         mdk::audioClose();
         mdk::windowDestroy(&window);
@@ -845,6 +985,95 @@ int main(int argc, char** argv) {
     // marked "END OF THE LEVEL".
     // =====================================================================
     for (;;) {
+    // THE STREAM (package #18b), when the flow shows one: after a level's end (the
+    // level-end hook below goes round the loop for it) or first, from --stream=N.
+    // Its own renderer scope, released with the same empty frames a level's
+    // teardown gets; then its Event is handled, the screens this port still lacks
+    // are skipped, and a level that follows is loaded below.
+    if (flow.screen() == mdk::flow::Screen::Stream) {
+        const MdkScope streamScope = mdk_render_mark(renderer);
+        StreamFrontend streamFrontend;
+        streamFrontend.renderer = renderer;
+        streamFrontend.window = &window;
+        streamFrontend.headless = headless;
+        streamFrontend.fixedStep = fixedStep;
+        streamFrontend.walk = hasWalk ? &walk : nullptr;
+        streamFrontend.frame = &frame;
+        streamFrontend.maxFrames = maxFrames;
+        streamFrontend.captureFrame = captureFrame;
+        streamFrontend.capturePath = &capturePath;
+        streamFrontend.difficulty = (mdk::Kurt::Difficulty)settings.difficulty;
+        // C# ShowStream's seed: DefaultSeed for --stream, else Environment.TickCount --
+        // this frontend's clock, except in a --fixed-step run, whose every stream takes
+        // the default seed so the run is reproducible.
+        const uint32_t clockSeed =
+            fixedStep ? mdk::flow::kStreamDefaultSeed
+                      : (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+        const int32_t streamLevel = flow.state().level;
+        int32_t streamEndHealth = flow.streamHealth();
+        const char* streamExit = nullptr;
+        mdk::flow::Event streamEvent = mdk::flow::Event::Quit;
+        {
+            const mdk::formats::MdkData streamData =
+                mdk::formats::MdkData::find(mdk::formats::fileSystem());
+            streamEvent = runStreamScreen(streamFrontend, streamData, streamLevel,
+                                          flow.streamHealth(), flow.streamSeed(clockSeed),
+                                          &streamEndHealth, &streamExit);
+        }
+        mdk_render_release(renderer, streamScope);
+        for (int i = 0; i < kBetweenLevelFrames; i++) {
+            MdkFrameParams blank;
+            blank.elapsed = 0.0f;
+            blank.frame_index = frame;
+            blank.clear_colour = 0xFF000000u;
+            blank.present = true;
+            blank.screenshot_path = nullptr;
+            mdk_render_begin_frame(renderer, &blank);
+            mdk_render_end_frame(renderer);
+        }
+        printMemory("stream-teardown", streamLevel, memorySample(renderer));
+        if (streamEvent == mdk::flow::Event::Quit) {
+            exitReason = streamExit;
+            break;
+        }
+        // C# AfterStream reads the stream screen's Health before it shows the next.
+        flow.setStreamHealth(streamEndHealth);
+        mdk::flow::Screen after = flow.handle(streamEvent);
+        std::printf("[main] flow: the stream after level %d ended (health %d); the flow shows "
+                    "%s\n",
+                    (int)streamLevel, (int)streamEndHealth,
+                    mdk::flow::GameFlow::screenName(after));
+        mdk::flow::GameFlow::SkipTrail trail;
+        after = flow.skipUnported(&trail);
+        for (int32_t i = 0; i < trail.count; i++) {
+            std::printf("[main] flow: skipped %s (package #%d not ported)\n",
+                        mdk::flow::GameFlow::screenName(trail.skipped[i]),
+                        (int)mdk::flow::GameFlow::screenPackage(trail.skipped[i]));
+        }
+        if (after == mdk::flow::Screen::Level && replayLevel && !firstLevel) {
+            std::printf("[main] flow: --replay-level: level %d again instead of %d\n",
+                        (int)streamLevel, (int)flow.state().level);
+            flow.state().level = streamLevel;
+        }
+        screen = after;
+        if (after == mdk::flow::Screen::Level) {
+            std::printf("[main] flow: next level %d at frame %u, entered at health %d\n",
+                        (int)flow.state().level, frame, (int)flow.levelHealth());
+        } else if (after == mdk::flow::Screen::Menu) {
+            // Kurt died in the Gunter stream: the main menu (package #20a), below.
+            std::printf("[main] flow: the menu follows\n");
+        } else {
+            std::printf("[main] flow: %s follows, which this frontend cannot show; exiting\n",
+                        mdk::flow::GameFlow::screenName(after));
+            exitReason = "stream ended";
+            break;
+        }
+        // C# Handle clears _firstLevel after the stream's event: the level that
+        // follows is not the first level (its test options are the first level's).
+        firstLevel = false;
+    }
     // THE MENU AND THE BRIEFING (package #20a): the screens before a level, until
     // the flow names one (menu_screens.h). The first pass of a --level run, and
     // every level that ends into a level, skip straight past.
@@ -2288,7 +2517,8 @@ int main(int argc, char** argv) {
         }
         // THE LEVEL-END HOOK (package 2). Game.cs takes Event.LevelEnded to AfterLevel
         // (:442, :499-512): the level's counts and Kurt's health are kept (the C#
-        // reads them off `_viewer`), and the flow says what follows. The stream, the
+        // reads them off `_viewer`), and the flow says what follows. The stream is
+        // played (package #18b: the loop's top, after this level's teardown); the
         // statistics, the fall and the save prompt are not ported, so they are skipped
         // the way the C# skips them (GameFlow::skipScreen, pinned against the C# by
         // golden/flow_next_level.txt), each one logged. A level at the end of that
@@ -2342,6 +2572,12 @@ int main(int argc, char** argv) {
             std::printf("[main] flow: level %d ended (health %d); the flow shows %s\n",
                         levelNumber, (int)result.health,
                         mdk::flow::GameFlow::screenName(after));
+            if (after == mdk::flow::Screen::Stream) {
+                // The stream is shown (package #18b): the level is torn down first,
+                // and the level loop's top plays it.
+                nextLevel = true;
+                break;
+            }
             mdk::flow::GameFlow::SkipTrail trail;
             after = flow.skipUnported(&trail);
             for (int32_t i = 0; i < trail.count; i++) {

@@ -442,6 +442,12 @@ struct MdkCapabilities {
     bool insets = false;          // viewport+scissor sub-rect 3D views
     bool canvas_filtering = false;// bilinear palette lookups in the canvas
     bool panorama_linear = false; // the filtered panorama
+    // Whether a scene draw multiplies by the vertex's colour (Vertex::colour). The
+    // Vulkan backend does (palette.frag); the 3DS's PICA vertex is position + UV
+    // and its scene combiner takes the texture alone, so a caller that needs a
+    // Gouraud colour there draws it from a texture instead (stream/stream_view.h,
+    // the tube). True by default: the C#'s renderer has them.
+    bool vertex_colours = true;
     int32_t max_texture_size = 1024;
     int32_t max_canvas_quads = 256;
 

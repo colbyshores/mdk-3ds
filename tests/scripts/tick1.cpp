@@ -6318,6 +6318,17 @@ int main(int argc, char** argv) {
         // The stream (stream_dump.h): `tick1 dump stream <level> <difficulty> <seed>
         // <health> <steps> <dt> [schedule]` and `tick1 dump streamrand <seeds> <count>`,
         // the C++ side of tests/scripts/stream_probe.
+        if (what == "streamview") {
+            // The stream view's models (tests/scripts/stream_view_probe), package #18b.
+            std::string got;
+            std::string why;
+            if (!test::streamViewDump(data, &got, &why)) {
+                printf("dump streamview: %s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "stream" || what == "streamrand") {
             std::string got;
             std::string why;
@@ -7959,6 +7970,26 @@ int main(int argc, char** argv) {
             printf("PASS stream_rand: Watcom's rand() for four seeds, 256 draws each\n");
         } else {
             printf("FAIL stream_rand: %s\n", firstDifference(got, expected).c_str());
+            failures++;
+        }
+
+        // The stream view's models (package #18b): STREAM.BNI's images, and every
+        // (model, animation) pair StreamView draws, parsed and baked, against
+        // tests/scripts/stream_view_probe (the C#'s Mdk.Formats).
+        expected.clear();
+        got.clear();
+        why.clear();
+        if (!readText("golden/stream_view_models.txt", &expected)) {
+            printf("FAIL stream_view_models: no golden file golden/stream_view_models.txt\n");
+            failures++;
+        } else if (!test::streamViewDump(data, &got, &why)) {
+            printf("FAIL stream_view_models: %s\n", why.c_str());
+            failures++;
+        } else if (got == expected) {
+            printf("PASS stream_view_models: the stream's images, and KURT, BONES, SWH150 and GUNTA in "
+                   "every frame of the animations the stream draws them in\n");
+        } else {
+            printf("FAIL stream_view_models: %s\n", firstDifference(got, expected).c_str());
             failures++;
         }
     }

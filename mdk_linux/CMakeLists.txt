@@ -205,6 +205,8 @@ set(SOURCES
     ${CORE}/src/stream/stream_flight.cpp
     ${CORE}/src/stream/stream_tube.cpp
     ${CORE}/src/stream/tube_basis.cpp
+    ${CORE}/src/stream/stream_view.cpp
+    ${CORE}/src/stream/stream_screen.cpp
     ${CORE}/src/util/math_lut.cpp
     ${CORE}/src/util/random.cpp
 )

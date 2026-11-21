@@ -1,15 +1,19 @@
 #!/bin/sh
 # level_chain_test.sh -- package 2, the next-level transition, on the Linux frontend:
-# a level ends, the flow walks the screens this port lacks (skipped the C#'s way),
-# the level is torn down, and the next one is loaded and played. Three runtime arms,
+# a level ends, the level is torn down, the stream plays (package #18b), the flow
+# walks the screens this port still lacks (skipped the C#'s way), and the next level
+# is loaded and played. Three runtime arms,
 # all headless (DISPLAY :99, lavapipe), all on the shipped binary:
 #
 #   1. THE CHAIN. `--level=3 --event=1 --event-every-level`: special_event 1 one
 #      second into EVERY level ends it, so the run plays 3 -> 4 -> 8 -> 5 (the C#'s
 #      order, GameState.Order) and goes to the main menu after 5 (since package
-#      #20a it is shown, until the frame budget ends the run). The log must name each
-#      skipped screen ("flow: skipped Stream (package #18 not ported)", Statistics,
-#      Fall; after 8 the Gunter stream and the save prompt) and each next level.
+#      #20a it is shown, until the frame budget ends the run). Each level's end plays
+#      its stream (a --fixed-step run's streams take the default seed, so these are
+#      the C# --stream=N runs' tubes: golden/stream_screen_L*.txt and its test); the
+#      log must name each skipped screen (Statistics, Fall; after 8's Gunter stream
+#      the save prompt) and each next level -- LEVEL5 entered at the Gunter stream's
+#      end health, 63.
 #
 #   2. A CLEAN RELOAD. The frame the chained run draws 111 frames into level 4 must be
 #      BYTE-IDENTICAL to the frame a run started directly in level 4 draws at its own
@@ -19,7 +23,7 @@
 #      start does not.
 #
 #   3. NO LEAK. `--replay-level` reloads the level that ended instead of the next one
-#      (a test aid): four teardowns of level 3. The C heap in use after each teardown
+#      (a test aid): four teardowns of level 3, each followed by its stream. The C heap in use after each teardown
 #      (mallinfo2, the line `mem[level-teardown]`) must not climb from the second one
 #      on -- the first carries the backend's one-time pools and pipelines -- beyond a
 #      small allocator slack, the file descriptors must not climb, and the renderer's
@@ -71,19 +75,23 @@ has() {
 
 # --- 1. The chain ------------------------------------------------------------
 CHAIN="$WORK/chain.log"
-run "$CHAIN" --level=3 --event=1 --event-every-level --frames 2400
+run "$CHAIN" --level=3 --event=1 --event-every-level --frames 9000
 rc=$?
 [ "$rc" -eq 0 ] || bad "[chain] exited $rc"
 for line in \
     "flow: level 3 ended (health 100); the flow shows Stream" \
-    "flow: skipped Stream (package #18 not ported)" \
+    "Stream ended after LEVEL3: Survived, health 1, segment 185, 33.7 s" \
+    "flow: the stream after level 3 ended (health 1); the flow shows Statistics" \
     "flow: skipped Statistics (package #20 not ported)" \
     "flow: skipped Fall (package #17 not ported)" \
-    "flow: next level 4 at frame 489, entered at health 100" \
-    "flow: next level 8 at frame 978, entered at health 100" \
+    "flow: next level 4 at frame 2513, entered at health 100" \
+    "Stream ended after LEVEL4: Survived, health 1, segment 187, 33.9 s" \
+    "flow: next level 8 at frame 5037, entered at health 100" \
+    "Stream ended after LEVEL8: Survived, health 63, segment 184, 31.3 s" \
+    "flow: the stream after level 8 ended (health 63); the flow shows SavePrompt" \
     "flow: skipped SavePrompt (package #19 not ported)" \
-    "flow: next level 5 at frame 1467, entered at health 100" \
-    "flow: level 5 ended (health 100); the flow shows Menu" \
+    "flow: next level 5 at frame 7403, entered at health 63" \
+    "flow: level 5 ended (health 63); the flow shows Menu" \
     "flow: the menu follows" \
     "flow: the main menu" \
     "Menu: New Game | Level: 6 | Saved Game | Options | Quit" \
@@ -108,12 +116,12 @@ compare() {
         bad "[$label] chained frame $chained differs from level $level's own frame $direct: the teardown left something the next level sees"
     fi
 }
-compare reload-L4 600 4 111
-compare reload-L8 1100 8 122
+compare reload-L4 2624 4 111
+compare reload-L8 5159 8 122
 
 # --- 3. No leak ----------------------------------------------------------------
 REPLAY="$WORK/replay.log"
-run "$REPLAY" --level=3 --event=1 --event-every-level --replay-level --frames 1960
+run "$REPLAY" --level=3 --event=1 --event-every-level --replay-level --frames 10100
 rc=$?
 [ "$rc" -eq 0 ] || bad "[replay] exited $rc"
 # mem[level-teardown]: level 3 heap=<n> fds=<n> renderer-log=<n>
@@ -147,4 +155,4 @@ if [ "$fail" -ne 0 ]; then
     echo "FAIL LevelChain ($fail check(s))"
     exit 1
 fi
-echo "PASS LevelChain (3 -> 4 -> 8 -> 5 with the stream, statistics, fall and save prompt skipped; levels 4 and 8 reload byte-identical to a direct start; four level-3 teardowns leave the heap flat)"
+echo "PASS LevelChain (3 -> 4 -> 8 -> 5 with each stream played and the statistics, fall and save prompt skipped; levels 4 and 8 reload byte-identical to a direct start; four level-3 teardowns leave the heap flat)"

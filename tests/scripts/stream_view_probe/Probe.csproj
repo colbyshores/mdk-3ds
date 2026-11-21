@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The stream view's model oracle (see Program.cs): STREAM.BNI's models and animations through
+       the C#'s own Mdk.Formats (Bni, Model.Parse, ModelAnimation.Parse, Bake). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsRidAgnostic>false</IsRidAgnostic>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Mdk.Formats/Mdk.Formats.csproj" />
+  </ItemGroup>
+</Project>

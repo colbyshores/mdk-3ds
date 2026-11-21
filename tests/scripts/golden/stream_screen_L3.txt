@@ -1,0 +1,5 @@
+# The C# oracle's StreamScreen report: mdk_sdl --hidden --original --gpu=vulkan --size=320x240 --mute --wait=50 --stream=3 (src/Mdk.App, 2026-11-20); tests/scripts/stream_screen_test.sh
+Stream after LEVEL3: Normal, turn 10, radius 9-15, 27 lights, ring 30 at -79.963 249.386 101.282
+Stream: first wall hit at segment 42, t 43.050 x 5.320 z -5.013 yaw 122.75 speed 5.400 health 97
+Stream: Bones comes at segment 163, health 1, 30.0 s
+Stream ended after LEVEL3: Survived, health 1, segment 185, 33.7 s

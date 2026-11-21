@@ -1728,13 +1728,27 @@ draw in an order that depends on where the allocator put them. Not yet
 investigated; it makes any claim of "N pixels changed" at that place unreadable,
 and it is why the haze batch's 7-pixel attribution was withdrawn.
 
-## The stream's screen (package #18b, after the #18a simulation)
+## The stream's screen (package #18b, 2026-11-20): what landed, what is open
 
-The simulation is in `mdk_core/src/stream/` and pinned by `golden/stream_*.txt`; nothing shows it yet.
-- **StreamScreen** (C# `Stream/StreamScreen.cs`): load `STREAM/STREAM.BNI` and `STREAM.MTI`, the palette (system colours 0-63, the stream's `PAL` above), the clips (`KURTANIM`, `BONESANIM`, `SWHANM`/`GUNTANIM`) and the `WIND` loop. Map the input to `stream::Steering` (turn or strafe right minus left, forward minus back, each signed); Back calls `Flight::stop()`. Play the flight's sounds (at most 8 voices; `HITSIDE` on a wall hit while it isn't playing). The events become `Event::Menu` (Died) or `Event::StreamEnded`.
-- **StreamView** (C# `Stream/StreamView.cs`): the tube from `StreamTube::addTriangles`/`rgba` far to near, the sprites and Kurt/Bones/Other by `Flight::transform`/`kurtTransform` and the `*Frame()` helpers, the scrolling background (`backgroundOffset`), and the fade (`Flight::fade`).
-- **The flow** (`game_flow.cpp` `showStream`/`afterStream`): seed `StreamRun` with `kStreamDefaultSeed` for `--stream`, the tick count otherwise. Pass `levelHealth`/the level's report in, and read `Flight::health()` back for LEVEL5. A `StreamRun` is about 25 KB of fixed arrays, so heap-allocate it on the 3DS.
-- **Not checked by the goldens:** the 3DS's newlib `sinf`/`cosf`/`fmaf` are not glibc's. The tube there is the same game, but not bit-identical to the host's.
+Landed: `stream/stream_screen` and `stream/stream_view` (C# StreamScreen/StreamView), on both
+frontends, hooked into the flow (`GameFlow::streamSeed`, `setStreamHealth`); see WORK_LEDGER.
+Pinned by golden/stream_screen_L{7,8,3}.txt (the C# app's report, `stream_screen_test.sh`) and
+golden/stream_view_models.txt (`tick1 dump streamview`). Open:
+- **45 pixels on Kurt.** Linux `--stream=7` frame 600 against the C# oracle's 10 s screenshot: all
+  but 45 of 76,800 pixels are identical; the 45 are one patch inside Kurt's body (around 201-207,
+  191-202 at 320x240), a different texel colour there. The geometry, the transforms, the camera and
+  the batches agree (the models golden, the matrices printed against a C# projection); not found.
+- **The 3DS is not checked in the emulator here.** Its tube is drawn from a colour table
+  (`MdkCapabilities::vertex_colours` false) and its background cut at the image's edges; both are
+  untested on the PICA. The 3DS's newlib `sinf`/`cosf`/`fmaf` are not glibc's, so its tube is the
+  same game but not bit-identical to the host's. Old-3DS cost unmeasured (the tube is up to 3072
+  corners a frame, the three model meshes about 2800).
+- **Blended draws lost the filtered half cover** (`pica::alphaTestReferenceFor`): the glass now
+  shows on the 3DS with filtering on where it was cut before. Check a level with glass (L6) in the
+  emulator.
+- **The canvas mods** (the C#'s `CanvasImages.Create` for SC_STAT and SNIP_TXT) are not wired.
+- **Linux sound.** The stream's mixer is wired to the SDL sink when there is a window; the level's
+  mixer still is not (it mixes and drops), so the stream is the only screen with sound on Linux.
 
 ## Sniper mode: the scope and the mode (2026-11-20, gap package #5): what landed, what is open
 

@@ -293,8 +293,9 @@ Screen GameFlow::finishLevel(GameOver over) {
 Screen GameFlow::showStream(int32_t health) {
     // C# ShowStream: a stream started straight from the command line gets
     // WatcomRandom.DefaultSeed so tests are reproducible; one that follows a level
-    // gets Environment.TickCount. The stream screen is cut, so there is no random
-    // to seed yet — see kStreamDefaultSeed.
+    // gets Environment.TickCount (Game.cs:515-516). The random itself is the
+    // frontend's StreamScreen's, seeded through streamSeed().
+    streamDirect_ = firstLevel_ && options_.start == Start::Stream;
     streamHealth_ = health;
     return show(Screen::Stream);
 }

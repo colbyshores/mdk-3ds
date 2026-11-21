@@ -337,6 +337,16 @@ $(error FIXED=1 needs AUTOQUIT: the fixed clock is a harness-build feature)
 endif
 DEFINES += -DMDK_HW_FIXED=1
 endif
+# `make AUTOQUIT=60 STREAM=1 LEVEL=<3..8>` starts the run in the stream after that
+# level (the C#'s --stream=N; package #18b), its tube the default seed's; the flow
+# then goes on to the next level. Only main_3ds.cpp reads it: touch it after
+# changing STREAM.
+ifeq ($(strip $(STREAM)),1)
+ifndef AUTOQUIT
+$(error STREAM=1 needs AUTOQUIT: the direct stream is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_STREAM=1
+endif
 # `make AUTOQUIT=90 PROFILE=1` logs one `profile:` frame-period summary at exit
 # (harness_3ds.h), what `hw_cycle.sh --profile` reads. Never combine with
 # CAPTURE: the capture's SD write would be inside the measured frames.

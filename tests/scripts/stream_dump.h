@@ -23,6 +23,10 @@ namespace test {
 bool streamDump(const formats::MdkData& data, int level, int difficulty, unsigned seed, int health, int maxSteps,
                 const std::string& dt, const std::string& schedule, std::string* out, std::string* why);
 
+// The stream view's models: what StreamView's Build walk reads (twin of
+// tests/scripts/stream_view_probe; golden/stream_view_models.txt).
+bool streamViewDump(const formats::MdkData& data, std::string* out, std::string* why);
+
 // Watcom rand() sequences: `count` values for each seed.
 bool streamRandDump(const std::string& seeds, int count, std::string* out, std::string* why);
 

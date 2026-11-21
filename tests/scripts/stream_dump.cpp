@@ -467,5 +467,94 @@ bool streamDump(const formats::MdkData& data, int level, int difficulty, unsigne
     return true;
 }
 
+// The stream view's models (tests/scripts/stream_view_probe): what StreamView's
+// Build walk reads for every (model, animation) pair Draw can ask for.
+bool streamViewDump(const formats::MdkData& data, std::string* out, std::string* why)
+{
+    std::vector<uint8_t> bytes;
+    formats::Bni bni;
+    if (!data.read("STREAM/STREAM.BNI", &bytes) || !formats::Bni::parse(&bni, std::move(bytes))) {
+        *why = "no STREAM/STREAM.BNI";
+        return false;
+    }
+    std::string& o = *out;
+    o += "stream view models\n";
+    static const char* const kImages[] = {"BG", "LIGHT", "PLANET", "SC_STAT", "SNIP_TXT"};
+    for (size_t i = 0; i < sizeof(kImages) / sizeof(kImages[0]); i++) {
+        formats::Texture texture;
+        if (!bni.image(kImages[i], &texture)) {
+            *why = std::string("no image ") + kImages[i];
+            return false;
+        }
+        uint32_t hash = kFnvStart;
+        const uint8_t* indices = texture.indices();
+        for (int32_t k = 0; k < texture.width() * texture.height(); k++) {
+            hash = fnv(hash, indices[k]);
+        }
+        o += std::string("image ") + kImages[i] + " " + I(texture.width()) + "x" + I(texture.height()) + " " +
+             X8(hash) + "\n";
+    }
+    static const char* const kPairs[][2] = {{"KURT", "KURTANIM"},
+                                            {"KURT", "BONESANIM"},
+                                            {"BONES", "BONESANIM"},
+                                            {"SWH150", "SWHANM"},
+                                            {"GUNTA", "GUNTANIM"}};
+    const std::vector<uint8_t>& all = bni.bytes();
+    for (size_t i = 0; i < sizeof(kPairs) / sizeof(kPairs[0]); i++) {
+        const formats::ArchiveIndex::Entry* modelEntry = bni.index().find(kPairs[i][0]);
+        const formats::ArchiveIndex::Entry* animationEntry = bni.index().find(kPairs[i][1]);
+        formats::Model model;
+        formats::ModelAnimation animation;
+        if (modelEntry == nullptr || animationEntry == nullptr ||
+            !formats::Model::parse(&model, kPairs[i][0], all.data(), (int32_t)all.size(), modelEntry->offset,
+                                   formats::Model::Header::NoFlags, formats::Model::Parts::Named) ||
+            !formats::ModelAnimation::parse(&animation, kPairs[i][1], all.data(), (int32_t)all.size(),
+                                            animationEntry->offset)) {
+            *why = std::string("no model or animation ") + kPairs[i][0] + " " + kPairs[i][1];
+            return false;
+        }
+        const std::vector<std::vector<std::vector<formats::Vec3f>>> frames = animation.bake(model);
+        o += std::string("pose ") + kPairs[i][0] + " " + kPairs[i][1] + " frames " + I(animation.frameCount) +
+             " speed " + H(animation.speed) + " baked " + I((long long)frames.size()) + " parts " +
+             I((long long)model.partList.size()) + "\n";
+        o += "  materials ";
+        for (size_t m = 0; m < model.materials.size(); m++) {
+            o += (m > 0 ? "," : "") + model.materials[m].nameString();
+        }
+        o += "\n";
+        for (size_t p = 0; p < model.partList.size(); p++) {
+            const formats::Model::Part& part = model.partList[p];
+            uint32_t uvs = kFnvStart;
+            for (size_t k = 0; k < part.triangleUvs.size(); k++) {
+                uvs = fnvF(fnvF(uvs, part.triangleUvs[k].x), part.triangleUvs[k].y);
+            }
+            uint32_t materials = kFnvStart;
+            for (size_t k = 0; k < part.triangleMaterials.size(); k++) {
+                materials = fnv(materials, (uint32_t)part.triangleMaterials[k]);
+            }
+            o += "  part " + I((long long)p) + " " + part.nameString() + " vertices " +
+                 I((long long)part.vertices.size()) + " triangles " + I((long long)part.triangleMaterials.size()) +
+                 " materials " + X8(materials) + " uvs " + X8(uvs) + "\n";
+        }
+        for (size_t f = 0; f < frames.size(); f++) {
+            uint32_t corners = kFnvStart;
+            Vec3 lo{3.40282347e38f, 3.40282347e38f, 3.40282347e38f};
+            Vec3 hi{-3.40282347e38f, -3.40282347e38f, -3.40282347e38f};
+            for (size_t p = 0; p < model.partList.size(); p++) {
+                const formats::Model::Part& part = model.partList[p];
+                for (size_t c = 0; c < part.triangleIndices.size(); c++) {
+                    const Vec3 v = frames[f][p][(size_t)part.triangleIndices[c]];
+                    corners = fnvV(corners, v);
+                    lo = Vec3{v.x < lo.x ? v.x : lo.x, v.y < lo.y ? v.y : lo.y, v.z < lo.z ? v.z : lo.z};
+                    hi = Vec3{v.x > hi.x ? v.x : hi.x, v.y > hi.y ? v.y : hi.y, v.z > hi.z ? v.z : hi.z};
+                }
+            }
+            o += "  frame " + I((long long)f) + " " + X8(corners) + " min " + H(lo.x) + " " + H(lo.y) + " " +
+                 H(lo.z) + " max " + H(hi.x) + " " + H(hi.y) + " " + H(hi.z) + "\n";
+        }
+    }
+    return true;
+}
+
 } // namespace test
 } // namespace mdk

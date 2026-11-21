@@ -314,6 +314,33 @@ void testHandleTable() {
     flow::GameFlow wounded(hurt);
     wounded.handle(flow::Event::Stream);
     expect("Stream keeps --stream's health", wounded.streamHealth(), 40);
+
+    // ShowStream's seed (Game.cs:515-516, package #18b): a stream started directly
+    // (--stream) is the default seed's; one after a level takes the clock's.
+    flow::FlowOptions direct = levelOptions(7);
+    direct.start = flow::Start::Stream;
+    flow::GameFlow fromCommandLine(direct);
+    expect("--stream shows the stream",
+           static_cast<long long>(fromCommandLine.handle(fromCommandLine.firstEvent())),
+           static_cast<long long>(flow::Screen::Stream));
+    expect("a direct stream is direct", fromCommandLine.streamDirect() ? 1 : 0, 1);
+    expect("and takes DefaultSeed, not the clock", fromCommandLine.streamSeed(12345u),
+           static_cast<long long>(flow::kStreamDefaultSeed));
+    flow::GameFlow streamAfter(levelOptions(7));
+    streamAfter.handle(streamAfter.firstEvent());
+    streamAfter.handle(flow::Event::LevelEnded);
+    expect("a stream after a level is not direct", streamAfter.streamDirect() ? 1 : 0, 0);
+    expect("and takes the clock's seed", streamAfter.streamSeed(12345u), 12345);
+    // The stream's END health is what AfterStream reads (StreamScreen.Health): the
+    // Gunter stream's carries into LEVEL5.
+    flow::GameFlow gunterEnd(levelOptions(8));
+    gunterEnd.handle(gunterEnd.firstEvent());
+    gunterEnd.handle(flow::Event::LevelEnded);
+    gunterEnd.setStreamHealth(63);
+    expect("the Gunter stream's end shows the save prompt",
+           static_cast<long long>(gunterEnd.handle(flow::Event::StreamEnded)),
+           static_cast<long long>(flow::Screen::SavePrompt));
+    expect("LEVEL5 starts with the stream's END health", gunterEnd.state().carry.health, 63);
 }
 
 void testLevelEndPaths() {
