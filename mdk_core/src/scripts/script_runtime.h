@@ -1132,6 +1132,7 @@ private:
     TextureStampedHook textureStampedHook_ = nullptr;
     void* textureStampedUser_ = nullptr;
     friend class Rides;
+    friend class Bomber;  // package #11: the XE moves Kurt (Bomber.Update), as Rides does
     // C# AimScore (:2029, 0x41ab2c): a box is a target when it is within its size + 140
     // of the origin, inside a cone around Kurt's yaw that is wider for big and close boxes,
     // and visible. Its score (squared distance, height counting double; lower is better),

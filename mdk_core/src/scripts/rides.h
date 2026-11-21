@@ -24,18 +24,20 @@
 // flag (MEAT_5's end box) or he dies (Snowboard::getOff: the board thrown on); if
 // the board goes while he rides it, he is off without the XD2's 50 damage.
 //
-// THE SEAM. Rides.cs also mounts the XE bomber of L7's DANT_5 (package #11). Its
-// class (Bomber.cs) is not ported, so TryMount finds its type and leaves Kurt off
-// it, and bomber() stays false. The branches that read it are written the C#'s
-// way (Update, Follow, Dismount, Lost, takesHits) so that package fills in a
-// pointer, not a control flow. Player's half of the rides is Player::RideHook
-// (the C#'s Kurt.Ride delegate), Player::glide and Player::getOffBoard.
+// THE XE (package #11). Rides.cs also mounts the XE bomber of L7's DANT_5 (and
+// the strike's X_STRIKE, the same list): MountBomber hides Kurt and binds the
+// Bomber (scripts/bomber.h) as his ride step (Player::RideHook); Follow puts him
+// where the XE is, Hides hides the XE once the view is inside it, and Dismount
+// drops him (Player::getOffBoard) when its script clears the flag. Player's half
+// of the rides is Player::RideHook (the C#'s Kurt.Ride delegate), Player::glide
+// and Player::getOffBoard.
 // ============================================================================
 
 #include <stdint.h>
 
 #include <memory>
 
+#include "scripts/bomber.h"
 #include "scripts/snowboard.h"
 
 namespace mdk {
@@ -51,7 +53,7 @@ public:
     static const int32_t kFlagRideable = 0x2000000;
     static const int32_t kFlagLocked = 0x4000000;
 
-    explicit Rides(ScriptRuntime& runtime) : runtime_(runtime) {}
+    explicit Rides(ScriptRuntime& runtime) : runtime_(runtime), bomberRide_(runtime) {}
 
     // C# Rides.Ridden (Rides.cs:40): the object Kurt rides, or null.
     MdkObject* ridden() const { return ridden_; }
@@ -62,6 +64,8 @@ public:
     const Snowboard* board() const { return board_.get(); }
     // Whether Kurt rides the XE (C# `Rides.Bomber != null`). Package #11.
     bool bomber() const { return bomber_; }
+    // C# Rides.Bomber (Rides.cs:43): the bomber ride while Kurt is on an XE, or null.
+    const Bomber* bomberRide() const { return bomber_ ? &bomberRide_ : nullptr; }
     // C# Viewer.Driven (Viewer.cs:600): what Kurt rides that follows him each step
     // (the XD2, the board), drawn with him rather than between two ticks.
     MdkObject* driven() const { return bomber_ ? nullptr : ridden_; }
@@ -76,8 +80,7 @@ public:
     // C# Rides.RideWalker (Rides.cs:92): puts Kurt on a walker at once, as touching
     // it does (the tests' --ride, RideTest.Start).
     void rideWalker(MdkObject* obj);
-    // C# Rides.Hides (Rides.cs:99): the XE once the view is inside it. Package #11;
-    // false while there is no bomber.
+    // C# Rides.Hides (Rides.cs:99): the XE once the view is inside it (package #11).
     bool hides(const MdkObject* obj) const;
     // C# Rides.TakesHits (Rides.cs:102): hits on Kurt go to what he rides (the XD2,
     // the XE), not on the board.
@@ -90,6 +93,7 @@ private:
     void tryMount();
     void mountBoard(MdkObject* obj);
     void mountWalker(MdkObject* obj);
+    void mountBomber(MdkObject* obj);
     void updateWalker();
     void dismount();
 
@@ -97,8 +101,10 @@ private:
     MdkObject* ridden_ = nullptr;
     // C# Rides._board (Rides.cs:36): the snowboard ride, owned while Kurt is on it.
     std::unique_ptr<Snowboard> board_;
-    // C# Rides.Bomber: the seam of package #11, never set here.
+    // C# Rides.Bomber (package #11): `bomber_` is its `!= null`, `bomberRide_` the ride
+    // (one object, started anew at each mount as the C# news one).
     bool bomber_ = false;
+    Bomber bomberRide_;
     // C# Rides._walkerSound: the XD2's DUMMY voice while Kurt steers.
     int32_t walkerSound_ = 0;
 };

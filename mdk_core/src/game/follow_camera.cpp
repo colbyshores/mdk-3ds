@@ -352,16 +352,37 @@ bool buildSniperCamera(Camera* camera, const Player& player, float aspect) {
                             aspect, follow_camera::kNear, follow_camera::kFar);
 }
 
+// C# FollowCamera.LookDown (FollowCamera.cs:297-305, 0x4183f0): the bomber's view --
+// straight down from `height` above the feet, the heading at the top (Up is the facing,
+// Right Kurt's right). `facing` is (cos yaw, sin yaw, 0).
+static bool lookDown(Camera* camera, const Vec3& feet, const Vec3& facing, float height,
+                     float aspect) {
+    const Vec3 position{feet.x + 0.0f * height, feet.y + 0.0f * height, feet.z + height};
+    const Vec3 forward{-0.0f, -0.0f, -1.0f};
+    if (!buildLookAtCamera(camera, position,
+                           Vec3{position.x + forward.x, position.y + forward.y,
+                                position.z + forward.z},
+                           facing, follow_camera::kFieldOfView, aspect, follow_camera::kNear,
+                           follow_camera::kFar)) {
+        return false;
+    }
+    camera->forward = forward;
+    camera->up = facing;
+    return true;
+}
+
 void FollowCamera::mouseLook(const Player& player, Input& input) {
-    // C# FollowCamera.MouseLook (FollowCamera.cs:156-164): nothing through the scope.
-    if (player.sniping()) {
+    // C# FollowCamera.MouseLook (FollowCamera.cs:156-164): nothing in the bomber's
+    // top-down view or through the scope.
+    if (player.hasTopDownHeight || player.sniping()) {
         return;
     }
     mouseLook(input);
 }
 
 void FollowCamera::mouseLook(Input& input) {
-    // C# FollowCamera.MouseLook (the top-down and sniper guards are not ported).
+    // C# FollowCamera.MouseLook's clamp, for a caller with no Player (the guards are
+    // the overload above's).
     _lookOffset = clampf(_lookOffset + input.takeMouseY() * follow_camera::kMouseDegrees,
                          follow_camera::kMinPitch - _arenaPitch - _airPitch,
                          follow_camera::kMaxPitch - _arenaPitch - _airPitch);
@@ -472,6 +493,11 @@ void FollowCamera::updateShake(float delta) {
 
 void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, float arenaPitchTarget,
                           float delta, float aspect) {
+    // C# FollowCamera.cs:98-102: the bomber's view, and nothing else this step.
+    if (player.hasTopDownHeight) {
+        lookDown(camera, player.feet, player.facing(), player.topDownHeight, aspect);
+        return;
+    }
     // Ease the arena pitch toward its target: C# `float.Lerp(target, old, Pow(ease,
     // dt))`, and Single.Lerp's arithmetic is the FUSED `from*(1-t) + to*t` -- see the
     // measurement on frame_blend::lerp, whose scalar twin this now matches. The
@@ -530,6 +556,21 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
         _previousAim = _aim;
     }
     _aim = aim;
+}
+
+bool FollowCamera::blend(Camera* camera, const Player& player, const Vec3& feet, float yaw,
+                         float alpha, float aspect) {
+    // C# FollowCamera.Blend (FollowCamera.cs:170-181): the facing of the drawn yaw, and
+    // in the bomber's view straight down from its height over the drawn feet.
+    if (player.hasTopDownHeight) {
+        if (camera == nullptr) {
+            return false;
+        }
+        const float yawRadians = follow_camera::degreesToRadians(yaw);
+        const Vec3 facing{fastCos(yawRadians), fastSin(yawRadians), 0.0f};
+        return lookDown(camera, feet, facing, player.topDownHeight, aspect);
+    }
+    return blend(camera, feet, yaw, alpha, aspect);
 }
 
 bool FollowCamera::blend(Camera* camera, const Vec3& feet, float yaw, float alpha, float aspect) {

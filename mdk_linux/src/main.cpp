@@ -2404,7 +2404,11 @@ int main(int argc, char** argv) {
             // two steps. This port draws Kurt at Player::feet (FrameBlend's Kurt pose is
             // not ported), so his lag is zero and the driven object is drawn at its
             // current transform -- alpha 1 -- where Rides::follow put it after the
-            // step, under the camera that follows the same feet.
+            // step, under the camera that follows the same feet. The XE Kurt flies
+            // (package #11) is the C#'s Carrier (Viewer.cs:588): the oracle draws Kurt
+            // and its camera blended with the XE, and here Rides::follow puts his feet
+            // -- and so LookDown's camera -- on the XE's current place each step, so the
+            // XE is drawn there too (alpha 1), or it would lag under the camera.
             const float tickAlpha = fixedStep ? 1.0f : runtime->tick_blend(pending);
             objectStream.reset();
             for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
@@ -2414,7 +2418,9 @@ int main(int argc, char** argv) {
                 if (!obj.visible || runtime->isRemoved(&obj)) {
                     continue;
                 }
-                const float alpha = &obj == runtime->rides().driven() ? 1.0f : tickAlpha;
+                const bool carried = runtime->rides().bomber() && &obj == runtime->rides().ridden();
+                const float alpha =
+                    &obj == runtime->rides().driven() || carried ? 1.0f : tickAlpha;
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
                                      &objectStream);
             }
@@ -2553,6 +2559,15 @@ int main(int argc, char** argv) {
                 const mdk::scripts::ScriptRuntime::BarValues bar = runtime->bar();
                 state.barHealth = bar.health;
                 state.barMax = bar.max;
+                // The XE bomber's sight (Viewer.cs:914, Rides.Bomber?.Shown; package #11).
+                mdk::scripts::Bomber::Sight sight;
+                const mdk::scripts::Bomber* bomber = runtime->rides().bomberRide();
+                if (bomber != nullptr && bomber->shown(&sight)) {
+                    state.bomber = true;
+                    state.bomberCursorX = sight.cursorX;
+                    state.bomberCursorY = sight.cursorY;
+                    state.bomberBombs = sight.bombs;
+                }
             }
             // Viewer.DrawScene: the messages advance by the frame's elapsed time, then
             // the HUD draws them last.

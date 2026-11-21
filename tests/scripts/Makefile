@@ -57,6 +57,7 @@ COMMON_SOURCES := \
 	$(CORE)/formats/fti.cpp \
 	$(CORE)/formats/font.cpp \
 	$(CORE)/game/font_view.cpp \
+	$(CORE)/game/bomber_overlay.cpp \
 	$(CORE)/game/messages.cpp \
 	$(CORE)/game/level_data.cpp \
 	$(CORE)/game/arena_stream.cpp \
@@ -108,6 +109,7 @@ COMMON_SOURCES := \
 	$(CORE)/scripts/platforms.cpp \
 	$(CORE)/scripts/rides.cpp \
 	$(CORE)/scripts/snowboard.cpp \
+	$(CORE)/scripts/bomber.cpp \
 	$(CORE)/scripts/updraft_wind.cpp \
 	$(CORE)/scripts/debris.cpp \
 	$(CORE)/stream/tube_basis.cpp \

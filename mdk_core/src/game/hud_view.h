@@ -15,7 +15,9 @@
 // the C# HudView does. The message stream (Messages, game/messages.h) is the
 // C#'s too: HudView owns it and draws it last, over the rest. Sniper mode's
 // screen (game/sniper_overlay.h, the C#'s HudView.Sniper) is owned here too and
-// replaces the HUD while it shows. The bomber sight is not ported yet.
+// replaces the HUD while it shows. The bomber's sight (game/bomber_overlay.h,
+// package #11) is drawn first when HudState carries one, as the C#'s HudView.Draw
+// does.
 // ============================================================================
 
 #include <stdint.h>
@@ -23,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "game/bomber_overlay.h"
 #include "game/messages.h"
 #include "game/sniper_overlay.h"
 #include "render/render.h"
@@ -54,6 +57,13 @@ struct HudState {
     int32_t superChainGun = 0;
     int32_t barHealth = 0;
     int32_t barMax = 0;
+    // C# HudState.Bomber (HudView.cs:22, a BomberSight?): the XE bomber's sight while
+    // its controls are unlocked (Rides.Bomber?.Shown, Viewer.cs:914) -- the cursor in
+    // the 600x360 view and the bombs left. `bomber` false is the C#'s null.
+    bool bomber = false;
+    float bomberCursorX = 0.0f;
+    float bomberCursorY = 0.0f;
+    int32_t bomberBombs = 0;
 };
 
 class HudView {
@@ -129,6 +139,7 @@ private:
     int32_t blink_ = 0;
     Messages messages_;
     SniperOverlay sniper_;
+    BomberOverlay bomber_;
     const FontView* big_ = nullptr;
     const FontView* small_ = nullptr;
 };

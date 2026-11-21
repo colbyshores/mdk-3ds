@@ -17,11 +17,12 @@
 // moves) are not reachable here, and the C#'s branches on them are taken the way
 // they are false. The ride (Kurt.Ride.cs) is ported (package 9): Walk::Riding in
 // the XD2 (scripts/rides.cpp mounts him), and the RideHook seam the snowboard and
-// the bomber (packages 10, 11) step him through. The fans' updraft
-// (Kurt.Updraft.cs) and the wind zones' slide (Kurt.Slide.cs) are ported
-// (package 8): the scripts runtime answers the updraft through UpdraftHook and
-// starts, pushes and stops the slide. The ledges (Kurt.Ledge.cs: the grab, the
-// hang and the climb) are ported in game/player_ledge.cpp (package 12).
+// the bomber (packages 10, 11) step him through; the bomber's top-down view is
+// topDownHeight (package 11). The fans' updraft (Kurt.Updraft.cs) and the wind
+// zones' slide (Kurt.Slide.cs) are ported (package 8): the scripts runtime answers
+// the updraft through UpdraftHook and starts, pushes and stops the slide. The
+// ledges (Kurt.Ledge.cs: the grab, the hang and the climb) are ported in
+// game/player_ledge.cpp (package 12).
 //
 // Units and convention match the C#: world units, Z up; Yaw in degrees,
 // counter-clockwise, Facing = (cos yaw, sin yaw, 0); the follow camera's pitch
@@ -61,8 +62,8 @@ public:
     // (KurtSprite.cs:182). The cutscenes hide him except in the strike and the end of the
     // game (ScriptRuntime::cutsceneTick) and show him again at their end. The rides
     // hide him in the XD2 (Rides.cs:178, scripts/rides.cpp, package #9) and show him
-    // when he gets out (Kurt.Ride.cs:81, :95: jumpOff, getOffBoard); the XE's (Rides.cs:187)
-    // is package #11's.
+    // when he gets out (Kurt.Ride.cs:81, :95: jumpOff, getOffBoard); the XE hides him too
+    // (Rides.cs:187, MountBomber, package #11).
     bool visible = true;
     // C# Kurt.Rising (Kurt.Ride.cs:38): the end of a level is lifting him, so the
     // follow camera holds no air tilt (FollowCamera.cs:113-117).
@@ -90,8 +91,9 @@ public:
     // C# Kurt.Ride (Kurt.Ride.cs:27, Action<Input, float>): a ride's step (the
     // snowboard, the bomber; packages #10 and #11) instead of walking. §10 forbids the
     // delegate, so it is a function pointer over a context, the UpdraftHook shape.
-    // Null is the C#'s null delegate: Kurt walks. The snowboard sets it (Rides::mountBoard,
-    // package #10); getOffBoard clears it.
+    // Null is the C#'s null delegate: Kurt walks. The snowboard (Rides::mountBoard,
+    // package #10) and the XE (Rides::mountBomber, package #11) set it; getOffBoard
+    // clears it.
     struct RideHook {
         void* context = nullptr;
         void (*step)(void* context, const Input& input, float delta) = nullptr;
@@ -114,6 +116,12 @@ public:
     // rolls with the board's bank. The one writer outside update() the C# has, so the
     // roll stays read-only to everything else (see cameraRoll() below).
     void followCameraRoll(float bank, float delta) { _cameraRoll.follow(bank, delta); }
+    // C# Kurt.TopDownHeight (Kurt.Ride.cs:34, a float?): the bomber's view, this high
+    // above Kurt, looking down (0x4183f0). scripts/bomber.cpp writes it each step of the
+    // XE ride (package #11), getOffBoard clears it, and FollowCamera looks down from it
+    // while it is set (FollowCamera.cs:98, LookDown).
+    bool hasTopDownHeight = false;
+    float topDownHeight = 0.0f;
     // ---- end of rides ----
     float forwardSpeed = 0.0f;
     float strafeSpeed = 0.0f;

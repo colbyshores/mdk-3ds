@@ -51,6 +51,7 @@
 #include "formats/palette.h"
 #include "formats/sprite_animation.h"
 #include "game/arena_space.h"
+#include "game/bomber_overlay.h"
 #include "game/follow_camera.h"
 #include "game/font_view.h"
 #include "game/follow_camera.h"
@@ -5217,6 +5218,354 @@ bool kurtBoardDump(int level, int steps, const std::string& schedule, const MdkD
 }
 // ---- end of the snowboard dump (package #10) -----------------------------------------
 
+// ---- the bomber dump (package #11) --------------------------------------------------
+// The XE bomber ride of L7's DANT_5, end to end against the oracle probe
+// (tests/scripts/bomber_probe): the C++ Player, ScriptRuntime and FollowCamera stepped at
+// 1/60 s in the C# Viewer's order (Kurt -- whose ride step is Bomber::update -- the
+// scripts, whose update ends with Rides::follow, then the camera), under the probe's
+// schedule: the key holds (`key:from-to`), `mouse:from-to:dx:dy` (the step's
+// Input::mouseX/mouseY), `tp:step:ARENA:x:y:z:yaw` (teleportKurt), `call:step:ARENA:GROUP`
+// (hitGroup(arena, group, 1, the chain gun, 0): RideTest's call of the XE),
+// `board:step` (Kurt 1 unit above the first rideable XE's box, the first step from then
+// on that there is one), `hit:step:DAMAGE` (hurtKurt) and `print:step` (the lines from
+// that step on). Its columns are the probe's, byte for byte:
+//
+//   state ... floor   Kurt's state, feet (1/64 units), yaw, forward and vertical speeds.
+//   vis fire hp       Kurt's Visible, the chain gun, his health.
+//   ride hits         Rides.Ridden, Rides.TakesHits.
+//   topdown           Kurt.TopDownHeight (Player::topDownHeight), or `-`.
+//   bomber            the ride: view height / locked / hides the XE / cursor / cursor
+//                     speed / bombs left / refill timer / fire held.
+//   xe                the first XE: where it is (1/64), yaw, flags, health, script
+//                     position, dead, visible.
+//   cam64 fwd up      the camera while it looks down (LookDown): its place, forward, and
+//                     `up=facing` when its up is Kurt's facing (the facing's digits are
+//                     the trig table's here and MathF's in the probe, apart in the fourth
+//                     place); `cam=follow` off the XE (its pitch is the table's too).
+//   objs live ohp kills  the objects (and the live ones' health sum), Stats.Kills.
+//   bombs             every live XBN_BOMB: where (1/64), velocity, kind, ticks, flags,
+//                     pitch.
+//   voices            the mixer's voices (DROP follows each bomb).
+//   draw              BomberOverlay.Draw of Rides.Bomber.Shown on a 600-wide canvas: the
+//                     quads' count and FNV-1a hash, and every 10th step the quads.
+bool kurtBomberDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                    const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    struct BomberTeleport {
+        int step;
+        std::string arena;
+        Vec3 at;
+        float yaw;
+    };
+    struct BomberCall {
+        int step;
+        std::string arena;
+        int32_t group;
+    };
+    struct BomberMouse {
+        int from;
+        int to;
+        float x;
+        float y;
+    };
+    std::vector<BomberTeleport> teleports;
+    std::vector<BomberCall> calls;
+    std::vector<std::pair<int, int32_t> > hits;
+    std::vector<BomberMouse> mice;
+    int board = -1;
+    int from = 1;
+    std::string keys;
+    size_t start = 0;
+    while (start < schedule.size()) {
+        size_t end = schedule.find(',', start);
+        if (end == std::string::npos) {
+            end = schedule.size();
+        }
+        const std::string token = schedule.substr(start, end - start);
+        start = end + 1;
+        std::vector<std::string> fields;
+        size_t at = 0;
+        while (at <= token.size()) {
+            size_t colon = token.find(':', at);
+            if (colon == std::string::npos) {
+                colon = token.size();
+            }
+            fields.push_back(token.substr(at, colon - at));
+            at = colon + 1;
+        }
+        const std::string& kind = fields[0];
+        if (kind == "tp" && fields.size() == 7) {
+            BomberTeleport t;
+            t.step = atoi(fields[1].c_str());
+            t.arena = fields[2];
+            t.at = Vec3{strtof(fields[3].c_str(), nullptr), strtof(fields[4].c_str(), nullptr),
+                        strtof(fields[5].c_str(), nullptr)};
+            t.yaw = strtof(fields[6].c_str(), nullptr);
+            teleports.push_back(t);
+        } else if (kind == "call" && fields.size() == 4) {
+            BomberCall c;
+            c.step = atoi(fields[1].c_str());
+            c.arena = fields[2];
+            c.group = atoi(fields[3].c_str());
+            calls.push_back(c);
+        } else if (kind == "board" && fields.size() == 2) {
+            board = atoi(fields[1].c_str());
+        } else if (kind == "print" && fields.size() == 2) {
+            from = atoi(fields[1].c_str());
+        } else if (kind == "hit" && fields.size() == 3) {
+            hits.push_back(std::make_pair(atoi(fields[1].c_str()), (int32_t)atoi(fields[2].c_str())));
+        } else if (kind == "mouse" && fields.size() == 4) {
+            const size_t dash = fields[1].find('-');
+            BomberMouse m;
+            m.from = atoi(fields[1].substr(0, dash).c_str());
+            m.to = atoi(fields[1].substr(dash + 1).c_str());
+            m.x = strtof(fields[2].c_str(), nullptr);
+            m.y = strtof(fields[3].c_str(), nullptr);
+            mice.push_back(m);
+        } else {
+            keys += (keys.empty() ? "" : ",") + token;
+        }
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<ItemsPush> pushes;
+    if (!parseItemsSchedule(keys, &holds, &gives, &pushes) || !gives.empty() || !pushes.empty()) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* place = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{place[0], place[1], place[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+    // Viewer.cs:237: the follow camera over the same space (no ClipView in either tree).
+    FollowCamera follow;
+    Camera camera;
+
+    // The overlay over the recording canvas: the HUD's fonts (FONTBIG texture 1, FONTSML
+    // 2), then BOMBTARG 3 and CROSS 4 -- the probe's ids. The palette's bytes only reach
+    // the faked index-texture call.
+    HudFonts fonts;
+    Messages unused;
+    if (!loadHudFonts(data, &fonts, &unused, why)) {
+        return false;
+    }
+    std::vector<uint8_t> black(768, 0);
+    const Palette colours = Palette::fromRgb(black.data(), (int32_t)black.size());
+    BomberOverlay overlay;
+    if (!overlay.load(nullptr, *sprites, 0, colours)) {
+        *why = "BOMBTARG or CROSS is missing";
+        return false;
+    }
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    std::deque<scripts::MdkObject>& objects = runtime.objects();
+    const scripts::MdkObject* xe = nullptr;
+    bool boarded = false;
+    std::vector<CanvasQuad> quads;
+    char buffer[2048];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < teleports.size(); i++) {
+            if (teleports[i].step == step) {
+                runtime.teleportKurt(teleports[i].arena, teleports[i].at, teleports[i].yaw);
+            }
+        }
+        for (size_t i = 0; i < calls.size(); i++) {
+            if (calls[i].step == step) {
+                // ScriptRuntime.HitChainGun (ScriptRuntime.cs:116) is 2.
+                runtime.hitGroup(calls[i].arena, calls[i].group, 1, 2, 0);
+            }
+        }
+        // RideTest.StepBomber's boarding: once an XE is rideable, Kurt 1 unit above its box.
+        if (board >= 0 && step >= board && !boarded) {
+            for (size_t i = 0; i < objects.size(); i++) {
+                scripts::MdkObject* o = &objects[i];
+                if (!runtime.isRemoved(o) && o->type_name == "XE" &&
+                    (o->flags & scripts::Rides::kFlagRideable) != 0) {
+                    boarded = true;
+                    const float top = runtime.worldBounds(o).max.z;
+                    player.teleport(Vec3{o->position.x, o->position.y, top + 1.0f}, player.yaw);
+                    break;
+                }
+            }
+        }
+        for (size_t i = 0; i < hits.size(); i++) {
+            if (hits[i].first == step) {
+                runtime.hurtKurt(hits[i].second);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        for (size_t i = 0; i < mice.size(); i++) {
+            if (step >= mice[i].from && step < mice[i].to) {
+                input.mouseX = mice[i].x;
+                input.mouseY = mice[i].y;
+                break;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        // The arena's rest pitch (see the rides dump on camera_track); LookDown ignores it.
+        follow.update(&camera, &space, player, levelData.arenaPitch(runtime.currentArena()),
+                      1.0f / 60.0f, 4.0f / 3.0f);
+
+        for (size_t i = 0; i < objects.size() && xe == nullptr; i++) {
+            if (!runtime.isRemoved(&objects[i]) && objects[i].type_name == "XE") {
+                xe = &objects[i];
+            }
+        }
+        if (step < from) {
+            continue;
+        }
+        char x[256];
+        if (xe == nullptr) {
+            snprintf(x, sizeof(x), "-");
+        } else {
+            snprintf(x, sizeof(x), "%s@%d,%d,%d/y%.4f/f%X/hp%d/r%d/d%d/v%d",
+                     platformName(xe).c_str(), p64(xe->position.x), p64(xe->position.y),
+                     p64(xe->position.z), xe->yaw, (unsigned)xe->flags, (int)xe->health,
+                     (int)xe->restart, xe->dead ? 1 : 0, xe->visible ? 1 : 0);
+        }
+        const scripts::Bomber* bomber = runtime.rides().bomberRide();
+        char b[256];
+        if (bomber == nullptr) {
+            snprintf(b, sizeof(b), "-");
+        } else {
+            snprintf(b, sizeof(b), "%.4f/l%d/h%d/c%.4f,%.4f/v%.4f,%.4f/n%d/t%.4f/held%d",
+                     bomber->viewHeight(), bomber->locked() ? 1 : 0, bomber->hidesXe() ? 1 : 0,
+                     bomber->cursorX(), bomber->cursorY(), bomber->speedX(), bomber->speedY(),
+                     (int)bomber->bombsLeft(), bomber->refill(), bomber->fireHeld() ? 1 : 0);
+        }
+        std::string bombs;
+        int live = 0;
+        int ohp = 0;
+        for (size_t i = 0; i < objects.size(); i++) {
+            const scripts::MdkObject& o = objects[i];
+            if (runtime.isRemoved(&o) || o.dead) {
+                continue;
+            }
+            live++;
+            ohp += o.health;
+            if (o.type_name == "XBN_BOMB") {
+                char one[256];
+                snprintf(one, sizeof(one), "%s@%d,%d,%d/v%.4f,%.4f,%.4f/k%d/t%d/f%X/p%.4f",
+                         platformName(&o).c_str(), p64(o.position.x), p64(o.position.y),
+                         p64(o.position.z), o.velocity.x, o.velocity.y, o.velocity.z,
+                         (int)o.thrown_kind, (int)o.item_ticks, (unsigned)o.flags, o.pitch);
+                bombs += (bombs.empty() ? "" : ";") + std::string(one);
+            }
+        }
+        char top[32];
+        if (player.hasTopDownHeight) {
+            snprintf(top, sizeof(top), "%.4f", player.topDownHeight);
+        } else {
+            snprintf(top, sizeof(top), "-");
+        }
+        char view[192];
+        if (player.hasTopDownHeight) {
+            const Vec3 facing = player.facing();
+            char up[64];
+            if (camera.up.x == facing.x && camera.up.y == facing.y && camera.up.z == facing.z) {
+                snprintf(up, sizeof(up), "facing");
+            } else {
+                snprintf(up, sizeof(up), "%.4f,%.4f,%.4f", camera.up.x, camera.up.y, camera.up.z);
+            }
+            snprintf(view, sizeof(view), "cam64=%d,%d,%d fwd=%.4f,%.4f,%.4f up=%s",
+                     p64(camera.position.x), p64(camera.position.y), p64(camera.position.z),
+                     camera.forward.x, camera.forward.y, camera.forward.z, up);
+        } else {
+            snprintf(view, sizeof(view), "cam=follow");
+        }
+        const Kurt& combat = player.combat();
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d arena=%s state=%s feet64=%d,%d,%d yaw=%.4f fs=%.4f vz=%.4f floor=%d "
+                 "vis=%d fire=%d hp=%d ride=%s hits=%d topdown=%s bomber=%s xe=%s %s "
+                 "objs=%d live=%d ohp=%d kills=%d bombs=",
+                 step, runtime.currentArena().c_str(), kurtStateName(player.state()),
+                 p64(player.feet.x), p64(player.feet.y), p64(player.feet.z), player.yaw,
+                 player.forwardSpeed, player.verticalSpeed, player.onFloor ? 1 : 0,
+                 player.visible ? 1 : 0, combat.firing() ? 1 : 0, player.health(),
+                 platformName(runtime.rides().ridden()).c_str(),
+                 runtime.rides().takesHits() ? 1 : 0, top, b, x, view,
+                 runtime.objectCount(), live, ohp, (int)runtime.stats.kills);
+        *out += buffer;
+        *out += bombs.empty() ? "-" : bombs;
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& playing = runtime.mixer().voices();
+        for (size_t i = 0; i < playing.size(); i++) {
+            voices += (i ? "," : "") + playing[i].name;
+        }
+        *out += " voices=" + (voices.empty() ? std::string("-") : voices);
+
+        scripts::Bomber::Sight sight;
+        if (bomber == nullptr || !bomber->shown(&sight)) {
+            *out += " draw=-\n";
+            continue;
+        }
+        quads.clear();
+        g_canvasQuads = &quads;
+        overlay.draw(nullptr, &fonts.big, 600.0f, sight.cursorX, sight.cursorY, sight.bombs);
+        g_canvasQuads = nullptr;
+        uint32_t hash = 2166136261u;
+        std::string list;
+        for (size_t i = 0; i < quads.size(); i++) {
+            const CanvasQuad& q = quads[i];
+            hash = fnvInt(hash, (uint32_t)q.texture);
+            hash = fnvFloat(fnvFloat(fnvFloat(fnvFloat(hash, q.x0), q.y0), q.x2), q.y2);
+            list += (i ? ";T" : "T") + std::to_string(q.texture) + ":" + hexBits(q.x0) + "," +
+                    hexBits(q.y0) + "," + hexBits(q.x2) + "," + hexBits(q.y2);
+        }
+        snprintf(buffer, sizeof(buffer), " draw=%d:%08X", (int)quads.size(), hash);
+        *out += buffer;
+        if (step % 10 == 0 && !quads.empty()) {
+            *out += " quads=" + list;
+        }
+        *out += "\n";
+    }
+    return true;
+}
+// ---- end of the bomber dump (package #11) --------------------------------------------
+
 // Kurt in the fans' updrafts and the wind zones' slide, end to end against the oracle probe
 // (tests/scripts/wind_probe): the C++ Player and ScriptRuntime stepped at 1/60 s in the C#
 // Viewer's order (Kurt, the scripts, then ArenaSpace.SetSolid(SolidArenas)) from a placed
@@ -7415,6 +7764,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "bomber") {
+            // `tick1 dump bomber <level> <steps> <schedule>`: kurtBomberDump's text, the
+            // C++ side of the bomber probe (package #11).
+            std::string got;
+            std::string why;
+            if (!kurtBomberDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                                &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "sniperiris") {
             // `tick1 dump sniperiris <level> <steps>`: the rounds probe's `iris` mode.
             std::string got;
@@ -9314,6 +9676,92 @@ int main(int argc, char** argv) {
         }
     }
     // ---- end of package #10 ------------------------------------------------------------
+
+    // The bomber probe's goldens (tests/scripts/bomber_probe; see kurtBomberDump for the
+    // columns), package #11. Each case is the probe's command line. L7 DANT_5: RideTest's
+    // way onto the XE -- Kurt teleported in front of the comm device, its group 16 hit
+    // once, which calls the XE; once its script makes it rideable (step 620) Kurt is put
+    // 1 unit above it and mounts on touching it (TryMount's Bombers, MountBomber).
+    {
+        struct BomberCase {
+            const char* golden;
+            int level;
+            int steps;
+            const char* schedule;
+            const char* what;
+        };
+        static const BomberCase kBomberCases[] = {
+            // The mount: firing, Kurt above the rideable XE does not get on (TryMount refuses
+            // while Kurt.Firing) and falls through it; he lets go and is on (hidden, Kurt.Ride
+            // set, hits to the XE); the view sinks 50 -> 0 in 2 s, then the XE is hidden and
+            // not solid; locked, fire drops nothing and the HUD is off; a 5-point hit goes to
+            // the XE and back to him (PassDamage); the script unlocks the controls.
+            {"L7_bomber_mount", 7, 790,
+             "tp:30:DANT_5:100:2320:-60:90,call:90:DANT_5:16,board:91,print:600,fire:600-650,"
+             "hit:700:5,fire:720-724",
+             "Kurt boards the XE once he stops firing; the view sinks and the script unlocks"},
+            // The bombs: a drop at the centre (straight down), the cursor steered by the
+            // turn keys, forward, strafe and turn together (turn wins), the mouse (only while
+            // no key moves it), held fire drops once, the ten bombs run out and come back one
+            // a second, a far aim at the box's edge; the bombs fall (Items' kind 0x81) and
+            // blow up on what they hit, DROP following each.
+            {"L7_bomber_bombs", 7, 1100,
+             "tp:30:DANT_5:100:2320:-60:90,call:90:DANT_5:16,board:91,print:750,fire:760-762,"
+             "right:780-800,fwd:800-815,fire:815-817,sleft:820-835,right:830-840,fire:836-838,"
+             "fire:845-846,fire:850-852,fire:860-890,fire:895-897,fire:900-902,fire:905-907,"
+             "fire:910-912,fire:915-917,fire:920-922,fire:925-927,mouse:940-950:30:-15,"
+             "back:945-955,fire:960-962,left:970-1000,sright:970-985,fire:990-992,"
+             "right:1000-1040,back:1005-1030,fire:1040-1042,fire:1070-1072",
+             "the cursor, the drops, the refill and the bombs' fall"},
+            // A target: the XE passes over the guard XG#3500 (walking +x) at step 1450; the
+            // mouse puts the cursor ahead of it (76, -65 px off the centre: 33 units on
+            // the ground at the XE's yaw of 53.7, from 82 up) and four bombs fall there
+            // (no object's part under the ray: the arena's floor, Raycast) -- their blasts
+            // take its 60 and it dies (kills 1).
+            {"L7_bomber_target", 7, 1660,
+             "tp:30:DANT_5:100:2320:-60:90,call:90:DANT_5:16,board:91,print:1440,"
+             "mouse:1448-1449:228:-195,fire:1450-1452,fire:1456-1458,fire:1462-1464,"
+             "fire:1468-1470",
+             "bombs led onto a walking guard kill it"},
+            // The player's way, no test hooks (the 3DS harness's WALK, docs/PORT_GAPS.md #11):
+            // from step 1 in DANT_5 Kurt turns left to the comm device and shoots it (the
+            // XE is called at 158), turns right to yaw 120, walks into the landed XE once
+            // it is rideable and mounts on the floor (752); the script unlocks the controls
+            // (874) and he drops a bomb (880).
+            {"L7_bomber_walk", 7, 900,
+             "tp:1:DANT_5:100:2320:-60:90,left:60-125,fire:130-180,right:200-250,fwd:720-800,"
+             "fire:880-882,print:740",
+             "Kurt calls the XE by shooting the comm device and walks into it"},
+            // The end: the script clears the rideable flag (and sets its health, which
+            // PassDamage hands back as a negative hit Kurt ignores); Kurt drops from where
+            // the XE is (Player::getOffBoard: the view, the ride step and the hiding go) and
+            // it shows again.
+            {"L7_bomber_end", 7, 6450,
+             "tp:30:DANT_5:100:2320:-60:90,call:90:DANT_5:16,board:91,print:6320",
+             "the script ends the ride and Kurt drops from the XE"},
+        };
+        for (size_t i = 0; i < sizeof(kBomberCases) / sizeof(kBomberCases[0]); i++) {
+            const BomberCase& c = kBomberCases[i];
+            const std::string path = std::string("golden/") + c.golden + ".txt";
+            std::string expected;
+            std::string got;
+            std::string why;
+            if (!readText(path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.golden, path.c_str());
+                failures++;
+            } else if (!kurtBomberDump(c.level, c.steps, c.schedule, data, spritesArg, &got,
+                                       &why)) {
+                printf("FAIL %s: %s\n", c.golden, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.golden, c.what);
+            } else {
+                printf("FAIL %s: %s\n", c.golden, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+    // ---- end of package #11 ------------------------------------------------------------
 
     // The end of a level, end to end against the oracle probe (tests/scripts/end_probe; see
     // levelEndDump for the columns): special_event <= 50 -> EndTheLevel -> EndLevel.cs, and

@@ -2094,10 +2094,7 @@ Still open:
 - ~~**The snowboard (#10)**~~ landed 2026-11-20 (next section): `MountBoard`, `onBoard()`'s
   solid-arena pin, `Dismount`'s board arm, `RideHook`, `glide`, `updateGun` and `getOffBoard`
   are exercised by `golden/L4_board_*.txt`.
-- **The XE bomber (#11)** is a seam: `TryMount` finds XE / X_STRIKE and leaves Kurt off it
-  (the C#'s MountBomber); `bomber_` is never set, so `Hides`, `Follow`'s bomber arm and
-  `Dismount`'s bomber arm are unreachable. `Kurt.TopDownHeight` (the bomber's view) is not a
-  Player field yet.
+- ~~**The XE bomber (#11)**~~ landed 2026-11-20: see "The XE bomber" below.
 - **The camera_track pitch is a ULP off** (opcode 203's `fastAtan2`, R6, vs `MathF.Atan2`:
   -24.1330566 vs -24.1330547 at the XD2 golden's step 300), and the follow camera's eased
   pitch carries it into its 1/64 position. The ride goldens therefore ease the camera toward
@@ -2147,3 +2144,44 @@ Still open:
   oracle's behaviour (the player steers and jumps), recorded so nobody reads it as a hang.
 - **No emulator or hardware run here.** The 3DS harness uses #19's `ARENA=` to load
   CMEAT_3 at the board; see the ledger entry for the command.
+
+## The XE bomber (2026-11-20, gap package #11): what landed, what is open
+
+Landed, operation for operation (C# -> C++):
+- `Scripts/Bomber.cs` -> `mdk_core/src/scripts/bomber.{h,cpp}` (`Bomber`, owned by `Rides` as
+  `bomberRide_`, started anew at each mount): Update (Kurt on the XE, the view sinking 25 u/s,
+  the hidden XE made not solid, the cursor and the drops only while unlocked, PassDamage),
+  MoveCursor, CursorStep, RefillBombs, Drop (an XBN_BOMB of Items' kind 0x81 under the
+  controller, DROP following it), Aim, AimDirection (libm sinf/cosf: one call per fire press,
+  cold), FallTime, FirstObject, PassDamage.
+- `Scripts/Rides.cs`'s bomber half -> `scripts/rides.cpp`: TryMount's `Bombers` (XE and
+  X_STRIKE) -> `mountBomber` (Kurt hidden, the gun stopped, `Player::RideHook` bound to
+  `Bomber::update`), `hides`, `follow`'s bomber arm, `dismount`'s drop; `bomberRide()` is the
+  C#'s `Rides.Bomber`.
+- `Kurt.TopDownHeight` -> `Player::hasTopDownHeight`/`topDownHeight` (cleared by
+  `getOffBoard`); `FollowCamera.LookDown` -> `follow_camera.cpp`'s `lookDown`, taken by
+  `FollowCamera::update`, a new `blend(camera, player, ...)` overload, and `mouseLook`'s guard.
+- `Hud/BomberOverlay.cs` -> `game/bomber_overlay.{h,cpp}` (the mod images in
+  `bomber_overlay_mods.cpp`), drawn first by `HudView::draw` when `HudState::bomber` is set;
+  both frontends fill it from `Rides::bomberRide()->shown()` (Viewer.cs:914) and draw the
+  flown XE at its current transform (the C#'s Carrier; see below).
+- Goldens (`tests/scripts/bomber_probe` vs `tick1 dump bomber`, byte for byte):
+  `L7_bomber_mount`, `L7_bomber_bombs`, `L7_bomber_target`, `L7_bomber_walk`, `L7_bomber_end`.
+
+Still open:
+- **The camera's digits off the XE and its up on it are the trig table's** (R6): the goldens
+  print `cam=follow` off the XE (the follow camera's pitch goes through `fastSin`/`fastCos`,
+  measured 1/64 apart once at step 640 of `L7_bomber_mount`, and equal with libm) and
+  `up=facing` on it (LookDown's up is Kurt's facing, `fastCos`/`fastSin` here, a digit apart
+  in the fourth place). The yaw column pins the facing's input exactly.
+- **A bomb that hits nothing** (Bomber.MissTime, 2.5 s) is unreachable in DANT_5: the aim's
+  ray is 250000 units deep and always meets the arena, so no golden covers it (a mutant that
+  drops the miss branch survives).
+- **The Carrier blend.** The C# draws Kurt and the camera blended with the XE between steps
+  (FrameBlend's carrier pose); FrameBlend's Kurt half is not ported (see FrameBlend above), so
+  the frontends draw the flown XE at alpha 1, where Rides::follow put Kurt and LookDown's
+  camera. During the 2 s descent this is the C#'s picture at each step, not between them.
+- **X_STRIKE** is in the same `Bombers` list and mounts the same way if a script makes it
+  rideable; its spawn and flight (AirStrike.cs, flags 0x85e20: not rideable) are package #14's.
+- **No emulator or hardware run here.** The harness needs `ARENA=DANT_5` (package #19) to put
+  Kurt in DANT_5 with its scripts; see the commit's report for the command.

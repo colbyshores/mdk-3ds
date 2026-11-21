@@ -291,7 +291,8 @@ void Player::update(const Input& input, float delta) {
     }
     // C# Kurt.cs:166-174 (package #9): a ride's step (the snowboard, the bomber) owns
     // the step -- no knock-down, chute or ledges while riding; the noclip step above
-    // comes first. The snowboard sets the hook (package #10); the bomber is #11.
+    // comes first. The snowboard (Rides::mountBoard, package #10) and the XE bomber
+    // (scripts/bomber.cpp, package #11) set the hook.
     if (_rideHook.step != nullptr) {
         combat_.setKnockDamage(0.0f);
         stopChuteSound();
@@ -1420,12 +1421,14 @@ void Player::jumpOff() {
 
 void Player::getOffBoard(float forward, float strafe) {
     // C# Kurt.GetOffBoard (Kurt.Ride.cs:89-99): off the board or the bomber, keeping
-    // the ride's speeds (u/s) as his walking ones. TopDownHeight (the bomber's view,
-    // FollowCamera) is package #11's and is not a field here yet.
+    // the ride's speeds (u/s) as his walking ones; the bomber's view goes
+    // (TopDownHeight = null, package #11).
     _rideHook = RideHook();
     hasPose = false;
     poseName = nullptr;
     poseFrame = 0;
+    hasTopDownHeight = false;
+    topDownHeight = 0.0f;
     cameraPivot = 4.5f;  // C# Kurt.DefaultPivot
     visible = true;
     forwardSpeed = forward;

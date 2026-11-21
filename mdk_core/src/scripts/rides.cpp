@@ -1,6 +1,7 @@
 // ============================================================================
 // rides.cpp — C# src/Mdk.Game/Scripts/Rides.cs, operation for operation (package
-// #9). See rides.h for the ride's shape and the seams packages #10 and #11 fill.
+// #9; the XE's half, package #11). See rides.h for the ride's shape and the seam
+// package #10 fills.
 // Kurt's half (Walk::Riding, rideWalker, jumpOff, the RideHook) is in
 // game/player.cpp.
 // ============================================================================
@@ -91,8 +92,7 @@ void Rides::follow() {
     }
 
     if (bomber_) {
-        // Package #11: Kurt where the XE is (kurt.Feet = Ridden.Position, kurt.Yaw =
-        // Ridden.Yaw). Unreachable until the bomber lands.
+        // Kurt where the XE is.
         kurt->feet = ridden_->position;
         kurt->yaw = ridden_->yaw;
         return;
@@ -110,9 +110,7 @@ void Rides::rideWalker(MdkObject* obj) {
 
 bool Rides::hides(const MdkObject* obj) const {
     // C# Rides.Hides (Rides.cs:99): `Bomber != null && obj == Ridden && Bomber.HidesXe`.
-    // The view inside the XE is package #11's.
-    (void)obj;
-    return false;
+    return bomber_ && obj == ridden_ && bomberRide_.hidesXe();
 }
 
 void Rides::lost(MdkObject* obj) {
@@ -155,7 +153,7 @@ void Rides::tryMount() {
         }
 
         if (typeIn(obj->type_name, kBombers, sizeof(kBombers) / sizeof(kBombers[0]))) {
-            // MountBomber (Rides.cs:177): the XE is package #11; Kurt stays off.
+            mountBomber(obj);
             return;
         }
     }
@@ -198,6 +196,24 @@ void Rides::mountWalker(MdkObject* obj) {
     kurt->visible = false;
 }
 
+void Rides::mountBomber(MdkObject* obj) {
+    // C# Rides.MountBomber (Rides.cs:182-190): the XE (also in the air) -- Kurt isn't
+    // drawn and goes with it; the Bomber's update is his ride step (Kurt.Ride).
+    Player* kurt = runtime_.player_;
+    if (kurt == nullptr) {
+        return;
+    }
+    ridden_ = obj;
+    kurt->stopFiring();
+    kurt->visible = false;
+    bomber_ = true;
+    bomberRide_.start(obj);
+    Player::RideHook hook;
+    hook.context = &bomberRide_;
+    hook.step = Bomber::stepTrampoline;
+    kurt->setRideHook(hook);
+}
+
 void Rides::updateWalker() {
     // C# Rides.UpdateWalker (Rides.cs:187-216): the XD2 goes with Kurt (the tick's copy
     // of his feet and yaw), animating while it moves; its sound while the keys are
@@ -234,9 +250,9 @@ void Rides::updateWalker() {
 
 void Rides::dismount() {
     // C# Rides.Dismount (Rides.cs:228-251). The board is thrown on (Snowboard::getOff,
-    // which also takes the RideHook back); the XE's drop is package #11 (unreachable
-    // here: the flag is never set). The XD2's ridden flag (0x80000) is left set, as the
-    // C#'s is.
+    // which also takes the RideHook back); from the XE Kurt drops where it is
+    // (Player::getOffBoard) and it shows again. The XD2's ridden flag (0x80000) is left
+    // set, as the C#'s is.
     Player* kurt = runtime_.player_;
     if (board_) {
         board_->getOff();

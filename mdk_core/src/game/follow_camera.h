@@ -186,9 +186,10 @@ bool buildSniperCamera(Camera* camera, const Player& player, float aspect);
 // Aim triple; wiring it to a frontend still needs FrameBlend's Kurt pose. Its
 // sniper guards are ported (no clearance and no mouse look while Kurt snipes; the
 // scope's own view is buildSniperCamera above). The shake is ported (package #15:
-// RaiseShake, UpdateShake and Turn's shake half, in update and blend). The top-down
-// view is not (it needs the moves); where the C# branches on it this takes the false
-// side.
+// RaiseShake, UpdateShake and Turn's shake half, in update and blend), and so is the
+// bomber's top-down view (LookDown, package #11: while Player::hasTopDownHeight the
+// view looks straight down from that height, before any shake, and the mouse does not
+// look).
 class FollowCamera {
 public:
     // C# FollowCamera.RaiseShake (FollowCamera.cs:94, 0x467f7c, opcode 135): shake the
@@ -213,8 +214,8 @@ public:
     // offset, clamped against the eased arena pitch and the air tilt.
     void mouseLook(Input& input);
     // C# FollowCamera.MouseLook(kurt, input) whole: in sniper mode the mouse turns the
-    // scope instead (Player::mouseLook took it), so the look offset is left alone.
-    // (The top-down guard is not ported.)
+    // scope instead (Player::mouseLook took it), and in the bomber's top-down view the
+    // mouse moves the cursor (scripts/bomber.cpp), so the look offset is left alone.
     void mouseLook(const Player& player, Input& input);
 
     // A frame between two steps (C# FollowCamera.Blend): place the camera for
@@ -224,6 +225,12 @@ public:
     // false before the first step (there is no Aim to blend) or when the
     // look-at is degenerate; the camera is left alone in that case.
     bool blend(Camera* camera, const Vec3& feet, float yaw, float alpha, float aspect);
+    // C# FollowCamera.Blend(kurt, ...) whole: in the bomber's top-down view
+    // (Player::hasTopDownHeight) the view is straight down from that height above the
+    // drawn feet, his drawn heading at the top (FollowCamera.cs:174-181); otherwise the
+    // blend above.
+    bool blend(Camera* camera, const Player& player, const Vec3& feet, float yaw, float alpha,
+               float aspect);
 
     // The eased arena pitch, in degrees. This is the camera's own state, exposed
     // read-only so the host harness can pin the oracle's exact rounding; no
@@ -245,7 +252,8 @@ public:
     // One step (C# FollowCamera.Update): ease the arena pitch toward its target,
     // update the air time and the climb, compute the pitch, then place the camera
     // and run the clearance (buildFollowCameraCleared). `arenaPitchTarget` is the
-    // pitch of the arena Kurt is in (the C# PitchGoal).
+    // pitch of the arena Kurt is in (the C# PitchGoal). In the bomber's top-down view
+    // (Player::hasTopDownHeight) it is LookDown alone, and nothing else moves.
     void update(Camera* camera, ArenaSpace* space, Player& player, float arenaPitchTarget,
                 float delta, float aspect);
 

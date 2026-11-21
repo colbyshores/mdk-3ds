@@ -136,6 +136,8 @@ set(SOURCES
     ${CORE}/src/game/save_prompt.cpp
     ${CORE}/src/game/viewer_saves.cpp
     ${CORE}/src/util/json.cpp
+    ${CORE}/src/game/bomber_overlay.cpp
+    ${CORE}/src/game/bomber_overlay_mods.cpp
     ${CORE}/src/game/hud_view.cpp
     ${CORE}/src/game/kurt.cpp
     ${CORE}/src/game/kurt_sprite.cpp
@@ -205,6 +207,7 @@ set(SOURCES
     ${CORE}/src/scripts/platforms.cpp
     ${CORE}/src/scripts/rides.cpp
     ${CORE}/src/scripts/snowboard.cpp
+    ${CORE}/src/scripts/bomber.cpp
     ${CORE}/src/scripts/updraft_wind.cpp
     ${CORE}/src/scripts/script_vm.cpp
     ${CORE}/src/scripts/debris.cpp

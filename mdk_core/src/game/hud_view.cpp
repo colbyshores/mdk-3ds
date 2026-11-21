@@ -114,6 +114,12 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
     // loads, and sniper mode keeps the HUD instead of its screen.
     sniper_.load(renderer, sprites, palette, palette_);
 
+    // The bomber's sight (C# HudView's `new BomberOverlay(renderer, sprites, _palette,
+    // big, palette, mods)`). It degrades: without its sprites there is no sight.
+    if (bomber_.load(renderer, sprites, palette_, palette) && mods != nullptr) {
+        bomber_.replaceWithMods(renderer, sprites, palette, mods);
+    }
+
     barFill_ = paletteColour(palette, kBarFill);
     barFrame_ = paletteColour(palette, kBarFrame);
 
@@ -190,6 +196,14 @@ void HudView::draw(MdkRenderer renderer, const HudState& state) {
             messages_.draw(renderer_, *big_, *small_, canvasWidth);
         }
         return;
+    }
+
+    // The bomber's sight first (C# HudView.cs:164-168, 0x41e3c8), its count in the big
+    // font once the fonts are ready.
+    if (state.bomber && bomber_.ready()) {
+        const FontView* big = big_ != nullptr && big_->ready() ? big_ : nullptr;
+        bomber_.draw(renderer_, big, canvasWidth, state.bomberCursorX, state.bomberCursorY,
+                     state.bomberBombs);
     }
 
     // The health panel at the bottom right; the number blinks when health is low.

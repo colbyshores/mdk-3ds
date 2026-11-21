@@ -520,7 +520,8 @@ By blocking subsystem (carried grouping, corrected for this batch):
   215, 240, 244, 247 (181 and 209 landed with the chain-gun batch, 114 with
   package #3).
   (171 (`if_is_573c30`) reads `Rides.Ridden`, which the rides (package #9)
-  now write: true for the XD2 Kurt rides, `golden/L7_ride_*.txt`.)
+  now write: true for the XD2 Kurt rides, `golden/L7_ride_*.txt`, and since
+  package #11 for the XE bomber he flies (`Rides::mountBomber`), `golden/L7_bomber_*.txt`.)
   (109 `hurt_kurt` and 175 `if_inventory` landed with the Kurt health/inventory
   slice; 240/244 read the same Kurt state but do not fire in levels 3-8, so
   they stay deferred. 135's runtime state landed, but its camera consumer is
