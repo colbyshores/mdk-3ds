@@ -291,7 +291,7 @@ void Player::update(const Input& input, float delta) {
     }
     // C# Kurt.cs:166-174 (package #9): a ride's step (the snowboard, the bomber) owns
     // the step -- no knock-down, chute or ledges while riding; the noclip step above
-    // comes first. No ride sets the hook yet (packages #10, #11).
+    // comes first. The snowboard sets the hook (package #10); the bomber is #11.
     if (_rideHook.step != nullptr) {
         combat_.setKnockDamage(0.0f);
         stopChuteSound();
@@ -575,9 +575,15 @@ void Player::updateMuzzle(float delta) {
 }
 
 bool Player::muzzleOffset(int32_t* x, int32_t* y) const {
+    // C# Kurt.MuzzleOffset (Kurt.Combat.cs:358-363): on the board (state 201, the K_SURF
+    // pose, package #10) the flash is drawn at (-42, 12) whatever the state.
+    if (hasPose && poseName != nullptr && strcmp(poseName, "K_SURF") == 0) {
+        *x = -42;
+        *y = 12;
+        return true;
+    }
     // C# Kurt.MuzzleOffsets (Kurt.Combat.cs:57-65): the states that don't show the gun
-    // firing by themselves. The board's K_SURF pose (-42, 12) comes first in the C# and
-    // belongs to the unported ride.
+    // firing by themselves.
     switch (state()) {
         case Kurt::Turn:
         case Kurt::Side:

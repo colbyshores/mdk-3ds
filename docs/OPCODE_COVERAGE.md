@@ -18,6 +18,12 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   all to -1027, the glass); 202 in L3 HMO_3/HMO_4/HMO_10/CHMO_9, L4 MEAT_3/5/6/7/10/CMEAT_5,
   L6 OLYM_3, L7 DANT_3/4/5/CDANT_3/4; 135 in every level.
 
+- **The snowboard (2026-11-20, PORT_GAPS package 10):** no opcode added; the counts stand.
+  What changed is what three opcodes see on LEVEL4's board: 114 (`if_player_on_me`, XSNOWB's
+  script 147319) now leads to a mount, because Kurt touching the rideable board gets on it
+  (`Rides::mountBoard`, `scripts/snowboard.cpp`); 116/117 (`flags_set`/`flags_clear` of
+  0x2000000 at MEAT_5's end box, script 147357) now let him off (`Snowboard::getOff`); and
+  171 (`if_is_573c30`) answers true for the ridden board. Pinned by `golden/L4_board_*.txt`.
 - **Bullet holes (2026-11-20, PORT_GAPS package 16):** 130 (`special_130`) ported:
   `ScriptRuntime::stampBulletHole` (scripts/bullet_holes.cpp, BulletHoles.cs whole), pinned
   end to end by `golden/L8_holes_guntam.txt` and `golden/L6_holes_xb2.txt` (sniper rounds hit

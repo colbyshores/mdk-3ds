@@ -22,6 +22,7 @@
 // scope here; the rest of ObjectMotion is not.
 // ============================================================================
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -4914,6 +4915,308 @@ bool kurtRideDump(int level, int steps, const std::string& schedule, const MdkDa
 }
 // ---- end of the rides dump (package #9) ----------------------------------------------
 
+// ---- the snowboard dump (package #10) ------------------------------------------------
+// Kurt on L4's board, end to end against the oracle probe (tests/scripts/board_probe): the
+// C++ Player, ScriptRuntime and FollowCamera stepped at 1/60 s in the C# Viewer's order (Kurt
+// -- whose RideHook is the board's step --, the scripts, the camera, then
+// ArenaSpace::setSolid(solidArenas()), his arena alone while he rides), under the probe's
+// schedule: the key holds (`key:from-to`), `tp:step:ARENA:x:y:z:yaw` (teleportKurt),
+// `off:step:TYPE` (its rideable flag cleared, as its script does), `kill:step:TYPE`
+// (ScriptRuntime::kill) and `hit:step:DAMAGE` (ScriptRuntime::hurtKurt), each before its
+// step; `every:N` and `show:from-to` print only those steps (and the last). Its columns are
+// the probe's, byte for byte:
+//
+//   arena solid       currentArena(), solidArenas() (one name on the board).
+//   state ... floor   Kurt's state, feet (1/64), yaw, forward/strafe/vertical speeds.
+//   vis pose pivot    visible, the K_SURF/K_SURFJ pose (name:frame), the camera pivot.
+//   roll              the view's bank (CameraRoll.Follow on the board).
+//   fire muzzle hp    the chain gun, the flash (surf: at K_SURF's -42,12), his health.
+//   ride onboard hits Rides.Ridden, OnBoard, TakesHits.
+//   touched           Kurt.Touched (TryMount and Ram read it).
+//   board             the first XSNOWB: place (1/64), yaw, pitch, flags, path time and
+//                     stop, velocity (1/64), gravity, friction, script position, dead.
+//   sb                the ride (Snowboard's fields): speed, side, heading, steer, pitch,
+//                     grounded, path heading, turn/jump/air ticks, pose, frame.
+//   camz64 pitch      the follow camera's height (its x and y follow Kurt's facing, the
+//                     LUT's here: see the probe) and its eased arena and air pitch.
+//   objs voices       the object count and the mixer's voices (SKI, SKITURN, SKILAND).
+bool kurtBoardDump(int level, int steps, const std::string& schedule, const MdkData& data,
+                   const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    struct BoardAction {
+        int step;
+        std::string kind;
+        std::string arg;
+        std::string arena;
+        Vec3 at;
+        float yaw;
+    };
+    std::vector<BoardAction> actions;
+    int every = 0;
+    std::vector<std::pair<int, int> > shows;
+    std::string keys;
+    size_t start = 0;
+    while (start < schedule.size()) {
+        size_t end = schedule.find(',', start);
+        if (end == std::string::npos) {
+            end = schedule.size();
+        }
+        const std::string token = schedule.substr(start, end - start);
+        start = end + 1;
+        std::vector<std::string> fields;
+        size_t at = 0;
+        while (at <= token.size()) {
+            size_t colon = token.find(':', at);
+            if (colon == std::string::npos) {
+                colon = token.size();
+            }
+            fields.push_back(token.substr(at, colon - at));
+            at = colon + 1;
+        }
+        const std::string& kind = fields[0];
+        if (kind == "tp" && fields.size() == 7) {
+            BoardAction a;
+            a.step = atoi(fields[1].c_str());
+            a.kind = kind;
+            a.arena = fields[2];
+            a.at = Vec3{strtof(fields[3].c_str(), nullptr), strtof(fields[4].c_str(), nullptr),
+                        strtof(fields[5].c_str(), nullptr)};
+            a.yaw = strtof(fields[6].c_str(), nullptr);
+            actions.push_back(a);
+        } else if ((kind == "off" || kind == "kill" || kind == "hit") && fields.size() == 3) {
+            BoardAction a;
+            a.step = atoi(fields[1].c_str());
+            a.kind = kind;
+            a.arg = fields[2];
+            a.at = Vec3{0.0f, 0.0f, 0.0f};
+            a.yaw = 0.0f;
+            actions.push_back(a);
+        } else if (kind == "every" && fields.size() == 2) {
+            every = atoi(fields[1].c_str());
+        } else if (kind == "show" && fields.size() == 2) {
+            const size_t dash = fields[1].find('-');
+            if (dash == std::string::npos) {
+                *why = "the schedule did not parse: " + schedule;
+                return false;
+            }
+            shows.push_back(std::make_pair(atoi(fields[1].substr(0, dash).c_str()),
+                                           atoi(fields[1].substr(dash + 1).c_str())));
+        } else {
+            keys += (keys.empty() ? "" : ",") + token;
+        }
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<ItemsGive> gives;
+    std::vector<ItemsPush> pushes;
+    if (!parseItemsSchedule(keys, &holds, &gives, &pushes) || !gives.empty() || !pushes.empty()) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* place = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{place[0], place[1], place[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+    FollowCamera follow;
+    Camera camera;
+
+    const auto firstOf = [&runtime](const std::string& type) -> scripts::MdkObject* {
+        std::deque<scripts::MdkObject>& objects = runtime.objects();
+        for (size_t i = 0; i < objects.size(); i++) {
+            if (!objects[i].dead && objects[i].type_name == type) {
+                return &objects[i];
+            }
+        }
+        return nullptr;
+    };
+    // The probe's `o.TypeName.ToUpperInvariant() == "XSNOWB"`.
+    const auto isBoard = [](const std::string& type) {
+        static const char kName[] = "XSNOWB";
+        if (type.size() != sizeof(kName) - 1) {
+            return false;
+        }
+        for (size_t i = 0; i < type.size(); i++) {
+            if (toupper((unsigned char)type[i]) != kName[i]) {
+                return false;
+            }
+        }
+        return true;
+    };
+    static const char* const kPoses[] = {"Surf", "Jump", "Land"};
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " seed=1 schedule=" + schedule + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    const scripts::MdkObject* board = nullptr;
+    char buffer[2048];
+    for (int step = 1; step <= steps; step++) {
+        for (size_t i = 0; i < actions.size(); i++) {
+            if (actions[i].step == step && actions[i].kind == "tp") {
+                runtime.teleportKurt(actions[i].arena, actions[i].at, actions[i].yaw);
+            }
+        }
+        for (size_t i = 0; i < actions.size(); i++) {
+            const BoardAction& a = actions[i];
+            if (a.step != step || a.kind == "tp") {
+                continue;
+            }
+            if (a.kind == "hit") {
+                runtime.hurtKurt(atoi(a.arg.c_str()));
+                continue;
+            }
+            scripts::MdkObject* obj = firstOf(a.arg);
+            if (obj == nullptr) {
+                continue;
+            }
+            if (a.kind == "off") {
+                obj->flags &= ~scripts::Rides::kFlagRideable;
+            } else if (a.kind == "kill") {
+                runtime.kill(obj);
+            }
+        }
+        Input input;
+        for (size_t i = 0; i < holds.size(); i++) {
+            if (step >= holds[i].from && step < holds[i].to) {
+                input.down[holds[i].key] = true;
+            }
+        }
+        player.update(input, 1.0f / 60.0f);
+        runtime.update(1.0f / 60.0f);
+        follow.update(&camera, &space, player, levelData.arenaPitch(runtime.currentArena()),
+                      1.0f / 60.0f, 4.0f / 3.0f);
+        space.setSolid(runtime.solidArenas());
+
+        if (board == nullptr) {
+            const std::deque<scripts::MdkObject>& objects = runtime.objects();
+            for (size_t i = 0; i < objects.size() && board == nullptr; i++) {
+                if (isBoard(objects[i].type_name)) {
+                    board = &objects[i];
+                }
+            }
+        }
+        bool shown = (every == 0 && shows.empty()) || step == steps ||
+                     (every > 0 && step % every == 0);
+        for (size_t i = 0; i < shows.size(); i++) {
+            shown = shown || (step >= shows[i].first && step < shows[i].second);
+        }
+        if (!shown) {
+            continue;
+        }
+
+        std::string solid;
+        const std::vector<std::string>& solids = runtime.solidArenas();
+        for (size_t i = 0; i < solids.size(); i++) {
+            solid += (i ? "|" : "") + solids[i];
+        }
+        std::string touched;
+        for (size_t i = 0; i < player.touched().size(); i++) {
+            touched += (i ? "|" : "") + platformName(player.touched()[i]);
+        }
+        char b[512];
+        if (board == nullptr) {
+            snprintf(b, sizeof(b), "-");
+        } else {
+            snprintf(b, sizeof(b),
+                     "%s@%d,%d,%d/y%.4f/p%.4f/f%X/t%.4f/ps%d/v%d,%d,%d/g%.4f/fr%.4f/r%d/d%d",
+                     platformName(board).c_str(), p64(board->position.x), p64(board->position.y),
+                     p64(board->position.z), board->yaw, board->pitch, (unsigned)board->flags,
+                     board->path_time, (int)board->path_stop, p64(board->velocity.x),
+                     p64(board->velocity.y), p64(board->velocity.z), board->gravity,
+                     board->friction, (int)board->restart, board->dead ? 1 : 0);
+        }
+        char sb[512];
+        const scripts::Snowboard* ride = runtime.rides().board();
+        if (ride == nullptr) {
+            snprintf(sb, sizeof(sb), "-");
+        } else {
+            snprintf(sb, sizeof(sb),
+                     "v%.4f/l%.4f/h%.4f/s%.4f/p%.4f/g%d/ph%.4f/tt%.4f/jt%.4f/at%.4f/%s/fr%.4f",
+                     ride->speed(), ride->side(), ride->heading(), ride->steerAngle(),
+                     ride->pitch(), ride->grounded() ? 1 : 0, ride->pathHeading(),
+                     ride->turnTicks(), ride->jumpTicks(), ride->airTicks(),
+                     kPoses[(int)ride->pose()], ride->frame());
+        }
+        char pose[64];
+        if (player.hasPose && player.poseName != nullptr) {
+            snprintf(pose, sizeof(pose), "%s:%d", player.poseName, (int)player.poseFrame);
+        } else {
+            snprintf(pose, sizeof(pose), "-");
+        }
+        const Kurt& combat = player.combat();
+        // The flash's frame and jitter are the oracle's unseeded Random's (Player's
+        // _muzzleRandom note), so the probe prints only whether one is up and whether it
+        // sits at K_SURF's (-42, 12) + 0-4.
+        const char* muzzle = "-";
+        if (combat.hasMuzzle()) {
+            const Kurt::MuzzleFlash& m = combat.muzzle();
+            muzzle = m.x >= -42 && m.x <= -38 && m.y >= 12 && m.y <= 16 ? "surf" : "state";
+        }
+        const scripts::MdkObject* ridden = runtime.rides().ridden();
+        snprintf(buffer, sizeof(buffer),
+                 "s=%d arena=%s solid=%s state=%s feet64=%d,%d,%d yaw=%.4f fs=%.4f ss=%.4f "
+                 "vz=%.4f floor=%d vis=%d pose=%s pivot=%.4f roll=%.4f fire=%d muzzle=%s hp=%d "
+                 "ride=%s onboard=%d hits=%d touched=%s board=%s sb=%s camz64=%d "
+                 "pitch=%.4f,%.4f objs=%d voices=",
+                 step, runtime.currentArena().c_str(), solid.c_str(),
+                 kurtStateName(player.state()), p64(player.feet.x), p64(player.feet.y),
+                 p64(player.feet.z), player.yaw, player.forwardSpeed, player.strafeSpeed,
+                 player.verticalSpeed, player.onFloor ? 1 : 0, player.visible ? 1 : 0, pose,
+                 player.cameraPivot, player.cameraRoll().roll(), combat.firing() ? 1 : 0, muzzle,
+                 player.health(), platformName(ridden).c_str(),
+                 runtime.rides().onBoard() ? 1 : 0, runtime.rides().takesHits() ? 1 : 0,
+                 touched.empty() ? "-" : touched.c_str(), b, sb, p64(camera.position.z),
+                 follow.arenaPitch(),
+                 follow.airPitch(), runtime.objectCount());
+        *out += buffer;
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& live = runtime.mixer().voices();
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) {
+                voices += ",";
+            }
+            voices += live[i].name;
+        }
+        *out += voices.empty() ? "-" : voices;
+        *out += "\n";
+    }
+    return true;
+}
+// ---- end of the snowboard dump (package #10) -----------------------------------------
+
 // Kurt in the fans' updrafts and the wind zones' slide, end to end against the oracle probe
 // (tests/scripts/wind_probe): the C++ Player and ScriptRuntime stepped at 1/60 s in the C#
 // Viewer's order (Kurt, the scripts, then ArenaSpace.SetSolid(SolidArenas)) from a placed
@@ -7099,6 +7402,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "board") {
+            // `tick1 dump board <level> <steps> <schedule>`: kurtBoardDump's text, the C++
+            // side of the snowboard probe (package #10).
+            std::string got;
+            std::string why;
+            if (!kurtBoardDump(level, ticks, argc > 5 ? argv[5] : "", data, spritesArg, &got,
+                               &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "sniperiris") {
             // `tick1 dump sniperiris <level> <steps>`: the rounds probe's `iris` mode.
             std::string got;
@@ -8924,6 +9240,80 @@ int main(int argc, char** argv) {
         }
     }
     // ---- end of package #9 -------------------------------------------------------------
+
+    // The snowboard probe's goldens (tests/scripts/board_probe; see kurtBoardDump for the
+    // columns), package #10. Each case is the probe's command line. L4 CMEAT_3's XSNOWB: Kurt
+    // dropped above it lands on it (script 147319 makes it rideable once he is on it) and
+    // TryMount puts him on the board; from then on he collides with his arena alone
+    // (SolidArenas) and the board's step (Snowboard.Update) moves him down the run. Every
+    // Kurt and board column is byte for byte: the board's trig is glibc's (= MathF's), only
+    // the camera's x and y (Kurt's facing, the LUT's) are left out of the dump.
+    {
+        struct BoardCase {
+            const char* golden;
+            int steps;
+            const char* schedule;
+            const char* what;
+        };
+        static const BoardCase kBoardCases[] = {
+            // Mounting, then the controls: faster (fwd), the carve angle left and right
+            // (the 15-tick ramp, the snap straight on reversing, +-30, SKITURN past 22.5),
+            // the strafe keys winning a tie with the turn keys, braking (back), a jump off a
+            // ledge (K_SURFJ held on frame 5, the pivot dipping, firing stopped, SKILAND on
+            // landing after 15 ticks in the air, the late landing's K_SURFJ 6-10), firing on
+            // the ground (the flash at K_SURF's -42,12), a held jump key that does not
+            // re-jump, the path heading and time, the board's place, yaw and pitch.
+            {"L4_board_ride", 700,
+             "tp:1:CMEAT_3:420:4285:-570:90,fwd:60-120,left:130-160,right:165-215,sleft:220-226,"
+             "right:220-226,back:240-290,jump:300-306,fire:395-420,jump:400-404,left:450-470,"
+             "sright:450-470,jump:500-560,fire:600-640",
+             "Kurt mounts XSNOWB and rides it: steering, speed, jumps, the gun, the sounds"},
+            // The script's flag cleared mid-run (Rides.Dismount -> Snowboard.GetOff): the
+            // sounds stop, the board is thrown on at 1.1x his velocity (gravity 64, no
+            // friction), he keeps its speeds as his walking ones, and collides with the
+            // drawn arenas again; then he walks.
+            {"L4_board_off", 400,
+             "tp:1:CMEAT_3:420:4285:-570:90,fwd:60-100,off:200:XSNOWB,fwd:260-300",
+             "a cleared rideable flag throws the board on and Kurt walks off"},
+            // The board killed under him (Rides.Lost): off, without the XD2's 50 damage.
+            {"L4_board_lost", 300, "tp:1:CMEAT_3:420:4285:-570:90,kill:150:XSNOWB,fwd:200-240",
+             "the board's loss puts Kurt off unhurt (Rides.Lost)"},
+            // Kurt killed on the board: Rides.Update's `_board != null && Health == 0` gets
+            // him off (GetOff) and he dies on foot.
+            {"L4_board_dead", 260, "tp:1:CMEAT_3:420:4285:-570:90,hit:150:200",
+             "Kurt's death gets him off the board"},
+            // The whole run from halfway down CMEAT_3 (teleported on the board): the doorway
+            // into MEAT_4 (his one solid arena follows him), a jump over MEAT_4's lip at
+            // 9356 (without it he stays against it), the two XTGUN turrets he rams (killed, 5
+            // damage each: steps 2340, 2645), CMEAT_4, MEAT_5 and its end box (script 147357
+            // clears the flag at 6054: Kurt off, the board thrown and, on its first collision,
+            // dead). Printed every 100 steps and around the rams and the end.
+            {"L4_board_end", 6200,
+             "tp:1:CMEAT_3:420:4285:-570:90,tp:100:CMEAT_3:279:7312:-1130:90,jump:1880-1890,"
+             "every:100,show:2335-2345,show:2640-2650,show:6040-6090",
+             "the run to MEAT_5's end box: rams, arenas, the script lets Kurt off"},
+        };
+        for (size_t i = 0; i < sizeof(kBoardCases) / sizeof(kBoardCases[0]); i++) {
+            const BoardCase& c = kBoardCases[i];
+            const std::string path = std::string("golden/") + c.golden + ".txt";
+            std::string expected;
+            std::string got;
+            std::string why;
+            if (!readText(path, &expected)) {
+                printf("FAIL %s: no golden file %s\n", c.golden, path.c_str());
+                failures++;
+            } else if (!kurtBoardDump(4, c.steps, c.schedule, data, spritesArg, &got, &why)) {
+                printf("FAIL %s: %s\n", c.golden, why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS %s: %s\n", c.golden, c.what);
+            } else {
+                printf("FAIL %s: %s\n", c.golden, firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+    // ---- end of package #10 ------------------------------------------------------------
 
     // The end of a level, end to end against the oracle probe (tests/scripts/end_probe; see
     // levelEndDump for the columns): special_event <= 50 -> EndTheLevel -> EndLevel.cs, and

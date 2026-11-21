@@ -47,10 +47,9 @@ public:
     float yaw = 0.0f;          // degrees, unnormalised, CCW
     // C# Kurt.CameraPivot and Kurt.CameraTilt (Kurt.Ride.cs:32,37). They belong
     // to Kurt, not to the camera: the follow camera reads them when it places
-    // the view and when it blends between two steps. The ride that changes the
-    // pivot is not ported, so the pivot stays at its oracle default and the
-    // tilt stays zero, but the fields live here so the camera does not keep a
-    // second copy of them.
+    // the view and when it blends between two steps. The snowboard dips the pivot
+    // while K_SURFJ takes off (scripts/snowboard.cpp, package #10); the fields live
+    // here so the camera does not keep a second copy of them.
     float cameraPivot = 4.5f;   // C# Kurt.DefaultPivot
     float cameraTilt = 0.0f;    // degrees, negative looks up
     // C# Kurt.Frozen (Kurt.Combat.cs:89): cutscenes and the level's end -- he stands
@@ -69,7 +68,7 @@ public:
     // follow camera holds no air tilt (FollowCamera.cs:113-117).
     bool rising = false;
     // C# Kurt.Pose (Kurt.Ride.cs:31): a frame shown instead of the state's (the end's
-    // K_TAKEOF / K_FLOATC; the board's K_SURF when the rides land). KurtSprite::pick
+    // K_TAKEOF / K_FLOATC; the board's K_SURF / K_SURFJ, package #10). KurtSprite::pick
     // shows it, wrapped into the animation, when the animation has frames. The name
     // is a static string (EndLevel::kTakeoff / kFloating), never owned here.
     bool hasPose = false;
@@ -91,7 +90,8 @@ public:
     // C# Kurt.Ride (Kurt.Ride.cs:27, Action<Input, float>): a ride's step (the
     // snowboard, the bomber; packages #10 and #11) instead of walking. §10 forbids the
     // delegate, so it is a function pointer over a context, the UpdraftHook shape.
-    // Null is the C#'s null delegate: Kurt walks. Nothing in this package sets it.
+    // Null is the C#'s null delegate: Kurt walks. The snowboard sets it (Rides::mountBoard,
+    // package #10); getOffBoard clears it.
     struct RideHook {
         void* context = nullptr;
         void (*step)(void* context, const Input& input, float delta) = nullptr;
@@ -110,6 +110,10 @@ public:
     // C# Kurt.GetOffBoard (Kurt.Ride.cs:89): off the board or the bomber, keeping the
     // ride's speeds (u/s) as his walking ones.
     void getOffBoard(float forward, float strafe);
+    // C# `_kurt.CameraRoll.Follow(bank, delta)` (Snowboard.cs:428, package #10): the view
+    // rolls with the board's bank. The one writer outside update() the C# has, so the
+    // roll stays read-only to everything else (see cameraRoll() below).
+    void followCameraRoll(float bank, float delta) { _cameraRoll.follow(bank, delta); }
     // ---- end of rides ----
     float forwardSpeed = 0.0f;
     float strafeSpeed = 0.0f;
@@ -536,7 +540,7 @@ private:
     void updateMuzzle(float delta);
     // C# Kurt.MuzzleOffset (Kurt.Combat.cs:383): the flash's offset in the current
     // state, or false when the state's frames show the flash themselves (SHOT,
-    // RUN_FIRE) or have none. The ride's K_SURF pose is not ported.
+    // RUN_FIRE) or have none. The board's K_SURF pose comes first (package #10).
     bool muzzleOffset(int32_t* x, int32_t* y) const;
     void updateSpecial(float delta);
     void updateDeath(float delta);

@@ -17,17 +17,26 @@
 // DUMMY loop plays while he steers, firing sounds the alarm, and hits on Kurt go
 // to it (ScriptRuntime::hurtKurt); if it goes while he rides it he takes 50.
 //
-// THE SEAMS. Rides.cs also mounts the snowboard of L4 (XSNOWB, package #10) and
-// the XE bomber of L7's DANT_5 (package #11). Their classes (Snowboard.cs,
-// Bomber.cs) are not ported, so TryMount finds their types and leaves Kurt off
-// them -- what this port did before this package -- and onBoard()/bomber() stay
-// false. The branches that read them are written the C#'s way (Update's
-// off-test, Follow, Dismount, Lost, takesHits) so those packages fill in a
-// pointer, not a control flow. Player's half of the seam is Player::RideHook
+// THE BOARD (package #10). Touching the rideable XSNOWB of L4's CMEAT_3, Kurt
+// gets on it (MountBoard): it becomes a floor only (+0x80800, -0x800100), the scope
+// goes, and a Snowboard (scripts/snowboard.{h,cpp}, Snowboard.cs) steps him through
+// Player::RideHook instead of his walking. He gets off when its script clears the
+// flag (MEAT_5's end box) or he dies (Snowboard::getOff: the board thrown on); if
+// the board goes while he rides it, he is off without the XD2's 50 damage.
+//
+// THE SEAM. Rides.cs also mounts the XE bomber of L7's DANT_5 (package #11). Its
+// class (Bomber.cs) is not ported, so TryMount finds its type and leaves Kurt off
+// it, and bomber() stays false. The branches that read it are written the C#'s
+// way (Update, Follow, Dismount, Lost, takesHits) so that package fills in a
+// pointer, not a control flow. Player's half of the rides is Player::RideHook
 // (the C#'s Kurt.Ride delegate), Player::glide and Player::getOffBoard.
 // ============================================================================
 
 #include <stdint.h>
+
+#include <memory>
+
+#include "scripts/snowboard.h"
 
 namespace mdk {
 namespace scripts {
@@ -47,7 +56,10 @@ public:
     // C# Rides.Ridden (Rides.cs:40): the object Kurt rides, or null.
     MdkObject* ridden() const { return ridden_; }
     // C# Rides.OnBoard (Rides.cs:89): whether Kurt rides the snowboard. Package #10.
-    bool onBoard() const { return board_; }
+    bool onBoard() const { return board_ != nullptr; }
+    // C# Rides._board (Rides.cs:36): the board ride while Kurt is on it, else null
+    // (the goldens read its state; the C# probe reads the private field).
+    const Snowboard* board() const { return board_.get(); }
     // Whether Kurt rides the XE (C# `Rides.Bomber != null`). Package #11.
     bool bomber() const { return bomber_; }
     // C# Viewer.Driven (Viewer.cs:600): what Kurt rides that follows him each step
@@ -76,14 +88,16 @@ public:
 
 private:
     void tryMount();
+    void mountBoard(MdkObject* obj);
     void mountWalker(MdkObject* obj);
     void updateWalker();
     void dismount();
 
     ScriptRuntime& runtime_;
     MdkObject* ridden_ = nullptr;
-    // C# Rides._board / Rides.Bomber: the seams of packages #10 and #11, never set here.
-    bool board_ = false;
+    // C# Rides._board (Rides.cs:36): the snowboard ride, owned while Kurt is on it.
+    std::unique_ptr<Snowboard> board_;
+    // C# Rides.Bomber: the seam of package #11, never set here.
     bool bomber_ = false;
     // C# Rides._walkerSound: the XD2's DUMMY voice while Kurt steers.
     int32_t walkerSound_ = 0;

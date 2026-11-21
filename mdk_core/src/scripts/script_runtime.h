@@ -889,16 +889,14 @@ public:
     // resolve (its C# Named() answers null) rather than a list this function emptied. The
     // snowboard half is the oracle's too: on the board Kurt collides with his own
     // arena ALONE (ScriptRuntime.cs:274-280), so the active second drops out. The
-    // snowboard is package #10, so rides_.onBoard() is false on every tick of the corpus
-    // and that branch cannot be reached yet -- it is here so the rule is the C#'s on
-    // the day the board lands, and it is the one case where a one-name pin IS the
-    // oracle's value.
+    // snowboard (package #10) reaches that branch from the mount on (golden/L4_board_*.txt),
+    // and it is the one case where a one-name pin IS the oracle's value.
     //
     // The scratch is a member, not a temporary, for the C#'s own reason ("kept: no
     // list per step", :285): a frontend reads this once per simulation step.
     const std::vector<std::string>& solidArenas() const;
-    // C# ScriptRuntime.DrawnArenas (ScriptRuntime.cs:262): the drawn list ITSELF, with
-    // the snowboard's drop of element 1 NOT applied. solidArenas() above is what the
+    // C# ScriptRuntime.DrawnArenas (ScriptRuntime.cs:262): the drawn list ITSELF, without
+    // the snowboard's drop of element 1 (solidArenas() applies it while Kurt rides). solidArenas() above is what the
     // COLLISION world reads (Viewer.cs:533 SetSolid); this is what the VIEW reads in the
     // oracle (Viewer.cs:702 `_view.Draw(_scripts.DrawnArenas, ...)`) and what the rest of
     // UpdateArenas will read when the loaded-arena bookkeeping lands. Read it instead of

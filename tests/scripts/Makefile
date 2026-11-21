@@ -107,6 +107,7 @@ COMMON_SOURCES := \
 	$(CORE)/scripts/hazards.cpp \
 	$(CORE)/scripts/platforms.cpp \
 	$(CORE)/scripts/rides.cpp \
+	$(CORE)/scripts/snowboard.cpp \
 	$(CORE)/scripts/updraft_wind.cpp \
 	$(CORE)/scripts/debris.cpp \
 	$(CORE)/stream/tube_basis.cpp \

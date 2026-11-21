@@ -1243,7 +1243,8 @@ Still open:
 - ~~**Items**~~: landed on branch `port/pickups-items` (next section).
 - ~~**Opcode 209's platform half**~~ landed with `Kurt.Platform` (package #3, 2026-11-20).
 - ~~**The sniper half of `StopFiring`** (`LeaveSniper`)~~: landed with sniper mode
-  (2026-11-20, section below). The ride's K_SURF muzzle offset waits for the ride.
+  (2026-11-20, section below). The ride's K_SURF muzzle offset landed with the snowboard
+  (package #10, 2026-11-20).
 - **The run goldens print no `pc=`**: `Player::facing()`'s trig LUT (the owner-gated item
   above) leaves a running Kurt ~1e-5 off the oracle, and the sum of the pieces' centres
   straddles a printed decimal on four lines of 480; with `cosf`/`sinf` it matches byte for
@@ -1352,7 +1353,8 @@ Still open, with cause:
 - ~~**The ride parts of the same C# code wait for package #9**~~: landed with #9
   (2026-11-20): `Kurt.Update`'s `Ride` branch (`Player::RideHook`, which also drops the
   keeper), `Glide`, `Land`'s `Ride == null` test and `Rides.TryMount`'s `Touched` reader.
-  `SolidsWithin` skips `rides_.ridden()`. Snowboard.cs's `Touched` reader is package #10's.
+  `SolidsWithin` skips `rides_.ridden()`. Snowboard.cs's `Touched` reader (`Ram`) landed with
+  package #10 (2026-11-20).
 - **`Kurt.Sliding`'s branch of `FallMove`** waits for the slide (package #8), as before.
 - ~~**L6's flying gun diverged from step 68**~~ in its bullets (XBG_B1) and an EXPLODE: that
   was package #4's combat opcodes. With #4 merged the C# and C++ agree to step 1200, and
@@ -2089,12 +2091,13 @@ Landed, operation for operation (C# -> C++):
   `tests/scripts/ride_probe`, C++ twin `tick1 dump ride`.
 
 Still open:
-- **The snowboard (#10) and the XE bomber (#11)** are seams: `TryMount` finds XSNOWB / XE /
-  X_STRIKE and leaves Kurt off them (the C#'s MountBoard / MountBomber); `Rides::board_` and
-  `bomber_` are never set, so `onBoard()` (the solid-arena pin), `Hides`, `Follow`'s bomber
-  arm and `Dismount`'s board and bomber arms are unreachable. `Player::RideHook`, `glide`,
-  `updateGun` and `getOffBoard` are ported and unexercised by any golden until those land.
-  `Kurt.TopDownHeight` (the bomber's view) is not a Player field yet.
+- ~~**The snowboard (#10)**~~ landed 2026-11-20 (next section): `MountBoard`, `onBoard()`'s
+  solid-arena pin, `Dismount`'s board arm, `RideHook`, `glide`, `updateGun` and `getOffBoard`
+  are exercised by `golden/L4_board_*.txt`.
+- **The XE bomber (#11)** is a seam: `TryMount` finds XE / X_STRIKE and leaves Kurt off it
+  (the C#'s MountBomber); `bomber_` is never set, so `Hides`, `Follow`'s bomber arm and
+  `Dismount`'s bomber arm are unreachable. `Kurt.TopDownHeight` (the bomber's view) is not a
+  Player field yet.
 - **The camera_track pitch is a ULP off** (opcode 203's `fastAtan2`, R6, vs `MathF.Atan2`:
   -24.1330566 vs -24.1330547 at the XD2 golden's step 300), and the follow camera's eased
   pitch carries it into its 1/64 position. The ride goldens therefore ease the camera toward
@@ -2111,3 +2114,36 @@ Still open:
 - **The save prompt's `Rides.Ridden == null`** (`ScriptRuntime.Snapshot.cs:25`) is #19's.
 - **No emulator or hardware run here.** The 3DS harness `AT=` sets Kurt's feet but does not
   load DANT_9 (L7's start arena is DANT_1); see the commit's report for the walk.
+
+## The snowboard (2026-11-20, gap package #10): what landed, what is open
+
+Landed (`docs/PORT_GAPS.md` row 10; `docs/WORK_LEDGER.md` has the evidence):
+- `Scripts/Snowboard.cs` whole -> `mdk_core/src/scripts/snowboard.{h,cpp}`: Update (steer,
+  speed, the glide, the pitch from the ground under the board's ends, the slope speed, the
+  jump, the sounds SKI / SKITURN / SKILAND, the gun or StopFiring in the jump, the path follow
+  and its unstick nudge, the heading turn, the board's place, Ram, the K_SURF / K_SURFJ
+  animation and the camera pivot), GetOff (the thrown board), and the public statics.
+- `Rides.MountBoard` and the board halves of Update / Dismount / Lost / TakesHits
+  (`scripts/rides.cpp`; `Rides::board_` is the owned Snowboard). `ScriptRuntime::solidArenas()`
+  is Kurt's arena alone while he rides (the "board drop").
+- `CameraRoll.Follow` (`game/camera_roll.cpp`), `Player::followCameraRoll`, and the K_SURF
+  muzzle offset (-42, 12) in `Player::muzzleOffset`.
+- Goldens `L4_board_ride`, `L4_board_off`, `L4_board_lost`, `L4_board_dead`, `L4_board_end`
+  (C# probe `tests/scripts/board_probe`, C++ twin `tick1 dump board`), byte for byte.
+
+Still open:
+- **The camera's x and y are not in the board goldens.** They stand behind Kurt along his
+  facing, which `Player::facing()` takes from the trig LUT (the open yaw-0 owner item); on the
+  board's ever-changing yaw that is a 1/64 cell off the oracle on 3 steps of 700 (and its
+  height, through the clearance pass, on 6 of the 6200-step run, none of them printed). The
+  dumps print the camera's height (`camz64`) and pitch. Rounding, not behaviour (owner rule
+  2026-11-20); every Kurt and board column is exact because the board's own trig is glibc's.
+- **The muzzle flash's frame and jitter** come from the oracle's unseeded `Random`; the
+  goldens print only whether a flash is up and whether it sits at K_SURF's offset.
+- **`(int)MathF.Round(t)`'s ties-to-even** (`path_stop`, `rintf`) is not bitten by any golden:
+  the path time moves by 1 and 0.2 and never lands on a .5 in them; `roundf` survives.
+- **The full run needs a jump at MEAT_4's lip** (y 9356): without one the oracle's Kurt rides
+  against it forever (the `L4_board_end` schedule jumps at steps 1880-1890). That is the
+  oracle's behaviour (the player steers and jumps), recorded so nobody reads it as a hang.
+- **No emulator or hardware run here.** The 3DS harness uses #19's `ARENA=` to load
+  CMEAT_3 at the board; see the ledger entry for the command.

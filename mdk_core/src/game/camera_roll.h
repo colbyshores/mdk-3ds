@@ -59,6 +59,10 @@ public:
     // leveller like every writer.
     void slide(const Vec3& normal, const Vec2& facing, float delta);
 
+    // On the snowboard (C# CameraRoll.Follow, CameraRoll.cs:62-67, called at
+    // Snowboard.cs:428): towards the board's bank at 45 deg/s. Package #10.
+    void follow(float bank, float delta);
+
     // The top of every step (C# CameraRoll.Settle, called at Kurt.cs:160, right
     // after FadeFlashes and before every early return below it). Levels out unless
     // a writer ran on the step just ended.
@@ -75,6 +79,7 @@ private:
     static constexpr float kTicks = 30.0f;             // C# Kurt.Ticks
     static constexpr float kSlideKeep = 0.9f;          // C# SlideKeep, per tick
     static constexpr float kSlideLevel = 90.0f;        // C# SlideLevel, degrees
+    static constexpr float kBoardRate = 45.0f;         // C# BoardRate, degrees per second
 
     float roll_ = 0.0f;
     // "Something set the roll this step, so it doesn't level out" (0x57ff74).

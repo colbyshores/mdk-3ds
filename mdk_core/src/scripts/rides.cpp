@@ -23,6 +23,9 @@ namespace {
 // C# Rides.cs:20-35.
 const int32_t kFlagRidden = 0x80000;
 const int32_t kFlagFiring = 0x1;
+// On the board: Kurt passes through it (+0x800) and it's no platform any more (-0x800100).
+const int32_t kBoardFlagsSet = 0x80800;
+const int32_t kBoardFlagsClear = 0x800100;
 const char* const kBoard = "XSNOWB";
 const char* const kWalkers[] = {"XD", "XD2"};
 const char* const kBombers[] = {"XE", "X_STRIKE"};
@@ -141,8 +144,7 @@ void Rides::tryMount() {
         }
 
         if (typeIs(obj->type_name, kBoard)) {
-            // MountBoard (Rides.cs:152): the snowboard is package #10. The C# returns
-            // after mounting it; here Kurt stays off, as he did before the rides.
+            mountBoard(obj);
             return;
         }
 
@@ -157,6 +159,24 @@ void Rides::tryMount() {
             return;
         }
     }
+}
+
+void Rides::mountBoard(MdkObject* obj) {
+    // C# Rides.MountBoard (Rides.cs:156-163, package #10): the board becomes a floor
+    // only (0x800900: Kurt passes through it, and it carries him no more), the scope
+    // goes, and the board's step replaces Kurt's walking.
+    Player* kurt = runtime_.player_;
+    if (kurt == nullptr) {
+        return;
+    }
+    ridden_ = obj;
+    obj->flags = (obj->flags | kBoardFlagsSet) & ~kBoardFlagsClear;
+    kurt->leaveSniper();
+    board_.reset(new Snowboard(runtime_, *kurt, obj));
+    Player::RideHook hook;
+    hook.context = board_.get();
+    hook.step = &Snowboard::step;
+    kurt->setRideHook(hook);
 }
 
 void Rides::mountWalker(MdkObject* obj) {
@@ -213,12 +233,14 @@ void Rides::updateWalker() {
 }
 
 void Rides::dismount() {
-    // C# Rides.Dismount (Rides.cs:218-241). The board's GetOff and the XE's drop are
-    // packages #10 and #11 (unreachable here: neither flag is ever set). The XD2's
-    // ridden flag (0x80000) is left set, as the C#'s is.
+    // C# Rides.Dismount (Rides.cs:228-251). The board is thrown on (Snowboard::getOff,
+    // which also takes the RideHook back); the XE's drop is package #11 (unreachable
+    // here: the flag is never set). The XD2's ridden flag (0x80000) is left set, as the
+    // C#'s is.
     Player* kurt = runtime_.player_;
     if (board_) {
-        board_ = false;
+        board_->getOff();
+        board_.reset();
     } else if (bomber_) {
         // Kurt drops from where the XE is, and it shows again.
         ridden_->flags &= ~MdkObject::FlagNotSolid;

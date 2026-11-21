@@ -92,6 +92,14 @@ void CameraRoll::slide(const Vec3& normal, const Vec2& facing, float delta) {
     roll_ = fmaf(kSlideLevel - angle, 1.0f - t, roll_ * t);
 }
 
+void CameraRoll::follow(float bank, float delta) {
+    // C# CameraRoll.Follow (CameraRoll.cs:62-67, package #10): on the board, towards its
+    // bank at 45 deg/s (0x46ac4c). Holds the leveller like every writer.
+    held_ = true;
+    const float step = kBoardRate * delta;
+    roll_ = fabsf(bank - roll_) <= step ? bank : roll_ + signf(bank - roll_) * step;
+}
+
 void CameraRoll::settle(float delta) {
     // C# CameraRoll.Settle (CameraRoll.cs:71-80). The held step is the oracle's, not
     // a smoothing detail: see the header.

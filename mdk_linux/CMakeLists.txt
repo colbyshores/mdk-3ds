@@ -204,6 +204,7 @@ set(SOURCES
     ${CORE}/src/scripts/hazards.cpp
     ${CORE}/src/scripts/platforms.cpp
     ${CORE}/src/scripts/rides.cpp
+    ${CORE}/src/scripts/snowboard.cpp
     ${CORE}/src/scripts/updraft_wind.cpp
     ${CORE}/src/scripts/script_vm.cpp
     ${CORE}/src/scripts/debris.cpp

@@ -1020,9 +1020,9 @@ const std::vector<std::string>& ScriptRuntime::solidArenas() const {
     // a door or an arena_show that ran later in the tick would have moved). On the
     // board it is drawn[0] alone (:274-280), and drawn[0] is always the current arena
     // because :660 adds it unconditionally -- so the board case is this list without the
-    // second, which is what the `!rides_.onBoard()` half below encodes. The snowboard is
-    // package #10, so onBoard() is false on every tick the corpus has and that half is
-    // not reachable yet; it is here so the rule is the C#'s the day it lands.
+    // second, which is what the `!rides_.onBoard()` half below encodes. The snowboard
+    // (package #10, scripts/snowboard.cpp) reaches it: golden/L4_board_*.txt pin the one
+    // name from the mount on, and both names again once Kurt is off.
     //
     // Before the first tick drawnArenas_ is empty and so is the C#'s _drawnArenas:
     // ArenaSpace::setSolid then clears its pin and Kurt collides with the arenas around
