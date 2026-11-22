@@ -7,9 +7,15 @@
 // arena when the level loads and Draw(arenas) picks the ones the scripts say
 // are drawn (Viewer.cs:702: ScriptRuntime.DrawnArenas -- Kurt's arena and the
 // ACTIVE second one, the original's 0x41e344). A PC can hold a level's worth of
-// meshes and textures; the 3DS cannot (SPEC.md 7.3: "the 3DS must stream by
-// arena"), and the original did not either. So the port keeps one LevelView per
-// arena that is LOADED and lets the rest go, by the original's own residency:
+// meshes and textures; the 3DS cannot, and the original did not either. Full-
+// level residency was tried on the Old 3DS 2026-11-22 and refused twice: a
+// level's meshes exhaust the 40 MiB main heap at load (OOM at 38.8 MiB) and
+// its ETC1 exhausts the linear pool (762 of level 7's 1686 makes fail). So the
+// port keeps the original's residency -- and what changed instead is where the
+// BYTES live: the whole MTO sits in RAM from level load (game/level_data.cpp),
+// so no arena data is read from the SD card during play at all. The streaming
+// this replaces paced 32 KiB SD reads inside gameplay frames, which was the
+// transition stutter on an SD-launched build.
 //
 //   kept   Kurt's arena and the second arena (the loaded pair: the second may be
 //          behind a closed door or preloading, so its view is ready the frame
@@ -17,13 +23,13 @@
 //          everything the frame DRAWS (the scripts' drawn list is the middle
 //          of their tick and the pair is its end: after a scripted teleport the
 //          frame still draws the arena Kurt left -- review, 2026-11-18);
-//          the MTO arena that has the texture stream (ArenaStream::resident),
-//          and the corridors CONNECTED to it -- the original keeps exactly
-//          those loaded (0x419ac0 frees a corridor that is not connected to the
-//          resident arena, and loads one that is). Keeping them is what stops a
-//          door that opens and closes from rebuilding its corridor every time.
-//   built  when an arena first enters the loaded pair (never ahead of that:
-//          a kept corridor Kurt never approaches costs nothing);
+//          the corridors CONNECTED to the pair -- the original keeps the
+//          corridors of its resident arena (0x419ac0), and keeping them is what
+//          stops a door that opens and closes from rebuilding its corridor
+//          every time.
+//   built  when an arena first enters the kept set -- for the second arena,
+//          hundreds of frames before its door, so the crossing pays no mesh
+//          build; its textures are pumped in the meantime (pumpSurfaces).
 //   freed  when it is no longer kept: its mesh, and every GPU texture drawn
 //          through ITS palette (SurfaceCache::releasePalette) -- an arena's
 //          textures, the level's textures in its colours, its objects'.
@@ -41,9 +47,8 @@
 // draw() is the C#'s Draw(arenas): the drawn list, in its order. An arena in
 // the list with no view (its build failed) is skipped; the log says which.
 //
-// The frame's order is: scripts tick -> ArenaStream::update (pixels) ->
-// ArenaViews::sync (meshes) -> draw. sync after update, so a view that is
-// built this frame finds its textures' pixels in.
+// The frame's order is: scripts tick -> ArenaViews::sync (meshes) ->
+// pumpSurfaces (textures, from RAM) -> draw.
 // ============================================================================
 
 #include <stdint.h>
@@ -70,9 +75,10 @@ public:
     // The sweep's period, and a failed build's retry period after its first
     // kQuickRetries (which are one sync apart), in sync() calls: ten and two
     // seconds at 60 frames a second.
-    static const int32_t kOrphanSweepSyncs = 600;
     static const int32_t kRetrySyncs = 120;
     static const int32_t kQuickRetries = 3;
+    // How often sync() sweeps orphan palette textures (arena_views.cpp).
+    static const int32_t kOrphanSweepSyncs = 600;
 
     ArenaViews() = default;
     // The views' GPU objects are released by clear(), which needs the renderer:
@@ -97,8 +103,9 @@ public:
 
     // Resolve up to `budget` textures across the kept views (LevelView::
     // pumpSurfaces), so an arena's first drawn frame does not pay them all.
-    // Call it every frame between sync() and draw(); a view that is already
-    // resolved costs one comparison.
+    // The pixels are in RAM (the resident MTO, game/level_data.cpp), so a
+    // pumped make is decode and upload with no SD read. Call it every frame; a
+    // resolved view costs one comparison.
     void pumpSurfaces(int32_t budget);
 
     // The end of a level: the torn triangles vanish from that arena's view
@@ -132,7 +139,7 @@ private:
         LevelView* view = nullptr;
     };
 
-    // pumpSurfaces()'s rotating start, so a kept view past the frame's budget
+    // pumpSurfaces()'s rotating start, so a view past the frame's budget
     // is not starved by the ones before it.
     size_t pumpCursor_ = 0;
 

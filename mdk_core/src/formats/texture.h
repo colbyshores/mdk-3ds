@@ -43,7 +43,7 @@ namespace formats {
 class Texture;
 
 // Who brings a texture's pixels back: the owner of the arena the texture
-// belongs to (game/arena_stream.h). A plain struct of a function pointer and
+// belongs to (game/level_data.cpp's resident MTO). A plain struct of a function pointer and
 // its state, as formats/file_system.h is and for the same reason (AGENTS.md
 // section 10: no virtual dispatch). The texture BORROWS it; it must outlive
 // every texture that points at it.

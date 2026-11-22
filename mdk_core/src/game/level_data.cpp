@@ -60,7 +60,6 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
     out->corridorReadFailures_ = 0;
     out->arenas_.clear();
     // The stream first: it points into the arenas the next line frees.
-    out->stream_.reset();
     out->mto_ = formats::Mto();
     out->levelTextures_ = formats::TextureArchive();
 
@@ -90,9 +89,17 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
         }
     }
 
-    // The arenas, one block at a time (Mto::open): only the directory stays
-    // with the level, and each arena is read by range, parsed, and its block
-    // freed. The reset above is what keeps a failed load empty.
+    // The MTO is OPENED, not read whole: a level's archive is 4.5-9.8 MB and
+    // the main heap cannot hold it next to the level's other data (measured
+    // 2026-11-22: holding it whole OOMs the 40 MiB heap at level 7 load). The
+    // streamed form keeps the directory and reads a block when asked -- and
+    // almost nothing asks: the orig pack ships the arena textures as ETC1
+    // files (game/hd_key.cpp), and only a texture absent from the pack falls
+    // back to reading its arena's pixel prefix here, once, off the door frame
+    // (ArenaViews::pumpSurfaces). The old arena stream is gone: it paced 32
+    // KiB of SD reads INSIDE gameplay frames, which was the transition
+    // stutter; a whole-arena prefix read, made while Kurt is still in the
+    // corridor, replaces the pacing.
     path = std::string(base) + "O.MTO";
     if (!formats::Mto::open(&out->mto_, data, path)) {
         return false;
@@ -173,15 +180,53 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
         }
     }
 
-    // The arena stream takes over the MTO arenas' texture pixels: none is
-    // resident until the stream is told where Kurt is (ArenaStream::update), or
-    // something reads one.
-    out->stream_.attach(out);
+    // THE PIXELS' FALLBACK SOURCE. The arenas' pixel prefixes were dropped at
+    // parse (the loop above); a texture whose pixels are asked for -- one
+    // absent from the orig pack, or an oversized strip the pack refused -- has
+    // its arena's prefix read once (a whole-arena read, not the old stream's
+    // 32 KiB a frame) and re-parsed here. The orig pack covers nearly every
+    // texture, so on a shipped build this path is rare; the pump makes the
+    // textures before the arena is drawn, so the read never lands on a door
+    // frame either.
+    for (size_t i = 0; i < out->arenas_.size(); i++) {
+        if (out->arenas_[i]->texturePrefixBytes() > 0) {
+            const_cast<formats::Arena*>(out->arenas_[i])->setPixelSource(
+                &LevelData::loadPixelsFromMto, out);
+        }
+    }
 
     // The number is set only on success. A level that failed to load is an
     // empty object, and it must not claim a number it has no files for.
     out->number_ = number;
     return true;
+}
+
+// Read one arena's texture prefix back from the MTO and adopt the pixels of
+// the texture the archive asked for -- the same parse the level's load ran over
+// the same bytes, so the pixels are the ones that were dropped. `user` is the
+// LevelData that owns the MTO; the borrow cannot dangle (LevelData is neither
+// copyable nor movable). The read is the arena's whole prefix, once; the old
+// arena stream's 32 KiB stepping is gone.
+void LevelData::loadPixelsFromMto(void* user, const formats::Texture* texture) {
+    LevelData* self = static_cast<LevelData*>(user);
+    const std::vector<std::string>& names = self->mto_.arenaNames();
+    for (size_t i = 0; i < names.size(); i++) {
+        formats::Arena* arena = self->mto_.getArena(names[i]);
+        if (arena == nullptr || !arena->ownsTexture(texture)) {
+            continue;
+        }
+        const int32_t prefix = arena->texturePrefixBytes();
+        if (prefix <= 0) {
+            return;
+        }
+        std::vector<uint8_t> bytes;
+        if (!self->mto_.readBlock(names[i], 0, prefix, &bytes)) {
+            return;
+        }
+        formats::TextureArchive fresh = formats::TextureArchive::parse(bytes.data(), prefix, 4 + 0x10);
+        arena->adoptTexturePixels(&fresh);
+        return;
+    }
 }
 
 LevelData::~LevelData() {

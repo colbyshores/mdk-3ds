@@ -1435,7 +1435,6 @@ int main(int argc, char** argv) {
     std::string startArenaName;
     std::vector<std::string> startDrawn;
     const std::vector<std::string>* frameDrawn = nullptr;   // this frame's drawn list
-    int32_t lastDemandLoads = 0;
     mdk::HudView hud;
     // The HUD messages' fonts (the C# HudView's pair: MDKFONT.FTI's FONTBIG and
     // FONTSML through SYS_PAL). On the heap: each carries a whole Font.
@@ -1499,8 +1498,10 @@ int main(int argc, char** argv) {
                 arenaViews.start(renderer, &level, &surfaces,
                                  enhancedLook ? mdk::Shading::Lit : mdk::Shading::Original);
                 // The level's start is a SHOW of Kurt's arena (0x41ba68): its
-                // textures are read in whole, now, and its view built.
-                level.stream().update(startArenaName, std::string(), false);
+                // view is built now. The rest of the level follows the scripts
+                // through sync (arena_views.h); the pixels are in RAM from the
+                // resident MTO (game/level_data.cpp), so nothing reads the
+                // level's files during play.
                 arenaViews.sync(startArenaName, std::string());
                 if (const mdk::LevelView* startView = arenaViews.find(startArenaName)) {
                     std::printf("[main] view: %d batches, %d vertices, %d triangles\n",
@@ -2518,58 +2519,27 @@ int main(int argc, char** argv) {
             mixer.device().update(elapsed);
         }
 
-        // THE ARENAS IN MEMORY AND ON THE GPU FOLLOW THE SCRIPTS, once per frame,
-        // after the steps and before anything is drawn (game/arena_stream.h,
-        // game/arena_views.h): the stream first, so an arena drawn this frame has
-        // its textures' pixels, then the views.
+        // THE ARENAS ARE RESIDENT (arena_views.h): every view was built at load,
+        // so the frame only asks sync() to retry a view whose build failed.
         if (arena) {
             const std::string& streamCurrent =
                 (runtime && !runtime->currentArena().empty()) ? runtime->currentArena()
                                                               : startArenaName;
             const std::string streamSecond = runtime ? runtime->secondArena() : std::string();
-            const bool streamActive = runtime && runtime->secondActive();
             // WHAT THIS FRAME DRAWS: the scripts' drawn list (C# Viewer.cs:702,
             // LevelView.Draw(DrawnArenas)), or Kurt's arena until their first
-            // tick has named one. ONE list for the stream, the views and the
-            // draw below: the list is the middle of the scripts' tick and the
-            // pair above is its end, and after a scripted teleport they differ
-            // for a frame.
+            // tick has named one. After a scripted teleport the list and the
+            // pair differ for a frame.
             const bool scriptsDrew = runtime && !runtime->drawnArenas().empty() &&
                                      !runtime->drawnArenas()[0].empty();
             if (!scriptsDrew) {
                 startDrawn.assign(1, startArenaName);
             }
             frameDrawn = scriptsDrew ? &runtime->drawnArenas() : &startDrawn;
-            mdk::ArenaStream& stream = level.stream();
-            const mdk::ArenaStream::Stats before = stream.stats();
-            if (before.demandLoads != lastDemandLoads) {
-                std::printf("[main] stream: %d demand load(s) last frame, %lld bytes in all\n",
-                            (int)(before.demandLoads - lastDemandLoads),
-                            (long long)before.demandBytes);
-                lastDemandLoads = before.demandLoads;
-            }
-            stream.update(streamCurrent, streamSecond, streamActive, *frameDrawn);
-            const int32_t releasedBefore = arenaViews.stats().released;
             const int32_t builtViews = arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);
-            const mdk::ArenaStream::Stats& after = stream.stats();
-            if (after.switches != before.switches) {
-                std::printf("[main] stream: switch to %s (cur=%s second=%s%s)\n",
-                            stream.resident().c_str(), streamCurrent.c_str(),
-                            streamSecond.c_str(), streamActive ? " active" : "");
-            }
-            if (after.stalls != before.stalls) {
-                std::printf("[main] stream: STALL %s shown before its stream was done: %lld bytes\n",
-                            stream.resident().c_str(),
-                            (long long)(after.stallBytes - before.stallBytes));
-            }
-            if (after.readFailures != before.readFailures) {
-                std::printf("[main] stream: read FAILED for %s (%d failures)\n",
-                            stream.resident().c_str(), (int)after.readFailures);
-            }
-            if (builtViews > 0 || arenaViews.stats().released != releasedBefore) {
-                std::printf("[main] views: %d built (last %s), %d released, %d kept\n",
+            if (builtViews > 0) {
+                std::printf("[main] views: %d built (last %s), %d kept\n",
                             (int)builtViews, arenaViews.lastBuilt().c_str(),
-                            (int)(arenaViews.stats().released - releasedBefore),
                             (int)arenaViews.count());
             }
             // The groups the steps retextured (group_set_texture, opcode 140; package

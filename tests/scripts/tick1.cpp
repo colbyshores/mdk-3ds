@@ -9132,12 +9132,13 @@ int main(int argc, char** argv) {
         }
     }
 
-    // A STAMPED TEXTURE OUTLIVES ITS ARENA'S STREAM (formats::Texture::pinPixels). The C#
-    // keeps every texture's pixels for the level, so a hole stays; the port's arena stream
-    // drops an arena's pixels when Kurt leaves it and reads them back from the MTO -- the
-    // file's, hole-less pixels -- so a stamped texture is pinned. Driven through the stream
-    // itself: GUNT_10 resident, a texel changed and pinned, GUNT_1 made resident (GUNT_10
-    // trimmed: an unpinned sibling goes), then GUNT_10 again (adopted back from the file).
+    // A STAMPED TEXTURE OUTLIVES A PIXEL DROP (formats::Texture::pinPixels). The C#
+    // keeps every texture's pixels for the level, so a hole stays; the port's level
+    // load drops an arena's pixels and reads them back from the resident MTO -- the
+    // file's, hole-less pixels -- so a stamped texture is pinned. Driven through the
+    // pixel source itself (game/level_data.cpp): pixels in, a texel changed and
+    // pinned, the arena's pixels dropped (an unpinned sibling goes), then read back
+    // (adopted from the resident MTO).
     {
         LevelData pinned;
         const char* name = "holes_pinned";
@@ -9150,17 +9151,17 @@ int main(int argc, char** argv) {
             printf("FAIL %s: level 8's GUNT_10 and two of its textures did not load\n", name);
             failures++;
         } else {
-            pinned.stream().update("GUNT_10", std::string(), false);
+            (*textures)[0].second.indices();  // bring the arena's pixels in
             formats::Texture& stamped = (*textures)[0].second;
             formats::Texture& sibling = (*textures)[1].second;
             const uint8_t was = stamped.indices()[0];
             const uint8_t mark = (uint8_t)(was + 1);
             stamped.mutableIndices()[0] = mark;
             stamped.pinPixels();
-            pinned.stream().update("GUNT_1", std::string(), false);
+            arena->dropTexturePixels();
             const bool kept = !stamped.pixelsAway() && stamped.indices()[0] == mark;
             const bool trimmed = sibling.pixelsAway();
-            pinned.stream().update("GUNT_10", std::string(), false);
+            sibling.indices();  // the source re-parses the arena's prefix from RAM
             const bool back = !stamped.pixelsAway() && stamped.indices()[0] == mark &&
                               !sibling.pixelsAway();
             if (kept && trimmed && back) {

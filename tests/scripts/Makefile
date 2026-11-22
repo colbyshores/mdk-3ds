@@ -60,7 +60,6 @@ COMMON_SOURCES := \
 	$(CORE)/game/bomber_overlay.cpp \
 	$(CORE)/game/messages.cpp \
 	$(CORE)/game/level_data.cpp \
-	$(CORE)/game/arena_stream.cpp \
 	$(CORE)/game/level_flow.cpp \
 	$(CORE)/game/arena_space.cpp \
 	$(CORE)/game/solids.cpp \

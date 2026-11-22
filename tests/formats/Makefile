@@ -25,7 +25,6 @@ SOURCES := \
 	render_seam_stubs.cpp \
 	path_tests.cpp \
 	format_tests.cpp \
-	stream_tests.cpp \
 	colour_tests.cpp \
 	lighting_tests.cpp \
 	math_lut_tests.cpp \
@@ -57,7 +56,6 @@ SOURCES := \
 	$(CORE)/formats/png.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/game/level_data.cpp \
-	$(CORE)/game/arena_stream.cpp \
 	$(CORE)/formats/font.cpp \
 	$(CORE)/game/enhanced_config.cpp \
 	$(CORE)/game/enhanced_menu.cpp \

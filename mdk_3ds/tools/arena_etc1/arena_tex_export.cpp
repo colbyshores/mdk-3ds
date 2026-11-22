@@ -34,10 +34,10 @@
 // the first name a key was seen under -- the same first occurrence that wrote
 // the .rgba here, so the two agree by construction.
 //
-// The pixels: LevelData::load drops each arena's texture pixels behind the
-// arena stream, and a tool that never calls update() reads them on demand
-// (game/arena_stream.h: "every read is a demand load and nothing is trimmed")
-// -- the same path the console takes when a texture is drawn.
+// The pixels: LevelData::load drops each arena's texture pixels, and a tool
+// that never sets a pixel source reads them on demand from the resident MTO
+// (game/level_data.cpp) -- the same path the console takes when a texture is
+// drawn.
 //
 // HOST ONLY. Built by the converter with the host compiler against mdk_core's
 // own parsers; never part of the 3DS build.

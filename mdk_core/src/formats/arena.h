@@ -115,9 +115,9 @@ public:
 
     const TextureArchive& textures() const { return textures_; }
 
-    // THE STREAMED PART (docs/ARENA_STREAMING_SPEC.md Phase 2): this arena's
-    // texture PIXELS, which game/arena_stream.h drops and reads back. The
-    // texture objects never move or go.
+    // THE PIXELS' HOME: this arena's texture PIXELS, which the level load drops
+    // (game/level_data.cpp) and a pixel source reads back from the resident
+    // MTO. The texture objects never move or go.
     //
     // texturePrefixBytes: how much of the arena's MTO block, from its start,
     // holds everything TextureArchive::parse reads (the block header and the

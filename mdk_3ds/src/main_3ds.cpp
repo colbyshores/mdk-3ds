@@ -1217,6 +1217,13 @@ int main(int argc, char** argv) {
     mdk::formats::Cmi cmi;
     bool cmiReady = false;
     const mdk::formats::Arena* arena = nullptr;
+    // The rig per arena, computed once (cachedLighting). enhancedLighting scans
+    // the arena's faces (mean up, mean facing) -- ~111 ms per arena change on
+    // the Old 3DS -- and its answer depends on nothing but (dti, arena), both
+    // fixed for the level's life. Two arenas of level 7 log byte-identical
+    // haze; walking a door twice must not pay the scan twice. Residency fills
+    // it for every arena at load.
+    std::vector<std::pair<const mdk::formats::Arena*, mdk::Lighting>> lightCache;
     if (data.found()) {
         mdk::log3dsPrintf("data: %s", data.dir().c_str());
         if (mdk::LevelData::load(&level, &data, flow.state().level)) {
@@ -1270,21 +1277,31 @@ int main(int argc, char** argv) {
                 startArenaName = arena->name();
                 arenaViews.start(renderer, &level, &surfaces, mdk::Shading::Lit);
                 // The level's start is a SHOW of Kurt's arena (the original's
-                // BSPShow at 0x41ba68): its textures are read in whole, now, and
-                // its view built. Every later arena arrives through the frame's
-                // stream step (see the loop).
-                level.stream().update(startArenaName, std::string(), false);
-                arenaViews.sync(startArenaName, std::string());
+                // BSPShow at 0x41ba68): its view and its textures are made now,
+                // under the loading screen. The rest of the level arrives the
+                // original's way -- the pair and its corridors kept, the second
+                // arena's mesh built hundreds of frames before its door and
+                // its textures pumped from the resident MTO (arena_views.h) --
+                // with no SD read anywhere in play (game/level_data.cpp).
+                const int32_t viewsBuilt = arenaViews.sync(startArenaName, std::string());
+                // The start arena's textures are NOT made here: linear must
+                // stay free for Kurt's animation pack (which streams in as
+                // animations are used), the fonts, and the audio sink -- making
+                // 171 of them at load left 779 KB and cost the menu fonts and
+                // the audio worker (measured 2026-11-22). The pump makes them
+                // over the first frames, which are the load-in frames the
+                // original also spent inside BSPShow (0x41ba68).
+                // The light rigs too: the scan is ~113 ms an arena and no door
+                // frame must pay it.
+                for (const mdk::formats::Arena* a : level.arenas()) {
+                    cachedLighting(lightCache, level, a);
+                }
+                mdk::log3dsPrintf("start: %d views, %d light rigs precomputed",
+                                  (int)viewsBuilt, (int)lightCache.size());
                 if (const mdk::LevelView* startView = arenaViews.find(startArenaName)) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
                                       (int)startView->batchCount(), (int)startView->vertexCount(),
                                       (int)arena->triangleCount());
-                    mdk::log3dsPrintf("stream: start arena %s, %d bytes read (%d arenas hold "
-                                      "pixels, %d bytes)",
-                                      startArenaName.c_str(),
-                                      (int)level.stream().stats().bytesRead,
-                                      (int)level.stream().residentArenas(),
-                                      (int)level.stream().residentBytes());
                     {
                         const mdk::formats::Dti& dti = level.dti();
                         const uint8_t* pal = dti.palette().rgba();
@@ -1745,12 +1762,6 @@ int main(int argc, char** argv) {
     double prefetchWorstMs = 0.0;
     // The arena whose light rig the renderer holds (see the frame's light below).
     const mdk::formats::Arena* litArena = nullptr;
-    // The rig per arena, computed once (cachedLighting). enhancedLighting scans
-    // the arena's faces (mean up, mean facing) -- ~111 ms per arena change on
-    // the Old 3DS -- and its answer depends on nothing but (dti, arena), both
-    // fixed for the level's life. Two arenas of level 7 log byte-identical
-    // haze; walking a door twice must not pay the scan twice.
-    std::vector<std::pair<const mdk::formats::Arena*, mdk::Lighting>> lightCache;
     // THE SCRIPT OPTION (C# ScriptRuntime.Option). It is a USER SETTING, not a
     // constant: `Option = ui.Settings.Gore ? 1 : 0` when the runtime is built
     // (Viewer.cs:234) and `Option = data["option"]` when a save is loaded
@@ -2115,7 +2126,6 @@ int main(int argc, char** argv) {
     // The arena stream's log state (see the frame's stream step).
     int32_t lastViewsReleased = 0;
     int32_t lastViewsFailed = 0;
-    int32_t lastDemandLoads = 0;
     std::vector<std::string> startDrawn;
     const std::vector<std::string>* frameDrawn = nullptr;   // this frame's drawn list
     int32_t objectPeakCorners = 0;
@@ -2919,16 +2929,13 @@ int main(int argc, char** argv) {
             }
         }
 
-        // THE ARENAS IN MEMORY AND ON THE GPU FOLLOW THE SCRIPTS, once per frame,
-        // after the steps and before anything is drawn (game/arena_stream.h,
-        // game/arena_views.h): the stream first, so an arena that is drawn this
-        // frame has its textures' pixels before its view is asked for a texture;
-        // then the views. Outside begin/end_frame: both make and release GPU
-        // resources. A stall (an arena SHOWN before its stream was done, as the
-        // original's BSPShow blocks) is logged with its time: spec Phase 3.
+        // THE ARENAS ON THE GPU FOLLOW THE SCRIPTS (arena_views.h): the pair and
+        // its corridors are kept, the second arena's mesh is built long before
+        // its door, and its textures are pumped from the resident MTO -- no SD
+        // read and no unplanned build lands on the frame Kurt crosses a door.
+        // Outside begin/end_frame: it can make and release GPU resources.
 #ifdef MDK_HW_PROFILE
-        // This frame's stream and view work, for the arena-entry table (harness_3ds.h).
-        float hwStreamMs = 0.0f;
+        // This frame's view work, for the arena-entry table (harness_3ds.h).
         float hwViewsMs = 0.0f;
         int32_t hwViewsBuilt = 0;
 #endif
@@ -2937,82 +2944,28 @@ int main(int argc, char** argv) {
                 (runtime && !runtime->currentArena().empty()) ? runtime->currentArena()
                                                               : startArenaName;
             const std::string streamSecond = runtime ? runtime->secondArena() : std::string();
-            const bool streamActive = runtime && runtime->secondActive();
             // WHAT THIS FRAME DRAWS: the scripts' drawn list (C# Viewer.cs:702,
             // LevelView.Draw(DrawnArenas)), or Kurt's arena until their first
-            // tick has named one. ONE list for the stream, the views and the
-            // draw below: the list is the middle of the scripts' tick and the
-            // pair above is its end, and after a scripted teleport they differ
-            // for a frame (review, 2026-11-18).
+            // tick has named one. After a scripted teleport the list and the
+            // pair differ for a frame (review, 2026-11-18).
             const bool scriptsDrew = runtime && !runtime->drawnArenas().empty() &&
                                      !runtime->drawnArenas()[0].empty();
             if (!scriptsDrew) {
                 startDrawn.assign(1, startArenaName);
             }
             frameDrawn = scriptsDrew ? &runtime->drawnArenas() : &startDrawn;
-            mdk::ArenaStream& stream = level.stream();
-            const mdk::ArenaStream::Stats before = stream.stats();
-            // A reader that found pixels away during the last frame's draws (the
-            // stream's backstop): correct, but a read nobody planned, so it is
-            // said. Level 6's OLYM_9 is the one retail arena expected to.
-            if (before.demandLoads != lastDemandLoads) {
-                mdk::log3dsPrintf("stream: %d demand load(s) last frame, %d bytes in all",
-                                  (int)(before.demandLoads - lastDemandLoads),
-                                  (int)before.demandBytes);
-                lastDemandLoads = before.demandLoads;
-            }
-            const std::string wasStreaming = stream.streaming();
-            const double stream0 = nowSeconds();
-            stream.update(streamCurrent, streamSecond, streamActive, *frameDrawn);
             const double stream1 = nowSeconds();
             const int32_t builtViews = arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);
             const double stream2 = nowSeconds();
+            // Spread the texture makes over the frames before anyone sees them
+            // (arena_views.h): from the resident MTO, so a make is decode and
+            // upload with no SD read. Two a frame; the entry stall was 442 ms
+            // for nine at once.
+            arenaViews.pumpSurfaces(2);
 #ifdef MDK_HW_PROFILE
-            hwStreamMs = (float)((stream1 - stream0) * 1000.0);
             hwViewsMs = (float)((stream2 - stream1) * 1000.0);
             hwViewsBuilt = builtViews;
 #endif
-            // Spread the loaded arenas' texture creation over the frames before
-            // anyone sees them (LevelView::pumpSurfaces): the stream loads the
-            // second arena hundreds of frames before Kurt reaches its door, and
-            // the first frame that DRAWS it should pay nothing. One texture per
-            // view per frame; the entry stall was 442 ms for nine at once.
-            arenaViews.pumpSurfaces(2);
-            // And the second arena's light rig: the scan costs ~113 ms and the
-            // frame Kurt crosses the door must not pay it (the 113 ms spike
-            // lands on a corridor frame instead, hundreds of frames early).
-            // A cached arena is a cheap lookup, so this runs every frame.
-            if (const mdk::formats::Arena* nextArena =
-                    streamSecond.empty() ? nullptr : level.arenaNamed(streamSecond)) {
-                cachedLighting(lightCache, level, nextArena);
-            }
-            const mdk::ArenaStream::Stats& after = stream.stats();
-            if (after.switches != before.switches) {
-                const mdk::formats::Arena* target = level.arenaNamed(stream.resident());
-                mdk::log3dsPrintf("stream: switch to %s (%d bytes; cur=%s second=%s%s)",
-                                  stream.resident().c_str(),
-                                  target ? (int)target->texturePrefixBytes() : 0,
-                                  streamCurrent.c_str(), streamSecond.c_str(),
-                                  streamActive ? " active" : "");
-            }
-            if (after.stalls != before.stalls) {
-                mdk::log3dsPrintf("stream: STALL %s shown before its stream was done: %d bytes "
-                                  "in %.1f ms",
-                                  stream.resident().c_str(),
-                                  (int)(after.stallBytes - before.stallBytes),
-                                  (stream1 - stream0) * 1000.0);
-            } else if (!wasStreaming.empty() && stream.streaming().empty() &&
-                       after.readFailures == before.readFailures) {
-                mdk::log3dsPrintf("stream: %s in (%d steps so far, %d arenas hold pixels, "
-                                  "%d bytes)",
-                                  wasStreaming.c_str(), (int)after.steps,
-                                  (int)stream.residentArenas(), (int)stream.residentBytes());
-                heapProbe("stream-in");
-            }
-            if (after.readFailures != before.readFailures) {
-                mdk::log3dsPrintf("stream: read FAILED for %s (%d failures)",
-                                  stream.resident().c_str(), (int)after.readFailures);
-            }
             if (arenaViews.stats().failed != lastViewsFailed) {
                 mdk::log3dsPrintf("views: build FAILED (%d so far); it is tried again",
                                   (int)arenaViews.stats().failed);
@@ -3566,11 +3519,12 @@ int main(int argc, char** argv) {
                                : startArenaName.c_str();
             sample.second = runtime ? runtime->secondArena().c_str() : "";
             sample.secondActive = runtime && runtime->secondActive();
-            const mdk::ArenaStream::Stats& streamStats = level.stream().stats();
-            sample.streamSwitches = streamStats.switches;
-            sample.streamBytes = streamStats.bytesRead;
-            sample.streamStalls = streamStats.stalls;
-            sample.streamMs = hwStreamMs;
+            // Residency retired the arena stream: its columns stay in the
+            // table at zero, so old logs and new read the same shape.
+            sample.streamSwitches = 0;
+            sample.streamBytes = 0;
+            sample.streamStalls = 0;
+            sample.streamMs = 0.0f;
             sample.viewsBuilt = hwViewsBuilt;
             sample.viewsMs = hwViewsMs;
             MdkC3dFirstUse made;

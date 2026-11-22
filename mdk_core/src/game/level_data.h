@@ -39,7 +39,6 @@
 #include "formats/dti.h"
 #include "formats/mdk_data.h"
 #include "formats/mto.h"
-#include "game/arena_stream.h"
 #include "formats/palette.h"
 #include "formats/sni.h"
 #include "formats/texture_archive.h"
@@ -68,10 +67,6 @@ public:
     formats::Dti& mutableDti() { return dti_; }
     formats::Mto& mto() { return mto_; }
 
-    // The arena stream: the frontends call stream().update() once per frame
-    // with the scripts' arenas (game/arena_stream.h).
-    ArenaStream& stream() { return stream_; }
-    const ArenaStream& stream() const { return stream_; }
     const formats::TextureArchive& levelTextures() const { return levelTextures_; }
 
     // Corridors that could not be read out of LEVELnO.SNI when the level
@@ -127,10 +122,12 @@ private:
     // (docs/ARENA_STREAMING_SPEC.md Phase 1). It borrows the MdkData the level
     // was loaded with, which the frontends and tests keep for the level's life.
     formats::Mto mto_;
-    // Which arena's texture pixels are in memory (Phase 2, game/arena_stream.h).
-    // The arenas' textures point back at it, so a LevelData does not move (the
-    // stream is neither copyable nor movable, and so neither is this).
-    ArenaStream stream_;
+    // The arenas' pixel fallback source: read the owning arena's texture
+    // prefix back from the MTO and adopt the asked texture's pixels. The orig
+    // pack ships nearly every texture as an ETC1 file, so this path is rare;
+    // the pump makes the textures before the arena is drawn, so the read never
+    // lands on a door frame.
+    static void loadPixelsFromMto(void* user, const formats::Texture* texture);
     formats::TextureArchive levelTextures_;
     std::vector<const formats::Arena*> arenas_;
 

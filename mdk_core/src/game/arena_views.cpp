@@ -57,18 +57,17 @@ void ArenaViews::start(MdkRenderer renderer, LevelData* level, SurfaceCache* sur
     }
 }
 
-bool ArenaViews::connected(const std::string& a, const std::string& b) const {
-    for (size_t i = 0; i < connections_.size(); i++) {
-        if ((connections_[i].first == a && connections_[i].second == b) ||
-            (connections_[i].first == b && connections_[i].second == a)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 bool ArenaViews::keeps(const std::string& name, const std::string& current,
                        const std::string& second, const std::vector<std::string>& drawn) const {
+    // The loaded PAIR and whatever the frame draws (the original's residency,
+    // 0x419ac0). Full-level residency was tried 2026-11-22 and the Old 3DS
+    // refused it twice: a level's meshes and textures exhaust the 40 MiB main
+    // heap at load (OOM at 38.8 MiB) and its linear pool holds a third of a
+    // level's ETC1 (762 of 1686 makes fail). What the level now keeps in RAM
+    // instead is its whole MTO (game/level_data.cpp), so nothing reads the SD
+    // card during play; the pair's mesh and textures are pre-built -- hundreds
+    // of frames before a door, with the pump (pumpSurfaces) spreading the
+    // makes -- and a departing arena's view is freed here.
     if (name == current || name == second) {
         return true;
     }
@@ -77,15 +76,27 @@ bool ArenaViews::keeps(const std::string& name, const std::string& current,
             return true;
         }
     }
-    // The arena with the stream, and its corridors (see the header).
-    const std::string& resident = level_->stream().resident();
-    if (resident.empty()) {
-        return false;
-    }
-    if (name == resident) {
+    // A corridor connected to the pair is kept, as the original kept the
+    // corridors of its resident arena: it is where the next door leads, and
+    // keeping it is what stops a door that opens and closes from rebuilding
+    // its corridor every time.
+    if (!level_->mto().has(name) && (connected(name, current) || connected(name, second))) {
         return true;
     }
-    return !level_->mto().has(name) && connected(name, resident);
+    return false;
+}
+
+bool ArenaViews::connected(const std::string& a, const std::string& b) const {
+    if (a.empty() || b.empty()) {
+        return false;
+    }
+    for (size_t i = 0; i < connections_.size(); i++) {
+        if ((connections_[i].first == a && connections_[i].second == b) ||
+            (connections_[i].first == b && connections_[i].second == a)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool ArenaViews::waiting(const std::string& name) const {
@@ -231,6 +242,7 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
     return built;
 }
 
+
 void ArenaViews::sweepOrphans(const std::string& current, const std::string& second,
                               const std::vector<std::string>& drawn) {
     const std::vector<const formats::Arena*>& arenas = level_->arenas();
@@ -247,22 +259,10 @@ void ArenaViews::sweepOrphans(const std::string& current, const std::string& sec
     }
 }
 
-void ArenaViews::draw(const std::vector<std::string>& drawn) {
-    for (size_t d = 0; d < drawn.size(); d++) {
-        for (size_t i = 0; i < views_.size(); i++) {
-            if (views_[i].name == drawn[d]) {
-                views_[i].view->draw();
-                break;
-            }
-        }
-    }
-}
-
 void ArenaViews::pumpSurfaces(int32_t budget) {
     // One texture per view per call, at most `budget` views a frame. The start
-    // rotates: the residency policy can keep more views than the budget (drawn,
-    // resident, and every connected corridor), and a fixed scan would starve
-    // the views past it. A resolved view costs one comparison.
+    // rotates so no view is starved by the ones before it. A resolved view costs
+    // one comparison.
     const size_t n = views_.size();
     if (n == 0 || budget <= 0) {
         return;
@@ -283,6 +283,17 @@ void ArenaViews::pumpSurfaces(int32_t budget) {
     pumpCursor_ += 1;
     if (pumpCursor_ >= n) {
         pumpCursor_ = 0;
+    }
+}
+
+void ArenaViews::draw(const std::vector<std::string>& drawn) {
+    for (size_t d = 0; d < drawn.size(); d++) {
+        for (size_t i = 0; i < views_.size(); i++) {
+            if (views_[i].name == drawn[d]) {
+                views_[i].view->draw();
+                break;
+            }
+        }
     }
 }
 

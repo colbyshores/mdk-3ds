@@ -103,14 +103,13 @@ public:
     int32_t vertexCount() const { return (int32_t)scene_.vertices.size(); }
 
     // Resolve this arena's surfaces' textures, up to `budget` batches this call,
-    // exactly as draw() would (the same surfaceId, the same palette). The first
-    // draw of a new arena pays every texture it needs in one frame -- the
-    // compressed read, decode and upload, ~49 ms each on the Old 3DS, 442 ms for
-    // DANT_2's nine -- and that is the arena-entry stall. Pumping between the
-    // view's build and the arena's first drawn frame (the stream loads the
-    // second arena hundreds of frames before Kurt reaches its door) spreads the
-    // same work where nobody sees it. True when the whole arena is resolved;
-    // calling it again after that costs one comparison.
+    // exactly as draw() would (the same surfaceId, the same palette). Residency
+    // makes every arena's MESH at load, but not its textures: the Old 3DS's
+    // linear pool cannot hold a level's ETC1 at once (measured 2026-11-22: 762
+    // of level 7's 1686 makes fail). The pixels are in RAM (the resident MTO),
+    // so a make is decode + upload only -- ~49 ms each -- and pumping spreads
+    // them over the frames before the arena is first drawn. True when the whole
+    // arena is resolved; calling it again after that costs one comparison.
     bool pumpSurfaces(int32_t budget);
 
     // The arena this view is for.

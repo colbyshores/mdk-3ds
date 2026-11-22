@@ -94,9 +94,9 @@ public:
     bool has(const std::string& name) const;
 
     // `length` bytes at `at` of the named arena's block, counted from the
-    // block's start (its size field): the arena stream's read
-    // (game/arena_stream.h), in the original's 32 KiB steps. From the file in
-    // the streamed form (open()), from the borrowed buffer in the parsed form.
+    // block's start (its size field). From the file in
+    // the streamed form (open()), from the borrowed buffer in the parsed form
+    // (the level load reads the whole archive into RAM, game/level_data.cpp).
     // False on an unknown arena, an arena that was add()ed, a range outside the
     // block, or a short read.
     bool readBlock(const std::string& name, int32_t at, int32_t length,

@@ -36,7 +36,6 @@ SOURCES := \
 	$(CORE)/formats/fti.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/game/level_data.cpp \
-	$(CORE)/game/arena_stream.cpp \
 	$(CORE)/game/hd_key.cpp
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))
