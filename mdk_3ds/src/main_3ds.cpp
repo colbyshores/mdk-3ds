@@ -352,6 +352,72 @@ bool loadOrigPack(int32_t level, mdk::ModImages* out) {
     return true;
 }
 
+// THE NAME-KEYED ORIG INDEX (romfs:/orig/byname.txt). manifest.txt is keyed by
+// the CONTENT hash, so a ModImages lookup re-hashes the texture's whole index
+// array -- 60-150 ms per texture on the ARM11, measured, which is the entire
+// cost of the texture pumps. The build also knows every texture by name
+// (arena_etc1_convert.py writes byname.txt from the exporter's index.tsv), so
+// the pump and the draw can find the file by (arena, name) for free. A miss
+// falls through to the hash path: a stale or absent byname.txt costs time,
+// never correctness. Keyed by the arena's PALETTE because that is what the
+// lookup is handed -- and the palette is what the .t3x's pixels were encoded
+// through, so it identifies the arena exactly.
+struct OrigByName {
+    std::map<std::pair<const void*, std::string>, std::string> paths;
+};
+
+static std::string lowerName3ds(const std::string& s) {
+    std::string out = s;
+    for (size_t i = 0; i < out.size(); i++) {
+        if (out[i] >= 'A' && out[i] <= 'Z') {
+            out[i] = (char)(out[i] - 'A' + 'a');
+        }
+    }
+    return out;
+}
+
+bool loadOrigByName(int32_t level, mdk::LevelData& levelData, OrigByName* out) {
+    FILE* file = fopen((std::string(kOrigPackRoot) + "/byname.txt").c_str(), "r");
+    if (!file) {
+        return false;
+    }
+    char line[512];
+    while (fgets(line, sizeof(line), file)) {
+        const size_t length = strlen(line);
+        if (length > 0 && line[length - 1] != '\n' && !feof(file)) {
+            int c;
+            while ((c = fgetc(file)) != EOF && c != '\n') {
+            }
+            continue;
+        }
+        if (line[0] == '#' || line[0] == '\n') {
+            continue;
+        }
+        // level \t arena \t name \t rel   (arena_etc1_convert.py)
+        std::string fields[4];
+        size_t field = 0;
+        for (const char* p = line; *p && *p != '\n' && field < 4; p++) {
+            if (*p == '\t') {
+                field++;
+            } else {
+                fields[field] += *p;
+            }
+        }
+        if (field != 3 || atoi(fields[0].c_str()) != (int)level) {
+            continue;
+        }
+        const mdk::formats::Arena* arena = levelData.arenaNamed(fields[1]);
+        if (arena == nullptr) {
+            continue;
+        }
+        const mdk::formats::Palette& palette = levelData.paletteOf(arena);
+        out->paths[std::make_pair((const void*)&palette, lowerName3ds(fields[2]))] =
+            std::string(kOrigPackRoot) + "/" + fields[3] + ".t3x";
+    }
+    fclose(file);
+    return !out->paths.empty();
+}
+
 // KURT'S PACK AT LEVEL LOAD (cold; AGENTS.md P5). ONE open of romfs:/kurt/kurt.pak,
 // the 32-byte header, then the index and the start set in ONE contiguous read
 // (kurt_pack.py lays the start set out right after the index), and the file is
@@ -437,6 +503,7 @@ bool loadKurtPack(const char* path, KurtPackLoad* out) {
 struct HdPackSource {
     mdk::ModImages* pack = nullptr;
     mdk::ModImages* orig = nullptr;
+    OrigByName* byname = nullptr;
     std::string path;
 };
 
@@ -447,6 +514,25 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
         return false;
     }
     const std::string& name = surface.name.empty() ? surface.texture->name() : surface.name;
+    // THE NAME INDEX FIRST, when no HD pack is in play: the build knows this
+    // texture by name, so the content hash is the fallback, not the rule. Both
+    // names it could be keyed by are tried -- the material's and the texture's
+    // own -- because an archive can hold a texture under a different name than
+    // its own. With an HD pack present the hash runs anyway (it must, to match
+    // the HD key), and the orig hash path below still answers this case.
+    if (!source->pack && source->byname && !source->byname->paths.empty()) {
+        std::string keys[2] = {lowerName3ds(name), lowerName3ds(surface.texture->name())};
+        for (int k = 0; k < 2; k++) {
+            std::map<std::pair<const void*, std::string>, std::string>::const_iterator hit =
+                source->byname->paths.find(std::make_pair((const void*)palette, keys[k]));
+            if (hit != source->byname->paths.end()) {
+                source->path = hit->second;
+                out->compressedPath = source->path.c_str();
+                out->compressedOriginal = true;
+                return true;
+            }
+        }
+    }
     // THE HD PACK FIRST, THE ORIG PACK SECOND: where both hold the key the HD
     // copy (the upscale) wins, and the orig pack fills the rest -- an arena the
     // HD pack does not cover still skips the ARM11 expansion. Both resolve by
@@ -1067,6 +1153,7 @@ int main(int argc, char** argv) {
     // before the packs existed.
     mdk::ModImages hdPack;
     mdk::ModImages origPack;
+    OrigByName origByName;
     HdPackSource hdSource;
     if (loadHdPack(flow.state().level, &hdPack)) {
         hdSource.pack = &hdPack;
@@ -1134,6 +1221,12 @@ int main(int argc, char** argv) {
         mdk::log3dsPrintf("data: %s", data.dir().c_str());
         if (mdk::LevelData::load(&level, &data, flow.state().level)) {
             heapProbe("level-data");
+            // The name-keyed orig index needs the loaded level (arena name ->
+            // palette), so it is built here, not with the pack itself.
+            if (hdSource.orig && loadOrigByName(flow.state().level, level, &origByName)) {
+                hdSource.byname = &origByName;
+                mdk::log3dsPrintf("orig: byname index %d textures", (int)origByName.paths.size());
+            }
             if (level.corridorReadFailures() != 0) {
                 mdk::log3dsPrintf("level: %d corridor read(s) FAILED -- the level has holes "
                                   "where those corridors are",

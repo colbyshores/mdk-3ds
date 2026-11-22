@@ -306,6 +306,35 @@ def main():
             f.write("\t".join(lines[rel]) + "\n")
     os.replace(tmp, manifest_path)
 
+    # THE NAME-KEYED INDEX (byname.txt): (level, arena, texture name) -> rel.
+    # manifest.txt is keyed by the CONTENT hash, so the runtime must re-hash a
+    # texture's whole index array (hdKeyOf) to find its file -- 60-150 ms per
+    # lookup on the ARM11, which is the whole cost of the texture pumps. The
+    # build already knows every texture by name (the exporter's index.tsv), so
+    # this file lets the runtime look the file up by (arena, name) for free;
+    # the hash path stays as the fallback for anything not named here. A name
+    # whose key was first encoded under another name points at THAT file --
+    # the same rel manifest.txt names. Refused/failed encodings are absent, so
+    # absence is how the runtime learns to leave a texture to expansion.
+    byname_path = os.path.join(out, "byname.txt")
+    tmp = byname_path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("# level\tarena\tname\trel\n")
+        seen = set()
+        for line in open(os.path.join(frames_dir, "index.tsv")):
+            if line.startswith("#") or not line.strip():
+                continue
+            level, arena, name, w, h, frames, key = line.rstrip("\n").split("\t")
+            rel = "textures/%s@%s" % (images[key][0].lower(), key)
+            if rel not in lines:
+                continue
+            row = (level, arena, name, rel)
+            if row in seen:
+                continue
+            seen.add(row)
+            f.write("\t".join(row) + "\n")
+    os.replace(tmp, byname_path)
+
     # ---- the size summary (the RomFS budget) --------------------------------
     bytes_of = {}  # key -> manifest bytes (only encoded ones)
     for rel, v in lines.items():

@@ -172,6 +172,10 @@ if [ -f "$ARENA_ETC1_DIR/manifest.txt" ]; then
     mkdir -p "$OUT/orig/textures"
     ln "$ARENA_ETC1_DIR/manifest.txt" "$OUT/orig/manifest.txt" 2>/dev/null ||
         cp "$ARENA_ETC1_DIR/manifest.txt" "$OUT/orig/manifest.txt"
+    if [ -f "$ARENA_ETC1_DIR/byname.txt" ]; then
+        ln "$ARENA_ETC1_DIR/byname.txt" "$OUT/orig/byname.txt" 2>/dev/null ||
+            cp "$ARENA_ETC1_DIR/byname.txt" "$OUT/orig/byname.txt"
+    fi
     while IFS= read -r -d '' file; do
         rel="${file#"$ARENA_ETC1_DIR"/}"
         mkdir -p "$OUT/orig/$(dirname "$rel")"
