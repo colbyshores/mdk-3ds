@@ -67,7 +67,8 @@ void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTic
 // line whenever that frame's draw ran over the spike threshold. `rest` is what
 // the sections do not account for, printed too -- an unattributed draw is the
 // finding, not a rounding gap.
-void harnessProfileDrawSub(uint64_t lightTicks, uint64_t skyTicks, uint64_t arenaTicks,
+void harnessProfileDrawSub(uint64_t lightTicks, uint64_t rigTicks, uint64_t skyTicks,
+                           uint64_t arenaTicks, uint64_t layTicks, uint64_t objTicks,
                            uint64_t fxTicks, uint64_t kurtTicks, uint64_t hudTicks);
 void harnessProfileReport();
 

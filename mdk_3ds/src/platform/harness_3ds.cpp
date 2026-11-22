@@ -158,7 +158,8 @@ uint32_t g_spikesLogged = 0;
 uint64_t g_lastSimT = 0, g_lastBeginT = 0, g_lastDrawT = 0, g_lastEndT = 0, g_lastAudioT = 0;
 // The stalled draw's sections (harnessProfileDrawSub), kept with the last
 // frame's spans so the drawsub line names the same frame the spike/STALL line does.
-uint64_t g_subLight = 0, g_subSky = 0, g_subArena = 0, g_subFx = 0, g_subKurt = 0, g_subHud = 0;
+uint64_t g_subLight = 0, g_subRig = 0, g_subSky = 0, g_subArena = 0, g_subLay = 0,
+         g_subObj = 0, g_subFx = 0, g_subKurt = 0, g_subHud = 0;
 uint32_t g_lastSteps = 0;
 uint32_t g_over17 = 0;   // > 16.667 ms: missed a 60 Hz vblank
 uint32_t g_over34 = 0;   // > 33.333 ms: missed a 30 Hz vblank
@@ -344,14 +345,18 @@ void harnessProfileFrame(double periodSeconds) {
     if ((double)g_lastDrawT * (1000000.0 / (double)SYSCLOCK_ARM11) > kSpikeUs &&
         g_subLight + g_subSky + g_subArena + g_subFx + g_subKurt + g_subHud > 0) {
         const double usPerTick = 1000000.0 / (double)SYSCLOCK_ARM11;
-        const uint64_t sub = g_subLight + g_subSky + g_subArena + g_subFx + g_subKurt + g_subHud;
+        const uint64_t sub = g_subLight + g_subSky + g_subArena + g_subLay + g_subObj +
+                             g_subFx + g_subKurt + g_subHud;
         const uint64_t rest = g_lastDrawT > sub ? g_lastDrawT - sub : 0;
-        mdk::log3dsPrintf("profile: drawsub frame %lu: light %.2f sky %.2f arenas %.2f "
-                          "fx %.2f kurt %.2f hud %.2f rest %.2f ms",
+        mdk::log3dsPrintf("profile: drawsub frame %lu: light %.2f (rig %.2f) sky %.2f "
+                          "arenas %.2f lay %.2f obj %.2f fx %.2f kurt %.2f hud %.2f rest %.2f ms",
                           (unsigned long)g_count,
                           (double)g_subLight * usPerTick / 1000.0,
+                          (double)g_subRig * usPerTick / 1000.0,
                           (double)g_subSky * usPerTick / 1000.0,
                           (double)g_subArena * usPerTick / 1000.0,
+                          (double)g_subLay * usPerTick / 1000.0,
+                          (double)g_subObj * usPerTick / 1000.0,
                           (double)g_subFx * usPerTick / 1000.0,
                           (double)g_subKurt * usPerTick / 1000.0,
                           (double)g_subHud * usPerTick / 1000.0,
@@ -426,18 +431,22 @@ void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTic
 #endif
 }
 
-void harnessProfileDrawSub(uint64_t lightTicks, uint64_t skyTicks, uint64_t arenaTicks,
+void harnessProfileDrawSub(uint64_t lightTicks, uint64_t rigTicks, uint64_t skyTicks,
+                           uint64_t arenaTicks, uint64_t layTicks, uint64_t objTicks,
                            uint64_t fxTicks, uint64_t kurtTicks, uint64_t hudTicks) {
 #ifdef MDK_HW_PROFILE
     g_subLight = lightTicks;
+    g_subRig = rigTicks;
     g_subSky = skyTicks;
     g_subArena = arenaTicks;
+    g_subLay = layTicks;
+    g_subObj = objTicks;
     g_subFx = fxTicks;
     g_subKurt = kurtTicks;
     g_subHud = hudTicks;
 #else
-    (void)lightTicks; (void)skyTicks; (void)arenaTicks;
-    (void)fxTicks; (void)kurtTicks; (void)hudTicks;
+    (void)lightTicks; (void)rigTicks; (void)skyTicks; (void)arenaTicks;
+    (void)layTicks; (void)objTicks; (void)fxTicks; (void)kurtTicks; (void)hudTicks;
 #endif
 }
 

@@ -3087,6 +3087,7 @@ int main(int argc, char** argv) {
         // CHANGES, because enhancedLighting walks the sky panorama and every
         // triangle of the arena -- level-load work, not frame work, on an ARM11.
         // The rig carries the haze's colour and density (SPEC.md 7.9).
+        uint64_t tRig0 = 0, tRig1 = 0;
         {
             const mdk::formats::Arena* lightArena = arena;
             if (runtime) {
@@ -3097,7 +3098,9 @@ int main(int argc, char** argv) {
             }
             if (lightArena && lightArena != litArena) {
                 litArena = lightArena;
+                tRig0 = mdk::harnessProfileTick();
                 const mdk::Lighting rig = cachedLighting(lightCache, level, lightArena);
+                tRig1 = mdk::harnessProfileTick();
                 mdk_render_set_lighting(renderer, &rig);
                 mdk::log3dsPrintf("light: arena %s haze rgb=(%.3f,%.3f,%.3f) density=%.5f",
                                   lightArena->name().c_str(), rig.haze_colour.r,
@@ -3149,6 +3152,7 @@ int main(int argc, char** argv) {
             arenaViews.draw(*frameDrawn);
         }
         const uint64_t tArena = mdk::harnessProfileTick();
+        uint64_t tLay = tArena;
         if (runtime) {
             // C# Viewer.DrawScene draws the objects after the arena and before
             // Kurt (Viewer.cs:702-708): every object the scripts hold, in its
@@ -3212,6 +3216,7 @@ int main(int argc, char** argv) {
                                          &objectStream);
                 }
             }
+            const uint64_t tLay = mdk::harnessProfileTick();
             objectDraw.draw(renderer, &surfaces, objectStream);
             // The frame's own cost, kept for the log line below. The peak over a
             // run is what a level costs the stream mesh; one frame's count is not.
@@ -3284,6 +3289,7 @@ int main(int argc, char** argv) {
                                   (int)objectCorners, (int)objectDraws);
             }
         }
+        const uint64_t tObj = mdk::harnessProfileTick();
         if (runtime && !strikeFrame) {
             // The pieces and sprite effects, where the C# draws them:
             // after the objects, before Kurt (Viewer.cs:707). The ropes
@@ -3450,8 +3456,9 @@ int main(int argc, char** argv) {
         const uint64_t spanEnd0 = mdk::harnessProfileTick();
         mdk_render_end_frame(renderer);
         if (frame > 0) {
-            mdk::harnessProfileDrawSub(tLight - spanDraw0, tSky - tLight, tArena - tSky,
-                                       tFx - tArena, tKurt - tFx, spanEnd0 - tKurt);
+            mdk::harnessProfileDrawSub(tLight - spanDraw0, tRig1 - tRig0, tSky - tLight,
+                                       tArena - tSky, tLay - tArena, tObj - tLay,
+                                       tFx - tObj, tKurt - tFx, spanEnd0 - tKurt);
             mdk::harnessProfileSpans(spanSim, steps - spanSteps0, spanDraw0 - spanBegin0,
                                      spanEnd0 - spanDraw0,
                                      mdk::harnessProfileTick() - spanEnd0, spanAudio);
