@@ -229,7 +229,13 @@ static void heapProbe(const char* tag) {
 // (ModImages::fromList) without scanning the card; the surface cache then hands
 // each Lit surface's match to the backend (mdk_render_replace_compressed), which
 // streams it under the HD budget.
+#ifdef MDK_HW_HDROMFS
+// The harness's RomFS copy of one level's pack (`make HDROMFS=1`, stage_romfs.sh):
+// the appliance's SD card has no pack and the hardware loop only pushes a .3dsx.
+const char kHdPackRoot[] = "romfs:/hd";
+#else
 const char kHdPackRoot[] = "sdmc:/3ds/mdk/hd";
+#endif
 
 // KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): his ORIGINAL
 // TRAVSPRT.BNI frames as ETC1A4, made on the host by
@@ -305,7 +311,7 @@ bool loadHdPack(int32_t level, mdk::ModImages* out) {
     if (!loadCompressedManifest(kHdPackRoot, level, out, &count)) {
         return false;
     }
-    mdk::log3dsPrintf("hd: pack manifest %d textures (sdmc:/3ds/mdk/hd)", (int)count);
+    mdk::log3dsPrintf("hd: pack manifest %d textures (%s)", (int)count, kHdPackRoot);
     return true;
 }
 
@@ -3356,6 +3362,11 @@ int main(int argc, char** argv) {
             mdk_render_c3d_first_use(renderer, &made);
             sample.texturesMade = made.texturesMade;
             sample.hdImported = made.hdImported;
+            sample.texturesEvicted = made.texturesEvicted;
+            sample.hdEvicted = made.hdEvicted;
+            sample.textureMakeTicks = made.textureMakeTicks;
+            sample.hdImportTicks = made.hdImportTicks;
+            sample.linearFreeKB = (uint32_t)(linearSpaceFree() >> 10);
             if (kurtSpriteReady) {
                 sample.kurtReads = kurtSprite.streamStats().reads;
                 // E12 replaced the 16-bit stand-in with the HOLD (KurtSprite::chooseFrame):

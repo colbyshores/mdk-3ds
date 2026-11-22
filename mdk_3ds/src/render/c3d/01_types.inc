@@ -816,6 +816,13 @@ struct RendererC3D {
     // not allocate against the RGBA8 expansion of the same padded size.
     int32_t compressedMade = 0;
     size_t compressedBytesSaved = 0;
+    // THE COST OF FIRST USE, for the harness's arena-entry table
+    // (render_c3d_stats.h): textures the LRU evicted (each comes back through
+    // makeTexture on its next draw), and the svcGetSystemTick spans spent making
+    // textures and importing HD copies. Cumulative; the harness takes differences.
+    int32_t texturesEvicted = 0;
+    uint64_t textureMakeTicks = 0;
+    uint64_t hdImportTicks = 0;
 
     // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
     // may still be reading the last frame's textures then. C3D_FrameBegin

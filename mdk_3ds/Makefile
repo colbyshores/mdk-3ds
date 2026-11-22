@@ -197,6 +197,22 @@ $(error WALK=$(WALK) needs AUTOQUIT: the scripted walk is a harness-build featur
 endif
 DEFINES += -DMDK_HW_WALK='"$(WALK)"'
 endif
+# `make AUTOQUIT=90 LEVEL=7 HDROMFS=1` reads the HD pack from romfs:/hd instead of
+# sdmc:/3ds/mdk/hd: stage_romfs.sh hard-links that level's .t3x files and manifest
+# lines out of build-hd-pack/ (mdk_3ds/tools/build_hd_pack.sh) into the RomFS, so
+# the HD stream can be measured on a console whose SD card has no pack (the
+# appliance; the hardware loop pushes only the .3dsx). Only main_3ds.cpp reads it:
+# `make clean` after changing HDROMFS.
+ifneq ($(strip $(HDROMFS)),)
+ifndef AUTOQUIT
+$(error HDROMFS=$(HDROMFS) needs AUTOQUIT: the RomFS pack is a harness-build feature)
+endif
+ifeq ($(strip $(LEVEL)),)
+$(error HDROMFS=$(HDROMFS) needs LEVEL=n: only that level's pack is staged)
+endif
+DEFINES += -DMDK_HW_HDROMFS=1
+export MDK_HD_ROMFS_LEVEL := $(LEVEL)
+endif
 # `make AUTOQUIT=90 MENU=Menu.Accept@2,Menu.Back@4,Menu.Accept@5` presses the
 # menus' keys at those seconds of the menus' game time (game/menu_presses.h, the
 # C#'s TestPresses spelling: Menu.Up/Down/Left/Right/Accept/Back), for a build

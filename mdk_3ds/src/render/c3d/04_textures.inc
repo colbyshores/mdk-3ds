@@ -47,6 +47,7 @@ static bool evictTextures(RendererC3D* renderer, size_t needed) {
     C3dTexture& victim = renderer->textures[(size_t)oldest];
     C3D_TexDelete(&victim.tex);
     victim.valid = false;
+    renderer->texturesEvicted++;
     return true;
 }
 
@@ -367,10 +368,19 @@ static bool makeStreamed(RendererC3D* renderer, C3dTexture& texture) {
 // So the allocation RETRIES, each time evicting the least recently used
 // texture. The textures that are being drawn stay; the ones that are not
 // are made again when they are next needed.
+static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diagnostics);
 static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnostics) {
     if (texture.valid) {
         return true;
     }
+    // Timed for the arena-entry table (textureMakeTicks): one tick read a making.
+    const uint64_t start = svcGetSystemTick();
+    const bool made = makeTextureNow(renderer, texture, diagnostics);
+    renderer->textureMakeTicks += svcGetSystemTick() - start;
+    return made;
+}
+
+static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diagnostics) {
     // Texel memory is about to be (re)filled, possibly at an address a bound
     // texture had: no unit's bind may be skipped on the strength of the old
     // contents (03_frame.inc, THE DEDUPE).
@@ -781,10 +791,12 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             continue;
         }
         forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)
+        const uint64_t importStart = svcGetSystemTick();
         Tex3DS_Texture t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
         if (!t3x && evictHd(renderer, protectFrom, false)) {
             t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
         }
+        renderer->hdImportTicks += svcGetSystemTick() - importStart;
         free(bytes);
         if (!t3x) {
             hdFailed(renderer, copy, "import FAILED");
