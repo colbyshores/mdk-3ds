@@ -861,6 +861,19 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             renderer->hdQueue.push_back(id);
             continue;
         }
+        // THE IMPORT: an LZ decompress and a copy into the linear heap, the ETC
+        // blocks already tiled on the host -- at the frame boundary, after
+        // C3D_FrameBegin's wait (P3), at most kHdImportsPerFrame a frame. This
+        // is the HD pack's copy landing on its expansion (the profile timing
+        // below, hdImportTicks, counts it; the file read ran on the reader
+        // thread, off the frame). The ORIG pack's textures do NOT come through
+        // here: they are made from their .t3x at creation
+        // (mdk_render_create_compressed_file), and that import runs through
+        // importCompressed below, timed as texture-make work. No sampler state
+        // is set here: 06_draw.inc rewrites filter and maxLevel per draw, so a
+        // full mip chain holds at NEAREST level 0 in the original look; only
+        // the wrap, which the draw does not rewrite, is set below from the
+        // image's own rectangle.
         forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)
 #ifdef MDK_HW_PROFILE
         const uint64_t importStart = svcGetSystemTick();

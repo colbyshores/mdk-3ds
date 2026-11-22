@@ -102,6 +102,11 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t, int32_t,
     return -1;
 }
 
+MdkTextureId mdk_render_create_compressed_file(MdkRenderer, int32_t, int32_t, const char*,
+                                               const uint8_t*) {
+    return -1;
+}
+
 int32_t mdk_render_texture_bytes(MdkRenderer, MdkTextureId) {
     return 0;
 }

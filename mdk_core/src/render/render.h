@@ -189,6 +189,18 @@ int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t hei
 MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t width, int32_t height,
                                                   const uint8_t* t3x, int32_t size);
 
+// The same, from a FILE: the backend reads `path` (a pack's .t3x) and makes the
+// compressed texture from those bytes, stamping `paletteRgba` (256 RGBA8
+// entries, may be null) on the texture so a later pixel update can fall back
+// through it (mdk_render_update_texture's rule for a stamped compressed
+// texture). This is the arena pack's pre-creation path: a surface the pack
+// holds as a .t3x of the ORIGINAL look is made from the file and the ARM11
+// never expands the palette (render/surface_cache.h's surfaceId). Returns -1
+// when the backend has no compressed textures, the file cannot be read, or the
+// bytes do not import -- the caller then makes the index texture as always.
+MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t width, int32_t height,
+                                               const char* path, const uint8_t* paletteRgba);
+
 // The GPU bytes a MADE texture holds right now, in the store it was actually
 // made in (an index texture's RGBA8 or 16-bit store and its mip chain, a
 // compressed texture's ETC data). What a residency that wants to count real

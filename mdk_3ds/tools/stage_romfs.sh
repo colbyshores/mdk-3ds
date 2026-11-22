@@ -149,6 +149,39 @@ else
     echo "stage_romfs:   (skip) kurt -- no compressed set; Kurt is expanded"
 fi
 
+# THE ARENA TEXTURES AS ETC1/ETC1A4 (arena streaming): every arena and level
+# texture of levels 3-8, expanded through its arena's palette with the 3DS's
+# rule, RGB565-quantized, bled, padded and encoded with a gaussian mip chain by
+# arena_etc1_convert.py into $ARENA_ETC1_DIR (default <repo>/build-arena-etc1,
+# kept across `make clean`) -- incremental, seconds when nothing changed -- so
+# the console never expands a palette or builds a mip at runtime. The manifest
+# and textures/ are hard-linked here as orig/ (the ModImages key is the
+# @<hdkey> in each file name). Not fatal: without the set (no tex3ds, no numpy
+# or PIL, a failed encode) the game draws every arena texture from its palette
+# indices.
+ARENA_ETC1_DIR="${ARENA_ETC1_DIR:-$REPO/build-arena-etc1}"
+if [ "${MDK_ARENA_ETC1:-1}" != "0" ]; then
+    if MDK_DATA_DIR="$SRC" python3 "$HERE/arena_etc1_convert.py" "$ARENA_ETC1_DIR" >&2; then
+        :
+    else
+        echo "stage_romfs:   (warning) arena_etc1_convert.py failed; arena textures are expanded" >&2
+    fi
+fi
+rm -rf "$OUT/orig"
+if [ -f "$ARENA_ETC1_DIR/manifest.txt" ]; then
+    mkdir -p "$OUT/orig/textures"
+    ln "$ARENA_ETC1_DIR/manifest.txt" "$OUT/orig/manifest.txt" 2>/dev/null ||
+        cp "$ARENA_ETC1_DIR/manifest.txt" "$OUT/orig/manifest.txt"
+    while IFS= read -r -d '' file; do
+        rel="${file#"$ARENA_ETC1_DIR"/}"
+        mkdir -p "$OUT/orig/$(dirname "$rel")"
+        ln "$file" "$OUT/orig/$rel" 2>/dev/null || cp "$file" "$OUT/orig/$rel"
+    done < <(find "$ARENA_ETC1_DIR/textures" -type f -name '*.t3x' -print0)
+    echo "stage_romfs:   orig ($(find "$OUT/orig" -name '*.t3x' | wc -l) textures, $(du -sh "$OUT/orig" | cut -f1))"
+else
+    echo "stage_romfs:   (skip) orig -- no compressed arena set; arena textures are expanded"
+fi
+
 # THE HD PACK IN THE RomFS (harness builds only: `make AUTOQUIT=90 LEVEL=n
 # HDROMFS=1` exports MDK_HD_ROMFS_LEVEL). One level's textures and every 2D
 # image, hard-linked from build-hd-pack/ with the manifest lines that name them,

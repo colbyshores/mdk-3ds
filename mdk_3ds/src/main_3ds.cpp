@@ -246,13 +246,28 @@ const char kHdPackRoot[] = "sdmc:/3ds/mdk/hd";
 // .3dsx and .cia and the hardware loop needs no separate SD copy).
 const char kKurtPackPath[] = "romfs:/kurt/kurt.pak";
 
+// THE ORIG PACK: the ORIGINAL-LOOK arena textures pre-encoded on the host --
+// the same manifest, the same hdKeyOf keys, the same .t3x import as the HD
+// pack -- staged into the RomFS by stage_romfs.sh, so it ships in every .3dsx
+// and .cia and the hardware loop needs no separate SD copy. Its point is the
+// level-load / arena-stream-in hitches: an arena index texture expanded on the
+// ARM11 (palette -> RGBA8 -> 16-bit pack -> mip chain) costs 600-1600 ms per
+// arena. A surface the pack holds is MADE from its .t3x at first use
+// (surface_cache.h's pre-creation consult -> mdk_render_create_compressed_file:
+// a RomFS read, an LZ decompress and a copy) and the expansion never runs.
+// With no pack staged (the tool did not run) the manifest open fails silently
+// and the expansion is today's, exactly.
+const char kOrigPackRoot[] = "romfs:/orig";
+
 // The sound bank's decoded store, bounded (see where it is set).
 const size_t kDecodedSoundBudgetBytes = (size_t)6 << 20;
 
-// The HD pack's manifest, indexed for `level` by ModImages' own rule. False
-// when there is none.
+// A compressed pack's manifest, indexed for `level` by ModImages' own rule.
+// False when there is none. `tag` names the pack in its log lines ("hd",
+// "orig"); `maxCap` is the largest build cap the backend budgets for it (see
+// the column-8 gate below).
 bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out,
-                            int32_t* count) {
+                            int32_t* count, const char* tag, int32_t maxCap) {
     const std::string manifest = std::string(root) + "/manifest.txt";
     FILE* file = fopen(manifest.c_str(), "r");
     if (!file) {
@@ -275,8 +290,12 @@ bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out
             continue;
         }
         // Column 8 is the size cap the pack was built with
-        // (hd_pack_convert.py): the backend's budget gate assumes 512
-        // (kHdLargestBytes), so a larger cap is refused, not drawn over budget.
+        // (hd_pack_convert.py): the backend budgets the largest pack texture
+        // (kHdLargestBytes, sized for the worst file of the largest cap it
+        // accepts), so a pack built above `maxCap` is refused, not drawn over
+        // budget. The HD pack is capped at 512; the orig pack's arena textures
+        // pad up to 1024x512 and is capped at 1024 -- kHdLargestBytes covers
+        // that worst case (01_types.inc).
         {
             int column = 0;
             const char* field = line;
@@ -286,7 +305,7 @@ bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out
                     field = p + 1;
                 }
             }
-            if (column == 8 && atoi(field) > 512) {
+            if (column == 8 && atoi(field) > maxCap) {
                 tooBig = true;
             }
         }
@@ -299,7 +318,8 @@ bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out
     }
     fclose(file);
     if (tooBig) {
-        mdk::log3dsPrintf("hd: pack built above the 512 cap the 3DS budgets for; not used");
+        mdk::log3dsPrintf("%s: pack built above the %d cap the 3DS budgets for; not used", tag,
+                          (int)maxCap);
         return false;
     }
     *out = mdk::ModImages::fromList(root, files, true, level);
@@ -309,10 +329,26 @@ bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out
 
 bool loadHdPack(int32_t level, mdk::ModImages* out) {
     int32_t count = 0;
-    if (!loadCompressedManifest(kHdPackRoot, level, out, &count)) {
+    if (!loadCompressedManifest(kHdPackRoot, level, out, &count, "hd", 512)) {
         return false;
     }
     mdk::log3dsPrintf("hd: pack manifest %d textures (%s)", (int)count, kHdPackRoot);
+    return true;
+}
+
+// The orig pack, at the same level-load moment and through the same machinery
+// as the HD pack (loadCompressedManifest). Its textures are the ORIGINAL look
+// pre-encoded -- original resolution, a full gaussian mip chain the sampler
+// only descends under the Enhanced Mode filtering+mipmaps pair (06_draw.inc)
+// -- so with the pack staged the ARM11 expands nothing for the arenas that
+// have a key, and the original look is the ETC1 copy sampled NEAREST at level 0
+// rather than the palette expansion.
+bool loadOrigPack(int32_t level, mdk::ModImages* out) {
+    int32_t count = 0;
+    if (!loadCompressedManifest(kOrigPackRoot, level, out, &count, "orig", 1024)) {
+        return false;
+    }
+    mdk::log3dsPrintf("orig: pack manifest %d textures (%s)", (int)count, kOrigPackRoot);
     return true;
 }
 
@@ -395,25 +431,44 @@ bool loadKurtPack(const char* path, KurtPackLoad* out) {
     return true;
 }
 
-// The surface cache's lookup into the HD pack: a Lit surface's .t3x path.
+// The surface cache's lookup into the compressed packs: a Lit surface's .t3x
+// path. `pack` is the HD pack (the SD card's upscale), `orig` the orig pack
+// (the RomFS's original-resolution pre-encode); either may be absent.
 struct HdPackSource {
     mdk::ModImages* pack = nullptr;
+    mdk::ModImages* orig = nullptr;
     std::string path;
 };
 
 bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::Palette* palette,
                   mdk::ColourReplacement* out) {
     HdPackSource* source = static_cast<HdPackSource*>(user);
-    if (!source || !source->pack || !surface.texture || !palette) {
+    if (!source || (!source->pack && !source->orig) || !surface.texture || !palette) {
         return false;
     }
     const std::string& name = surface.name.empty() ? surface.texture->name() : surface.name;
-    if (!source->pack->resolve(mdk::ModImages::Kind::Textures, name, *surface.texture, *palette,
-                               &source->path)) {
-        return false;
+    // THE HD PACK FIRST, THE ORIG PACK SECOND: where both hold the key the HD
+    // copy (the upscale) wins, and the orig pack fills the rest -- an arena the
+    // HD pack does not cover still skips the ARM11 expansion. Both resolve by
+    // the same hdKeyOf key, so a texture the HD pack rekeys (a stamped texture,
+    // 05_resources.inc) matches neither pack and takes the index path.
+    if (source->pack && source->pack->resolve(mdk::ModImages::Kind::Textures, name,
+                                              *surface.texture, *palette, &source->path)) {
+        out->compressedPath = source->path.c_str();
+        return true;
     }
-    out->compressedPath = source->path.c_str();
-    return true;
+    if (source->orig && source->orig->resolve(mdk::ModImages::Kind::Textures, name,
+                                              *surface.texture, *palette, &source->path)) {
+        out->compressedPath = source->path.c_str();
+        // THE ORIG PACK'S HIT IS MADE UP FRONT, not attached after an expansion:
+        // surfaceId's pre-creation consult (surface_cache.h) turns this into
+        // mdk_render_create_compressed_file, so the ARM11 expands nothing for
+        // this texture -- the arena's 600-1600 ms of palette expansion, filter
+        // and mip chain becomes a RomFS read and a decompress.
+        out->compressedOriginal = true;
+        return true;
+    }
+    return false;
 }
 
 // With -fno-exceptions libstdc++'s operator new calls this and then aborts,
@@ -987,13 +1042,22 @@ int main(int argc, char** argv) {
     // draw objects with). The C# gives both views one MaterialResolver for
     // exactly this reason.
     mdk::SurfaceCache surfaces(renderer);
-    // The HD pack, when the SD card has one (loadHdPack). Its lookup is wired
-    // whatever the toggle says: the backend decides per draw (enableHdTextures)
-    // whether the HD copy is used, so the toggle stays live.
+    // The compressed packs, when they are there: the HD pack on the SD card
+    // (loadHdPack) and the orig pack in the RomFS (loadOrigPack). The lookup is
+    // wired whatever the toggle says: the backend decides per draw
+    // (enableHdTextures) whether a pack copy is used, so the toggle stays live.
+    // With neither pack staged nothing is wired and the level behaves exactly as
+    // before the packs existed.
     mdk::ModImages hdPack;
+    mdk::ModImages origPack;
     HdPackSource hdSource;
     if (loadHdPack(flow.state().level, &hdPack)) {
         hdSource.pack = &hdPack;
+    }
+    if (loadOrigPack(flow.state().level, &origPack)) {
+        hdSource.orig = &origPack;
+    }
+    if (hdSource.pack || hdSource.orig) {
         surfaces.setColourReplacementLookup(hdPackLookup, &hdSource);
     }
     // The arenas on the GPU: a LevelView per arena the scripts have loaded,

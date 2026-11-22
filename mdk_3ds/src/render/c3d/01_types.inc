@@ -123,12 +123,20 @@ static constexpr size_t kHdBudgetBytes = 6u * 1024u * 1024u;
 // How many .t3x a frame boundary imports at most: each is an SD read and an
 // upload, and they wait at the boundary, never inside a draw.
 static constexpr int32_t kHdImportsPerFrame = 2;
-// The most one pack texture can need: 512x512 ETC1A4 with its chain (the pack's
-// cap, hd_pack_convert.py --max 512; pica::textureBytes). A read is only handed
-// out when this much could be made room for, so a full budget does not re-read
-// the same files from SD every frame (measured with a 1 MB budget: 13-15 queued
-// textures re-read continuously before this rule).
-static constexpr size_t kHdLargestBytes = 349504u;
+// The most one pack texture can need: the worst file of the LARGEST cap the
+// manifest gate accepts (main_3ds.cpp loadCompressedManifest). The HD pack is
+// capped at 512 -- 512x512 ETC1A4 with its chain is 349504 bytes -- and the
+// orig pack (romfs:/orig) at 1024, whose arena textures pad up to 1024x512:
+// 1024x512 ETC1A4 with its chain is 699008 bytes (pica::textureBytes,
+// mipLevelsFor(1024,512) = 6; an ETC1 copy of the same texture is half,
+// 349504). A read is only handed out when this much could be made room for, so
+// a full budget does not re-read the same files from SD every frame (measured
+// with a 1 MB budget: 13-15 queued textures re-read continuously before this
+// rule). Raising it for the bigger pack makes the dispatch gate STRICTER, not
+// looser -- eviction and the import's own budget check (which books the file's
+// real size, not this bound) are untouched. No buffer is sized from this: the
+// reader mallocs the file's actual length (async_file_reader.cpp readWhole).
+static constexpr size_t kHdLargestBytes = 699008u;
 // A failed import waits this many frames before it is asked for again, at most
 // kHdMaxFailures times.
 static constexpr int32_t kHdRetryFrames = 120;

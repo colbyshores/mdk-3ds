@@ -192,6 +192,62 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t w, int3
     return id;
 }
 
+// Read a whole file into a vector (cold: the arena pack's pre-creation read,
+// render.h's mdk_render_create_compressed_file). False when it cannot be
+// opened or read; an empty file is not an error here, the import rejects it.
+static bool readWholeFile(const char* path, std::vector<uint8_t>* out) {
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        return false;
+    }
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return false;
+    }
+    const long size = ftell(file);
+    // A bound on ftell, not a pack limit: the largest .t3x is 699008 bytes, so
+    // anything past 4 MiB is a damaged entry, and a huge resize under
+    // -fno-exceptions aborts instead of falling back to the expansion.
+    if (size < 0 || (unsigned long)size > 4u * 1024u * 1024u) {
+        fclose(file);
+        return false;
+    }
+    rewind(file);
+    out->resize((size_t)size);
+    const size_t got = out->empty() ? 0 : fread(out->data(), 1, (size_t)size, file);
+    fclose(file);
+    if (got != (size_t)size) {
+        out->clear();
+        return false;
+    }
+    return true;
+}
+
+MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t w, int32_t h,
+                                               const char* path, const uint8_t* paletteRgba) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || !renderer->ready || !path || !path[0]) {
+        return -1;
+    }
+    std::vector<uint8_t> bytes;
+    if (!readWholeFile(path, &bytes)) {
+        return -1;
+    }
+    const MdkTextureId id = mdk_render_create_compressed_texture(r, w, h, bytes.data(),
+                                                                 (int32_t)bytes.size());
+    if (id < 0) {
+        return -1;
+    }
+    // The stamp the pixel-update fallback needs (05_resources.inc's rule in
+    // mdk_render_update_texture): a stamped compressed texture with a palette
+    // converts to the index path when its pixels change. The bytes are the
+    // palette the texture was made to stand in for, so the restamp is bit-exact.
+    if (paletteRgba) {
+        renderer->textures[(size_t)id].palette.assign(paletteRgba, paletteRgba + 256 * 4);
+    }
+    return id;
+}
+
 int32_t mdk_render_texture_bytes(MdkRenderer r, MdkTextureId t) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || t < 0 || (size_t)t >= renderer->textures.size()) {
@@ -238,12 +294,34 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
         return;
     }
     C3dTexture& texture = renderer->textures[(size_t)t];
-    // A compressed texture's source is a file's bytes, not indices to replace.
-    if (texture.source.empty() || texture.releasePending || texture.compressed) {
+    if (texture.source.empty() || texture.releasePending) {
         return;
     }
     if (w != texture.realWidth || h != texture.realHeight) {
         return;  // the contract is same-size updates only
+    }
+    // A COMPRESSED texture's source is a .t3x's bytes, not indices to replace,
+    // and the caller hands the format's INDEX bytes (SurfaceCache::refresh):
+    // the ordinary path below would size them as a store image (w*h*4 for a
+    // non-indexed texture), four times the caller's buffer, and write garbage
+    // over the source. The safe recreation is the INDEX one: the update's
+    // pixels ARE the texture's indices, so take them, clear the compressed
+    // flag, and let the restamp below rebuild the GPU copy through the palette
+    // -- the texture falls back to the index path for that key for good,
+    // exactly as an HD/orig-backed texture gives up its copy below. Without a
+    // palette there is nothing to expand through (a .t3x made by
+    // mdk_render_create_compressed_texture never carries one): the stamp is
+    // dropped, as it was when this guard refused every compressed texture --
+    // a stale copy beats an invisible surface.
+    if (texture.compressed) {
+        if (texture.palette.size() < 256 * 4) {
+            return;
+        }
+        texture.compressed = false;
+        texture.indexed = true;
+        texture.paddedWidth = nextPowerOfTwo(texture.realWidth);
+        texture.paddedHeight = nextPowerOfTwo(texture.realHeight);
+        texture.mipLevels = 0;  // the make below sets the chain it actually builds
     }
     // A bullet hole's texture changes (scripts/bullet_holes.h). The 3DS's texture
     // is EXPANDED, so the update has to go through the palette again -- and the
@@ -256,11 +334,17 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     texture.hasHoles = mdk::pica::textureSourceHasHoles(texture.source.data(),
                                                         texture.source.size(), texture.indexed);
 
-    // THE HD COPY GOES (a world texture's; a canvas picture keeps its own): the HD
-    // pack's image is the texture WITHOUT the hole, and the PC drops a changed
-    // texture's replacement the same way (the C#'s Renderer.Changed: "an HD texture
-    // no longer shows the texture: expanded again from now on"). Unlinked only: the
-    // copies table owns it and its budget frees it (mdk_render_release_texture's rule).
+    // THE PACK COPY GOES (a world texture's, from either pack; a canvas picture
+    // keeps its own): the pack's image is the texture WITHOUT the hole, and the
+    // PC drops a changed texture's replacement the same way (the C#'s
+    // Renderer.Changed: "an HD texture no longer shows the texture: expanded
+    // again from now on"). Unlinked only: the copies table owns it and its
+    // budget frees it (mdk_render_release_texture's rule). THE FALLBACK IS
+    // PERMANENT for this key: the restamp below rebuilds the index expansion
+    // (bit-exact -- the same expandIndices through the kept palette as a
+    // texture that never had a copy), nothing re-links the copy, and a later
+    // re-look cannot either -- the stamped texture's hdKeyOf has changed, so
+    // neither pack holds its key any more.
     if (!texture.hdCanvas && texture.hdCopy >= 0 &&
         (size_t)texture.hdCopy < renderer->hdCopies.size()) {
         HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];

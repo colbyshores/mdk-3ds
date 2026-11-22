@@ -55,6 +55,12 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t, int32_t,
     return -1;
 }
 
+// Same answer from a file (render.h): the desktop makes the index texture.
+MdkTextureId mdk_render_create_compressed_file(MdkRenderer, int32_t, int32_t, const char*,
+                                               const uint8_t*) {
+    return -1;
+}
+
 // NO STREAMED PACK READS ON THE DESKTOP: it never loads Kurt's compressed pack
 // (it has no compressed textures), so there is nothing to stream (render.h).
 bool mdk_render_read_range_async(MdkRenderer, int32_t, const char*, uint32_t, uint32_t) {

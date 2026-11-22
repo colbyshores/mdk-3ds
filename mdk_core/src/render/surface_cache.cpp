@@ -152,28 +152,58 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
     if (surface.texture == nullptr) {
         return flatColourId(surface.colour);
     }
-    const MdkTextureId id = textureId(surface.texture, palette);
-    // A Lit surface's mod replacement, asked once per (texture, palette)
-    // pair (the C#'s MaterialResolver.Replace, at the first point here
-    // where the GPU ids it names exist). The backend copies the bytes, so
-    // the lookup's image need only live for this call.
-    if (replacementLookup_ && surface.shading == Shading::Lit && id >= 0) {
-        const std::pair<const formats::Texture*, const formats::Palette*> key(surface.texture,
-                                                                               palette);
-        if (replacementLooked_.find(key) == replacementLooked_.end()) {
+    // THE LOOKUP COMES FIRST, THE TEXTURE SECOND (the arena orig pack's whole
+    // point). A Lit surface the pack holds as a .t3x of the ORIGINAL look is
+    // MADE from that file (mdk_render_create_compressed_file: a decompress and
+    // a copy) and the ARM11 never expands its palette -- the 600-1600 ms an
+    // arena's expansion costs is exactly the hitch the pack exists to remove.
+    // An HD-pack upscale is NOT this: it keeps the expansion as its fallback
+    // and the toggle's per-draw choice, so only a compressedOriginal hit takes
+    // this path, and a -1 (no compressed textures in this backend, an unreadable
+    // file) falls through to the ordinary expansion. Asked once per pair, as
+    // before; the bytes the lookup hands back are borrowed for the call only.
+    const std::pair<const formats::Texture*, const formats::Palette*> key(surface.texture,
+                                                                           palette);
+    ColourReplacement replacement;
+    bool lookedNow = false;
+    if (replacementLookup_ && surface.shading == Shading::Lit &&
+        replacementLooked_.find(key) == replacementLooked_.end()) {
+        // NOT marked yet: a streamed arena whose pixels are not ready returns -1
+        // from textureId below, and a replacement consumed on that frame would
+        // never be attached (the pair would be marked asked with nothing landed).
+        // The mark lands when the answer is a miss, or when the replacement is.
+        lookedNow = replacementLookup_(replacementUser_, surface, palette, &replacement);
+        if (!lookedNow) {
             replacementLooked_[key] = true;
-            ColourReplacement replacement;
-            const bool looked = replacementLookup_(replacementUser_, surface, palette, &replacement);
-            if (looked && replacement.compressedPath && replacement.compressedPath[0]) {
-                mdk_render_replace_compressed(renderer_, id, replacement.compressedPath);
+        } else if (replacement.compressedOriginal && palette != nullptr &&
+                   replacement.compressedPath && replacement.compressedPath[0]) {
+            const MdkTextureId made = mdk_render_create_compressed_file(
+                renderer_, surface.texture->width(),
+                surface.texture->height() * surface.texture->frameCount(),
+                replacement.compressedPath, palette->rgba());
+            if (made >= 0) {
+                replacementLooked_[key] = true;
+                textures_[key] = made;
                 replacementFound_++;
-            } else if (looked && replacement.rgba && replacement.width > 0 &&
-                       replacement.height > 0) {
-                mdk_render_replace_colour(renderer_, id, paletteId(palette), surface.frameCount,
-                                          replacement.width, replacement.height, replacement.rgba);
-                replacementFound_++;
+                return made;
             }
         }
+    }
+    const MdkTextureId id = textureId(surface.texture, palette);
+    // The replacement that is NOT made up front: the HD pack's compressed
+    // upscale (attached to the expansion through the pump, the toggle deciding
+    // per draw) and a decoded colour image. The backend copies the bytes, so
+    // the lookup's image need only live for this call.
+    if (lookedNow && id >= 0) {
+        if (replacement.compressedPath && replacement.compressedPath[0]) {
+            mdk_render_replace_compressed(renderer_, id, replacement.compressedPath);
+            replacementFound_++;
+        } else if (replacement.rgba && replacement.width > 0 && replacement.height > 0) {
+            mdk_render_replace_colour(renderer_, id, paletteId(palette), surface.frameCount,
+                                      replacement.width, replacement.height, replacement.rgba);
+            replacementFound_++;
+        }
+        replacementLooked_[key] = true;
     }
     return id;
 }

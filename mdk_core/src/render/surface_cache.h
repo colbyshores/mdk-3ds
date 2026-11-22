@@ -52,12 +52,21 @@ struct ColourReplacement {
     // OR a compressed file (the 3DS HD pack's .t3x), handed to
     // mdk_render_replace_compressed instead; borrowed for the call only.
     const char* compressedPath = nullptr;
+    // The compressedPath is the ORIGINAL look at the original size (the arena
+    // orig pack), not an upscale: surfaceId makes the texture from the file
+    // up front (mdk_render_create_compressed_file) and the backend never
+    // expands the palette. False for an HD-pack upscale, which keeps the
+    // expansion as its fallback and the toggle's per-draw choice.
+    bool compressedOriginal = false;
 };
 
 // Asks for a Lit surface's colour replacement, or returns false. Called
 // once per (texture, palette) pair, the first time the pair is drawn (the
-// C#'s MaterialResolver.Replace runs as surfaces resolve; here the GPU ids
-// only exist at this point, so this is where the replacement can land).
+// C#'s MaterialResolver.Replace runs as surfaces resolve). It is asked
+// BEFORE the texture is made, so a compressedOriginal hit can be made from
+// its file instead of expanded; the replacement then lands on the id the
+// surface ends up with (the made file, or the made expansion for the other
+// replacement kinds).
 typedef bool (*ColourReplacementLookup)(void* user, const Surface& surface,
                                         const formats::Palette* palette,
                                         ColourReplacement* out);
