@@ -662,12 +662,16 @@ inline void texelBytes(uint8_t* dst, uint32_t r, uint32_t g, uint32_t b, uint32_
 // no division and no table, and does not change the texel count; R11 and the
 // float rules do not apply to it.
 inline uint32_t morton8InTile(uint32_t x, uint32_t y) {
-    uint32_t m = 0;
-    for (int b = 0; b < 3; b++) {
-        m |= ((x >> b) & 1u) << (2 * b);
-        m |= ((y >> b) & 1u) << (2 * b + 1);
-    }
-    return m;
+    // The 64 values of the 3-bit interleave, as a table: the loop form cost
+    // ~15 cycles a texel and this runs once per texel of every texture made
+    // (and up to nine times per transparent texel in prepareForFiltering).
+    // Index (x&7) | ((y&7)<<3); the values are the loop's own arithmetic.
+    static const uint32_t kTable[64] = {
+        0,  1,  4,  5,  16, 17, 20, 21, 2,  3,  6,  7,  18, 19, 22, 23,
+        8,  9,  12, 13, 24, 25, 28, 29, 10, 11, 14, 15, 26, 27, 30, 31,
+        32, 33, 36, 37, 48, 49, 52, 53, 34, 35, 38, 39, 50, 51, 54, 55,
+        40, 41, 44, 45, 56, 57, 60, 61, 42, 43, 46, 47, 58, 59, 62, 63};
+    return kTable[(x & 7u) | ((y & 7u) << 3)];
 }
 
 // THE TEXTURE'S t AXIS RUNS FROM THE LAST MEMORY ROW. The PICA samples t = 0 at
@@ -799,8 +803,15 @@ uint32_t hazeColourWord(const Colour& colour);
 //     the half-cover test would open a crack along it. The first padding row and
 //     column take a copy of the last real ones (alpha included) -- the PC's
 //     clamp, one texel wide, which is all a bilinear tap reaches.
+//
+// `realHasTransparent` lets a caller that already knows the real region has no
+// alpha-0 texel (the index expansion tracks it for free) skip step 1: with no
+// alpha-0 texel to write, step 1 is a no-op, and it is the expensive part --
+// nine Morton lookups a texel over the whole real region. Step 2 still runs
+// (padding is always transparent). Default true: callers that do not track it
+// get the full pass, unchanged.
 void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
-                         int32_t paddedHeight);
+                         int32_t paddedHeight, bool realHasTransparent = true);
 
 // ---------------------------------------------------------------------------
 // THE MIP CHAIN (Enhanced Mode, SPEC.md 7.9 `enableMipmaps`)

@@ -327,7 +327,7 @@ uint32_t hazeColourWord(const Colour& colour) {
 }
 
 void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
-                         int32_t paddedHeight) {
+                         int32_t paddedHeight, bool realHasTransparent) {
     if (!tiled || width <= 0 || height <= 0 || width > paddedWidth || height > paddedHeight) {
         return;
     }
@@ -336,7 +336,10 @@ void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t 
     // (1) the colour under each transparent real texel. Only OPAQUE neighbours are
     // read and only alpha-0 texels are written (their alpha untouched), so the
     // pass is order-independent: no written texel is ever read as a source.
-    for (int32_t y = 0; y < height; y++) {
+    // Skipped when the caller knows the real region has no alpha-0 texel: with
+    // none to write, this is a no-op, and it is the nine-Morton-lookups-a-texel
+    // cost (see the header). Step 2 still runs -- padding is always transparent.
+    for (int32_t y = 0; realHasTransparent && y < height; y++) {
         for (int32_t x = 0; x < width; x++) {
             uint8_t* t = tiled + textureTexelIndex((uint32_t)x, (uint32_t)y, pw) * 4u;
             if (t[0] != 0) {

@@ -106,28 +106,52 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
     // arena went invisible through the alpha test rather than merely looking
     // wrong.
     memset(pixels, 0, texels * 4);
+#ifdef MDK_HW_PROFILE
+    const uint64_t expT0 = svcGetSystemTick();
+#endif
+    bool sawTransparent = false;
     for (int32_t y = 0; y < height; y++) {
         const uint8_t* source = indices + (size_t)y * (size_t)width;
         for (int32_t x = 0; x < width; x++) {
             const uint8_t index = source[x];
-            const size_t slot =
-                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);
-            uint8_t* pixel = pixels + slot * 4u;
             if (index == 0) {
                 // Transparent: the colour is irrelevant, but it must not be
-                // black-with-alpha-255, which is what the palette says.
+                // black-with-alpha-255, which is what the palette says. The
+                // memset already left the slot all-zero, so there is nothing
+                // to write -- and no tile slot to compute.
+                sawTransparent = true;
                 continue;
             }
-            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],
+            const size_t slot =
+                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);
+            mdk::pica::texelBytes(pixels + slot * 4u, paletteRgba[index * 4 + 0],
                                   paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);
         }
     }
+#ifdef MDK_HW_PROFILE
+    const uint64_t expT1 = svcGetSystemTick();
+#endif
     // Ready for Enhanced Mode filtering whichever way its toggle stands now: the
     // toggle is live, the texture is made once (pica::prepareForFiltering; a
     // nearest sample of any texel it touches is unchanged in colour or
     // discarded as before, except at an exact padded edge, which now clamps).
-    mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
+    mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight,
+                                   sawTransparent);
+#ifdef MDK_HW_PROFILE
+    const uint64_t expT2 = svcGetSystemTick();
+#endif
     mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, width, height, mipLevels);
+#ifdef MDK_HW_PROFILE
+    const uint64_t expT3 = svcGetSystemTick();
+    const double msPer = 1000.0 / (double)SYSCLOCK_ARM11;
+    const double expMs = (double)(expT3 - expT0) * msPer;
+    if (expMs > 50.0) {
+        mdk::log3dsPrintf("expandstage: %dx%d main %.1f filter %.1f mip %.1f ms%s", (int)width,
+                          (int)height, (double)(expT1 - expT0) * msPer,
+                          (double)(expT2 - expT1) * msPer, (double)(expT3 - expT2) * msPer,
+                          sawTransparent ? "" : " (opaque)");
+    }
+#endif
     return pixels;
 }
 
@@ -149,9 +173,13 @@ static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
         return nullptr;
     }
     memset(pixels, 0, texels * 4);
+    bool sawTransparent = false;
     for (int32_t y = 0; y < height; y++) {
         const uint8_t* row = source + (size_t)y * (size_t)width * 4;
         for (int32_t x = 0; x < width; x++) {
+            if (row[(size_t)x * 4 + 3] == 0) {
+                sawTransparent = true;
+            }
             const size_t slot =
                 mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);
             mdk::pica::texelBytes(pixels + slot * 4u, row[(size_t)x * 4 + 0],
@@ -159,7 +187,8 @@ static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
                                   row[(size_t)x * 4 + 3]);
         }
     }
-    mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
+    mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight,
+                                   sawTransparent);
     mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, width, height, mipLevels);
     return pixels;
 }
@@ -426,6 +455,14 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     // memory, and the arena's textures stopped allocating one after
     // another.
     uint8_t* pixels = nullptr;
+#ifdef MDK_HW_PROFILE
+    // THE STAGES OF A SLOW MAKE (profile builds only -- 42ee7a22's lesson: an
+    // SVC read per texture make does not belong in the shipped path). The
+    // arena-entry stalls are 53-163 ms a texture on OG; this says which stage
+    // eats it: expand (palette), alloc (C3D_TexInit + eviction), pack (16-bit
+    // rewrite), load (memcpy), flush (GSPGPU_FlushDataCache).
+    const uint64_t texT0 = svcGetSystemTick();
+#endif
     if (texture.indexed) {
         pixels = expandIndices(texture.source.data(), texture.realWidth, texture.realHeight,
                                texture.palette.data(), texture.paddedWidth, texture.paddedHeight,
@@ -437,6 +474,9 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     if (!pixels) {
         return false;
     }
+#ifdef MDK_HW_PROFILE
+    const uint64_t texT1 = svcGetSystemTick();
+#endif
     // THE STORE (EnhancedToggles::texture16): RGBA8, or 16 bits a texel -- RGB565
     // with no transparent texel, RGBA5551 with only 0/255 alpha (every index
     // texture), RGBA4 with partial alpha. pica::expandedTexelFormat carries the
@@ -524,6 +564,9 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
                           (int)texture.realWidth, (int)texture.realHeight);
         return false;
     }
+#ifdef MDK_HW_PROFILE
+    const uint64_t texT2 = svcGetSystemTick();
+#endif
 
     // SAMPLING, set explicitly rather than inherited from C3D_TexInit.
     //   Filter: NEAREST both ways at creation -- the ORIGINAL look. The oracle's
@@ -556,6 +599,9 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
                             mdk::pica::mipChainTexels(texture.paddedWidth, texture.paddedHeight,
                                                       levels),
                             format);
+#ifdef MDK_HW_PROFILE
+    const uint64_t texT3 = svcGetSystemTick();
+#endif
     C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);
     // The chain, already in the same buffer after level 0 (the expansion built
     // it: pica::buildMipChain). Each level is handed to the sink from its offset:
@@ -567,6 +613,9 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
         C3D_TexLoadImage(&texture.tex, pixels + offset, GPU_TEXFACE_2D, level);
         made = level;
     }
+#ifdef MDK_HW_PROFILE
+    const uint64_t texT4 = svcGetSystemTick();
+#endif
     texture.mipLevels = made;
     // C3D_TexFlush flushes level 0 plus `maxLevel` levels; the draw path rewrites
     // maxLevel per draw, so put back what the allocation holds first.
@@ -611,6 +660,22 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     // which is this GPU's far plane, and so were clipped before rasterisation).
     // See docs/OPEN_ITEMS.md, "The 3DS canvas draws no pixels".
     C3D_TexFlush(&texture.tex);
+#ifdef MDK_HW_PROFILE
+    {
+        const uint64_t texT5 = svcGetSystemTick();
+        const double msTotal = (double)(texT5 - texT0) * 1000.0 / (double)SYSCLOCK_ARM11;
+        if (msTotal > 50.0) {
+            const double msPer = 1000.0 / (double)SYSCLOCK_ARM11;
+            mdk::log3dsPrintf("texperf: %dx%d %s expand %.1f alloc %.1f pack %.1f load %.1f "
+                              "flush %.1f ms",
+                              (int)texture.realWidth, (int)texture.realHeight,
+                              texture.indexed ? "indexed" : "rgba",
+                              (double)(texT1 - texT0) * msPer, (double)(texT2 - texT1) * msPer,
+                              (double)(texT3 - texT2) * msPer, (double)(texT4 - texT3) * msPer,
+                              (double)(texT5 - texT4) * msPer);
+        }
+    }
+#endif
     free(pixels);
     texture.valid = true;
     texture.format = format;
