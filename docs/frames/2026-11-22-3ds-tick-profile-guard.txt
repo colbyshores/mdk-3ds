@@ -1,0 +1,5 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-22T02:03:03Z at 5316caaa
+golden gap: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=0.000 max_delta=0 mean_delta=0.0000
+the capture is byte-identical to the reference cpp golden (cpp=58615fc8); live C# oracle unavailable: no dotnet host on this machine.
+the make/import tick spans are profile-build only; the shipped frame is unchanged.
