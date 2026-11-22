@@ -447,10 +447,11 @@ endif
 # `make AUTOQUIT=90 PROFILE=1` logs one `profile:` frame-period summary at exit
 # (harness_3ds.h), what `hw_cycle.sh --profile` reads. Never combine with
 # CAPTURE: the capture's SD write would be inside the measured frames.
+# PROFILE without AUTOQUIT is the free-play profile: the sampler and the named
+# STALL lines run during play, and harnessProfileReport() prints at the normal
+# teardown (main_3ds.cpp), so an exit through the HOME menu still reports.
+# Added 2026-11-22 to measure the owner's pauses on the owner's own route.
 ifeq ($(strip $(PROFILE)),1)
-ifndef AUTOQUIT
-$(error PROFILE=1 needs AUTOQUIT: the profile is a harness-build feature)
-endif
 ifneq ($(strip $(CAPTURE)),)
 $(error PROFILE and CAPTURE together would measure the capture's SD stall)
 endif

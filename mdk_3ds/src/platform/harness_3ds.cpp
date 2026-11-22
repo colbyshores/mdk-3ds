@@ -1,13 +1,17 @@
 // ============================================================================
 // harness_3ds.cpp -- see harness_3ds.h. The whole file is the harness
-// build's: without MDK_AUTOQUIT it compiles to the two no-op answers, so
-// the release binary carries no trace of the cycle (no deadline, no
-// chain-load, no hb:ldr traffic).
+// build's: without MDK_AUTOQUIT or MDK_HW_PROFILE it compiles to the no-op
+// answers, so the release binary carries no trace of the cycle (no deadline,
+// no chain-load, no hb:ldr traffic).
 // ============================================================================
 
 #include "platform/harness_3ds.h"
 
-#ifdef MDK_AUTOQUIT
+// The harness compiles its real answers for either feature: the autoquit
+// harness (MDK_AUTOQUIT) and the free-play profile (MDK_HW_PROFILE without
+// MDK_AUTOQUIT, added 2026-11-22 to measure the owner's pauses on the owner's
+// own route). With neither, the no-op stubs at the bottom of this file answer.
+#if defined(MDK_AUTOQUIT) || defined(MDK_HW_PROFILE)
 
 #include <3ds.h>
 #include <stdio.h>
@@ -22,6 +26,7 @@
 namespace mdk {
 
 bool harnessAutoquitDue() {
+#ifdef MDK_AUTOQUIT
     static u64 quitAtTick = 0;
     const u64 now = svcGetSystemTick();
     if (quitAtTick == 0) {
@@ -31,6 +36,10 @@ bool harnessAutoquitDue() {
         return false;
     }
     return now >= quitAtTick;
+#else
+    // A profile-only build has no deadline: the player exits through HOME.
+    return false;
+#endif
 }
 
 #ifdef MDK_HW_WALK
@@ -223,6 +232,26 @@ uint32_t g_runTexEvicted = 0, g_runHdEvicted = 0, g_runTextures = 0, g_runHd = 0
 uint32_t g_runLinearMinKB = 0xFFFFFFFFu;
 float g_runTexWorstMs = 0.0f, g_runHdWorstMs = 0.0f;
 uint32_t g_runTexWorstFrame = 0, g_runHdWorstFrame = 0;
+// The newest frame's first-use diffs and arena pair, kept for the STALL line:
+// a stall is named at the NEXT frame's start, after harnessArenaFrame's row is
+// gone, and the arena table only keeps windows around arena events -- so the
+// owner's 719/1833 ms stalls (2026-11-22) had no breakdown at all.
+uint32_t g_lastTex = 0, g_lastHd = 0, g_lastStrmKB = 0, g_lastViews = 0;
+float g_lastTexMs = 0.0f, g_lastHdMs = 0.0f, g_lastStrmMs = 0.0f, g_lastViewsMs = 0.0f;
+char g_lastFlags[7] = "------";
+char g_lastArena[kArenaName] = "";
+char g_lastSecond[kArenaName] = "";
+
+void flagText(uint8_t flags, char* out) {
+    // Always six characters plus the terminator: "AW-V--" style.
+    out[0] = (flags & kArenaFlagArena) ? 'A' : '-';
+    out[1] = (flags & kArenaFlagSecond) ? '2' : '-';
+    out[2] = (flags & kArenaFlagSwitch) ? 'W' : '-';
+    out[3] = (flags & kArenaFlagViews) ? 'V' : '-';
+    out[4] = (flags & kArenaFlagStall) ? 'T' : '-';
+    out[5] = (flags & kArenaFlagEvict) ? 'E' : '-';
+    out[6] = '\0';
+}
 
 uint32_t clampTicks(uint64_t ticks) {
     return ticks > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)ticks;
@@ -286,9 +315,25 @@ void harnessProfileFrame(double periodSeconds) {
                           (double)g_lastAudioT * usPerTick / 1000.0);
     }
     if (us > 500000u) {
-        mdk::log3dsPrintf("profile: STALL %lu.%03lu ms at profiled frame %lu",
+        // The full breakdown, not just the length: these are the stalls the
+        // owner feels, and the arena table does not cover frames away from an
+        // arena event. The spans and diffs are the stalled frame's (named at
+        // the next frame's start, after its spans and row were recorded).
+        const double usPerTick = 1000000.0 / (double)SYSCLOCK_ARM11;
+        mdk::log3dsPrintf("profile: STALL %lu.%03lu ms at profiled frame %lu: sim %.2f ms (%lu steps) "
+                          "begin %.2f draw %.2f end %.2f audio %.2f | tex %u %.1f ms hd %u %.1f ms "
+                          "strm %lu KB %.1f ms views %u %.1f ms | arena %s second %s %s",
                           (unsigned long)(us / 1000u), (unsigned long)(us % 1000u),
-                          (unsigned long)g_count);
+                          (unsigned long)g_count, (double)g_lastSimT * usPerTick / 1000.0,
+                          (unsigned long)g_lastSteps, (double)g_lastBeginT * usPerTick / 1000.0,
+                          (double)g_lastDrawT * usPerTick / 1000.0,
+                          (double)g_lastEndT * usPerTick / 1000.0,
+                          (double)g_lastAudioT * usPerTick / 1000.0,
+                          (unsigned)g_lastTex, (double)g_lastTexMs,
+                          (unsigned)g_lastHd, (double)g_lastHdMs,
+                          (unsigned long)g_lastStrmKB, (double)g_lastStrmMs,
+                          (unsigned)g_lastViews, (double)g_lastViewsMs,
+                          g_lastArena, g_lastSecond, g_lastFlags);
     }
     if (g_count >= kSteadyFrom) {
         g_steadySumUs += us;
@@ -437,6 +482,17 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
     if (s.viewsBuilt > 0) row.flags |= kArenaFlagViews;
     if (s.streamStalls != g_arenaPrevStalls) row.flags |= kArenaFlagStall;
     if (row.texEvicted != 0) row.flags |= kArenaFlagEvict;
+    g_lastTex = row.textures;
+    g_lastTexMs = row.texMs;
+    g_lastHd = row.hd;
+    g_lastHdMs = row.hdMs;
+    g_lastStrmKB = row.streamBytes / 1024u;
+    g_lastStrmMs = row.streamMs;
+    g_lastViews = row.viewsBuilt;
+    g_lastViewsMs = row.viewsMs;
+    flagText(row.flags, g_lastFlags);
+    copyName(g_lastArena, arena);
+    copyName(g_lastSecond, second);
     g_arenaPrevSwitches = s.streamSwitches;
     g_arenaPrevStalls = s.streamStalls;
     g_arenaPrevBytes = s.streamBytes;
@@ -507,17 +563,6 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
 
 #ifdef MDK_HW_PROFILE
 namespace {
-void flagText(uint8_t flags, char* out) {
-    // Always six characters plus the terminator: "AW-V--" style.
-    out[0] = (flags & kArenaFlagArena) ? 'A' : '-';
-    out[1] = (flags & kArenaFlagSecond) ? '2' : '-';
-    out[2] = (flags & kArenaFlagSwitch) ? 'W' : '-';
-    out[3] = (flags & kArenaFlagViews) ? 'V' : '-';
-    out[4] = (flags & kArenaFlagStall) ? 'T' : '-';
-    out[5] = (flags & kArenaFlagEvict) ? 'E' : '-';
-    out[6] = '\0';
-}
-
 // At exit, never inside a measured frame: one line per event, then one per kept
 // row that is flagged, slow (over 1.25x the steady mean) or did first-use work.
 void arenaReport(uint32_t steadyUs) {
