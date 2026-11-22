@@ -408,7 +408,15 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     // shipped path, least of all in the stutter being measured.
     const uint64_t start = svcGetSystemTick();
     const bool made = makeTextureNow(renderer, texture, diagnostics);
-    renderer->textureMakeTicks += svcGetSystemTick() - start;
+    const uint64_t mk = svcGetSystemTick() - start;
+    renderer->textureMakeTicks += mk;
+    // WHICH make was the expensive one: the entry table says how many and how
+    // long; this names each by size and path (the oversized refused strips are
+    // identifiable by dimension alone: sl_big 64x1920, fire 64x2628,
+    // explode 128x3328). Profile builds only, like the tick read above.
+    mdk::log3dsPrintf("texmake %dx%d %s %.1f ms", (int)texture.realWidth, (int)texture.realHeight,
+                      texture.compressed ? "pack" : (texture.streamed ? "stream" : "expand"),
+                      (double)mk * 1000.0 / (double)SYSCLOCK_ARM11);
     return made;
 #else
     return makeTextureNow(renderer, texture, diagnostics);
