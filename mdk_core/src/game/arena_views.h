@@ -95,6 +95,12 @@ public:
     // Queue the drawn arenas' visible groups, in the list's order.
     void draw(const std::vector<std::string>& drawn);
 
+    // Resolve up to `budget` textures across the kept views (LevelView::
+    // pumpSurfaces), so an arena's first drawn frame does not pay them all.
+    // Call it every frame between sync() and draw(); a view that is already
+    // resolved costs one comparison.
+    void pumpSurfaces(int32_t budget);
+
     // The end of a level: the torn triangles vanish from that arena's view
     // (LevelView::tear; the C#'s LevelView.DrawEnd, Viewer.cs:703). Call it inside
     // the frame, before draw(). False when the view's dynamic mesh was refused (the
@@ -125,6 +131,10 @@ private:
         std::string name;
         LevelView* view = nullptr;
     };
+
+    // pumpSurfaces()'s rotating start, so a kept view past the frame's budget
+    // is not starved by the ones before it.
+    size_t pumpCursor_ = 0;
 
     struct Failed {
         std::string name;

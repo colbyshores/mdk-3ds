@@ -102,6 +102,17 @@ public:
     int32_t batchCount() const { return (int32_t)scene_.batches.size(); }
     int32_t vertexCount() const { return (int32_t)scene_.vertices.size(); }
 
+    // Resolve this arena's surfaces' textures, up to `budget` batches this call,
+    // exactly as draw() would (the same surfaceId, the same palette). The first
+    // draw of a new arena pays every texture it needs in one frame -- the
+    // compressed read, decode and upload, ~49 ms each on the Old 3DS, 442 ms for
+    // DANT_2's nine -- and that is the arena-entry stall. Pumping between the
+    // view's build and the arena's first drawn frame (the stream loads the
+    // second arena hundreds of frames before Kurt reaches its door) spreads the
+    // same work where nobody sees it. True when the whole arena is resolved;
+    // calling it again after that costs one comparison.
+    bool pumpSurfaces(int32_t budget);
+
     // The arena this view is for.
     const formats::Arena* arena() const { return arena_; }
 
@@ -120,6 +131,9 @@ private:
     Shading shading_ = Shading::Original;
 
     MdkMeshId mesh_ = -1;
+
+    // pumpSurfaces()'s cursor into scene_.batches; reset by load().
+    size_t pumpAt_ = 0;
 
     // tear()'s state: how many of the end's torn triangles are collapsed already (the
     // C#'s _tornShown), whether mesh_ is the dynamic copy, and the triangles' first

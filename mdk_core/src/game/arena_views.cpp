@@ -258,6 +258,34 @@ void ArenaViews::draw(const std::vector<std::string>& drawn) {
     }
 }
 
+void ArenaViews::pumpSurfaces(int32_t budget) {
+    // One texture per view per call, at most `budget` views a frame. The start
+    // rotates: the residency policy can keep more views than the budget (drawn,
+    // resident, and every connected corridor), and a fixed scan would starve
+    // the views past it. A resolved view costs one comparison.
+    const size_t n = views_.size();
+    if (n == 0 || budget <= 0) {
+        return;
+    }
+    if (pumpCursor_ >= n) {
+        pumpCursor_ = 0;
+    }
+    for (int32_t k = 0; k < (int32_t)n && budget > 0; k++) {
+        // Wrap by subtraction, not `%`: both terms are < n, so one subtraction
+        // is the exact wrap (and this ARM11 has no divide instruction).
+        size_t i = pumpCursor_ + (size_t)k;
+        if (i >= n) {
+            i -= n;
+        }
+        views_[i].view->pumpSurfaces(1);
+        budget -= 1;
+    }
+    pumpCursor_ += 1;
+    if (pumpCursor_ >= n) {
+        pumpCursor_ = 0;
+    }
+}
+
 void ArenaViews::clear() {
     if (renderer_ && level_ && surfaces_) {
         for (size_t i = views_.size(); i > 0; i--) {

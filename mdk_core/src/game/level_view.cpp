@@ -20,6 +20,7 @@ bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Aren
     // A fresh scene is whole: an end of a level in progress tears it again from the
     // first torn triangle on the next tear() (the C#'s view is never rebuilt mid-end).
     tornShown_ = 0;
+    pumpAt_ = 0;
     dynamic_ = false;
     triangleFirsts_.clear();
 
@@ -53,6 +54,7 @@ void LevelView::unload() {
     arena_ = nullptr;
     palette_ = nullptr;
     tornShown_ = 0;
+    pumpAt_ = 0;
     dynamic_ = false;
     triangleFirsts_.clear();
 }
@@ -169,6 +171,26 @@ void LevelView::draw() {
     }
 }
 
+bool LevelView::pumpSurfaces(int32_t budget) {
+    if (!renderer_ || surfaces_ == nullptr || !arena_) {
+        return true;
+    }
+    for (int32_t i = 0; i < budget && pumpAt_ < scene_.batches.size(); i++) {
+        const ArenaBatch& batch = scene_.batches[pumpAt_];
+        // The same skip draw() makes: a group the scripts hid is not drawn, so
+        // its texture is left to the frame that shows it again.
+        if (arenaBatchVisible(arena_, batch)) {
+            // A negative id (pixels not in, or the backend refused) is left to
+            // draw() to ask again: a refused texture is CACHED as refused
+            // (surface_cache.cpp), so pinning the cursor here would block every
+            // batch behind it for the level's life.
+            surfaces_->surfaceId(batch.surface, palette_);
+        }
+        pumpAt_++;
+    }
+    return pumpAt_ >= scene_.batches.size();
+}
+
 bool LevelView::refresh() {
     if (!renderer_ || !level_ || !arena_ || surfaces_ == nullptr) {
         return false;
@@ -188,6 +210,9 @@ bool LevelView::refresh() {
     // The rebuilt scene is whole and its mesh static again: an end of a level in
     // progress tears it again on the next tear().
     tornShown_ = 0;
+    // The batches are new, and a retextured group's new texture must be pumpable:
+    // the cursor restarts (re-pumping a resolved surface is a map hit).
+    pumpAt_ = 0;
     dynamic_ = false;
     triangleFirsts_.clear();
 

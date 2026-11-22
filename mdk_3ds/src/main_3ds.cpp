@@ -483,6 +483,23 @@ static void onHeapExhausted() {
 
 } // namespace
 
+// The light rig for one arena, computed once and kept in `cache` (main's
+// lightCache). enhancedLighting scans the arena's faces -- ~113 ms per arena
+// on the Old 3DS -- and its answer depends on nothing but (dti, arena), both
+// fixed for the level's life. The frame's light code and the stream pump both
+// come through here, so the scan runs at most once per arena.
+static mdk::Lighting cachedLighting(
+    std::vector<std::pair<const mdk::formats::Arena*, mdk::Lighting>>& cache,
+    const mdk::LevelData& level, const mdk::formats::Arena* arena) {
+    for (const std::pair<const mdk::formats::Arena*, mdk::Lighting>& e : cache) {
+        if (e.first == arena) {
+            return e.second;
+        }
+    }
+    cache.push_back(std::make_pair(arena, mdk::enhancedLighting(level.dti(), *arena)));
+    return cache.back().second;
+}
+
 int main(int argc, char** argv) {
     // P1 lifecycle (AGENTS.md 11): know when the console sleeps and
     // wakes. The hook only records the wake; the loop rebases its clock
@@ -1635,6 +1652,12 @@ int main(int argc, char** argv) {
     double prefetchWorstMs = 0.0;
     // The arena whose light rig the renderer holds (see the frame's light below).
     const mdk::formats::Arena* litArena = nullptr;
+    // The rig per arena, computed once (cachedLighting). enhancedLighting scans
+    // the arena's faces (mean up, mean facing) -- ~111 ms per arena change on
+    // the Old 3DS -- and its answer depends on nothing but (dti, arena), both
+    // fixed for the level's life. Two arenas of level 7 log byte-identical
+    // haze; walking a door twice must not pay the scan twice.
+    std::vector<std::pair<const mdk::formats::Arena*, mdk::Lighting>> lightCache;
     // THE SCRIPT OPTION (C# ScriptRuntime.Option). It is a USER SETTING, not a
     // constant: `Option = ui.Settings.Gore ? 1 : 0` when the runtime is built
     // (Viewer.cs:234) and `Option = data["option"]` when a save is loaded
@@ -2856,6 +2879,20 @@ int main(int argc, char** argv) {
             hwViewsMs = (float)((stream2 - stream1) * 1000.0);
             hwViewsBuilt = builtViews;
 #endif
+            // Spread the loaded arenas' texture creation over the frames before
+            // anyone sees them (LevelView::pumpSurfaces): the stream loads the
+            // second arena hundreds of frames before Kurt reaches its door, and
+            // the first frame that DRAWS it should pay nothing. One texture per
+            // view per frame; the entry stall was 442 ms for nine at once.
+            arenaViews.pumpSurfaces(2);
+            // And the second arena's light rig: the scan costs ~113 ms and the
+            // frame Kurt crosses the door must not pay it (the 113 ms spike
+            // lands on a corridor frame instead, hundreds of frames early).
+            // A cached arena is a cheap lookup, so this runs every frame.
+            if (const mdk::formats::Arena* nextArena =
+                    streamSecond.empty() ? nullptr : level.arenaNamed(streamSecond)) {
+                cachedLighting(lightCache, level, nextArena);
+            }
             const mdk::ArenaStream::Stats& after = stream.stats();
             if (after.switches != before.switches) {
                 const mdk::formats::Arena* target = level.arenaNamed(stream.resident());
@@ -3060,7 +3097,7 @@ int main(int argc, char** argv) {
             }
             if (lightArena && lightArena != litArena) {
                 litArena = lightArena;
-                const mdk::Lighting rig = mdk::enhancedLighting(level.dti(), *lightArena);
+                const mdk::Lighting rig = cachedLighting(lightCache, level, lightArena);
                 mdk_render_set_lighting(renderer, &rig);
                 mdk::log3dsPrintf("light: arena %s haze rgb=(%.3f,%.3f,%.3f) density=%.5f",
                                   lightArena->name().c_str(), rig.haze_colour.r,
