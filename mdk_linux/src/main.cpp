@@ -441,6 +441,10 @@ int main(int argc, char** argv) {
     // frontends. A walk also logs Kurt's arena on every change.
     bool hasWalk = false;
     mdk::WalkScript walk;
+    // Set when the frame loop refused the walk because no Kurt was ever spawned
+    // to read it. A run that was asked to walk and could not is a failure, not a
+    // short walk (the refusal at the frame loop and the exit status at the end).
+    bool walkRefused = false;
     // --event=N: the C#'s test option (Program.cs:53, Viewer.RunTests at Viewer.cs:664-680):
     // special_event N for the arena controller of Kurt's arena after 1 second of game time.
     // 50 and below end the level (scripts/end_level.h); it is how a run reaches the end
@@ -2043,6 +2047,20 @@ int main(int argc, char** argv) {
         // The scripted walk OWNS the actions (game/walk_script.h): after the
         // platform's poll, before the game reads the input.
         if (hasWalk) {
+            // A walk that cannot reach Kurt is a REFUSED run, not a walk that
+            // happens to stand still (the 3DS harness's rule, harness_3ds.h: a
+            // build that does not walk would profile the wrong scene). With no
+            // spawned player the step block below never runs, so the keys would
+            // be written into an Input nobody reads while every segment still
+            // logged his (0,0,0) feet and the run reported a clean exit on a
+            // scene it never walked. The cause is the level setup above: no data
+            // root (MDK_DATA_DIR / mdk_paths.cfg, formats/mdk_data.h) or a level
+            // whose archives failed to load.
+            if (!playerReady) {
+                walkRefused = true;
+                exitReason = "walk refused: no simulated player (the data root or the level failed to load)";
+                break;
+            }
             mdk::applyWalk(walk, frame, &input);
             const int32_t started = mdk::walkSegmentStartingAt(walk, frame);
             if (started >= 0) {
@@ -3120,6 +3138,17 @@ int main(int argc, char** argv) {
                      "did not take\n",
                      capturePath.c_str(), captureFrame, (int)captureWritten,
                      (int)captureRequested);
+        status = 1;
+    }
+
+    // The same rule for the scripted walk: a run asked to walk a route that never
+    // drove Kurt must not report success (the refusal at the frame loop). The
+    // upstream harness cannot tell this from a log full of segment lines about a
+    // Kurt whose feet never moved, so the exit code says it.
+    if (walkRefused) {
+        std::fprintf(stderr,
+                     "[main] walk FAILED: --walk was asked for and no frame reached a "
+                     "simulated Kurt; the run cannot report a walk it did not walk\n");
         status = 1;
     }
 
