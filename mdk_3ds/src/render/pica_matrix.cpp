@@ -326,6 +326,16 @@ uint32_t hazeColourWord(const Colour& colour) {
     return word;
 }
 
+// Inverse of morton8InTile: slot m -> (x, y) within the 8x8 tile. Used by the
+// blur (stage placement and the Morton-order write walk) and by the mip
+// downsample's tile walk.
+static const uint8_t kMortonInvX[64] = {
+    0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4, 5, 6, 7, 6, 7, 4, 5, 4, 5, 6, 7, 6, 7,
+    0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4, 5, 6, 7, 6, 7, 4, 5, 4, 5, 6, 7, 6, 7};
+static const uint8_t kMortonInvY[64] = {
+    0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3, 0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3,
+    4, 4, 5, 5, 4, 4, 5, 5, 6, 6, 7, 7, 6, 6, 7, 7, 4, 4, 5, 5, 4, 4, 5, 5, 6, 6, 7, 7, 6, 6, 7, 7};
+
 void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
                          int32_t paddedHeight, bool realHasTransparent) {
     if (!tiled || width <= 0 || height <= 0 || width > paddedWidth || height > paddedHeight) {
@@ -372,7 +382,7 @@ void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t 
                 const uint32_t tilesPerRow = pw >> 3;
                 const uint32_t txi = (uint32_t)tx >> 3;
                 const uint32_t tyi = (uint32_t)ty >> 3;
-                const uint8_t* tile = tiled + ((size_t)tyi * tilesPerRow + txi) * 256u;
+                uint8_t* tile = tiled + ((size_t)tyi * tilesPerRow + txi) * 256u;
                 for (uint32_t m = 0; m < 64u; m++) {
                     memcpy(stage[kMortonInvY[m] + 1][kMortonInvX[m] + 1], tile + m * 4u, 4);
                 }
@@ -444,44 +454,48 @@ void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t 
                         memset(stage[9][9], 0, 4);
                     }
                 }
-                for (int32_t ly = 0; ly < 8; ly++) {
-                    for (int32_t lx = 0; lx < 8; lx++) {
-                        const int32_t gx = tx + lx;
-                        const int32_t gy = ty + ly;
-                        if (gx >= width || gy >= height) {
-                            continue;
-                        }
-                        const uint8_t* self = stage[ly + 1][lx + 1];
-                        if (self[0] != 0) {
-                            continue;
-                        }
-                        uint32_t sum[3] = {0, 0, 0};
-                        uint32_t n = 0;
-                        for (int32_t dy = -1; dy <= 1; dy++) {
-                            for (int32_t dx = -1; dx <= 1; dx++) {
-                                if (dx == 0 && dy == 0) {
-                                    continue;
-                                }
-                                const uint8_t* s = stage[ly + 1 + dy][lx + 1 + dx];
-                                if (s[0] == 0) {
-                                    continue;
-                                }
-                                sum[0] += s[1];
-                                sum[1] += s[2];
-                                sum[2] += s[3];
-                                n++;
-                            }
-                        }
-                        if (n == 0) {
-                            continue;
-                        }
-                        const uint32_t k = kReciprocal[n];
-                        uint8_t* t =
-                            tiled + textureTexelIndex((uint32_t)gx, (uint32_t)gy, pw) * 4u;
-                        t[1] = (uint8_t)((sum[0] * k) >> 16);
-                        t[2] = (uint8_t)((sum[1] * k) >> 16);
-                        t[3] = (uint8_t)((sum[2] * k) >> 16);
+                // Walk in SLOT order, not row order: the write then lands at
+                // `tile + m*4`, sequential within the tile. The scattered
+                // write-per-transparent-texel was the blur's remaining cost
+                // once the fill was sequential (182 ms a 1024x256 sky,
+                // measured 2026-11-22). Same texels, same stage reads.
+                for (uint32_t m = 0; m < 64u; m++) {
+                    const int32_t lx = kMortonInvX[m];
+                    const int32_t ly = kMortonInvY[m];
+                    const int32_t gx = tx + lx;
+                    const int32_t gy = ty + ly;
+                    if (gx >= width || gy >= height) {
+                        continue;
                     }
+                    const uint8_t* self = stage[ly + 1][lx + 1];
+                    if (self[0] != 0) {
+                        continue;
+                    }
+                    uint32_t sum[3] = {0, 0, 0};
+                    uint32_t n = 0;
+                    for (int32_t dy = -1; dy <= 1; dy++) {
+                        for (int32_t dx = -1; dx <= 1; dx++) {
+                            if (dx == 0 && dy == 0) {
+                                continue;
+                            }
+                            const uint8_t* s = stage[ly + 1 + dy][lx + 1 + dx];
+                            if (s[0] == 0) {
+                                continue;
+                            }
+                            sum[0] += s[1];
+                            sum[1] += s[2];
+                            sum[2] += s[3];
+                            n++;
+                        }
+                    }
+                    if (n == 0) {
+                        continue;
+                    }
+                    const uint32_t k = kReciprocal[n];
+                    uint8_t* t = tile + m * 4u;
+                    t[1] = (uint8_t)((sum[0] * k) >> 16);
+                    t[2] = (uint8_t)((sum[1] * k) >> 16);
+                    t[3] = (uint8_t)((sum[2] * k) >> 16);
                 }
             }
         }
@@ -514,14 +528,6 @@ int32_t mipLevelsFor(int32_t paddedWidth, int32_t paddedHeight) {
     }
     return levels;
 }
-
-// Inverse of morton8InTile: slot m -> (x, y) within the 8x8 tile.
-static const uint8_t kMortonInvX[64] = {
-    0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4, 5, 6, 7, 6, 7, 4, 5, 4, 5, 6, 7, 6, 7,
-    0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4, 5, 6, 7, 6, 7, 4, 5, 4, 5, 6, 7, 6, 7};
-static const uint8_t kMortonInvY[64] = {
-    0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3, 0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3,
-    4, 4, 5, 5, 4, 4, 5, 5, 6, 6, 7, 7, 6, 6, 7, 7, 4, 4, 5, 5, 4, 4, 5, 5, 6, 6, 7, 7, 6, 6, 7, 7};
 
 void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t* dst) {
     if (!src || !dst || width < 16 || height < 16) {
