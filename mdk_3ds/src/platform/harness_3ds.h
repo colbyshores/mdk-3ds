@@ -61,6 +61,14 @@ void harnessProfileStepSpans(uint64_t playerTicks, uint64_t runtimeTicks,
 // whole CPU cost of sound in either mode, so a DSPAUDIO=0 A/B reads it directly.
 void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTicks,
                          uint64_t drawTicks, uint64_t endTicks, uint64_t audioTicks);
+// The draw span's sub-attribution, for the arena-entry stall: main records the
+// ticks at the section boundaries (lighting rebuild, sky, arena views, effects
+// and pieces, Kurt, HUD/canvas) and the breakdown prints with the spike/STALL
+// line whenever that frame's draw ran over the spike threshold. `rest` is what
+// the sections do not account for, printed too -- an unattributed draw is the
+// finding, not a rounding gap.
+void harnessProfileDrawSub(uint64_t lightTicks, uint64_t skyTicks, uint64_t arenaTicks,
+                           uint64_t fxTicks, uint64_t kurtTicks, uint64_t hudTicks);
 void harnessProfileReport();
 
 // THE ARENA-ENTRY TABLE (PROFILE builds; a no-op otherwise): the owner's "hitch

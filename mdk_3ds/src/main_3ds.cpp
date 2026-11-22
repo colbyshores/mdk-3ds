@@ -3067,6 +3067,7 @@ int main(int argc, char** argv) {
                                   rig.haze_colour.g, rig.haze_colour.b, rig.haze_density);
             }
         }
+        const uint64_t tLight = mdk::harnessProfileTick();
 
         // The sky first (see SkyRange): centred on the camera, DoubleSided -- only when
         // the scripts' sky mode shows it (C# `Backdrop == Backdrop.Sky`).
@@ -3089,6 +3090,7 @@ int main(int argc, char** argv) {
                 mdk_render_draw_mesh(renderer, &sky);
             }
         }
+        const uint64_t tSky = mdk::harnessProfileTick();
 
         // The arenas the scripts say are drawn: Kurt's and the active second
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
@@ -3109,6 +3111,7 @@ int main(int argc, char** argv) {
             }
             arenaViews.draw(*frameDrawn);
         }
+        const uint64_t tArena = mdk::harnessProfileTick();
         if (runtime) {
             // C# Viewer.DrawScene draws the objects after the arena and before
             // Kurt (Viewer.cs:702-708): every object the scripts hold, in its
@@ -3314,6 +3317,7 @@ int main(int argc, char** argv) {
                 sniperClipFailureLogged = false;
             }
         }
+        const uint64_t tFx = mdk::harnessProfileTick();
         if (kurtSpriteReady && playerReady && !strikeFrame) {
             // THE PACK STREAM'S PUMP (KurtSprite::pumpStream): the read the
             // reader thread finished, if any, staged -- no I/O on this thread. A
@@ -3332,6 +3336,7 @@ int main(int argc, char** argv) {
             // not DrawScene's, so they leave it alone.
             runtime->eye = sceneCamera.position;
         }
+        const uint64_t tKurt = mdk::harnessProfileTick();
         const bool showHint = menuReady && !menu.open() && now < hintUntil;
         if (!strikeFrame && (hudReady || menu.open() || showHint)) {
             // The HUD is the last thing drawn before the frame ends, which is the
@@ -3408,6 +3413,8 @@ int main(int argc, char** argv) {
         const uint64_t spanEnd0 = mdk::harnessProfileTick();
         mdk_render_end_frame(renderer);
         if (frame > 0) {
+            mdk::harnessProfileDrawSub(tLight - spanDraw0, tSky - tLight, tArena - tSky,
+                                       tFx - tArena, tKurt - tFx, spanEnd0 - tKurt);
             mdk::harnessProfileSpans(spanSim, steps - spanSteps0, spanDraw0 - spanBegin0,
                                      spanEnd0 - spanDraw0,
                                      mdk::harnessProfileTick() - spanEnd0, spanAudio);
