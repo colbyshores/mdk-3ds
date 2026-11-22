@@ -33,8 +33,8 @@ OUT="$1"; ELF="$2"; SMDH="$3"; ROMFS="$4"; ICON="$5"; BANNER="$6"
 # from a harness ELF would quit by itself and chain-load a stub that is
 # not on a retail console.
 if [ -n "${AUTOQUIT:-}" ] || [ -n "${CAPTURE:-}" ] || [ -n "${PROFILE:-}" ] || [ -n "${WALK:-}" ] ||
-   [ -n "${GIVE:-}" ] || [ -n "${RIDE:-}" ] || [ -n "${AIM:-}" ]; then
-    echo "build_cia: AUTOQUIT, CAPTURE, PROFILE, WALK, GIVE, RIDE or AIM is set -- this is a harness build, not a release." >&2
+   [ -n "${GIVE:-}" ] || [ -n "${RIDE:-}" ] || [ -n "${AIM:-}" ] || [ -n "${UNLOCK:-}" ]; then
+    echo "build_cia: AUTOQUIT, CAPTURE, PROFILE, WALK, GIVE, RIDE, AIM or UNLOCK is set -- this is a harness build, not a release." >&2
     echo "            Rebuild without them (after make clean) for a CIA." >&2
     exit 2
 fi

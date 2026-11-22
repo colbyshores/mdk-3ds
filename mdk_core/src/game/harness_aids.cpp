@@ -21,6 +21,9 @@ namespace {
 // and gives up when nothing of the model became rideable in this long.
 const float kRideStart = 1.0f;
 const float kRideGiveUp = 30.0f;
+// ObjectBehaviors.UpdateDoor's lock bit (script_runtime.cpp's kDoorLocked; the
+// corridor probe clears the same bit, tests/scripts/tick1.cpp's `unlock:`).
+const int32_t kDoorLockedBit = 0x40;
 // C# RideTest's call of the XE: DANT_5's group 16, hit once by the chain gun
 // (RideTest.cs:32-33, StepBomber; ScriptRuntime.HitChainGun is 2).
 const char kBomberArena[] = "DANT_5";
@@ -111,6 +114,29 @@ bool parseHarnessAim(const char* text, float* yaw, float* pitch, std::string* wh
     return true;
 }
 
+bool parseHarnessUnlock(const char* text, std::vector<int>* out, std::string* why) {
+    out->clear();
+    const std::string all = text ? text : "";
+    size_t at = 0;
+    while (at <= all.size()) {
+        size_t comma = all.find(',', at);
+        if (comma == std::string::npos) {
+            comma = all.size();
+        }
+        const std::string token = all.substr(at, comma - at);
+        char* end = nullptr;
+        const long step = strtol(token.c_str(), &end, 10);
+        if (token.empty() || end == token.c_str() || *end != '\0' || step < 1) {
+            *why = "\"" + token + "\" is not a step number (positive integers, comma-separated)";
+            out->clear();
+            return false;
+        }
+        out->push_back((int)step);
+        at = comma + 1;
+    }
+    return true;
+}
+
 void harnessAidsAtSpawn(HarnessAids* aids, Player* player, HarnessPrint print) {
     char line[160];
     for (size_t i = 0; i < aids->gives.size(); i++) {
@@ -138,6 +164,29 @@ void harnessAidsStep(HarnessAids* aids, Player* player, scripts::ScriptRuntime* 
         snprintf(line, sizeof(line), "harness: AIM the scope at yaw %.3f pitch %.3f",
                  aids->aimYaw, aids->aimPitch);
         say(print, line);
+    }
+    // UNLOCK: the corridor probe's unlock, on a step schedule. Each call is one
+    // of Kurt's steps (FIXED=1: frame f is step f), so the steps match the
+    // walk script's frames.
+    if (!aids->unlocks.empty() && runtime != nullptr) {
+        aids->stepsTaken += 1;
+        for (size_t i = 0; i < aids->unlocks.size(); i++) {
+            if (aids->unlocks[i] != aids->stepsTaken) {
+                continue;
+            }
+            std::deque<scripts::MdkObject>& objects = runtime->objects();
+            int freed = 0;
+            for (size_t j = 0; j < objects.size(); j++) {
+                if (!objects[j].dead && (objects[j].flags & scripts::MdkObject::FlagDoor) != 0 &&
+                    (objects[j].door_state & kDoorLockedBit) != 0) {
+                    objects[j].door_state &= ~kDoorLockedBit;
+                    freed++;
+                }
+            }
+            snprintf(line, sizeof(line), "harness: UNLOCK step %d: %d locked door(s) freed",
+                     aids->unlocks[i], freed);
+            say(print, line);
+        }
     }
     if (aids->ride.empty() || aids->rideDone || runtime == nullptr) {
         return;

@@ -826,6 +826,12 @@ int main(int argc, char** argv) {
                 return 1;
             }
             harnessAids.aim = true;
+        } else if ((value = optionValue(argv[i], "--unlock")) != nullptr) {
+            std::string why;
+            if (!mdk::parseHarnessUnlock(value, &harnessAids.unlocks, &why)) {
+                std::fprintf(stderr, "[main] invalid --unlock: %s\n", why.c_str());
+                return 1;
+            }
         } else if (std::strcmp(argv[i], "--die") == 0) {
             dieTest = true;
         } else if (std::strcmp(argv[i], "--god") == 0) {

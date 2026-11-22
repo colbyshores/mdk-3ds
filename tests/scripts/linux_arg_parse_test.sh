@@ -445,6 +445,9 @@ expect_reject "--ride that is not a ride" --headless --fixed-step --ride=XG --fr
 expect_reject "--aim without a pitch" --headless --fixed-step --aim=90 --frames 1
 expect_reject "--aim past the scope's limit" --headless --fixed-step --aim=0,60 --frames 1
 expect_reject "--give with an empty name" --headless --fixed-step --give=SW_BONES,,SW_HOME --frames 1
+expect_reject "--unlock with a zero step" --headless --fixed-step --unlock=0 --frames 1
+expect_reject "--unlock that is not a number" --headless --fixed-step --unlock=x --frames 1
+expect_reject "--unlock with an empty list" --headless --fixed-step --unlock= --frames 1
 
 # --- and the things it must still do --------------------------------------------
 # 19/20. Both documented value styles, or the gate is just a refusal machine.
@@ -452,6 +455,7 @@ expect_accept "documented run" --headless --fixed-step --level=3 --size=320x240 
 expect_accept "highest shipped level" --headless --fixed-step --level=8 --size=320x240 --seed 1 --frames 2
 expect_accept "a scripted walk" --headless --fixed-step --level=7 --size=320x240 --seed 1 --walk='forward+turbo@0-2;turnleft@1-2' --frames 2
 expect_accept "the set pieces' aids" --headless --fixed-step --level=5 --size=320x240 --seed 1 --give=SW_BONES --ride=xe --aim=0,1.25 --frames 2
+expect_accept "the door unlock schedule" --headless --fixed-step --level=7 --size=320x240 --seed 1 --at=0,380,15,90 --unlock=200,1000 --walk='forward@60-70' --frames 2
 # 21. The frame count is honoured, not just parsed.
 expect_frames "--frames 3 stops at 3" 3 \
     --headless --fixed-step --level=3 --size=320x240 --seed 1 --frames 3

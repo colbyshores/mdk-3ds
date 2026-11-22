@@ -241,6 +241,10 @@ endif
 #                               first time he snipes (degrees; pitch within +-50, down
 #                               positive): a shot that does not depend on turns rounded
 #                               through the trig table.
+#   UNLOCK=step[,step...]       at each listed step, every live door's lock bit clears
+#                               (the corridor probe's `unlock:`). A locked door is
+#                               solid in the C# and stops a scripted walk, so a route
+#                               over a locked doorway names the steps it frees doors at.
 # The set pieces (FIXED=1: frame f of WALK is step f):
 #   the bomber   LEVEL=7 AT=100,2320,-60,90 ARENA=DANT_5 RIDE=XE FIXED=1
 #                WALK='fire@800-802;turnright@820-840;fire@840-842;forward@850-865;fire@866-868'
@@ -267,6 +271,12 @@ ifndef AUTOQUIT
 $(error AIM=$(AIM) needs AUTOQUIT: the facing at spawn is a harness-build feature)
 endif
 DEFINES += -DMDK_HW_AIM='"$(AIM)"'
+endif
+ifneq ($(strip $(UNLOCK)),)
+ifndef AUTOQUIT
+$(error UNLOCK=$(UNLOCK) needs AUTOQUIT: clearing door locks on a schedule is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_UNLOCK='"$(UNLOCK)"'
 endif
 # `make AUTOQUIT=90 EVENT=1` runs special_event 1 after one second of game time, the
 # C#'s --event test option (Program.cs:53, Viewer.RunTests): 50 and below end the level
