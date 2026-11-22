@@ -339,46 +339,78 @@ void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t 
     // Skipped when the caller knows the real region has no alpha-0 texel: with
     // none to write, this is a no-op, and it is the nine-Morton-lookups-a-texel
     // cost (see the header). Step 2 still runs -- padding is always transparent.
-    for (int32_t y = 0; realHasTransparent && y < height; y++) {
-        for (int32_t x = 0; x < width; x++) {
-            uint8_t* t = tiled + textureTexelIndex((uint32_t)x, (uint32_t)y, pw) * 4u;
-            if (t[0] != 0) {
-                continue;
-            }
-            uint32_t sum[3] = {0, 0, 0};
-            uint32_t n = 0;
-            for (int32_t dy = -1; dy <= 1; dy++) {
-                for (int32_t dx = -1; dx <= 1; dx++) {
-                    const int32_t nx = x + dx;
-                    const int32_t ny = y + dy;
-                    if ((dx == 0 && dy == 0) || nx < 0 || ny < 0 || nx >= width || ny >= height) {
-                        continue;
+    //
+    // TILE-STAGED. The per-texel form scattered up to nine Morton lookups and a
+    // cache miss apiece over the whole buffer; measured 2026-11-22 on
+    // old3ds-lan167 (L2 off): 348 ms for a 1024x256 sky. Staging each 8x8
+    // tile's 10x10 neighbourhood turns a fully transparent tile's 576 lookups
+    // into 100 and makes every neighbour read local. The stage is filled before
+    // the tile's writes, and writes never change an alpha -- so a texel written
+    // by an earlier tile still reads as alpha-0 here exactly as it did reading
+    // `tiled` live. Same sources, same means, same slots.
+    if (realHasTransparent) {
+        // The mean without a divide: the ARM11 has no integer divide, and this
+        // can run mid-frame when an evicted texture is made again (06_draw.inc).
+        // ceil(65536 / n) is exact here: a sum is at most 8 * 255, so the
+        // product's error stays below 0.03 and no mean's fraction (at most
+        // 6/7) is pushed over an integer.
+        static const uint32_t kReciprocal[9] = {0, 65536, 32768, 21846, 16384,
+                                                13108, 10923, 9363, 8192};
+        for (int32_t ty = 0; ty < height; ty += 8) {
+            for (int32_t tx = 0; tx < width; tx += 8) {
+                uint8_t stage[10][10][4];
+                for (int32_t sy = 0; sy < 10; sy++) {
+                    const int32_t gy = ty - 1 + sy;
+                    for (int32_t sx = 0; sx < 10; sx++) {
+                        const int32_t gx = tx - 1 + sx;
+                        if (gx < 0 || gy < 0 || gx >= width || gy >= height) {
+                            memset(stage[sy][sx], 0, 4);  // never a source
+                            continue;
+                        }
+                        memcpy(stage[sy][sx],
+                               tiled + textureTexelIndex((uint32_t)gx, (uint32_t)gy, pw) * 4u, 4);
                     }
-                    const uint8_t* s =
-                        tiled + textureTexelIndex((uint32_t)nx, (uint32_t)ny, pw) * 4u;
-                    if (s[0] == 0) {
-                        continue;
+                }
+                for (int32_t ly = 0; ly < 8; ly++) {
+                    for (int32_t lx = 0; lx < 8; lx++) {
+                        const int32_t gx = tx + lx;
+                        const int32_t gy = ty + ly;
+                        if (gx >= width || gy >= height) {
+                            continue;
+                        }
+                        const uint8_t* self = stage[ly + 1][lx + 1];
+                        if (self[0] != 0) {
+                            continue;
+                        }
+                        uint32_t sum[3] = {0, 0, 0};
+                        uint32_t n = 0;
+                        for (int32_t dy = -1; dy <= 1; dy++) {
+                            for (int32_t dx = -1; dx <= 1; dx++) {
+                                if (dx == 0 && dy == 0) {
+                                    continue;
+                                }
+                                const uint8_t* s = stage[ly + 1 + dy][lx + 1 + dx];
+                                if (s[0] == 0) {
+                                    continue;
+                                }
+                                sum[0] += s[1];
+                                sum[1] += s[2];
+                                sum[2] += s[3];
+                                n++;
+                            }
+                        }
+                        if (n == 0) {
+                            continue;
+                        }
+                        const uint32_t k = kReciprocal[n];
+                        uint8_t* t =
+                            tiled + textureTexelIndex((uint32_t)gx, (uint32_t)gy, pw) * 4u;
+                        t[1] = (uint8_t)((sum[0] * k) >> 16);
+                        t[2] = (uint8_t)((sum[1] * k) >> 16);
+                        t[3] = (uint8_t)((sum[2] * k) >> 16);
                     }
-                    sum[0] += s[1];
-                    sum[1] += s[2];
-                    sum[2] += s[3];
-                    n++;
                 }
             }
-            if (n == 0) {
-                continue;
-            }
-            // The mean without a divide: the ARM11 has no integer divide, and this
-            // can run mid-frame when an evicted texture is made again (06_draw.inc).
-            // ceil(65536 / n) is exact here: a sum is at most 8 * 255, so the
-            // product's error stays below 0.03 and no mean's fraction (at most
-            // 6/7) is pushed over an integer.
-            static const uint32_t kReciprocal[9] = {0, 65536, 32768, 21846, 16384,
-                                                    13108, 10923, 9363, 8192};
-            const uint32_t k = kReciprocal[n];
-            t[1] = (uint8_t)((sum[0] * k) >> 16);
-            t[2] = (uint8_t)((sum[1] * k) >> 16);
-            t[3] = (uint8_t)((sum[2] * k) >> 16);
         }
     }
     // (2) the clamp, one texel into the padding on each padded axis: the column
@@ -410,6 +442,14 @@ int32_t mipLevelsFor(int32_t paddedWidth, int32_t paddedHeight) {
     return levels;
 }
 
+// Inverse of morton8InTile: slot m -> (x, y) within the 8x8 tile.
+static const uint8_t kMortonInvX[64] = {
+    0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4, 5, 6, 7, 6, 7, 4, 5, 4, 5, 6, 7, 6, 7,
+    0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4, 5, 6, 7, 6, 7, 4, 5, 4, 5, 6, 7, 6, 7};
+static const uint8_t kMortonInvY[64] = {
+    0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3, 0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3,
+    4, 4, 5, 5, 4, 4, 5, 5, 6, 6, 7, 7, 6, 6, 7, 7, 4, 4, 5, 5, 4, 4, 5, 5, 6, 6, 7, 7, 6, 6, 7, 7};
+
 void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t* dst) {
     if (!src || !dst || width < 16 || height < 16) {
         return;
@@ -417,15 +457,38 @@ void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t*
     const uint32_t sw = (uint32_t)width;
     const uint32_t dw = sw >> 1;
     const uint32_t dh = (uint32_t)height >> 1;
-    for (uint32_t y = 0; y < dh; y++) {
-        for (uint32_t x = 0; x < dw; x++) {
-            const uint8_t* a = src + textureTexelIndex(2 * x, 2 * y, sw) * 4u;
-            const uint8_t* b = src + textureTexelIndex(2 * x + 1, 2 * y, sw) * 4u;
-            const uint8_t* c = src + textureTexelIndex(2 * x, 2 * y + 1, sw) * 4u;
-            const uint8_t* d = src + textureTexelIndex(2 * x + 1, 2 * y + 1, sw) * 4u;
-            uint8_t* out = dst + textureTexelIndex(x, y, dw) * 4u;
-            for (int32_t k = 0; k < 4; k++) {
-                out[k] = (uint8_t)(((uint32_t)a[k] + b[k] + c[k] + d[k] + 2u) >> 2);
+    // TILE-SEQUENTIAL, AND THAT IS THE WHOLE POINT. The 2x2 block an output
+    // texel averages is four CONSECUTIVE slots of one source tile --
+    // morton(2u,2v) = morton(u,v)<<2, and +1/+2/+3 are the odd partners -- so
+    // walking output tiles in order makes both sides sequential: 64 contiguous
+    // 16-byte source reads, 64 contiguous output words. The per-texel form
+    // scattered five Morton lookups and a cache miss apiece over the whole
+    // level; measured 2026-11-22 on old3ds-lan167 (L2 off): 157 ms for a
+    // 1024x256 level 0, ~480 cycles an output texel. Same texels, same mean,
+    // same slots -- a walk order, not a formula change.
+    const uint32_t srcTilesPerRow = sw >> 3;
+    const uint32_t dstTilesPerRow = dw >> 3;
+    for (uint32_t oty = 0; oty < dh; oty += 8u) {
+        for (uint32_t otx = 0; otx < dw; otx += 8u) {
+            uint8_t* out =
+                dst + ((size_t)((oty >> 3) * dstTilesPerRow + (otx >> 3))) * 256u;
+            // Source tile of slot m: the output tile's 16x16 source region
+            // starts at source tile (2*otxTile, 2*otyTile) = (otx>>2, oty>>2);
+            // the high bits of lx/ly pick which of those four tiles slot m's
+            // block lives in, and the low 4 Morton bits, shifted up two, are
+            // the block's first slot within it.
+            const size_t srcBase =
+                (size_t)(oty >> 2) * srcTilesPerRow + (size_t)(otx >> 2);
+            for (uint32_t m = 0; m < 64u; m++) {
+                const size_t s =
+                    (srcBase + (size_t)(kMortonInvY[m] >> 2) * srcTilesPerRow +
+                     (size_t)(kMortonInvX[m] >> 2)) * 256u +
+                    ((size_t)(m & 0xFu) << 4);
+                const uint8_t* p = src + s;
+                for (int32_t k = 0; k < 4; k++) {
+                    out[m * 4 + k] = (uint8_t)(((uint32_t)p[k] + p[4 + k] + p[8 + k] +
+                                                p[12 + k] + 2u) >> 2);
+                }
             }
         }
     }
