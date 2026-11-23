@@ -160,6 +160,10 @@ Campaign update 2 (same day):
   is the same class in `EffectsView::build`.
 - Frame-795-style spikes remaining on the walk route are load-time
   only (frames 1–650: object/effect texture makes at first use).
+- Flush-removal visual proof: `hw_cycle --capture` at frame 800
+  (`/tmp/kilo/noflush-cap.log.bmp`, 400x240, 14,185 distinct colours)
+  shows Kurt and the DANT canyon textured and lit as expected with
+  the flush gone — dynamic-mesh objects render on real hardware.
 
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's
