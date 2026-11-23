@@ -1700,6 +1700,28 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // C3D_FrameEnd is the ONLY present path. It triggers the auto display
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);
+#ifdef MDK_HW_PROFILE
+    // The GPU's own account of the frame just submitted (citro3d's PICA
+    // timestamps): the port has never measured GPU time -- every span in
+    // the profile table is CPU. Sampled, not logged, here; the harness
+    // window at frame 300 boundaries prints the mean.
+    {
+        static float gpuDrawSum = 0.0f;
+        static float gpuProcSum = 0.0f;
+        static int32_t gpuSamples = 0;
+        gpuDrawSum += C3D_GetDrawingTime();
+        gpuProcSum += C3D_GetProcessingTime();
+        gpuSamples++;
+        if ((r->frame % 300) == 0 && gpuSamples > 0) {
+            mdk::log3dsPrintf("gputime: frame %d mean drawing %.2f processing %.2f ms over %d frames",
+                              (int)r->frame, (double)(gpuDrawSum / (float)gpuSamples),
+                              (double)(gpuProcSum / (float)gpuSamples), (int)gpuSamples);
+            gpuDrawSum = 0.0f;
+            gpuProcSum = 0.0f;
+            gpuSamples = 0;
+        }
+    }
+#endif
     r->inFrame = false;
     // THE NATIVE WRITES, SEEN ON THE REAL PASS, ONCE. testNativeShadowWrites
     // decides from 8x8 quads; the emulator's native writes pass that and land
