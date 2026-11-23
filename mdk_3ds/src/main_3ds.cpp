@@ -204,9 +204,10 @@ bool saveConfigNow() {
 // writes through a static FILE buffer, not newlib's heap).
 static uint32_t g_heapPeak = 0;
 
-#if defined(MDK_AUTOQUIT) && (defined(MDK_HW_GIVE) || defined(MDK_HW_RIDE) || defined(MDK_HW_AIM))
+#if defined(MDK_AUTOQUIT) && \
+    (defined(MDK_HW_GIVE) || defined(MDK_HW_RIDE) || defined(MDK_HW_AIM) || defined(MDK_HW_UNLOCK))
 #define MDK_HW_AIDS 1
-// The set pieces' test aids' lines (game/harness_aids.h: GIVE=, RIDE=, AIM=).
+// The set pieces' test aids' lines (game/harness_aids.h: GIVE=, RIDE=, AIM=, UNLOCK=).
 static void printHarnessAid(const char* line) {
     mdk::log3dsPrintf("%s", line);
 }
@@ -835,10 +836,16 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("main: harness aids AIM=%s REFUSED: %s", MDK_HW_AIM, why.c_str());
         }
 #endif
-        mdk::log3dsPrintf("main: harness aids: %d pickups, ride %s, aim %s",
+#if defined(MDK_HW_UNLOCK)
+        if (!mdk::parseHarnessUnlock(MDK_HW_UNLOCK, &harnessAids.unlocks, &why)) {
+            mdk::log3dsPrintf("main: harness aids UNLOCK=%s REFUSED: %s", MDK_HW_UNLOCK,
+                              why.c_str());
+        }
+#endif
+        mdk::log3dsPrintf("main: harness aids: %d pickups, ride %s, aim %s, %d unlock step(s)",
                           (int)harnessAids.gives.size(),
                           harnessAids.ride.empty() ? "-" : harnessAids.ride.c_str(),
-                          harnessAids.aim ? "yes" : "-");
+                          harnessAids.aim ? "yes" : "-", (int)harnessAids.unlocks.size());
     }
 #endif
 

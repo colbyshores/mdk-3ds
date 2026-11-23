@@ -21,6 +21,11 @@
 //                               the first time he snipes (entering the scope
 //                               resets its pitch): a shot that does not depend on
 //                               turns rounded through the trig table.
+//   UNLOCK=step[,step...]       at each listed step, every live door's lock bit
+//                               clears (the corridor probe's `unlock:`). A locked
+//                               door is solid in the C# and stops a scripted walk,
+//                               so a route over a locked doorway names the steps
+//                               it frees the doors at.
 //
 // Every aid is the run's FIRST level's only, as the C#'s test options are
 // (Game.cs:487). Nothing here runs unless a frontend asks.
@@ -45,14 +50,16 @@ struct HarnessAids {
     bool aim = false;
     float aimYaw = 0.0f;
     float aimPitch = 0.0f;
+    std::vector<int> unlocks;
 
     // The run's state.
     float rideTime = 0.0f;
     bool rideDone = false;
     bool rideCalled = false;
     bool scopeAimed = false;
+    int stepsTaken = 0;
 
-    bool any() const { return !gives.empty() || !ride.empty() || aim; }
+    bool any() const { return !gives.empty() || !ride.empty() || aim || !unlocks.empty(); }
 };
 
 // GIVE's list: comma-separated pickup models. False (and why) when empty or
@@ -62,6 +69,8 @@ bool parseHarnessGive(const char* text, std::vector<std::string>* out, std::stri
 bool parseHarnessRide(const char* text, std::string* out, std::string* why);
 // AIM's "yaw,pitch" in degrees (the scope's pitch is clamped to its limit).
 bool parseHarnessAim(const char* text, float* yaw, float* pitch, std::string* why);
+// UNLOCK's comma-separated step numbers (1-based, as the corridor probe's steps).
+bool parseHarnessUnlock(const char* text, std::vector<int>* out, std::string* why);
 
 // What the aids print (the frontend's log line).
 typedef void (*HarnessPrint)(const char* line);

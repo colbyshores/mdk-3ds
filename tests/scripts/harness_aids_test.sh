@@ -13,6 +13,10 @@
 #      plays the strike scene (golden/L5_strike_gunter.txt's aim, here at spawn).
 #   4. THE HOLES. L8 GUNT_10, --aim at XGUNTAM (golden/L8_holes_guntam.txt's first aim):
 #      the scope set exactly, the shot fired.
+#   5. THE LOCKED DOOR. L7 at the corridor door, a scripted walk into it: without
+#      --unlock the locked X7DOOR is solid and stops Kurt at y=478.4 (the C#'s
+#      SolidsWithin); with --unlock=200 the lock clears on schedule and the same
+#      walk crosses into CDANT_1 -- the corridor probe's `unlock:` as a harness aid.
 #
 #   usage: sh tests/scripts/harness_aids_test.sh [repo-root]
 #
@@ -89,8 +93,24 @@ has "$WORK/holes.log" holes \
     "harness: AIM the scope at yaw 123.802 pitch -26.158" \
     "segment 2 fire@190-200 starts"
 
+# The locked door stops the walk at the door (the C#'s solid locked door), and the
+# unlock on the schedule lets the SAME walk through. The frames and the crossing
+# are the level 7 two-doorway route's (mdk_3ds/Makefile, the arena-entry table).
+run "$WORK/door_locked.log" --level=7 --at=0,380,15,90 \
+    --walk='forward+turbo@60-260' --frames 300
+has "$WORK/door_locked.log" door-locked \
+    "feet (-0.0,478.4,15.0) yaw 90.0 arena DANT_1"
+grep -qF -- "arena DANT_1 -> CDANT_1" "$WORK/door_locked.log" &&
+    bad "door-locked: the locked door let Kurt through"
+
+run "$WORK/door_unlocked.log" --level=7 --at=0,380,15,90 --unlock=200 \
+    --walk='forward+turbo@60-260' --frames 300
+has "$WORK/door_unlocked.log" door-unlocked \
+    "harness: UNLOCK step 200: 1 locked door(s) freed" \
+    "arena DANT_1 -> CDANT_1 (second DANT_1 active)"
+
 if [ "$fail" -ne 0 ]; then
     echo "FAIL HarnessAids ($fail check(s))"
     exit 1
 fi
-echo "PASS HarnessAids (--ride mounts the XD2 by RideWalker and the XE after the C#'s call; --give puts Bones in at spawn and --aim's scope plays the strike; --aim sets the scope at XGUNTAM)"
+echo "PASS HarnessAids (--ride mounts the XD2 by RideWalker and the XE after the C#'s call; --give puts Bones in at spawn and --aim's scope plays the strike; --aim sets the scope at XGUNTAM; --unlock frees the corridor's locked door on schedule)"
