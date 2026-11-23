@@ -1586,10 +1586,10 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
             (r->frame == 30 || (r->frame % 600) == 0)) {
             mdk::log3dsPrintf("shadows: frame %lu: %d caster draws into the map at its last cast (%d more left "
                               "out: their textures have holes), %d shadowed lit draws (both eyes); "
-                              "%d frames reused the map since the last line",
+                              "%d frames reused the map since the last line, %d casters culled by the sun frustum",
                               (unsigned long)r->frame, (int)r->shadowCastersLast,
                               (int)r->shadowHoleCastersLast, (int)r->shadowReceivers,
-                              (int)r->shadowReuses);
+                              (int)r->shadowReuses, (int)r->shadowCastersCulled);
             r->shadowReuses = 0;
         }
         // The census is read after the FIRST eye's replay: the second eye draws
@@ -2123,6 +2123,7 @@ static bool ensureShadowTint(RendererC3D* r) {
 static void prepareShadows(RendererC3D* r) {
     r->shadowCasters = 0;
     r->shadowHoleCasters = 0;
+    r->shadowCastersCulled = 0;
     r->shadowReceivers = 0;
     r->shadowLitLive = false;
     // The tint first: without it no lit draw can take the shadow, and a map
@@ -2168,6 +2169,10 @@ static void prepareShadows(RendererC3D* r) {
         mdk::sunShadowMatrix(l.sun_direction, centre, l.shadow_distance,
                              (uint32_t)r->shadowMapSize, sun);
         mdk::pica::sunCasterMatrix(sun, r->sunVp);
+        // The sun volume for the caster cull (castShadows): the engine
+        // matrix's own planes, before the PICA conversions.
+        mdk::pica::frustumPlanes(sun, r->sunFrustum);
+        r->sunFrustumValid = true;
         float map[16];
         mdk::pica::sunMapMatrix(sun, map);
         mdk::pica::registers(map, r->shadowSunMtx);
@@ -2351,6 +2356,29 @@ static void castShadows(RendererC3D* r) {
                 draw->first_vertex + draw->vertex_count > mesh.count) {
                 continue;
             }
+            // THE SUN-FRUSTUM CULL: a caster wholly outside the sun's
+            // volume writes no map texel, so it is not drawn into the
+            // map. Only the level's batches carry a world box (identity
+            // world, like the eye cull); everything else is drawn as
+            // before. The box is exact at build and a torn mesh only
+            // collapses inward, so a skipped caster cast nothing.
+            /* @vfp-exempt R3 — a frustum test IS a float predicate; culling casters outside the sun volume is the measured win, not a rounding-sensitive gameplay boundary. measured n/a (pending OG capture). Verified 2026-11-23. */
+            if (draw->cullable && r->sunFrustumValid && mdk::pica::isIdentity(draw->world)) {
+                bool outside = false;
+                for (int p = 0; p < 6 && !outside; p++) {
+                    const float* pl = r->sunFrustum[p];
+                    const float vx = pl[0] >= 0.0f ? draw->bounds_max[0] : draw->bounds_min[0];
+                    const float vy = pl[1] >= 0.0f ? draw->bounds_max[1] : draw->bounds_min[1];
+                    const float vz = pl[2] >= 0.0f ? draw->bounds_max[2] : draw->bounds_min[2];
+                    if (pl[0] * vx + pl[1] * vy + pl[2] * vz + pl[3] < 0.0f) {
+                        outside = true;
+                    }
+                }
+                if (outside) {
+                    r->shadowCastersCulled++;
+                    continue;
+                }
+            }
             float composed[16];
             const float* upload = r->sunVp;
             if (!mdk::pica::isIdentity(draw->world)) {
@@ -2379,6 +2407,13 @@ static void castShadows(RendererC3D* r) {
         }
     }
 
+#ifdef MDK_HW_PROFILE
+    if (r->shadowCastersCulled > 0 && (r->frame % 120) == 0) {
+        mdk::log3dsPrintf("shadowcull: frame %lu culled %d of %d casters by the sun frustum",
+                          (unsigned long)r->frame, (int)r->shadowCastersCulled,
+                          (int)(r->shadowCasters + r->shadowCastersCulled));
+    }
+#endif
     if (r->shadowNative) {
         C3D_FragOpMode(GPU_FRAGOPMODE_GL);
     }

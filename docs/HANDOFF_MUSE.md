@@ -195,6 +195,12 @@ Campaign update 2 (same day):
   3.9/3.5/3.3 → 3.7/3.6/3.0 ms. The remaining ~3.3 ms is per-effect
   quad/batch layout from the C# design; a deeper cut needs the
   build's per-effect breakdown, not another memo.
+- Shadow caster sun-frustum cull: correct (host test pins the sun
+  planes' near/far/side read) and kept, but **neutral on level 7**
+  — the sun's 300-unit box covers the arena, so 0 casters cull
+  (`shadowcull:` PROFILE line never fired). It costs six plane
+  tests per caster per recast and protects larger arenas (level
+  8's GUNT spans past one sun box); do not expect a level-7 gain.
 
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's

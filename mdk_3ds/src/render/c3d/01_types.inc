@@ -765,6 +765,9 @@ struct RendererC3D {
     bool shadowRefused = false;     // they could not be: off for the session
     bool shadowLive = false;        // decided once per frame (prepareShadows)
     float sunVp[16] = {};           // world -> the caster pass's clip (pica::sunCasterMatrix)
+    float sunFrustum[6][4] = {};    // the sun volume's planes (engine VP, prepareShadows)
+    bool sunFrustumValid = false;
+    int32_t shadowCastersCulled = 0;   // casters the sun-frustum test skipped this cast
     // THE MAP'S CACHE (config shadowMapRefresh): the map is redrawn every few
     // frames, and between redraws the receivers keep the matrices it was cast
     // with (sunVp, shadowSunMtx), so a reused map stays where the world is.

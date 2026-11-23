@@ -1829,6 +1829,30 @@ void testTheSunsShadow() {
     mdk::pica::sunMapMatrix(pc, map);
     float mapRegisters[16];
     mdk::pica::registers(map, mapRegisters);
+
+    // The caster cull's planes (frustumPlanes on the engine sun matrix):
+    // the centre is inside all six, a point past the far reach and one
+    // past a side are outside -- the near/far read in the [0,1] depth
+    // the ortho above emits.
+    {
+        float planes[6][4];
+        mdk::pica::frustumPlanes(pc, planes);
+        const auto inside = [&](float x, float y, float z) {
+            for (int p = 0; p < 6; p++) {
+                if (planes[p][0] * x + planes[p][1] * y + planes[p][2] * z + planes[p][3] < 0.0f) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        PICA_CHECK(inside(centre.x, centre.y, centre.z));
+        const float along = 9000.0f;   // past the 4000 reach, either way
+        PICA_CHECK(!inside(centre.x + sun.x * along, centre.y + sun.y * along,
+                           centre.z + sun.z * along));
+        PICA_CHECK(!inside(centre.x - sun.x * along, centre.y - sun.y * along,
+                           centre.z - sun.z * along));
+        PICA_CHECK(!inside(centre.x + 900.0f, centre.y, centre.z));
+    }
     const float points[5][3] = {{12.0f, 500.0f, 150.0f},   // the centre
                                 {100.0f, 600.0f, 100.0f},
                                 {-200.0f, 400.0f, 200.0f},
