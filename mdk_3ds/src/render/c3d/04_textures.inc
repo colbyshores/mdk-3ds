@@ -445,6 +445,7 @@ static void dropExpansion(C3dTexture& texture) {
     texture.expandSawTransparent = false;
     texture.expandLevels = 0;
     texture.expandFormat = mdk::pica::TexelFormat::Rgba8;
+    texture.stalePending = false;
 }
 
 // Simultaneous chunked expansions each hold a full RGBA8 chain in the
@@ -583,6 +584,15 @@ static bool advanceExpansionSteps(RendererC3D* renderer, C3dTexture& texture, bo
                 // The finished buffer stays on the texture as a preset;
                 // makeTextureNow consumes (and frees) it in its upload.
                 texture.expandPending = false;
+                if (texture.stalePending) {
+                    // The old copy drew until now (a frame boundary, so
+                    // the GPU is done with it): swap it for the new one.
+                    texture.stalePending = false;
+                    if (texture.valid) {
+                        C3D_TexDelete(&texture.tex);
+                        texture.valid = false;
+                    }
+                }
                 const bool made = makeTextureNow(renderer, texture, false);
                 if (!made) {
                     dropExpansion(texture);
@@ -611,6 +621,19 @@ static bool advanceExpansion(RendererC3D* renderer, C3dTexture& texture, bool fi
 #else
     return advanceExpansionSteps(renderer, texture, finishAll);
 #endif
+}
+
+// The stale re-make's chunked start (03_frame.inc's settle): same
+// candidate rule as a first make, forced past the pending cap -- the old
+// copy is already deleted, so deferring the start would leave the surface
+// untextured until a draw finishes it whole anyway.
+static bool startStaleExpansion(RendererC3D* renderer, C3dTexture& texture) {
+    if (!texture.indexed || texture.compressed || texture.streamed ||
+        texture.realWidth <= 0 || texture.realHeight <= 0 ||
+        (size_t)texture.realWidth * (size_t)texture.realHeight < kChunkMinTexels) {
+        return false;
+    }
+    return startExpansion(renderer, texture, true) > 0;
 }
 
 // The frame-boundary pump: one step per pending expansion per frame, after
@@ -743,6 +766,16 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
         return false;
     }
 #ifdef MDK_HW_PROFILE
+    if (!prepacked && texture.indexed &&
+        (size_t)texture.realWidth * (size_t)texture.realHeight >= kChunkMinTexels) {
+        // A large texture expanded whole, in one call: who asked, and in
+        // what state (the DANT_2 entry's 320 ms re-make hunt).
+        mdk::log3dsPrintf("texsync: %dx%d frame %d stale=%d restamped=%d streamed=%d "
+                          "keepRgba8=%d hd=%d",
+                          (int)texture.realWidth, (int)texture.realHeight, (int)renderer->frame,
+                          (int)texture.stale, (int)texture.restamped, (int)texture.streamed,
+                          (int)texture.keepRgba8, (int)texture.hdCopy);
+    }
     const uint64_t texT1 = svcGetSystemTick();
 #endif
     // THE STORE (EnhancedToggles::texture16): RGBA8, or 16 bits a texel -- RGB565

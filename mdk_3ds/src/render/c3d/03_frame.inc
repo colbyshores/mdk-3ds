@@ -65,6 +65,9 @@ static uint32_t renderDebugFlags() {
 }
 
 static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnostics);
+// Starts a large stale texture's re-make in slices instead of whole
+// (04_textures.inc); false when the texture is not a chunked candidate.
+static bool startStaleExpansion(RendererC3D* renderer, C3dTexture& texture);
 
 // The HD stream's entry points (04_textures.inc, THE HD STREAM), declared here
 // because the frame boundary calls them before they are defined.
@@ -108,6 +111,19 @@ static void settleDeferredTextures(RendererC3D* renderer) {
             continue;
         }
         texture.stale = false;
+        // A large stale re-make in slices, not whole at this boundary
+        // (measured: a 1024x256 canvas-pinned texture re-expanded for
+        // 320 ms at the DANT_2 entry, then finished whole by its own
+        // draw when the copy was deleted first). The old copy keeps
+        // drawing while the new one expands; the finish swaps it at a
+        // frame boundary (advanceExpansion). Until then the surface
+        // shows its 16-bit copy -- the transient the canvas pin already
+        // accepts for one frame, stretched over the expansion.
+        if (!texture.source.empty() && startStaleExpansion(renderer, texture)) {
+            texture.stalePending = true;
+            texture.lastUsed = ++renderer->drawCounter;
+            continue;
+        }
         if (texture.valid) {
             C3D_TexDelete(&texture.tex);
             texture.valid = false;

@@ -109,6 +109,31 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
     return id;
 }
 
+void mdk_render_prepare_texture(MdkRenderer r, MdkTextureId t) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || !renderer->ready || t < 0 || (size_t)t >= renderer->textures.size()) {
+        return;
+    }
+    C3dTexture& texture = renderer->textures[(size_t)t];
+    // An evicted large indexed texture is re-expanded in slices from here
+    // (the frame pump advances it); anything else is either resident,
+    // already in flight, or cheap enough to make at its draw as before.
+    // (Eviction is exactly this state: valid=false, source kept -- stale
+    // and restamped are the canvas/bullet-hole remakes, settled elsewhere.)
+    if (texture.valid || texture.expandPending || texture.expandPixels || texture.expandWanted ||
+        texture.source.empty() || !texture.indexed || texture.compressed || texture.streamed ||
+        texture.stale || texture.restamped || texture.releasePending ||
+        texture.realWidth <= 0 || texture.realHeight <= 0) {
+        return;
+    }
+    if ((size_t)texture.realWidth * (size_t)texture.realHeight < kChunkMinTexels) {
+        return;
+    }
+    if (startExpansion(renderer, texture, false) < 0) {
+        texture.expandWanted = true;
+    }
+}
+
 MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !px) {

@@ -109,6 +109,12 @@ public:
     // of it in a second view is how the two trees drift.
     MdkTextureId surfaceId(const Surface& surface, const formats::Palette* palette);
 
+    // surfaceId, plus asking the backend to have the copy ready before a
+    // draw needs it (render.h mdk_render_prepare_texture): the pump's way
+    // of saying a resident arena's large textures should not be re-made in
+    // the frame that first draws them again after an eviction.
+    MdkTextureId prepare(const Surface& surface, const formats::Palette* palette);
+
     // Release everything made through `palette`: its textures, their mod
     // replacements' bookkeeping, and the palette itself. An arena that is no
     // longer on the GPU gives its colours back this way (game/arena_views.h); a

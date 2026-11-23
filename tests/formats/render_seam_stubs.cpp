@@ -49,6 +49,8 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t, int32_t, cons
     return 0;
 }
 
+void mdk_render_prepare_texture(MdkRenderer, MdkTextureId) {}
+
 void mdk_render_release_texture(MdkRenderer, MdkTextureId) {
     mdk_test_texturesReleased++;
 }

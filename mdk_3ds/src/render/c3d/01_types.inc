@@ -259,6 +259,9 @@ struct C3dTexture {
     // picture is never wrong, only early.
     bool expandPending = false;
     bool expandWanted = false;   // chunked start deferred by the pending cap
+    // A stale re-make expanding in slices while the OLD copy still draws
+    // (valid stays true): the finish swaps the copy at a frame boundary.
+    bool stalePending = false;
     uint8_t* expandPixels = nullptr;
     int32_t expandRow = 0;
     int32_t expandStage = 0;

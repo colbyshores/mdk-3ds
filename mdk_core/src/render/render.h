@@ -145,6 +145,14 @@ mdk::MdkCapabilities mdk_render_capabilities(MdkRenderer r);
 MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t width, int32_t height,
                                               const uint8_t* indices, const uint8_t* paletteRgba);
 
+// Ask the backend to have a texture's GPU copy ready before it is drawn.
+// On the 3DS a large indexed texture whose copy was evicted is re-expanded
+// in slices across frames once prepared (its draw finishes the make
+// synchronously if it comes first, so the picture is never wrong); a
+// backend whose textures are resident at creation has nothing to do.
+// Preparing an already-resident texture is a no-op.
+void mdk_render_prepare_texture(MdkRenderer r, MdkTextureId texture);
+
 // Create an RGBA8 texture (the enhanced look's expanded colour textures, the
 // canvas's images, the panorama).
 //

@@ -32,7 +32,7 @@ static void startLargeSurfaces(const ArenaScene& scene, SurfaceCache* surfaces,
                                const formats::Palette* palette) {
     for (size_t i = 0; i < scene.batches.size(); i++) {
         if (surfaceTexels(scene.batches[i]) >= kLargeSurfaceTexels) {
-            surfaces->surfaceId(scene.batches[i].surface, palette);
+            surfaces->prepare(scene.batches[i].surface, palette);
         }
     }
 }
@@ -103,10 +103,16 @@ int32_t LevelView::pumpSurfaces(int32_t budget) {
     // list) was first asked for by its own draw and made in that frame
     // (77 ms). A texture of 32768+ texels is the expensive kind (the 3DS
     // backend expands those in slices across frames once started), so the
-    // scan starts them within the same budget before the sequential walk
-    // spends it on cheap ones. The scan itself is one pass over the batch
-    // list across all calls; it makes nothing.
-    while (pumped < budget && pumpLargeAt_ < scene_.batches.size()) {
+    // scan starts them ahead of the sequential walk. The scan itself is
+    // one pass over the batch list across all calls; it makes nothing.
+    // The scan's prepares do NOT spend the caller's budget: a resident
+    // copy's prepare is a backend no-op, and counting it starved the
+    // second arena's scan behind the current arena's re-prepares
+    // (measured: the DANT_2 entry re-make survived two fix rounds that
+    // way). The scan is bounded by its own per-call limit instead; the
+    // sequential walk below keeps the budget for actual makes.
+    int32_t largePrepared = 0;
+    while (largePrepared < budget && pumpLargeAt_ < scene_.batches.size()) {
         const ArenaBatch& batch = scene_.batches[pumpLargeAt_++];
         if (surfaceTexels(batch) < kLargeSurfaceTexels) {
             continue;
@@ -116,10 +122,22 @@ int32_t LevelView::pumpSurfaces(int32_t budget) {
         // exactly the surfaces this scan exists for to their first draw.
         // The cost of a never-shown start is bounded by the backend's
         // pending-expansion cap; the sequential walk below keeps its skip.
-        surfaces_->surfaceId(batch.surface, palette_);
-        pumped++;
+        // prepare, not just surfaceId: a large copy evicted while its arena
+        // sat resident is re-expanded in slices from here, not in the frame
+        // that first draws it again (measured: 1024x256, 320 ms at the
+        // DANT_2 entry).
+        surfaces_->prepare(batch.surface, palette_);
+        largePrepared++;
     }
-    for (int32_t i = pumped; i < budget && pumpAt_ < scene_.batches.size(); i++) {
+    if (pumpLargeAt_ >= scene_.batches.size()) {
+        // The scan wraps: a large copy evicted while its arena sits
+        // resident is prepared again on the next pass, not re-made in the
+        // frame that first draws it again. The pass is one batch-list walk
+        // per (large count / budget) calls; prepares of resident copies
+        // are backend no-ops.
+        pumpLargeAt_ = 0;
+    }
+    for (int32_t i = 0; i < budget && pumpAt_ < scene_.batches.size(); i++) {
         const ArenaBatch& batch = scene_.batches[pumpAt_];
         // The same skip draw() makes: a group the scripts hid is not drawn, so
         // its texture is left to the frame that shows it again.
@@ -128,7 +146,11 @@ int32_t LevelView::pumpSurfaces(int32_t budget) {
             // again: a refused texture is CACHED as refused
             // (surface_cache.cpp), so pinning the cursor here would block every
             // batch behind it for the level's life.
-            surfaces_->surfaceId(batch.surface, palette_);
+            if (surfaceTexels(batch) >= kLargeSurfaceTexels) {
+                surfaces_->prepare(batch.surface, palette_);
+            } else {
+                surfaces_->surfaceId(batch.surface, palette_);
+            }
         }
         pumpAt_++;
         pumped++;

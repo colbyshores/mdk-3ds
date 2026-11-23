@@ -610,7 +610,7 @@ static mdk::Lighting cachedLighting(
 // one surface's texture, starting its make.
 static void startEffectSurface(void* user, const mdk::Surface& surface,
                                const mdk::formats::Palette* palette) {
-    static_cast<mdk::SurfaceCache*>(user)->surfaceId(surface, palette);
+    static_cast<mdk::SurfaceCache*>(user)->prepare(surface, palette);
 }
 
 int main(int argc, char** argv) {

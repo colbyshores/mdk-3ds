@@ -148,6 +148,14 @@ MdkTextureId SurfaceCache::flatColourId(const Colour& colour) {
     return id;
 }
 
+MdkTextureId SurfaceCache::prepare(const Surface& surface, const formats::Palette* palette) {
+    const MdkTextureId id = surfaceId(surface, palette);
+    if (id >= 0) {
+        mdk_render_prepare_texture(renderer_, id);
+    }
+    return id;
+}
+
 MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Palette* palette) {
     if (surface.texture == nullptr) {
         return flatColourId(surface.colour);

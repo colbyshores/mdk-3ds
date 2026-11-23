@@ -191,12 +191,28 @@ own cost.
    chain needs ~40 steps) can still finish in its draw if first asked
    late; eviction re-makes stay synchronous, as before. The pump already
    gives an unfinished view the whole budget (2/frame).
-3. **DANT_2 entry ~527 ms** (from the board/ledger, AT route): `draw 448 ms`
-   = arena GEOMETRY upload, not textures (orig pack + byname index already
-   killed the texture tax there: 788→88 ms). Plus the three PICA-refused
-   >1024 strips (`sl_big 64x1920`, `fire 64x2628`, `explode 128x3328`) have
-   no pack copy and expand at draw. Geometry upload is the next big item for
-   the DANT_2 side.
+3. **DANT_2 entry — re-measured 2026-11-23** (teleport route
+   `ARENA=CDANT_1 AT=0,650,15,90 WALK=forward+turbo@60-500 UNLOCK=200,300
+   HDROMFS=1`; the ledger's plain `AT=0,380,15,90` route leaves Kurt
+   standing in DANT_1 and never reaches DANT_2). Entry crossing itself is
+   now ~105 ms; the remaining spike is at entry+4 frames: a **1024x256
+   indexed texture re-expands synchronously for ~320 ms**
+   (`expandstage: main 17.6 filter 169.7 mip 92.4`). It was made at spawn
+   (ready frame 44), evicted while DANT_2 sat resident-but-undrawn
+   (linear free falls to ~1 MB in this route), and the first draw after
+   entry re-made it whole. The ledger's 448 ms geometry upload does not
+   reproduce as a per-entry cost in this route: view builds (2 views,
+   607 ms) happen once at the teleport spawn, and the walk route's pair
+   formation spreads them. Fix: `mdk_render_prepare_texture` seam +
+   `SurfaceCache::prepare` -- the pump/load/warm paths now prepare large
+   surfaces (not just ask for their ids), so an evicted large copy is
+   re-expanded in slices by the frame pump while its arena is resident;
+   the large scan wraps, and its prepares do not spend the sequential
+   pump budget (counting them starved the second arena's scan behind
+   the current arena's no-op re-prepares -- measured). The three
+   PICA-refused >1024 strips (`sl_big 64x1920`, `fire 64x2628`,
+   `explode 128x3328`) still expand at draw; they were not the measured
+   entry spike in this route.
 4. **Frame-771 stream-in 157 ms** — CDANT_1 geometry upload at pair
    formation; same class as (3), smaller.
 

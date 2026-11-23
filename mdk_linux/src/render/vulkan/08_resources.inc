@@ -261,6 +261,9 @@ void mdk_render_replace_image(MdkRenderer r_, MdkTextureId texture, MdkPaletteId
     registerReplacement(asVk(r_), texture, palette, 1, width, height, rgba, true);
 }
 
+// Textures are resident from creation on this backend: nothing to prepare.
+void mdk_render_prepare_texture(MdkRenderer, MdkTextureId) {}
+
 void mdk_render_release_texture(MdkRenderer r_, MdkTextureId t_) {
     RendererVk* r = asVk(r_);
     if (!r || t_ < 0 || t_ >= (int32_t)r->textures.size() || !r->textures[t_].used) {
