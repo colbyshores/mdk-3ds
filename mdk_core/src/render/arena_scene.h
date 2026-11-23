@@ -20,10 +20,13 @@
 // vertices would eventually draw a different picture, which the whole
 // design forbids (SPEC.md 5.3).
 //
-// THE BATCHES ARE CONTIGUOUS RUNS OF THE SAME MATERIAL VALUE. The C# sorts
-// the triangles by surface and by the depth layers, which needs the game's
-// state; the unsorted run is correct, just not optimally batched. The
-// sort lands with the game logic.
+// THE BATCHES ARE CONTIGUOUS RUNS OF THE SAME MATERIAL VALUE, IN THE C#'S
+// SORTED ORDER: the kept triangles are stably sorted by (group, material
+// value, depth layer) at build, so every run the builder emits is already
+// the merged batch a draw wants (the port's earlier unsorted emission was
+// correct, just not optimally batched: ~135 batches for an arena the
+// sorted build makes ~21 of). Stability keeps triangles equal on the
+// whole key in their original order, so a coplanar tie draws as before.
 // ============================================================================
 
 #include <stdint.h>

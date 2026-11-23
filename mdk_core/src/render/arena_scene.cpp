@@ -267,21 +267,73 @@ bool arenaSceneSkips(const formats::Arena* arena, int32_t triangle) {
             (arena->clipFlag() | formats::Arena::kGroupDisabled)) != 0;
 }
 
-bool arenaSceneTriangleFirsts(const formats::Arena* arena, std::vector<int32_t>* out) {
-    if (arena == nullptr || out == nullptr) {
-        return false;
-    }
-    // buildArenaScene pushes three vertices for every triangle it does not skip, in
-    // triangle order, so a triangle's first vertex is three times the count of the
-    // kept triangles before it.
-    out->assign((size_t)arena->triangleCount(), -1);
-    int32_t next = 0;
+// The emission order of a scene's kept triangles: a stable sort by
+// (group, material value, depth layer) -- the C#'s sort by surface and
+// layer (arena_scene.h), so triangles that share a batch's whole state are
+// contiguous and the run builder below merges them into one batch. Stable,
+// so triangles equal on the whole key keep their original order: a
+// coplanar tie between them draws as it did unsorted. Shared by the build
+// and the placements, so the two can never disagree about where a
+// triangle landed.
+struct TriangleOrder {
+    int32_t triangle = 0;
+    int32_t group = 0;
+    int32_t material = 0;
+    int32_t depthLayer = 0;
+};
+
+static std::vector<int32_t> sortedTriangleOrder(const formats::Arena* arena,
+                                                const std::vector<int32_t>& depthLayers) {
+    const std::vector<int32_t>& materials = arena->triangleMaterials();
+    const std::vector<uint32_t>& flags = arena->triangleFlags();
+    std::vector<TriangleOrder> kept;
+    kept.reserve((size_t)arena->triangleCount());
     for (int32_t t = 0; t < arena->triangleCount(); t++) {
         if (arenaSceneSkips(arena, t)) {
             continue;
         }
-        (*out)[(size_t)t] = next;
-        next += 3;
+        TriangleOrder entry;
+        entry.triangle = t;
+        entry.group = (int32_t)(flags[(size_t)t] >> 24);
+        int32_t groupMaterial = 0;
+        entry.material = arena->groupMaterial(entry.group, &groupMaterial)
+                             ? groupMaterial
+                             : materials[(size_t)t];
+        entry.depthLayer = (size_t)t < depthLayers.size() ? depthLayers[(size_t)t] : 0;
+        kept.push_back(entry);
+    }
+    std::stable_sort(kept.begin(), kept.end(), [](const TriangleOrder& a, const TriangleOrder& b) {
+        if (a.group != b.group) {
+            return a.group < b.group;
+        }
+        if (a.material != b.material) {
+            return a.material < b.material;
+        }
+        return a.depthLayer < b.depthLayer;
+    });
+    std::vector<int32_t> order;
+    order.reserve(kept.size());
+    for (size_t i = 0; i < kept.size(); i++) {
+        order.push_back(kept[i].triangle);
+    }
+    return order;
+}
+
+bool arenaSceneTriangleFirsts(const formats::Arena* arena, std::vector<int32_t>* out) {
+    if (arena == nullptr || out == nullptr) {
+        return false;
+    }
+    // buildArenaScene pushes three vertices for every triangle it does not
+    // skip, in the sorted order above, so a triangle's first vertex is three
+    // times its position in that order.
+    std::vector<int32_t> depthLayers;
+    if (!computeArenaDepthLayers(arena->vertices(), arena->triangleIndices(), &depthLayers)) {
+        return false;
+    }
+    const std::vector<int32_t> order = sortedTriangleOrder(arena, depthLayers);
+    out->assign((size_t)arena->triangleCount(), -1);
+    for (size_t i = 0; i < order.size(); i++) {
+        (*out)[(size_t)order[i]] = (int32_t)i * 3;
     }
     return true;
 }
@@ -348,7 +400,11 @@ bool buildArenaScene(const formats::Arena* arena,
     std::map<int32_t, float> scaleX;
     std::map<int32_t, float> scaleY;
 
-    for (int32_t t = 0; t < triangleCount; t++) {
+    // Emitted in the sorted order (see sortedTriangleOrder): same-state
+    // triangles are contiguous, so the runs below are the merged batches.
+    const std::vector<int32_t> order = sortedTriangleOrder(arena, depthLayers);
+    for (size_t oi = 0; oi < order.size(); oi++) {
+        const int32_t t = order[oi];
         // The C# LevelView.Build skips a triangle the arena's clip flag marks
         // (the 1996 demo's not-drawn triangles) or the Disabled flag marks
         // (the retail arena activation's, LevelView.cs:294).
