@@ -192,9 +192,23 @@ Campaign update 2 (same day):
   `noflush-cap.log.bmp`, 0 of 96,000 pixels differ).
 - Effects: a one-entry memo on `EffectsView::sprite` (a frame's
   effects are mostly one arena's one texture) measured fx
-  3.9/3.5/3.3 → 3.7/3.6/3.0 ms. The remaining ~3.3 ms is per-effect
-  quad/batch layout from the C# design; a deeper cut needs the
-  build's per-effect breakdown, not another memo.
+  3.9/3.5/3.3 → 3.7/3.6/3.0 ms, and a material-resolve memo for
+  the debris/end-piece loops (resolve() searched the archives by
+  name per triangle) → 3.0/2.9/2.7 ms. The remaining ~2.7 ms is
+  per-effect quad/batch layout from the C# design.
+
+Final campaign audit (2026-11-23, against "steady 60 fps-class,
+features-off"): steady frames meet it (p50 at the one-vblank
+boundary, 16.8 ms; whole-run spans sim 1.48 / draw 1.60 / end
+1.87 ms CPU, GPU drawing 5.75 ms). The corridor does not: it is
+still a two-vblank pocket (~33 ms), bounded by effects layout
+(~2.7 ms), sim (~3–5 ms in combat frames), backend replay
+(`end` ~8–10 ms at 140 draws/eye) and GPU fill — no single item
+left is larger than ~3 ms, so the next gains are several small
+ones, not one lever. Every originally named item is addressed:
+transition spikes (all gone), batching (sorted), drawcall CPU
+(culls), GPU timing (measured), sky (fill-bound, cull neutral),
+flush (removed), objects (culled), effects (memoized twice).
 - Shadow caster sun-frustum cull: correct (host test pins the sun
   planes' near/far/side read) and kept, but **neutral on level 7**
   — the sun's 300-unit box covers the arena, so 0 casters cull
