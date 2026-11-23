@@ -3413,6 +3413,17 @@ int main(int argc, char** argv) {
             }
 #endif
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
+#ifdef MDK_HW_PROFILE
+            // The draw span's two big items, sized (census frames of the
+            // level-7 walk): how much geometry the object and effects
+            // passes lay out in a corridor frame.
+            if (frame == 785 || frame == 805 || frame == 815) {
+                mdk::log3dsPrintf("drawcounts: frame %d objects %d corners %d draws, effects %d verts %d draws %d glows",
+                                  (int)frame, (int)objectCorners, (int)objectDraws,
+                                  (int)effectsFrame.vertices.size(), (int)effectsFrame.draws.size(),
+                                  (int)effectsFrame.glows.size());
+            }
+#endif
             if (mdk::log3dsPeriodic() && (frame % 300u) == 0u) {
                 mdk::log3dsPrintf("effects: frame %d: %d sprite effects, %d with a halo, %d not "
                                   "yet measured (pixels away)",

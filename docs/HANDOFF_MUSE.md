@@ -142,6 +142,25 @@ Campaign update 2026-11-23 (branch `perf/renderer-campaign`):
   agents ran on DeepSeek V4.1 Flash via `pi` instead (the validator's
   route), which is not session-model usage.
 
+Campaign update 2 (same day):
+- **Dynamic-mesh GSP flush removed** (`05_resources.inc`): measured
+  −0.65 ms in the object pass (4.6 → 3.95). `C3D_FrameEnd`'s
+  whole-linear-heap flush precedes queue execution, so the per-upload
+  flush the code's own follow-up wanted hardware evidence for is
+  redundant; objects/effects/Kurt all upload through this path.
+- **Corridor obj/fx attribution, corrected**: the drawsub `obj` field
+  is the whole object loop + draw (the harness reads the outer
+  `tLay`, so `lay` always reads 0). At frames 785–815, features-off:
+  objects = 3,417 corners / 38 draws; the mesh-update copy measures
+  0.02 ms/call (`meshupd:` PROFILE lines) and the draw records are
+  trivial, so obj's ~3.9 ms is `addObject`'s per-corner layout
+  (transform interpolation, posed-vertex copies) -- the next campaign
+  item, needing a per-corner cost cut (bulk corner writes), not more
+  attribution. Effects (~3.7 ms, ~850 verts / ~100 draws / ~95 glows)
+  is the same class in `EffectsView::build`.
+- Frame-795-style spikes remaining on the walk route are load-time
+  only (frames 1–650: object/effect texture makes at first use).
+
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's
 own cost.

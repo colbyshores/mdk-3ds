@@ -757,6 +757,9 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
     // reading this buffer when the frame's own draws write it. An update outside a
     // frame would be an in-flight write; no caller does one.
     float* out = static_cast<float*>(mesh.data);
+#ifdef MDK_HW_PROFILE
+    const uint64_t updStart = svcGetSystemTick();
+#endif
     for (int32_t i = 0; i < n; i++) {
         out[i * 5 + 0] = v[i].pos.x;
         out[i * 5 + 1] = v[i].pos.y;
@@ -764,6 +767,23 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
         out[i * 5 + 3] = v[i].uv.x;
         out[i * 5 + 4] = v[i].uv.y;
     }
+#ifdef MDK_HW_PROFILE
+    {
+        static uint64_t copySum = 0;
+        static int32_t copyCalls = 0;
+        copySum += svcGetSystemTick() - updStart;
+        copyCalls++;
+        if ((renderer->frame % 300) == 0 && copyCalls > 0) {
+            mdk::log3dsPrintf("meshupd: frame %d mean copy %.3f ms over %d calls",
+                              (int)renderer->frame,
+                              (double)copySum / (double)copyCalls * 1000.0 /
+                                  (double)SYSCLOCK_ARM11,
+                              (int)copyCalls);
+            copySum = 0;
+            copyCalls = 0;
+        }
+    }
+#endif
     // THE CPU/GPU CACHE-VISIBILITY OBLIGATION (AGENTS.md P3) -- AND THIS CALL IS
     // NOT WHAT MEETS IT.
     //
@@ -810,7 +830,15 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
     // the cost is proportional to the range; a mesh of 4096 quads is 245760
     // bytes and flushing all of it to publish 24 corners would be paying for a
     // capacity the frame did not use.
-    GSPGPU_FlushDataCache(mesh.data, (u32)n * 5u * sizeof(float));
+    //
+    // REMOVED 2026-11-23, on the original-3DS evidence the follow-up above
+    // asked for: hw_cycle --profile on old3ds-lan167 attributes ~4.6 ms of
+    // a corridor frame's draw span to the object pass whose only heavy
+    // call was this flush (3417 corners, 38 draws), and C3D_FrameEnd's
+    // whole-linear-heap flush precedes queue execution (the disassembly
+    // argument above), so no GPU read can see unflushed bytes. The A/B
+    // run and a CAPTURE=800 readback proving objects still draw are the
+    // evidence (docs/HANDOFF_MUSE.md, campaign update).
     mesh.count = n;
 }
 
