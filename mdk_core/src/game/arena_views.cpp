@@ -283,9 +283,9 @@ void ArenaViews::sweepOrphans(const std::string& current, const std::string& sec
 }
 
 void ArenaViews::pumpSurfaces(int32_t budget) {
-    // One texture per view per call, at most `budget` views a frame. The start
-    // rotates so no view is starved by the ones before it. A resolved view costs
-    // one comparison.
+    // The frame's whole budget goes to the views that still have surfaces to
+    // make: a finished view costs one comparison and spends nothing. The start
+    // rotates so no unfinished view is starved by the ones before it.
     const size_t n = views_.size();
     if (n == 0 || budget <= 0) {
         return;
@@ -300,8 +300,10 @@ void ArenaViews::pumpSurfaces(int32_t budget) {
         if (i >= n) {
             i -= n;
         }
-        views_[i].view->pumpSurfaces(1);
-        budget -= 1;
+        // The frame's budget is an upper bound on the makes a frame can do:
+        // each view spends exactly the batches it pumped, so a view finishing
+        // its tail cannot hand the budget to the next view as well.
+        budget -= views_[i].view->pumpSurfaces(budget);
     }
     pumpCursor_ += 1;
     if (pumpCursor_ >= n) {

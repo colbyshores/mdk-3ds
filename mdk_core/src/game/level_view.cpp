@@ -59,10 +59,11 @@ void LevelView::unload() {
     pumpAt_ = 0;
 }
 
-bool LevelView::pumpSurfaces(int32_t budget) {
+int32_t LevelView::pumpSurfaces(int32_t budget) {
     if (!renderer_ || surfaces_ == nullptr || !arena_) {
-        return true;
+        return 0;
     }
+    int32_t pumped = 0;
     for (int32_t i = 0; i < budget && pumpAt_ < scene_.batches.size(); i++) {
         const ArenaBatch& batch = scene_.batches[pumpAt_];
         // The same skip draw() makes: a group the scripts hid is not drawn, so
@@ -75,8 +76,9 @@ bool LevelView::pumpSurfaces(int32_t budget) {
             surfaces_->surfaceId(batch.surface, palette_);
         }
         pumpAt_++;
+        pumped++;
     }
-    return pumpAt_ >= scene_.batches.size();
+    return pumped;
 }
 
 bool LevelView::tear(const std::vector<int32_t>& torn) {

@@ -108,9 +108,11 @@ public:
     // linear pool cannot hold a level's ETC1 at once (measured 2026-11-22: 762
     // of level 7's 1686 makes fail). The pixels are in RAM (the resident MTO),
     // so a make is decode + upload only -- ~49 ms each -- and pumping spreads
-    // them over the frames before the arena is first drawn. True when the whole
-    // arena is resolved; calling it again after that costs one comparison.
-    bool pumpSurfaces(int32_t budget);
+    // them over the frames before the arena is first drawn. Returns the number
+    // of batches pumped (0 once the arena is resolved, or when the view has no
+    // renderer to pump through, so a finished view costs one comparison and
+    // spends no budget).
+    int32_t pumpSurfaces(int32_t budget);
 
     // The arena this view is for.
     const formats::Arena* arena() const { return arena_; }
