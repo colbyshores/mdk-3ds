@@ -174,6 +174,7 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
     }
     out->draw = draw;
     out->meshIndex = draw->mesh;
+    out->vertCount = draw->vertex_count;
 
     if ((renderDebugFlags() & kRenderDebugUvLog) && r->frame == 30 && mesh.data != nullptr &&
         draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
@@ -550,8 +551,8 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     if (!mesh.valid || mesh.count <= 0) {
         return;
     }
-    if (draw->first_vertex < 0 || draw->vertex_count <= 0 ||
-        draw->first_vertex + draw->vertex_count > mesh.count) {
+    if (draw->first_vertex < 0 || p->vertCount <= 0 ||
+        draw->first_vertex + p->vertCount > mesh.count) {
         return;
     }
     C3D_Tex* texture = nullptr;
@@ -629,7 +630,7 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     bindVertexBuffer(r, mesh.data);
 
     r->drawCount++;
-    r->triangleCount += draw->vertex_count / 3;
+    r->triangleCount += p->vertCount / 3;
     if (r->drawCount <= 3 && drawSampleArmed()) {
         // THE FIRST DRAWS, in full -- WHEN ARMED. A draw that never happens and a draw
         // that happens with the wrong data look the same on the screen, and
@@ -656,7 +657,7 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
         mdk::log3dsPrintf("draw %d: mesh=%d first=%d count=%d tex=%d pass=%d v0=(%.1f,%.1f,%.1f) uv=(%.3f,%.3f) "
                           "frame=%d frames=%d uvt=(%.4f,%.4f,%.4f,%.4f)%s",
                           (int)r->drawCount, (int)draw->mesh, (int)draw->first_vertex,
-                          (int)draw->vertex_count, (int)draw->material.texture,
+                          (int)p->vertCount, (int)draw->material.texture,
                           (int)draw->material.pass,
                           v[0], v[1], v[2], v[3], v[4],
                           (int)draw->frame, (int)draw->material.frame_count,
@@ -675,7 +676,7 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     // not the outlines; the picture differs from the original in that one
     // respect, and it is recorded rather than hidden.
     const int32_t first = draw->first_vertex;
-    const int32_t count = draw->vertex_count;
+    const int32_t count = p->vertCount;   // the record's (possibly folded) range
 
     // THE PER-DRAW MATRIX.
     //
@@ -1536,6 +1537,66 @@ static void drawGlow(RendererC3D* r) {
 // seams below do not flush (review-1 F4) -- and, since review-3 F1, why none of
 // them may draw by itself either: an immediate C3D_DrawArrays in a seam is
 // outside the per-eye replay, so it lands in one target or in none.
+// Could the second of two adjacent prepared draws be folded into the
+// first's DrawArrays? Strict: same mesh and contiguous range, every
+// submit-state field equal (byte compares only -- no float predicate).
+// Non-cullable only: a cullable record's per-eye frustum test uses its
+// own bounds, and folding would submit or drop the wrong range.
+static bool coalesciblePair(const PreparedDraw* a, const PreparedDraw* b) {
+    const mdk::MeshDraw* da = a->draw;
+    const mdk::MeshDraw* db = b->draw;
+    if (!da || !db || a->meshIndex != b->meshIndex) return false;
+    if (da->cullable || db->cullable) return false;
+    if (da->first_vertex + a->vertCount != db->first_vertex) return false;
+    // Whole triangles only: folding two partial-primitive ranges would
+    // emit triangles neither draw emitted (validator F1).
+    if (!a->wholeTriangles || !b->wholeTriangles) return false;
+    // Triangle-list only (render_types.h has no strip/fan, and this
+    // backend submits every range as a triangle list).
+    if (da->primitive != mdk::Primitive::Triangles ||
+        db->primitive != mdk::Primitive::Triangles) return false;
+    if (a->texHd != b->texHd || a->texIndex != b->texIndex || a->texUnit != b->texUnit) return false;
+    if (a->overlay != b->overlay || a->lit != b->lit || a->shadowLit != b->shadowLit ||
+        a->worldIdentity != b->worldIdentity ||
+        a->haze != b->haze || a->mipped != b->mipped) return false;
+    if (a->alphaRef != b->alphaRef || a->stage0Index != b->stage0Index ||
+        a->filter != b->filter || a->mipLevels != b->mipLevels) return false;
+    if (memcmp(&a->scaleX, &b->scaleX, sizeof(float) * 4) != 0) return false;
+    if (memcmp(&a->origScaleX, &b->origScaleX, sizeof(float) * 4) != 0) return false;
+    if (da->material.pass != db->material.pass || da->material.blend != db->material.blend ||
+        da->material.shading != db->material.shading) return false;
+    if (memcmp(&da->material.colour, &db->material.colour, sizeof(da->material.colour)) != 0) return false;
+    if (memcmp(da->world, db->world, sizeof(da->world)) != 0) return false;
+    return true;
+}
+
+// Append one prepared record, folding it into the previous record when
+// coalesciblePair allows: one DrawArrays then submits both ranges, with
+// identical state and order, so the picture cannot change. The compared
+// fields are every field drawRecorded submits from (validator F5:
+// material.texture is covered -- for a non-HD record texIndex IS
+// material.texture, and an HD record's texIndex names the one copy its
+// resource owns). Every producer routes through here (the glow is an
+// index into this array, not a record), so vertCount is always set
+// (validator F2). The glow slot is a hard boundary: preparedGlowAt is
+// the index the first post-glow record will take, so when the array's
+// size equals it, back() is the last pre-glow record and folding the
+// newcomer across would move it before the glow (validator F4).
+static void pushPrepared(RendererC3D* r, const PreparedDraw* p) {
+#ifdef MDK_HW_PROFILE
+    r->coalesceTotal++;
+#endif
+    if (!r->prepared.empty() && (int32_t)r->prepared.size() != r->preparedGlowAt &&
+        coalesciblePair(&r->prepared.back(), p)) {
+        r->prepared.back().vertCount += p->vertCount;
+#ifdef MDK_HW_PROFILE
+        r->coalescePairs++;
+#endif
+        return;
+    }
+    r->prepared.push_back(*p);
+}
+
 // Resolve the whole queue once per frame, in pass order; the glow's slot
 // and the insets-over-canvas tail keep their places in the prepared array.
 static void prepareQueue(RendererC3D* r) {
@@ -1568,7 +1629,7 @@ static void prepareQueue(RendererC3D* r) {
         for (size_t i = 0; i < bucket.size(); i++) {
             PreparedDraw p;
             if (prepareDraw(r, &bucket[i], &p)) {
-                r->prepared.push_back(p);
+                pushPrepared(r, &p);
             }
         }
     }
@@ -1577,7 +1638,7 @@ static void prepareQueue(RendererC3D* r) {
     for (size_t i = 0; i < r->insetOverDraws.size(); i++) {
         PreparedDraw p;
         if (prepareDraw(r, &r->insetOverDraws[i], &p)) {
-            r->prepared.push_back(p);
+            pushPrepared(r, &p);
         }
     }
 }

@@ -1403,6 +1403,16 @@ def adjudicate(text, quiet=False):
     # The sampler words live on the shared C3D_Tex (validator F1/F3): they
     # are written at submit, never in prepareDraw, and the HD fallback
     # stamps the original it revives.
+    coal_b = fn_body(text, "coalesciblePair") or ""
+    rep.check("submit-coalescing-folds-whole-non-cullable-only",
+              "if (da->cullable || db->cullable) return false;" in coal_b
+              and "if (!a->wholeTriangles || !b->wholeTriangles) return false;" in coal_b
+              and "da->primitive != mdk::Primitive::Triangles" in coal_b,
+              "coalesciblePair rejects cullable and partial-triangle records: %s "
+              "(folding partial ranges emits triangles neither draw emitted; "
+              "folding cullable records submits the wrong per-eye range)"
+              % ("yes" if "wholeTriangles" in coal_b else "NO"))
+
     rec_b2 = fn_body(text, "drawRecorded") or ""
     rep.check("sampler-words-written-at-submit-not-prepare",
               "C3D_TexSetFilter(" not in prep_b2 and "maxLevel" not in prep_b2
@@ -3468,6 +3478,9 @@ ARMS = [
     ("sampler-words-rehoisted-into-prepare",
      lambda s: s.replace("        C3D_TexSetFilter(texture, filter, filter);\n", "", 1),
      "sampler-words-written-at-submit-not-prepare"),
+    ("coalescing-folds-partial-triangles",
+     lambda s: s.replace("    if (!a->wholeTriangles || !b->wholeTriangles) return false;\n", "", 1),
+     "submit-coalescing-folds-whole-non-cullable-only"),
     ("stage0-variants-rebuilt-every-frame",
      lambda s: s.replace("            r->stage0Built = true;", "            r->stage0Built = false;", 1),
      "stage0-variants-built-once"),

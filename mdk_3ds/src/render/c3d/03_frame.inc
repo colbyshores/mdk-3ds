@@ -1748,6 +1748,11 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
             r->eyeTicks[0] = r->eyeTicks[1] = 0;
             r->prepareTicks = 0;
             r->eyeFrames = 0;
+            mdk::log3dsPrintf("coalesce: frame %d merged %llu of %llu prepared draws",
+                              (int)r->frame, (unsigned long long)r->coalescePairs,
+                              (unsigned long long)r->coalesceTotal);
+            r->coalescePairs = 0;
+            r->coalesceTotal = 0;
         }
         if ((r->frame % 300) == 0 && gpuSamples > 0) {
             mdk::log3dsPrintf("gputime: frame %d mean drawing %.2f processing %.2f ms over %d frames",

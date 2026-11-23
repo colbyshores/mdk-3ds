@@ -260,10 +260,29 @@ are arena batches whose textures are shared with visible batches
 of the same arena, so the culled-only texture set is small; the
 reviewed risk is a residency/pop-in difference under texture
 pressure, to watch for on texture-pressure captures.
+Submit coalescing (2026-11-23, the corridor per-draw campaign
+step): a PROFILE census first — the corridor window holds 8,222
+coalescible adjacent pairs of 33,547 prepared draws (~27/frame,
+**zero cullable**). `prepareQueue` now folds an adjacent record
+into the previous one (`vertCount` summed) when
+`coalesciblePair` passes: same mesh, contiguous range,
+non-cullable only, whole triangles only, every submit-state field
+byte-equal, glow slot a hard boundary. One `DrawArrays` submits
+the folded range, so state and order are unchanged. Validator
+(DeepSeek) caught the partial-triangle fold (F1, High) before it
+shipped — the whole-triangle guard costs nothing here (merges
+still 8,222). Measured on old3ds-lan167 (same walk route,
+features-off class): p95 30.9 → 27.1 ms, frames over 33 ms
+158 → 126, steady mean 18.46 → 18.32 ms, command list −4%/frame.
+Frame-800 capture: 14,185 distinct colours, the same count as the
+pre-coalescing capture on that route. Verdict: kept — a thinner
+corridor pocket, not a solved one (still 2 vblanks there; the
+remaining items are the audit's small levers, none >3 ms).
 Final verification (2026-11-23): `tools/check.sh` ALL PASSED;
-`c3d_frame_test.sh` 62 checks pass with the arm-failure set
+`c3d_frame_test.sh` 63 checks pass with the arm-failure set
 identical to clean HEAD (9 pre-existing texture arms; the new
-`sampler-words-written-at-submit-not-prepare` check and the
+`sampler-words-written-at-submit-not-prepare` and
+`submit-coalescing-folds-whole-non-cullable-only` checks and the
 repaired `prepare-moved-inside-the-eye-loop` arm adjudicate red);
 validator re-review `VERDICT: COMPLETE`. Hardware
 (`hw_cycle --profile`, old3ds-lan167, Old 3DS 268 MHz stereo):

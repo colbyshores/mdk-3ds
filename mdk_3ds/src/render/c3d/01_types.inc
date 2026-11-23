@@ -398,6 +398,10 @@ struct PreparedDraw {
     int32_t filter = 0;             // GPU_TEXTURE_FILTER_PARAM
     bool mipped = false;
     int32_t mipLevels = 0;
+    // Vertices this record submits: the draw's own, extended at prepare
+    // when an adjacent same-state non-cullable draw folds into it
+    // (submit coalescing, 06_draw.inc).
+    int32_t vertCount = 0;
     int alphaRef = 0;
     int32_t stage0Index = -1;       // 0 scene, 1 overlay, 2..5 flat; -1 shadow
 };
@@ -699,6 +703,13 @@ struct RendererC3D {
     int32_t canvasQuadsThisFrame = 0;
     int32_t canvasDrawsThisFrame = 0;
 #ifdef MDK_HW_PROFILE
+    // Submit-coalescing account (PROFILE only): folds actually
+    // performed by pushPrepared, of the records it was handed. (The
+    // pre-implementation census counted candidates on the unmerged
+    // prepared array with a separate loop; the two agreeing is the
+    // cross-check, not the same counter read twice.)
+    uint64_t coalescePairs = 0;
+    uint64_t coalesceTotal = 0;
     // Per-eye replay ticks (PROFILE only; see mdk_render_end_frame).
     uint64_t eyeTicks[2] = {0, 0};
     uint64_t prepareTicks = 0;
