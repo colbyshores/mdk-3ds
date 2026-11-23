@@ -168,6 +168,13 @@ void LevelView::draw() {
         draw.world[5] = 1.0f;
         draw.world[10] = 1.0f;
         draw.world[15] = 1.0f;
+        // The batch's box, for the backend's per-eye frustum cull. The world
+        // matrix is the identity here, so the batch box IS the world box.
+        for (int j = 0; j < 3; j++) {
+            draw.bounds_min[j] = batch.boundsMin[j];
+            draw.bounds_max[j] = batch.boundsMax[j];
+        }
+        draw.cullable = true;
 
         // The texture and the palette come from the shared cache, keyed by the
         // format's objects: an object drawn with this arena's palette reuses

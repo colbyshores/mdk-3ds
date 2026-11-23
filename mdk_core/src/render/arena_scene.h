@@ -56,6 +56,14 @@ struct ArenaBatch {
     // The triangle's depth layer (the C# Levels.Of). A detail over a larger
     // surface in the same plane is one layer above it.
     int32_t depthLayer = 0;
+
+    // The run's world-space bounding box, computed when the run is built.
+    // The backend culls the batch per eye against the camera frustum
+    // (render_types.h MeshDraw bounds) -- geometry behind the camera costs
+    // the PICA200's vertex pipeline nothing only if someone tells it to skip,
+    // and the original's BSP did that telling (the port draws flat batches).
+    float boundsMin[3] = {0.0f, 0.0f, 0.0f};
+    float boundsMax[3] = {0.0f, 0.0f, 0.0f};
 };
 
 // An arena's geometry.

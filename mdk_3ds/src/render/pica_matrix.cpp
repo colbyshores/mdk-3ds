@@ -62,8 +62,8 @@ bool isIdentity(const float m[16]) {
     return memcmp(m, kIdentity, sizeof(kIdentity)) == 0;
 }
 
-void eyeViewProjection(const float view[16], const float projection[16],
-                       float eyeOffset, float out[16]) {
+void eyeViewProjectionEngine(const float view[16], const float projection[16],
+                             float eyeOffset, float out[16]) {
     // The view matrix, with the eye's offset applied.
     //
     // The view is a row-major, row-vector look-at matrix: its translation row
@@ -87,8 +87,13 @@ void eyeViewProjection(const float view[16], const float projection[16],
     // V * P with view as the LEFT operand -- the C# oracle's `view *
     // projection` (Renderer.cs:115, FollowCamera.cs, FallView.cs). The
     // product below is the ordinary row-times-column product of that.
+    multiply(shifted, projection, out);
+}
+
+void eyeViewProjection(const float view[16], const float projection[16],
+                       float eyeOffset, float out[16]) {
     float m[16];
-    multiply(shifted, projection, m);
+    eyeViewProjectionEngine(view, projection, eyeOffset, m);
 
     // (A) The depth remap: D3D [0,1] -> PICA [-1,0].
     //
@@ -116,6 +121,36 @@ void eyeViewProjection(const float view[16], const float projection[16],
     }
 
     memcpy(out, rot, sizeof(rot));
+}
+
+void frustumPlanes(const float vp[16], float planes[6][4]) {
+    // The engine's clip convention (row-vector, row-major): clip.x = dot(p4,
+    // COLUMN 0 of vp), and so on for y/z/w, with clip.w > 0 in front and NDC z
+    // in [0,1] between the planes. So the six side tests
+    //     -w <= x, x <= w, -w <= y, y <= w, 0 <= z, z <= w
+    // are dot products with column sums and differences -- Gribb-Hartmann read
+    // in the row-vector convention, where the planes are COLUMNS, not rows.
+    // The near plane is column 2 (z >= 0) and the far plane column 3 - column 2
+    // (w - z >= 0), which is what the engine's [0,1] depth makes them.
+    for (int j = 0; j < 4; j++) {
+        // Component j of COLUMN k is element [j][k] = vp[j * 4 + k] -- the
+        // plane's component that multiplies p_j. Reading vp[k * 4 + j] instead
+        // reads ROW k, which is the transpose: wrong for every camera that is
+        // not axis-aligned (the identity check passes either way, which is how
+        // this bug hides).
+        const float c0 = vp[j * 4 + 0], c1 = vp[j * 4 + 1];
+        const float c2 = vp[j * 4 + 2], c3 = vp[j * 4 + 3];
+        planes[0][j] = c3 + c0;  // left
+        planes[1][j] = c3 - c0;  // right
+        planes[2][j] = c3 + c1;  // bottom
+        planes[3][j] = c3 - c1;  // top
+        planes[4][j] = c2;       // near
+        // The far plane is z_ndc = 1 -- the SAME plane the projection matrix
+        // itself places: beyond it the hardware clips the triangle (the PICA
+        // clip cube is the converted image of this volume), so culling here
+        // drops nothing the rasteriser would have shown.
+        planes[5][j] = c3 - c2;  // far
+    }
 }
 
 void drawMatrix(const float world[16], const float eyeVp[16], float out[16]) {

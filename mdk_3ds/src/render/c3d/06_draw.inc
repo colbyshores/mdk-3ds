@@ -160,6 +160,35 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         return;
     }
 
+    // THE PER-EYE FRUSTUM CULL. The level's batches opt in (MeshDraw::cullable,
+    // game/level_view.cpp); everything else -- objects with a world matrix,
+    // sprites, canvas, insets -- leaves `cullable` false and is never tested.
+    // A batch whose box is wholly outside this eye's frustum is not submitted:
+    // the PICA200 never sees its vertices. The original culled through the arena
+    // BSP; the port draws flat batches, so two resident arenas paid the vertex
+    // pipeline for geometry behind the camera (measured: the pair window cost
+    // ~+17 ms/frame on Old 3DS, 2026-11-22). The box is exact at build; a torn
+    // mesh only collapses vertices inward, so a stale box stays conservative.
+    /* @vfp-exempt R3 — a frustum test IS a float predicate; culling invisible batches is the measured win, not a rounding-sensitive gameplay boundary. measured n/a (pending OG capture). Verified 2026-11-23. */
+    if (draw->cullable && r->frustumValid) {
+        bool outside = false;
+        for (int p = 0; p < 6 && !outside; p++) {
+            const float* pl = r->frustum[p];
+            // The box corner that MAXIMIZES the plane's dot (the "positive
+            // vertex"): the batch is outside when even that corner is behind
+            // the plane. Sign only, so the planes need no normalization.
+            const float vx = pl[0] >= 0.0f ? draw->bounds_max[0] : draw->bounds_min[0];
+            const float vy = pl[1] >= 0.0f ? draw->bounds_max[1] : draw->bounds_min[1];
+            const float vz = pl[2] >= 0.0f ? draw->bounds_max[2] : draw->bounds_min[2];
+            if (pl[0] * vx + pl[1] * vy + pl[2] * vz + pl[3] < 0.0f) {
+                outside = true;
+            }
+        }
+        if (outside) {
+            return;
+        }
+    }
+
     if ((renderDebugFlags() & kRenderDebugUvLog) && r->frame == 30 && mesh.data != nullptr &&
         draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
         // rdebug `uvlog`: which draws TILE (uv outside [0,1]) and on what size.
@@ -1421,6 +1450,11 @@ static void replayQueue(RendererC3D* r) {
         memcpy(transform.m, r->insetMatrix, sizeof(transform.m));
         const mdk::Mat4 full = mdk::multiply(world, transform);
         memcpy(inset.world, full.m, sizeof(inset.world));
+        // The bounds the copy carried were the batch's WORLD box, valid only
+        // under the identity world (render_types.h MeshDraw). This draw now
+        // carries the inset's own transform, so the box no longer describes it:
+        // opt the copy back out of the frustum cull.
+        inset.cullable = false;
         inset.material.pass = mdk::Pass::Overlay;
         if (r->insetOver) {
             r->insetOverDraws.push_back(inset);

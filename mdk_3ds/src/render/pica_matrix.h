@@ -109,6 +109,22 @@ bool isIdentity(const float m[16]);
 void eyeViewProjection(const float view[16], const float projection[16],
                        float eyeOffset, float out[16]);
 
+// The per-eye view-projection BEFORE the PICA conversions: the eye offset and
+// the `view * projection` product only, in the engine's row-major row-vector
+// layout. The conversions are right-multiplications by fixed matrices, so this
+// matrix and `eyeViewProjection`'s output describe the SAME world-space view
+// volume — and this one's planes come straight from the engine's clip
+// convention (NDC z [0,1], clip.w = -z_view > 0 in front). That is what the
+// per-eye frustum cull wants (c3d/06_draw.inc).
+void eyeViewProjectionEngine(const float view[16], const float projection[16],
+                             float eyeOffset, float out[16]);
+
+// The six planes of the volume `vp` (an `eyeViewProjectionEngine` matrix), in
+// the order left, right, bottom, top, near, far. A point is inside a plane
+// (a, b, c, d) when a*x + b*y + c*z + d >= 0; inside the volume when inside
+// all six. The planes are NOT normalized — the cull only reads the sign.
+void frustumPlanes(const float vp[16], float planes[6][4]);
+
 // The matrix ONE DRAW must upload: its world transform composed with the frame's
 // per-eye matrix, i.e. `out = world * eyeVp` in the row-vector convention.
 //

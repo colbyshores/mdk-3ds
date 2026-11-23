@@ -2136,8 +2136,93 @@ void testTheLookDials() {
     PICA_CHECK(mdk::pica::sunShadowTintAlphaDialled(0, 50) == 128);   // 255 -> 127.5, rounded
 }
 
+void testTheFrustumPlanesFollowTheCamera() {
+    // THE FRUSTUM CULL'S PLANES (pica_matrix.cpp frustumPlanes). The invariant
+    // that matters: a point is inside the six planes exactly when it is inside
+    // the clip cube of the SAME matrix -- w > 0, -w <= x,y <= w, 0 <= z <= w,
+    // the engine's [0,1] depth. The planes are COLUMNS of the matrix in this
+    // row-vector engine; reading rows is the transpose, and an identity view
+    // passes either way -- so the views here are rotated and off-axis, where
+    // rows and columns differ.
+    auto clipInside = [](const float vp[16], const float p[3]) {
+        float c[4];
+        const float p4[4] = {p[0], p[1], p[2], 1.0f};
+        xform(vp, p4, c);
+        // w >= 0, not > 0: the planes describe the closed volume, and the apex
+        // (w = 0, x = y = z = 0) is inside both readings.
+        return c[3] >= 0.0f && c[0] >= -c[3] && c[0] <= c[3] && c[1] >= -c[3] &&
+               c[1] <= c[3] && c[2] >= 0.0f && c[2] <= c[3];
+    };
+    auto planesInside = [](const float planes[6][4], const float p[3]) {
+        for (int i = 0; i < 6; i++) {
+            if (planes[i][0] * p[0] + planes[i][1] * p[1] + planes[i][2] * p[2] +
+                    planes[i][3] <
+                0.0f) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // A finite far plane (near 4, far 8 along the view's -z) for the kView case,
+    // and kProjection (far infinity) for the rotated one.
+    const float kFarProj[16] = {
+        2, 0, 0, 0,
+        0, 4, 0, 0,
+        0, 0, -2, -8,
+        0, 0, -1, 0,
+    };
+
+    const float* views[2] = {kView, kWorld};
+    const float* projs[2] = {kProjection, kFarProj};
+    const float probes[][3] = {
+        {0, 0, 0},     {1, 0, 0},     {-1, 0, 0},   {0, 1, 0},
+        {0, -1, 0},    {0, 0, 1},     {0, 0, -1},   {3, 3, 3},
+        {-3, 3, -3},   {7, -2, 3},    {-9, -2, 3},  {0.5f, -2, 3},
+        {10, -2, 3},   {-20, -2, 3},  {0, 0, -20},  {0, 0, 20},
+        {2, 1, -5},    {-5, 4, 1},    {6, 0, 0},    {-6, 0, 0},
+    };
+
+    int insideCount = 0, outsideCount = 0;
+    for (int v = 0; v < 2; v++) {
+        for (int pr = 0; pr < 2; pr++) {
+            float vp[16];
+            float planes[6][4];
+            mdk::pica::eyeViewProjectionEngine(views[v], projs[pr], 0.0f, vp);
+            mdk::pica::frustumPlanes(vp, planes);
+            for (const auto& p : probes) {
+                const bool want = clipInside(vp, p);
+                if (want) insideCount++; else outsideCount++;
+                PICA_CHECK(planesInside(planes, p) == want);
+            }
+        }
+    }
+    // Non-vacuity: the probes must straddle the volume, or the pin proves
+    // nothing (the transposed extraction passed a same-side-only probe set).
+    PICA_CHECK(insideCount > 0);
+    PICA_CHECK(outsideCount > 0);
+
+    // THE EYE OFFSET moves the volume: the backend extracts per eye, with the
+    // offset, so the two eyes' planes must differ.
+    float vp[16], planesL[6][4], planesR[6][4];
+    mdk::pica::eyeViewProjectionEngine(kView, kProjection, -0.5f, vp);
+    mdk::pica::frustumPlanes(vp, planesL);
+    mdk::pica::eyeViewProjectionEngine(kView, kProjection, 0.5f, vp);
+    mdk::pica::frustumPlanes(vp, planesR);
+    bool anyDiffers = false;
+    for (int i = 0; i < 6; i++) {
+        for (int j = 0; j < 4; j++) {
+            if (planesL[i][j] != planesR[i][j]) {
+                anyDiffers = true;
+            }
+        }
+    }
+    PICA_CHECK(anyDiffers);
+}
+
 int runPicaMatrixTests() {
     testIdentityRecognition();
+    testTheFrustumPlanesFollowTheCamera();
     testTheLookDials();
     testTheGlowQuadMapsThePanelOntoThePicture();
     testTheGlowCurveIsReachableByTheCombiner();

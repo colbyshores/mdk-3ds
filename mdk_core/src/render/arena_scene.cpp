@@ -328,6 +328,9 @@ bool buildArenaScene(const formats::Arena* arena,
     int32_t runGroup = 0;
     int32_t runDepthLayer = 0;
     bool haveRun = false;
+    // The open run's bounding box, written into its batch when the run closes.
+    float runMin[3] = {0.0f, 0.0f, 0.0f};
+    float runMax[3] = {0.0f, 0.0f, 0.0f};
 
     // The surfaces, by material value. A material value's surface is
     // resolved ONCE, because the resolution searches the archives and the
@@ -405,11 +408,32 @@ bool buildArenaScene(const formats::Arena* arena,
             out->vertices.push_back(vertex);
         }
 
+        // This triangle's box, from the three vertices just appended. The run's
+        // box accumulates these; the backend culls per batch against it.
+        float tmin[3], tmax[3];
+        for (int k = 0; k < 3; k++) {
+            const Vec3& p = out->vertices[(size_t)first + (size_t)k].pos;
+            const float c[3] = {p.x, p.y, p.z};
+            for (int j = 0; j < 3; j++) {
+                if (k == 0) {
+                    tmin[j] = c[j];
+                    tmax[j] = c[j];
+                } else {
+                    if (c[j] < tmin[j]) tmin[j] = c[j];
+                    if (c[j] > tmax[j]) tmax[j] = c[j];
+                }
+            }
+        }
+
         if (!haveRun || material != runMaterial || triangleGroup != runGroup ||
             depthLayer != runDepthLayer) {
             // A new run. The previous one ends where this one starts.
             if (haveRun && !out->batches.empty()) {
                 out->batches.back().count = first - out->batches.back().first;
+                for (int j = 0; j < 3; j++) {
+                    out->batches.back().boundsMin[j] = runMin[j];
+                    out->batches.back().boundsMax[j] = runMax[j];
+                }
             }
             if (!drawn[material]) {
                 // Not drawn: NONE, PEN_ENV, RIPPLE, or a material name that
@@ -425,15 +449,28 @@ bool buildArenaScene(const formats::Arena* arena,
             batch.group = triangleGroup;
             batch.depthLayer = depthLayer;
             out->batches.push_back(batch);
+            for (int j = 0; j < 3; j++) {
+                runMin[j] = tmin[j];
+                runMax[j] = tmax[j];
+            }
             runMaterial = material;
             runGroup = triangleGroup;
             runDepthLayer = depthLayer;
             haveRun = true;
+        } else {
+            for (int j = 0; j < 3; j++) {
+                if (tmin[j] < runMin[j]) runMin[j] = tmin[j];
+                if (tmax[j] > runMax[j]) runMax[j] = tmax[j];
+            }
         }
     }
 
     if (haveRun && !out->batches.empty()) {
         out->batches.back().count = (int32_t)out->vertices.size() - out->batches.back().first;
+        for (int j = 0; j < 3; j++) {
+            out->batches.back().boundsMin[j] = runMin[j];
+            out->batches.back().boundsMax[j] = runMax[j];
+        }
     }
 
     // A batch with no triangles is a surface that is not drawn; drop it.

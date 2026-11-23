@@ -355,6 +355,12 @@ struct MeshDraw {
     int32_t frame = 0;          // the animated texture's frame index
     float world[16] = {0};
     Primitive primitive = Primitive::Triangles;
+    // The draw's world-space bounding box, for the backend's per-eye frustum
+    // cull. Valid ONLY when `world` is the identity and `cullable` is true
+    // (the level's batches); every other draw leaves them and is never culled.
+    float bounds_min[3] = {0.0f, 0.0f, 0.0f};
+    float bounds_max[3] = {0.0f, 0.0f, 0.0f};
+    bool cullable = false;
 };
 
 // A sprite is a mesh drawn with the sprite shading (the enhanced look's

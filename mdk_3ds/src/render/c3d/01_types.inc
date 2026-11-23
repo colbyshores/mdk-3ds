@@ -464,6 +464,15 @@ struct RendererC3D {
     // carries its own world composes against it (`drawMatrix`, cached below).
     float eyeVp[16] = {0};
 
+    // The current eye's view frustum: six planes (a,b,c,d), a point inside a
+    // plane when a*x+b*y+c*z+d >= 0, in the order left, right, bottom, top,
+    // near, far. Extracted from the eye's pre-conversion view-projection when
+    // the eye is installed (03_frame.inc) and read by drawRecorded's per-eye
+    // cull (06_draw.inc). Valid only while `frustumValid`; a draw that does not
+    // opt in (MeshDraw::cullable) is never tested.
+    float frustum[6][4] = {{0}};
+    bool frustumValid = false;
+
     // Whether the uniform currently holds `eyeVp` (the frame's matrix) or some
     // draw's own.
     //

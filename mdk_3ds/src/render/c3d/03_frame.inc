@@ -523,6 +523,17 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // world matrix composes it against this matrix instead of rebuilding the
     // whole chain per draw.
     mdk::pica::eyeViewProjection(r->view, r->projection, offset, r->eyeVp);
+    // THE PER-EYE FRUSTUM for drawRecorded's cull: the same eye matrix BEFORE
+    // the PICA conversions (the conversions are right-multiplications by fixed
+    // matrices, so the volume is the same and the engine's clip convention
+    // gives the planes directly). One extraction per eye per frame; the queue
+    // replay that follows tests each opted-in draw against it.
+    {
+        float vpEngine[16];
+        mdk::pica::eyeViewProjectionEngine(r->view, r->projection, offset, vpEngine);
+        mdk::pica::frustumPlanes(vpEngine, r->frustum);
+        r->frustumValid = true;
+    }
     // THE STRIDED READ -- see mdk::pica::registers: register i must hold
     // COLUMN i of the row-major matrix, or a rotation comes out inverted.
     //
@@ -1146,6 +1157,9 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     }
     r->inFrame = true;
     r->frame++;
+    // The frustum belongs to an installed eye; a frame that has not installed
+    // one yet has none (installEye sets it before each per-eye replay).
+    r->frustumValid = false;
     // THE COMMAND LIST'S LENGTH (the dedupe's evidence): libctru's write
     // position, which only moves forward through the frame's splits
     // (GPUCMD_Split advances gpuCmdBuf by what it hands over).
