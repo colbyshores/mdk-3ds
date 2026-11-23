@@ -120,6 +120,28 @@ timing readout, sky-dome culling, sun-frustum cull on shadow casters,
 and the unattributed ~10 ms corridor `draw` span (drawsub only prints
 on >60 ms spikes).
 
+Campaign update 2026-11-23 (branch `perf/renderer-campaign`):
+- **GPU timing in** (`0ece91d4`): steady GPU drawing 10.6 ms/frame
+  enhanced, **5.75 ms features-off** (all Enhanced look toggles 0:
+  240x400/eye, no lighting/shadows/filtering/mips/edge-smoothing).
+  Features-off walk: mean 18.0, p50 16.8, corridor 32.7–33.9 ms.
+- **Sky sector cull tried and reverted**: submitted sky triangles
+  −14% but GPU drawing unmoved (10.45 vs 10.55) — fill-bound, not
+  vertex-bound at this scale.
+- **Corridor `draw` attributed** (drawsub at census frames): objects
+  ~4.6 ms + effects ~3.8 ms + kurt 0.5 + hud 0.15 + arenas 0.15,
+  rest 0. The object pass is per-object layout/arrange/stream work
+  from the C# design on a 268 MHz CPU; an off-arena object skip and
+  an arrangement memo each measured ~0 (objects are in drawn arenas;
+  arrangement is not the cost) and were reverted. The remaining
+  obj/fx cost is per-frame geometry layout (transform interpolation,
+  posed-vertex copies, stream upload) — the next campaign item needs
+  a per-object breakdown before touching it.
+- Spark routing note: `muse-spark` is unauthorized on this box's
+  litellm key (401) and unknown to the Workflow catalog; the profiling
+  agents ran on DeepSeek V4.1 Flash via `pi` instead (the validator's
+  route), which is not session-model usage.
+
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's
 own cost.

@@ -341,8 +341,12 @@ void harnessProfileFrame(double periodSeconds) {
     }
     // The draw's own breakdown, for the frames whose draw is the spike: the
     // sections main measured, and `rest` -- what they do not explain. A big
-    // rest is the finding (unattributed work inside the draw span).
-    if ((double)g_lastDrawT * (1000000.0 / (double)SYSCLOCK_ARM11) > kSpikeUs &&
+    // rest is the finding (unattributed work inside the draw span). The
+    // census frames (785/805/815 on the level-7 walk) print too: the
+    // corridor's ~10 ms draw span is under the spike threshold but is the
+    // corridor's biggest CPU item, and only this line attributes it.
+    if (((double)g_lastDrawT * (1000000.0 / (double)SYSCLOCK_ARM11) > kSpikeUs ||
+         g_count == 785 || g_count == 805 || g_count == 815) &&
         g_subLight + g_subSky + g_subArena + g_subFx + g_subKurt + g_subHud > 0) {
         const double usPerTick = 1000000.0 / (double)SYSCLOCK_ARM11;
         const uint64_t sub = g_subLight + g_subSky + g_subArena + g_subLay + g_subObj +
