@@ -147,50 +147,33 @@ static void leaveShadowLitStages(RendererC3D* r) {
     r->shadowLitHaze = -1;
 }
 
-static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
+// The cached stage-0 variant a prepared index names (see prepareDraw).
+static C3D_TexEnv* stage0Variant(RendererC3D* r, int32_t index) {
+    if (index == 1) return &r->stage0Overlay;
+    if (index >= 2 && index <= 5) return &r->stage0Flat[index - 2];
+    return &r->stage0Scene;
+}
+
+// THE PREPARE (STEREO-REPLAY analogue): resolve one queue record for the
+// frame. Everything here is eye-invariant; the per-eye drawRecorded below
+// keeps only the frustum cull, the matrix compose and the state/draw calls.
+// Side effects that used to run once PER EYE now run once per frame, which
+// is what they always meant: the HD queue push, the keepRgba8 pin, the
+// texture revival and the LRU stamps.
+static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw* out) {
     if (draw->mesh < 0 || (size_t)draw->mesh >= r->meshes.size()) {
-        return;
+        return false;
     }
     const C3dMesh& mesh = r->meshes[(size_t)draw->mesh];
     if (!mesh.valid || mesh.count <= 0) {
-        return;
+        return false;
     }
     if (draw->first_vertex < 0 || draw->vertex_count <= 0 ||
         draw->first_vertex + draw->vertex_count > mesh.count) {
-        return;
+        return false;
     }
-
-    // THE PER-EYE FRUSTUM CULL. The level's batches opt in (MeshDraw::cullable,
-    // game/level_view.cpp); everything else -- objects with a world matrix,
-    // sprites, canvas, insets -- leaves `cullable` false and is never tested.
-    // A batch whose box is wholly outside this eye's frustum is not submitted:
-    // the PICA200 never sees its vertices. The original culled through the arena
-    // BSP; the port draws flat batches, so two resident arenas paid the vertex
-    // pipeline for geometry behind the camera (measured: the pair window cost
-    // ~+17 ms/frame on Old 3DS, 2026-11-22). The box is exact at build; a torn
-    // mesh only collapses vertices inward, so a stale box stays conservative.
-    /* @vfp-exempt R3 — a frustum test IS a float predicate; culling invisible batches is the measured win, not a rounding-sensitive gameplay boundary. measured n/a (pending OG capture). Verified 2026-11-23. */
-    if (draw->cullable && r->frustumValid) {
-        bool outside = false;
-        for (int p = 0; p < 6 && !outside; p++) {
-            const float* pl = r->frustum[p];
-            // The box corner that MAXIMIZES the plane's dot (the "positive
-            // vertex"): the batch is outside when even that corner is behind
-            // the plane. Sign only, so the planes need no normalization.
-            const float vx = pl[0] >= 0.0f ? draw->bounds_max[0] : draw->bounds_min[0];
-            const float vy = pl[1] >= 0.0f ? draw->bounds_max[1] : draw->bounds_min[1];
-            const float vz = pl[2] >= 0.0f ? draw->bounds_max[2] : draw->bounds_min[2];
-            if (pl[0] * vx + pl[1] * vy + pl[2] * vz + pl[3] < 0.0f) {
-                outside = true;
-            }
-        }
-        if (outside) {
-            if (r->census.active) {
-                r->census.culled++;
-            }
-            return;
-        }
-    }
+    out->draw = draw;
+    out->meshIndex = draw->mesh;
 
     if ((renderDebugFlags() & kRenderDebugUvLog) && r->frame == 30 && mesh.data != nullptr &&
         draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
@@ -259,6 +242,8 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
                 // Bound whether or not the original is resident: an evicted
                 // original must not take a resident HD copy's surface with it (F1).
                 texture = &copy->tex;
+                out->texHd = true;
+                out->texIndex = resource.hdCopy;
                 mipLevels = copy->levels;
                 resource.lastUsed = ++r->drawCounter;
                 copy->lastUsed = r->drawCounter;
@@ -272,6 +257,8 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
                 }
                 if (resource.valid) {
                     texture = &resource.tex;
+                    out->texHd = false;
+                    out->texIndex = draw->material.texture;
                     mipLevels = resource.mipLevels;
                     // THE EVICTION ORDER. The texture is stamped every time it is
                     // drawn, so the least recently used one is the one that goes
@@ -291,7 +278,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         }
     }
     if (!texture) {
-        return;
+        return false;
     }
     // THE FILTER (SPEC.md 7.9 enableFiltering): bilinear for every draw while
     // the toggle is on -- the PC's enhanced look filters the world, the sky and
@@ -306,7 +293,11 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     const bool animated = draw->material.frame_count > 1;
     const GPU_TEXTURE_FILTER_PARAM filter =
         (r->toggles.enableFiltering && !animated) ? GPU_LINEAR : GPU_NEAREST;
-    C3D_TexSetFilter(texture, filter, filter);
+    // Recorded, not written: the sampler words sit on the shared C3D_Tex,
+    // so writing them here (once per frame, in queue order) would leave
+    // every draw of a texture with the LAST prepared draw's filter.
+    // drawRecorded writes them at submit, before the bind (validator F1).
+    out->filter = (int32_t)filter;
     // THE MIP CHAIN (SPEC.md 7.9 enableMipmaps): the sampler may descend the
     // levels the texture was made with while the toggle is on -- trilinear with
     // FILTERING, nearest-of-nearest without -- and is held at level 0 otherwise,
@@ -329,8 +320,8 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // PC look either.
     const bool mipped = r->toggles.enableMipmaps && r->toggles.enableFiltering && !animated &&
                         draw->material.shading != mdk::Shading::Original;
-    texture->maxLevel = (u8)(mipped ? mipLevels : 0);
-    C3D_TexSetFilterMipmap(texture, filter);
+    out->mipped = mipped;
+    out->mipLevels = mipLevels;
     // THE LIGHT AND THE SUN'S SHADOW, decided here because the shadow moves the
     // surface to unit 1 (unit 0 is the only one that compares a shadow map).
     // A Lit surface is drawn with the lit program -- the geometry shader lights
@@ -354,9 +345,13 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     const bool shadowLit = lit && r->shadowLitLive &&
                            mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,
                                                      draw->primitive);
-    // Skipped when the unit already holds this texture as it is now (THE DEDUPE,
-    // 03_frame.inc): a run of draws of one texture binds it once.
-    bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);
+    out->overlay = overlay;
+    out->wholeTriangles = wholeTriangles;
+    out->lit = lit;
+    out->shadowLit = shadowLit;
+    // The unit is chosen here; the bind itself is per-eye submit state
+    // (bindTexUnitIfChanged, THE DEDUPE: a run of one texture binds once).
+    out->texUnit = shadowLit ? 1 : 0;
 
     // THE UV TRANSFORM, in uniform register 4.
     //
@@ -391,6 +386,13 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         offsetY = (float)(draw->frame * frameHeight) / (float)resource.paddedHeight;
     }
     if (hd) {
+        // The original's own transform, kept for the submit-time fallback:
+        // the padded-rect mapping with the last-row flip (the else path's).
+        const mdk::pica::SceneUv flippedOrig = mdk::pica::sceneUvFromTop(scaleY, offsetY);
+        out->origScaleX = scaleX;
+        out->origScaleY = flippedOrig.scaleY;
+        out->origOffsetX = offsetX;
+        out->origOffsetY = flippedOrig.offsetY;
         // AN HD COPY maps the oracle's uv (0 = image top) through the image's own
         // rectangle from its .t3x (Tex3DS_SubTexture: top/bottom are already the
         // texture's t, so no last-row flip is applied on top). A .t3x is a whole
@@ -417,9 +419,13 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         scaleY = flipped.scaleY;
         offsetY = flipped.offsetY;
     }
-    // Skipped when the register already holds it (THE DEDUPE): every unpadded
-    // single-frame texture has the same transform.
-    setVsUniform(r, kDedupeUv, r->uvLocation, scaleX, scaleY, offsetX, offsetY);
+    // The UV transform is stored, not sent: the register write is per-eye
+    // submit state (setVsUniform, THE DEDUPE -- every unpadded single-frame
+    // texture has the same transform, so a run sends it once per eye).
+    out->scaleX = scaleX;
+    out->scaleY = scaleY;
+    out->offsetX = offsetX;
+    out->offsetY = offsetY;
 
     // THE COMBINER, and with it the question of where a draw's colour comes from.
     //
@@ -447,40 +453,160 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // when the context's stage 0 holds something else.
     // THE CUT for this draw (pica::alphaTestReferenceFor): the half cover for a
     // filtered scene draw, the oracle's discard for the canvas and for nearest.
-    installAlphaTest(r, mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,
-                                                         draw->material.pass), false);
-    // A shadowed lit draw's stages are installShadowLitStages' (below, with the
-    // light); every other draw leaves that layout first.
+    // Stored; installAlphaTest itself is per-eye submit state.
+    out->alphaRef = mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,
+                                                     draw->material.pass);
+    // Stage 0's variant is chosen here and sent per eye only when the
+    // context's stage 0 differs (setTexEnv0, THE DEDUPE). The variants are
+    // pure functions of the debug flags, built once (r->stage0*); rdebug
+    // `flat` colours per pass: Solid red, DoubleSided green, Blended blue,
+    // others yellow, all opaque. A shadowed lit draw's stage 0 is
+    // installShadowLitStages' instead, so it stores none.
+    if (!shadowLit) {
+        if (!r->stage0Built) {
+            C3D_TexEnvInit(&r->stage0Scene);
+            C3D_TexEnvSrc(&r->stage0Scene, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
+            C3D_TexEnvFunc(&r->stage0Scene, C3D_Both, GPU_REPLACE);
+            C3D_TexEnvInit(&r->stage0Overlay);
+            C3D_TexEnvSrc(&r->stage0Overlay, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+            C3D_TexEnvFunc(&r->stage0Overlay, C3D_Both, GPU_MODULATE);
+            static const uint32_t kFlatColour[4] = {
+                0xFF0000FFu, 0xFF00FF00u, 0xFF00FFFFu, 0xFFFF0000u}; // ABGR
+            for (int i = 0; i < 4; i++) {
+                C3D_TexEnvInit(&r->stage0Flat[i]);
+                C3D_TexEnvSrc(&r->stage0Flat[i], C3D_Both, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
+                C3D_TexEnvFunc(&r->stage0Flat[i], C3D_Both, GPU_REPLACE);
+                C3D_TexEnvColor(&r->stage0Flat[i], kFlatColour[i]);
+            }
+            r->stage0Built = true;
+        }
+        if (overlay) out->stage0Index = 1;
+        else if (renderDebugFlags() & kRenderDebugFlat) {
+            int fi = (draw->material.pass == mdk::Pass::Solid) ? 0
+                   : (draw->material.pass == mdk::Pass::DoubleSided) ? 1
+                   : (draw->material.pass == mdk::Pass::Blended) ? 3 : 2;
+            out->stage0Index = 2 + fi;
+        } else out->stage0Index = 0;
+    }
+    out->worldIdentity = mdk::pica::isIdentity(draw->world);
+    out->haze = r->hazeLive && draw->material.shading != mdk::Shading::Original &&
+                draw->material.pass != mdk::Pass::Overlay;
+    return true;
+}
+
+// THE PER-EYE SUBMIT: only what depends on the eye -- its frustum, its
+// matrix -- plus the deduped state writes and the draw itself.
+static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
+    const mdk::MeshDraw* draw = p->draw;
+    const bool overlay = p->overlay;
+    const bool lit = p->lit;
+    const bool shadowLit = p->shadowLit;
+    const bool wholeTriangles = p->wholeTriangles;
+
+    // THE PER-EYE FRUSTUM CULL. The level's batches opt in (MeshDraw::cullable,
+    // game/level_view.cpp); everything else -- objects with a world matrix,
+    // sprites, canvas, insets -- leaves `cullable` false and is never tested.
+    // A batch whose box is wholly outside this eye's frustum is not submitted:
+    // the PICA200 never sees its vertices. The original culled through the arena
+    // BSP; the port draws flat batches, so two resident arenas paid the vertex
+    // pipeline for geometry behind the camera (measured: the pair window cost
+    // ~+17 ms/frame on Old 3DS, 2026-11-22). The box is exact at build; a torn
+    // mesh only collapses vertices inward, so a stale box stays conservative.
+    /* @vfp-exempt R3 — a frustum test IS a float predicate; culling invisible batches is the measured win, not a rounding-sensitive gameplay boundary. measured n/a (pending OG capture). Verified 2026-11-23. */
+    if (draw->cullable && r->frustumValid) {
+        bool outside = false;
+        for (int plane = 0; plane < 6 && !outside; plane++) {
+            const float* pl = r->frustum[plane];
+            // The box corner that MAXIMIZES the plane's dot (the "positive
+            // vertex"): the batch is outside when even that corner is behind
+            // the plane. Sign only, so the planes need no normalization.
+            const float vx = pl[0] >= 0.0f ? draw->bounds_max[0] : draw->bounds_min[0];
+            const float vy = pl[1] >= 0.0f ? draw->bounds_max[1] : draw->bounds_min[1];
+            const float vz = pl[2] >= 0.0f ? draw->bounds_max[2] : draw->bounds_min[2];
+            if (pl[0] * vx + pl[1] * vy + pl[2] * vz + pl[3] < 0.0f) {
+                outside = true;
+            }
+        }
+        if (outside) {
+            if (r->census.active) {
+                r->census.culled++;
+            }
+            return;
+        }
+    }
+
+    // Re-derive the pointers from the prepared indices (see PreparedDraw):
+    // a texture evicted since prepare is revived here, as the old per-eye
+    // resolve did, and a mesh that went invalid drops the draw. The tables
+    // only grow within a frame (nothing erases or compacts meshes,
+    // textures or hdCopies between prepare and the queue reset), so an
+    // index still names the same entry; the range guard is repeated
+    // because the mesh may have been re-made smaller since prepare
+    // (validator F11).
+    if (p->meshIndex < 0 || (size_t)p->meshIndex >= r->meshes.size()) {
+        return;
+    }
+    const C3dMesh& mesh = r->meshes[(size_t)p->meshIndex];
+    if (!mesh.valid || mesh.count <= 0) {
+        return;
+    }
+    if (draw->first_vertex < 0 || draw->vertex_count <= 0 ||
+        draw->first_vertex + draw->vertex_count > mesh.count) {
+        return;
+    }
+    C3D_Tex* texture = nullptr;
+    bool usedHd = false;
+    if (p->texHd && p->texIndex >= 0 && (size_t)p->texIndex < r->hdCopies.size() &&
+        r->hdCopies[(size_t)p->texIndex].state == HdCopy::Resident) {
+        texture = &r->hdCopies[(size_t)p->texIndex].tex;
+        usedHd = true;
+    }
+    // (An HD copy evicted since prepare falls back to the original below,
+    // as the old per-eye resolve did -- never a dropped draw.)
+    int32_t submitMipLevels = p->mipLevels;
+    if (!texture && draw->material.texture >= 0 &&
+        (size_t)draw->material.texture < r->textures.size()) {
+        C3dTexture& resource = r->textures[(size_t)draw->material.texture];
+        if (!resource.valid && !resource.source.empty() && !resource.releasePending) {
+            makeTexture(r, resource, false);
+        }
+        if (resource.valid) {
+            texture = &resource.tex;
+            submitMipLevels = resource.mipLevels;
+            // The fallback is a resolve too: stamp it, or the revived
+            // original is the next eviction's first victim (validator F3).
+            // (The keepRgba8 pin already ran in prepareDraw, above the HD
+            // branch, so it is not repeated here.)
+            resource.lastUsed = ++r->drawCounter;
+        }
+    }
+    if (!texture) {
+        return;
+    }
+    // The recorded sampler words, written at submit as the old per-eye
+    // resolve wrote them (validator F1): plain writes into the texture's
+    // own parameter words, carried by the bind below.
+    {
+        const GPU_TEXTURE_FILTER_PARAM filter = (GPU_TEXTURE_FILTER_PARAM)p->filter;
+        C3D_TexSetFilter(texture, filter, filter);
+        texture->maxLevel = (u8)(p->mipped ? submitMipLevels : 0);
+        C3D_TexSetFilterMipmap(texture, filter);
+    }
+    bindTexUnitIfChanged(r, p->texUnit, texture);
+    // The fallback to the original takes the original's transform.
+    const bool origUv = p->texHd && !usedHd;
+    const float uvScaleX = origUv ? p->origScaleX : p->scaleX;
+    const float uvScaleY = origUv ? p->origScaleY : p->scaleY;
+    const float uvOffsetX = origUv ? p->origOffsetX : p->offsetX;
+    const float uvOffsetY = origUv ? p->origOffsetY : p->offsetY;
+    setVsUniform(r, kDedupeUv, r->uvLocation, uvScaleX, uvScaleY, uvOffsetX, uvOffsetY);
+    installAlphaTest(r, p->alphaRef, false);
+    // A shadowed lit draw's stages are installShadowLitStages' (below, with
+    // the light); every other draw leaves that layout first.
     if (!shadowLit) {
         leaveShadowLitStages(r);
+        setTexEnv0(r, stage0Variant(r, p->stage0Index));
     }
-    // Stage 0 is built here and sent only when the context's stage 0 differs
-    // (setTexEnv0, THE DEDUPE): a run of scene draws sends it once, not per draw
-    // as C3D_GetTexEnv's unconditional dirty used to make it.
-    if (!shadowLit) {
-        C3D_TexEnv stage0;
-        C3D_TexEnv* env = &stage0;
-        C3D_TexEnvInit(env);
-        if (overlay) {
-            C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-            C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
-        } else if (renderDebugFlags() & kRenderDebugFlat) {
-            // rdebug `flat`: the texture is ignored; a constant colour per pass
-            // (Solid red, DoubleSided green, Blended blue, others yellow), opaque.
-            uint32_t c = 0xFF00FFFFu;  // ABGR: yellow
-            if (draw->material.pass == mdk::Pass::Solid) c = 0xFF0000FFu;
-            else if (draw->material.pass == mdk::Pass::DoubleSided) c = 0xFF00FF00u;
-            else if (draw->material.pass == mdk::Pass::Blended) c = 0xFFFF0000u;
-            C3D_TexEnvSrc(env, C3D_Both, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
-            C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
-            C3D_TexEnvColor(env, c);
-        } else {
-            C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
-            C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
-        }
-        setTexEnv0(r, env);
-    }
-    // (else: stage 0 is installShadowLitStages')
 
     // THE TINT, in uniform register 5. Only the canvas asks for one; the cache
     // restores white for the first scene draw after a canvas batch so the scene
@@ -534,7 +660,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
                           (int)draw->material.pass,
                           v[0], v[1], v[2], v[3], v[4],
                           (int)draw->frame, (int)draw->material.frame_count,
-                          scaleX, scaleY, offsetX, offsetY,
+                          uvScaleX, uvScaleY, uvOffsetX, uvOffsetY,
                           sampleable ? "" : " [first is past the mesh's end]");
     }
     // THE DIAGNOSTIC TRIANGLE IS DRAWN LAST, AFTER THE REAL DRAW -- see below.
@@ -586,7 +712,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     const float* upload = r->eyeVp;
     if (overlay) {
         upload = draw->world;
-    } else if (!mdk::pica::isIdentity(draw->world)) {
+    } else if (!p->worldIdentity) {
         mdk::pica::drawMatrix(draw->world, r->eyeVp, composed);
         upload = composed;
     }
@@ -852,7 +978,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (lit) {
         // The world position the geometry shader takes its normal from; the
         // identity (every arena batch) is written only when it is not there.
-        const bool identity = mdk::pica::isIdentity(draw->world);
+        const bool identity = p->worldIdentity;
         if (!identity || !r->worldIsIdentity) {
             C3D_Mtx worldMtx;
             mdk::pica::registers(draw->world, worldMtx.m);
@@ -882,8 +1008,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // per draw: AGENTS.md R3).
     // (A shadowed lit draw's haze is its stage 3, installShadowLitStages'.)
     if (!shadowLit) {
-        setHaze(r, r->hazeLive && draw->material.shading != mdk::Shading::Original &&
-                       draw->material.pass != mdk::Pass::Overlay);
+        setHaze(r, p->haze);
     }
     if (r->boundProgram && r->boundProgram->geometryShader) {
         // The geometry shader decides the primitives (it emits each triangle).
@@ -1411,25 +1536,66 @@ static void drawGlow(RendererC3D* r) {
 // seams below do not flush (review-1 F4) -- and, since review-3 F1, why none of
 // them may draw by itself either: an immediate C3D_DrawArrays in a seam is
 // outside the per-eye replay, so it lands in one target or in none.
-static void replayQueue(RendererC3D* r) {
-    if (!r || r->queue.empty() || !r->inFrame) {
+// Resolve the whole queue once per frame, in pass order; the glow's slot
+// and the insets-over-canvas tail keep their places in the prepared array.
+static void prepareQueue(RendererC3D* r) {
+    if (!r) {
         return;
+    }
+    r->prepared.clear();
+    r->preparedGlowAt = -1;
+    if (r->queue.empty() || !r->inFrame) {
+        return;
+    }
+    // Exact capacity for the frame (the records point into the queue, which
+    // nothing mutates between here and the queue reset after the eye loop).
+    {
+        size_t total = r->insetOverDraws.size();
+        for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
+            total += r->queue.bucket(pass).size();
+        }
+        if (r->prepared.capacity() < total) {
+            r->prepared.reserve(total);
+        }
     }
     for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
         // The glow lands between the scene and the canvas, where the PC's post
         // pass sits (SPEC.md 6: post -> frame -> canvas).
         if (pass == static_cast<int32_t>(mdk::Pass::Overlay)) {
-            drawGlow(r);
+            r->preparedGlowAt = (int32_t)r->prepared.size();
         }
         const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
         for (size_t i = 0; i < bucket.size(); i++) {
-            drawRecorded(r, &bucket[i]);
+            PreparedDraw p;
+            if (prepareDraw(r, &bucket[i], &p)) {
+                r->prepared.push_back(p);
+            }
         }
     }
     // The insets over the canvas, after it (render.h; the C#'s RenderInsets
     // OverCanvas): the sniper clip's rounds.
     for (size_t i = 0; i < r->insetOverDraws.size(); i++) {
-        drawRecorded(r, &r->insetOverDraws[i]);
+        PreparedDraw p;
+        if (prepareDraw(r, &r->insetOverDraws[i], &p)) {
+            r->prepared.push_back(p);
+        }
+    }
+}
+
+// The per-eye replay of the prepared array: thin submit only (see
+// drawRecorded), with the glow still drawn per eye at its slot.
+static void replayQueue(RendererC3D* r) {
+    if (!r || (r->prepared.empty() && r->preparedGlowAt < 0) || !r->inFrame) {
+        return;
+    }
+    for (size_t i = 0; i < r->prepared.size(); i++) {
+        if ((int32_t)i == r->preparedGlowAt) {
+            drawGlow(r);
+        }
+        drawRecorded(r, &r->prepared[i]);
+    }
+    if (r->preparedGlowAt == (int32_t)r->prepared.size()) {
+        drawGlow(r);
     }
 }
 

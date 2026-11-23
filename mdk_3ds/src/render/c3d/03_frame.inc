@@ -201,7 +201,8 @@ static mdk::pica::ShadowByteOrder shadowByteOrder(const RendererC3D* r);
 static void installLitUniforms(RendererC3D* r);
 static void installShadowUniforms(RendererC3D* r);
 static void leaveShadowLitStages(RendererC3D* r);
-static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw);
+static void prepareQueue(RendererC3D* r);
+static void drawRecorded(RendererC3D* r, const PreparedDraw* p);
 static void installAlphaTest(RendererC3D* r, int reference, bool force);
 
 // Install one pass's depth state on the citro3d context and record it in the
@@ -1579,9 +1580,33 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     r->billboardsLive = r->toggles.enableGlowBillboards && !r->toggles.glowBloom &&
                         r->lighting.enabled;
     r->billboardsDrawn = 0;
+    // Resolve the queue once for both eyes (STEREO-REPLAY analogue,
+    // 06_draw.inc prepareQueue): the eye loop below only culls, composes
+    // matrices and submits.
+    // A frame that draws no eye resolves nothing (validator F4; eyePlan
+    // only yields 1-2 today, so this is the guard, not a behaviour change).
+    if (r->eyes.passes > 0) {
+#ifdef MDK_HW_PROFILE
+        const uint64_t prepT0 = svcGetSystemTick();
+        prepareQueue(r);
+        r->prepareTicks += svcGetSystemTick() - prepT0;
+#else
+        prepareQueue(r);
+#endif
+    }
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
+#ifdef MDK_HW_PROFILE
+        // Per-eye replay account (2026-11-22): sizes what a prepared-draw
+        // replay could save -- the second eye's share of replayQueue. Ticks
+        // only; the print rides the gputime cadence below FrameEnd.
+        const uint64_t eyeT0 = svcGetSystemTick();
+#endif
         replayQueue(r);
+#ifdef MDK_HW_PROFILE
+        r->eyeTicks[eye & 1] += svcGetSystemTick() - eyeT0;
+        if (eye == 0) r->eyeFrames++;
+#endif
         if (eye == 0 && r->shadowLive && mdk::log3dsPeriodic() &&
             (r->frame == 30 || (r->frame % 600) == 0)) {
             mdk::log3dsPrintf("shadows: frame %lu: %d caster draws into the map at its last cast (%d more left "
@@ -1712,6 +1737,18 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
         gpuDrawSum += C3D_GetDrawingTime();
         gpuProcSum += C3D_GetProcessingTime();
         gpuSamples++;
+        if ((r->frame % 300) == 0 && r->eyeFrames > 0) {
+            const double ticksPerMs = (double)SYSCLOCK_ARM11 / 1000.0;
+            mdk::log3dsPrintf("eyetime: frame %d mean prepare %.2f eye0 %.2f eye1 %.2f ms over %d frames",
+                              (int)r->frame,
+                              (double)r->prepareTicks / ticksPerMs / (double)r->eyeFrames,
+                              (double)r->eyeTicks[0] / ticksPerMs / (double)r->eyeFrames,
+                              (double)r->eyeTicks[1] / ticksPerMs / (double)r->eyeFrames,
+                              (int)r->eyeFrames);
+            r->eyeTicks[0] = r->eyeTicks[1] = 0;
+            r->prepareTicks = 0;
+            r->eyeFrames = 0;
+        }
         if ((r->frame % 300) == 0 && gpuSamples > 0) {
             mdk::log3dsPrintf("gputime: frame %d mean drawing %.2f processing %.2f ms over %d frames",
                               (int)r->frame, (double)(gpuDrawSum / (float)gpuSamples),

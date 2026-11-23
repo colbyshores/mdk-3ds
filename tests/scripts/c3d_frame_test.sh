@@ -1184,18 +1184,26 @@ def adjudicate(text, quiet=False):
                if re.search(r"C3D_AlphaTest\(\s*true\s*,\s*GPU_GREATER\s*,\s*reference\s*\)",
                             loc)]
     draw_body = body(text, "drawRecorded") or ""
-    draw_calls = re.findall(r"installAlphaTest\(\s*r\s*,\s*mdk::pica::alphaTestReferenceFor\("
-                            r"\s*r->toggles\.enableFiltering\s*,\s*draw->material\.pass\s*\)"
-                            r"\s*,\s*false\s*\)", draw_body)
+    # The reference is computed once per frame in prepareDraw (the prepared
+    # replay) and installed per eye by drawRecorded from the prepared record.
+    prep_body = fn_body(text, "prepareDraw")
+    draw_calls = re.findall(r"out->alphaRef\s*=\s*mdk::pica::alphaTestReferenceFor\("
+                            r"\s*r->toggles\.enableFiltering\s*,"
+                            r"\s*draw->material\.pass\s*\)", prep_body)
+    draw_installs = re.findall(r"installAlphaTest\(\s*r\s*,\s*p->alphaRef\s*,\s*false\s*\)",
+                               draw_body)
     # (The reference VALUES -- kAlphaTestReference with filtering off or on the
     # canvas, the half cover for a filtered scene draw -- are PicaMatrix's pins.)
-    rep.check("alpha-test-is-the-oracles-discard", len(discard) == 1 and len(draw_calls) == 1,
-              "%d C3D_AlphaTest written as (true, GPU_GREATER, reference): %s; drawRecorded's "
-              "installAlphaTest(r, alphaTestReferenceFor(filtering, draw->material.pass), false) "
-              "calls: %d (GPU_GREATER against 0 IS `if (index == 0) discard;`, because the "
+    rep.check("alpha-test-is-the-oracles-discard", len(discard) == 1 and len(draw_calls) == 1
+              and len(draw_installs) == 1,
+              "%d C3D_AlphaTest written as (true, GPU_GREATER, reference): %s; prepareDraw's "
+              "alphaTestReferenceFor(filtering, draw->material.pass) computations: %d, "
+              "drawRecorded's installAlphaTest(r, p->alphaRef, false) calls: %d "
+              "(GPU_GREATER against 0 IS `if (index == 0) discard;`, because the "
               "palette expansion encodes index 0 as alpha 0 and every other index as 255; any "
               "other spelling is a different predicate and a discarded fragment does not "
-              "write depth)" % (len(discard), discard or ["none"], len(draw_calls)))
+              "write depth)" % (len(discard), discard or ["none"], len(draw_calls),
+                                len(draw_installs)))
 
     # THE MICROCODE IS UPLOADED FROM INSIDE THE FRAME (review-6 F6, external review
     # 2026-11-05). Batch 66 hung the guest between `shaderProgramSetVsh ok` and the
@@ -1348,17 +1356,65 @@ def adjudicate(text, quiet=False):
                                                 clear_at, drawon_at))
 
     # THE GLOW'S PLACE: called from replayQueue (so once per eye, into that eye's
-    # target), gated on the Overlay pass (so the canvas draws over it, as the PC's
-    # post pass sits under its canvas), and nowhere else.
+    # target), at the prepared array's Overlay slot (prepareQueue records it
+    # where the Overlay pass begins, so the canvas draws over it, as the PC's
+    # post pass sits under its canvas), and nowhere else. Two call sites: the
+    # in-loop slot and the empty-Overlay tail.
     replay_body = body(text, "replayQueue") or ""
     glow_calls = call_sites(text, "drawGlow")
-    glow_gate = re.search(r"if\s*\(\s*pass\s*==\s*static_cast<int32_t>\(mdk::Pass::Overlay\)\s*\)"
+    glow_gate = re.search(r"if\s*\(\(int32_t\)i == r->preparedGlowAt\)\s*\{\s*drawGlow\(r\);",
+                          replay_body)
+    glow_tail = re.search(r"if\s*\(r->preparedGlowAt == \(int32_t\)r->prepared\.size\(\)\)"
                           r"\s*\{\s*drawGlow\(r\);", replay_body)
+    # ... and the slot itself is recorded where the Overlay pass begins.
+    prep_queue_body = body(text, "prepareQueue") or ""
+    glow_slot = re.search(r"if\s*\(\s*pass\s*==\s*static_cast<int32_t>\(mdk::Pass::Overlay\)\s*\)"
+                          r"\s*\{\s*r->preparedGlowAt =", prep_queue_body)
     rep.check("glow-once-per-eye-before-the-canvas",
-              len(glow_calls) == 1 and glow_gate is not None,
-              "%d drawGlow call site(s); inside replayQueue gated on the Overlay pass: %s "
+              len(glow_calls) == 2 and glow_gate is not None and glow_tail is not None
+              and glow_slot is not None,
+              "%d drawGlow call site(s); inside replayQueue at the prepared Overlay slot: %s "
               "(anywhere else it lands in one eye, or over the canvas)"
-              % (len(glow_calls), "yes" if glow_gate else "NO"))
+              % (len(glow_calls), "yes" if glow_gate and glow_tail and glow_slot else "NO"))
+
+    # THE PREPARED REPLAY'S CONTRACT: the queue is resolved ONCE per frame,
+    # before the eye loop -- moving prepareQueue inside the loop would
+    # restore every once-per-eye side effect this split removed while every
+    # per-draw check above stayed green.
+    end_b2 = body(text, "mdk_render_end_frame") or ""
+    prepq_at = end_b2.find("prepareQueue(r);")
+    loop_at2 = end_b2.find("installEye(r, eye == 0")
+    # Two textual sites are the PROFILE timing ifdef/else pair; the contract
+    # is that every site sits before the eye loop and none inside it.
+    prepq_in_loop = "prepareQueue(r);" in end_b2[loop_at2:] if loop_at2 >= 0 else True
+    # The stage-0 variants are built once (r->stage0Built), not per draw:
+    # rebuilding them every frame would still draw the same picture.
+    prep_b2 = fn_body(text, "prepareDraw")
+    rep.check("stage0-variants-built-once",
+              "if (!r->stage0Built) {" in prep_b2 and "r->stage0Built = true;" in prep_b2,
+              "stage0 variants guarded by r->stage0Built in prepareDraw: %s"
+              % ("yes" if "r->stage0Built = true;" in prep_b2 else "NO"))
+    rep.check("prepared-replay-prepares-once-before-the-eyes",
+              0 <= prepq_at < loop_at2 and not prepq_in_loop,
+              "prepareQueue in end_frame at %d, eye loop at %d, called inside the loop: %s "
+              "(resolution runs once per frame or the second eye pays it again)"
+              % (prepq_at, loop_at2, "yes" if prepq_in_loop else "no"))
+
+    # The sampler words live on the shared C3D_Tex (validator F1/F3): they
+    # are written at submit, never in prepareDraw, and the HD fallback
+    # stamps the original it revives.
+    rec_b2 = fn_body(text, "drawRecorded") or ""
+    rep.check("sampler-words-written-at-submit-not-prepare",
+              "C3D_TexSetFilter(" not in prep_b2 and "maxLevel" not in prep_b2
+              and "C3D_TexSetFilter(texture, filter, filter);" in rec_b2
+              and "texture->maxLevel" in rec_b2
+              and "resource.lastUsed = ++r->drawCounter;" in rec_b2,
+              "sampler writes in prepareDraw: %s; submit writes filter/maxLevel "
+              "and stamps the fallback original: %s (re-hoisting the sampler "
+              "into prepare leaves every draw of a texture with the last "
+              "prepared draw's filter)"
+              % ("yes" if "C3D_TexSetFilter(" in prep_b2 else "no",
+                 "yes" if "texture->maxLevel" in rec_b2 else "NO"))
 
     # THE SUN SHADOW: MADE ONCE A FRAME, TAKEN IN THE LIT DRAW ITSELF (Enhanced
     # Mode enableSkyShadows; 03_frame.inc castShadows, 06_draw.inc
@@ -1387,10 +1443,14 @@ def adjudicate(text, quiet=False):
     cast_flush = cast_body.find("GPUCMD_AddWrite(GPUREG_FRAMEBUFFER_FLUSH, 1);")
     no_second_pass = "receiveShadows" not in text and "kDepthShadowReceive" not in text
     rec_body = body(text, "drawRecorded") or ""
+    # The shadowLit decision and unit choice are made once in prepareDraw;
+    # drawRecorded binds the prepared unit per eye.
+    prep_draw_body = fn_body(text, "prepareDraw")
     takes = re.search(r"const bool shadowLit = lit && r->shadowLitLive &&\s*"
                       r"mdk::pica::castsSunShadow\(draw->material\.pass, draw->material\.shading,"
-                      r"\s*draw->primitive\);", rec_body) is not None
-    unit1 = "bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);" in rec_body
+                      r"\s*draw->primitive\);", prep_draw_body) is not None
+    unit1 = ("out->texUnit = shadowLit ? 1 : 0;" in prep_draw_body
+             and "bindTexUnitIfChanged(r, p->texUnit, texture);" in rec_body)
     program = re.search(r"shadowLit\s*\?\s*&r->programShadow", rec_body) is not None
     stages = re.search(r"if\s*\(shadowLit\)\s*\{\s*installShadowLitStages\(r,", rec_body) is not None
     leaves = re.search(r"if\s*\(!shadowLit\)\s*\{\s*leaveShadowLitStages\(r\);", rec_body) is not None
@@ -1548,7 +1608,7 @@ def adjudicate(text, quiet=False):
     expected_high = sorted(["bindTexUnit(r, 2, &r->shadowTint);",
                             "bindTexUnit(r, 1, &r->unitIdle);",
                             "bindTexUnit(r, 2, &r->unitIdle);",
-                            "bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);"])
+                            "bindTexUnitIfChanged(r, p->texUnit, texture);"])
     # ... and a raw C3D_TexBind on unit 1/2 anywhere but inside the helper is the
     # same hazard spelled around it (a NULL unbind reads through the pointer).
     tb_range = line_range(text, body_span(text, "bindTexUnit"))
@@ -1627,10 +1687,11 @@ def adjudicate(text, quiet=False):
                                "C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation",
                                "C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->worldLocation")
                    if w in rec_code]
-    routed = all(c in rec_b for c in ("setTexEnv0(r, env);", "bindVertexBuffer(r, mesh.data);",
+    routed = all(c in rec_b for c in ("setTexEnv0(r, stage0Variant(r, p->stage0Index));",
+                                      "bindVertexBuffer(r, mesh.data);",
                                       "setVsUniform(r, kDedupeUv, r->uvLocation,",
                                       "setVsMatrix(r, kDedupeMvp, r->mvpLocation, &gpuMtx);",
-                                      "bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);"))
+                                      "bindTexUnitIfChanged(r, p->texUnit, texture);"))
     off_switch = re.search(r"#if defined\(MDK_AUTOQUIT\) && defined\(MDK_HW_DRAWDEDUPE_OFF\)\s*\n"
                            r"static constexpr bool kDrawDedupe = false;\s*\n#else\s*\n"
                            r"static constexpr bool kDrawDedupe = true;", text) is not None
@@ -3207,8 +3268,8 @@ ARMS = [
                          "        frameSplit(r);\n", 1),
      "borrowed-depth-split-then-cleared-per-right-eye"),
     ("glow-after-the-canvas",
-     lambda s: s.replace("if (pass == static_cast<int32_t>(mdk::Pass::Overlay)) {\n            drawGlow(r);",
-                         "if (pass == static_cast<int32_t>(mdk::Pass::Count)) {\n            drawGlow(r);", 1),
+     lambda s: s.replace("if (pass == static_cast<int32_t>(mdk::Pass::Overlay)) {\n            r->preparedGlowAt =",
+                         "if (pass == static_cast<int32_t>(mdk::Pass::Count)) {\n            r->preparedGlowAt =", 1),
      "glow-once-per-eye-before-the-canvas"),
     ("glow-leaves-the-combiner-buffer-live",
      lambda s: s.replace("    C3D_TexEnvBufUpdate(C3D_Both, 0);\n    r->lightStageOn = false;\n    r->hazeOn = false;",
@@ -3332,8 +3393,8 @@ ARMS = [
          "    // the GPU still holds of it goes to memory first (the glow's rule).\n", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("shadowed-lit-draw-keeps-the-surface-on-unit-0",
-     lambda s: s.replace("bindTexUnitIfChanged(r, shadowLit ? 1 : 0, texture);",
-                         "bindTexUnitIfChanged(r, 0, texture);", 1),
+     lambda s: s.replace("out->texUnit = shadowLit ? 1 : 0;",
+                         "out->texUnit = 0;", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("shadowed-lit-draw-through-the-plain-lit-program",
      lambda s: s.replace("shadowLit ? &r->programShadow", "shadowLit ? &r->programLit", 1),
@@ -3348,7 +3409,7 @@ ARMS = [
      lambda s: s.replace("    if (!shadowLit) {\n        setHaze(", "    {\n        setHaze(", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("unshadowed-draw-inherits-the-shadowed-layout",
-     lambda s: s.replace("    if (!shadowLit) {\n        leaveShadowLitStages(r);\n    }\n", "", 1),
+     lambda s: s.replace("    if (!shadowLit) {\n        leaveShadowLitStages(r);\n        setTexEnv0(r, stage0Variant(r, p->stage0Index));\n    }\n", "", 1),
      "sun-shadow-cast-once-and-taken-in-the-lit-draw"),
     ("shadowed-layout-leaves-the-surface-on-unit-1",
      lambda s: s.replace("    bindTexUnit(r, 1, &r->unitIdle);\n", "", 1),
@@ -3394,9 +3455,25 @@ ARMS = [
      lambda s: s.replace("memcmp(&C3D_FVUnif[GPU_VERTEX_SHADER][location]",
                          "memcmp(&C3D_FVUnif[GPU_GEOMETRY_SHADER][location]", 1),
      "per-draw-state-dedupe"),
+    ("prepare-moved-inside-the-eye-loop",
+     lambda s: s.replace("    if (r->eyes.passes > 0) {\n#ifdef MDK_HW_PROFILE\n"
+                         "        const uint64_t prepT0 = svcGetSystemTick();\n"
+                         "        prepareQueue(r);\n"
+                         "        r->prepareTicks += svcGetSystemTick() - prepT0;\n"
+                         "#else\n        prepareQueue(r);\n#endif\n    }\n",
+                         "", 1)
+                .replace("        replayQueue(r);\n",
+                         "        prepareQueue(r);\n        replayQueue(r);\n", 1),
+     "prepared-replay-prepares-once-before-the-eyes"),
+    ("sampler-words-rehoisted-into-prepare",
+     lambda s: s.replace("        C3D_TexSetFilter(texture, filter, filter);\n", "", 1),
+     "sampler-words-written-at-submit-not-prepare"),
+    ("stage0-variants-rebuilt-every-frame",
+     lambda s: s.replace("            r->stage0Built = true;", "            r->stage0Built = false;", 1),
+     "stage0-variants-built-once"),
     ("stage-0-written-raw-every-draw-again",
-     lambda s: s.replace("        C3D_TexEnv stage0;\n        C3D_TexEnv* env = &stage0;\n",
-                         "        C3D_TexEnv* env = C3D_GetTexEnv(0);\n", 1),
+     lambda s: s.replace("        setTexEnv0(r, stage0Variant(r, p->stage0Index));",
+                         "        C3D_SetTexEnv(0, C3D_GetTexEnv(0));", 1),
      "per-draw-state-dedupe"),
     ("dedupe-off-switch-reaches-a-release-build",
      lambda s: s.replace("#if defined(MDK_AUTOQUIT) && defined(MDK_HW_DRAWDEDUPE_OFF)",
@@ -3469,8 +3546,10 @@ ARMS = [
                          1),
      "alpha-test-is-the-oracles-discard"),
     ("alpha-test-ignores-the-draw's-pass (the canvas takes the half cover)",
-     lambda s: s.replace("draw->material.pass), false);",
-                         "mdk::Pass::Solid), false);", 1),
+     lambda s: s.replace("out->alphaRef = mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,\n"
+                         "                                                     draw->material.pass);",
+                         "out->alphaRef = mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,\n"
+                         "                                                     mdk::Pass::Solid);", 1),
      "alpha-test-is-the-oracles-discard"),
     ("installEye stops installing the frame's alpha test",
      lambda s: s.replace("    installAlphaTest(r, mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,\n"

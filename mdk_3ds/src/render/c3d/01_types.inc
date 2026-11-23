@@ -367,6 +367,41 @@ struct HdCopy {
     float left = 0.0f, top = 1.0f, right = 1.0f, bottom = 0.0f;
 };
 
+// One queue record resolved for the frame (STEREO-REPLAY analogue,
+// 2026-11-22): everything in drawRecorded that does not depend on the eye --
+// mesh/texture resolution, filter and mip setup, the UV transform, the
+// lit/shadow decision, stage 0, the alpha cut -- is decided ONCE here before
+// the eye loop; each eye's submit then only culls against its own frustum,
+// composes its own matrix and issues the draw. Frame-scoped: `draw` points
+// into the queue, which outlives the eye loop and is reset after it.
+struct PreparedDraw {
+    const mdk::MeshDraw* draw = nullptr;
+    // Indices, not pointers: the glow slot runs between prepare and the
+    // later submits, and a table growth there must not strand a record.
+    // Pointers are re-derived at submit (validator finding, 2026-11-22).
+    int32_t meshIndex = -1;
+    int32_t texIndex = -1;          // into textures, or hdCopies when texHd
+    bool texHd = false;
+    int32_t texUnit = 0;
+    float scaleX = 1.0f, scaleY = 1.0f, offsetX = 0.0f, offsetY = 0.0f;
+    // The original texture's UV, when the bound surface is an HD copy: a
+    // copy evicted before submit falls back to the original, with its own
+    // transform (never the copy's).
+    float origScaleX = 1.0f, origScaleY = 1.0f, origOffsetX = 0.0f, origOffsetY = 0.0f;
+    bool overlay = false, lit = false, shadowLit = false;
+    bool wholeTriangles = false, worldIdentity = false, haze = false;
+    // The sampler words (filter, mip ceiling) live on the shared C3D_Tex,
+    // and two draws of one texture may disagree, so they are recorded here
+    // and written at submit, as the old per-eye resolve wrote them
+    // (validator F1, 2026-11-23). mipLevels is the bound surface's chain;
+    // the HD fallback substitutes the original's at submit.
+    int32_t filter = 0;             // GPU_TEXTURE_FILTER_PARAM
+    bool mipped = false;
+    int32_t mipLevels = 0;
+    int alphaRef = 0;
+    int32_t stage0Index = -1;       // 0 scene, 1 overlay, 2..5 flat; -1 shadow
+};
+
 struct RendererC3D {
     C3D_RenderTarget* targetLeft = nullptr;
     C3D_RenderTarget* targetRight = nullptr;
@@ -600,6 +635,20 @@ struct RendererC3D {
     // first write and the scene draws after it cost one compare.
     bool tintIsWhite = true;
 
+    // THE STAGE-0 VARIANTS (cached 2026-11-22): stage 0 has seven possible
+    // contents (scene, overlay, flat x pass-colour), pure functions of the
+    // debug flags, so they are built once instead of on the stack per draw
+    // (C3D_TexEnvInit + src/func calls ~280x/frame). setTexEnv0 still memcmps
+    // against live state, so sending stays identical.
+    C3D_TexEnv stage0Scene, stage0Overlay, stage0Flat[4];
+    bool stage0Built = false;
+
+    // The frame's prepared draws (capacity kept across frames; see
+    // PreparedDraw). preparedGlowAt is the index at which the glow pass
+    // lands (the Overlay bucket's first prepared draw), or -1.
+    std::vector<PreparedDraw> prepared;
+    int32_t preparedGlowAt = -1;
+
     // THE CANVAS BATCH. The quads are held here between canvas_begin and
     // canvas_end, and canvas_end turns them into ONE mesh upload plus one queued
     // record per material group -- the oracle's own shape (Renderer.cs:340-358
@@ -649,6 +698,12 @@ struct RendererC3D {
     // draws the replay actually emitted.
     int32_t canvasQuadsThisFrame = 0;
     int32_t canvasDrawsThisFrame = 0;
+#ifdef MDK_HW_PROFILE
+    // Per-eye replay ticks (PROFILE only; see mdk_render_end_frame).
+    uint64_t eyeTicks[2] = {0, 0};
+    uint64_t prepareTicks = 0;
+    uint64_t eyeFrames = 0;
+#endif
     int32_t canvasFrames = 0;
 
     int frame = 0;

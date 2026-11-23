@@ -222,6 +222,58 @@ ones, not one lever. Every originally named item is addressed:
 transition spikes (all gone), batching (sorted), drawcall CPU
 (culls), GPU timing (measured), sky (fill-bound, cull neutral),
 flush (removed), objects (culled), effects (memoized twice).
+Prepared-draw replay (2026-11-23, owner option 2 + Forsaken
+validation): Forsaken's `STEREO_REPLAY` was verified in
+`../forsaken` — it memoizes CPU vertex *repacking* (index expansion
+into a scratch stream), not command lists; its transform is GPU
+(`projection * (modelView * inpos)` uniforms), and state/draws still
+run live per eye. MDK has no repacking to memoize (retained GPU
+meshes), so the analogue was built instead: `prepareQueue` resolves
+the queue once per frame (`prepareDraw`: mesh/texture/filter/UV/
+lit/stage-0/alpha decisions, all side effects once per frame), and
+each eye only culls, composes its matrix and submits
+(`drawRecorded` on a `PreparedDraw`; indices, not pointers, so the
+glow slot cannot strand a record). `eyetime:` PROFILE lines size
+it: prepare 0.21–0.24 ms/frame, eye0 ~1.7–2.2 ms, eye1 ~1.7–1.95 ms
+— resolution is only ~0.2 ms of the ~1.9 ms per-eye replay; the
+rest is citro3d command submission, which is inherently per eye.
+Measured (features-off walk): p50 17.9 → 17.6 ms, steady mean
+21.87 → 21.70 ms, 1-vblank frames 2888 → 2959 of 4080. The stage-0
+TexEnv variants are also cached (built once, chosen per draw).
+Verdict: correct and kept, but the second eye was never the lever
+— corridor replay cost is per-draw command submission (~11 µs/
+draw), matching Task 1's per-batch finding.
+Validator (DeepSeek, 2026-11-23, INCOMPLETE → remediated): F1
+(sampler words hoisted onto the shared `C3D_Tex` in queue order)
+and F3 (HD fallback bound the original unstamped) fixed —
+filter/mipped/mipLevels are recorded on `PreparedDraw` and written
+at submit, and the fallback stamps `lastUsed` (the keepRgba8 pin
+already runs in prepare, above the HD branch). F4 fixed with a
+`passes > 0` guard (`eyePlan` only yields 1–2). F6 (UV log printed
+the copy's transform on fallback) fixed. F7 was already covered by
+`replay-only-at-frame-end` (one `replayQueue` call site). F2
+(culled-in-both-eyes batches now pay resolve/revival once per
+frame — and their `lastUsed` stamps now run before the per-eye
+cull, so the **eviction order** changes too, not just the CPU
+cost; validator F9) is **accepted, unmeasured**: cullable batches
+are arena batches whose textures are shared with visible batches
+of the same arena, so the culled-only texture set is small; the
+reviewed risk is a residency/pop-in difference under texture
+pressure, to watch for on texture-pressure captures.
+Final verification (2026-11-23): `tools/check.sh` ALL PASSED;
+`c3d_frame_test.sh` 62 checks pass with the arm-failure set
+identical to clean HEAD (9 pre-existing texture arms; the new
+`sampler-words-written-at-submit-not-prepare` check and the
+repaired `prepare-moved-inside-the-eye-loop` arm adjudicate red);
+validator re-review `VERDICT: COMPLETE`. Hardware
+(`hw_cycle --profile`, old3ds-lan167, Old 3DS 268 MHz stereo):
+FRESH, 4809 frames, steady mean 18.42 ms, p50 ≤16.8 ms,
+4517/4807 frames at 1 vblank; corridor rows remain ~24–25 ms
+(2 vblanks — the per-draw submission cost above). F5 (`draw` pointer into the queue)
+verified safe today: nothing enqueues between prepare and the
+queue reset (`queue.add` runs only from `mdk_render_draw_mesh`
+during frame build; `drawGlow` draws immediately).
+
 - Shadow caster sun-frustum cull: correct (host test pins the sun
   planes' near/far/side read) and kept, but **neutral on level 7**
   — the sun's 300-unit box covers the arena, so 0 casters cull
