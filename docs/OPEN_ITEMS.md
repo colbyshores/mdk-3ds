@@ -19,9 +19,9 @@ The owner's first play test showed severe stutter on entering a new area, which 
   `DOTNET_ROOT=/tmp/kilo/dotnet10` and `MDK_DATA_DIR=<repo>/MDK`. The source oracle
   `src/Mdk.Game/**` is read-only; `tests/frames/capture_oracle.sh` builds the
   scratch tree. **For a frame later than the first**, set `MDK_FRAME_WAIT=N` (seconds;
-  since 2026-11-18, it was a hardcoded `--wait=0` before -- and that edit to
-  `capture_oracle.sh`, a protected contract file, is UNCOMMITTED in the working
-  tree until the owner approves it; `git diff tests/frames/capture_oracle.sh`): in test mode the oracle
+  since 2026-11-18, it was a hardcoded `--wait=0` before -- that edit to
+  `capture_oracle.sh`, a protected contract file, was approved by the owner
+  on 2026-11-23): in test mode the oracle
   advances 1/60 s per frame, so `MDK_FRAME_WAIT=1` is frame 60 (1/60 rounds UP in
   binary, so the accumulator reaches N/60 exactly on step N) and pairs with
   `capture_cpp.sh`'s `MDK_FRAME_CAPTURE=60`. `MDK_FRAME_AT=x,y,z[,yaw]` places Kurt

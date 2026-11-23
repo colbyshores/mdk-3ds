@@ -1,0 +1,52 @@
+EXPLOSION / PREWARM / ARENA-ENTRY EVIDENCE — 2026-11-23
+Console: old3ds-lan167 (Old 3DS family, model 0, 268 MHz, L2 off, stereo on).
+All cycles PROFILE OG via mdk_3ds/tools/hw_cycle.sh --profile (P10 loop).
+
+1. EXPLOSIONS (queue item 1)
+Scene: LEVEL=5 AT=250,121,-1622,0 GIVE=SW_BONES AIM=0,1.25 FIXED=1
+WALK='sniper@20-22;fire@80-82', campaign cd41cc99.
+  frames=2568 mean 35.0ms p50 33.7 p95 49.7; first-use: 332 textures in
+  1211.8 ms. Shot frame 82: draw 163.5 ms, all in the object span. Sniper
+  entry frame 22: fx 112 ms with tex=39 made in 116.9 ms.
+An explosion is an OBJECT (ScriptRuntime::spawnExplosion: the CMI's first
+model, animated texture, scaled), plus debris pieces — NOT a sprite-effect
+draw. The explosion cost the owner feels is (a) first-use texture creation
+inside the draw span on the first explosion frame, and (b) a texture
+REMADE mid-game in the draw span (~220 ms spike at frame ~504 in BOTH
+prewarm A/B arms below; tex=2 remade — evicted, then remade in draw).
+EffectsDraw itself is already one batched dynamic mesh.
+
+2. PREWARM A/B (queue item 5) — experiment base 84fb5df0, same scene
+  PREWARM=0: mean 51.14 p50 48.9 p95 58.9 p99 71.6; spikes >60 ms: 42;
+             frame 4 draw 151.2 ms (first-use in draw).
+  PREWARM=1: mean 49.94 p50 47.6 p95 54.4 p99 58.2; spikes >60 ms: 14;
+             frame 4 draw 4.3 ms.
+Verdict: prewarm is a real hitch win (spike count -67%, p99 -13.4 ms).
+Port to the campaign is staged on branch port/prewarm-v2 (at cd41cc99):
+a straight cherry-pick hits 36 conflicts, 9 in 04_textures.inc, because
+HEAD grew its own creation-stats (render_c3d_stats.h, logCreation) and
+chunked expansion after the experiment was written. The port must ADAPT
+prewarm to HEAD's stats/expansion, not take the experiment's versions.
+Core files (game/prewarm.{h,cpp}, surface_cache prewarm/has,
+ArenaViews::prewarm, pose_cache counter) apply clean.
+
+3. ARENA-ENTRY STUTTER (queue item 3) — VERIFIED FIXED
+Scene: LEVEL=7 UNLOCK=650,750,790,830,870
+WALK='forward+turbo@60-800;forward+turbo@800-1120' (DANT_1 -> CDANT_1),
+campaign cd41cc99. Arena event 3: entered CDANT_1 at frame 791.
+Frames 817-829 (entry window): period 25.7-38.7 ms, tex made 0, evicted 0,
+no STALL, no spike at the crossing. The sky-powf storm (a98e7c4b: 1.95M
+powf per arena change, now a per-palette table) does not appear; the
+entry frames are the normal 2-vblank corridor class (begin = GPU wait).
+Whole run: frames=4836 mean 18.6 p50 16.8 p95 27.3.
+
+4. LEDGER NOTE (discard item 11)
+spec.voice-pool: SPEC.md s8 already records the owner's decision; the
+row's acceptance (make -C tests/scripts test) is RED at clean cd41cc99 —
+9 c3d_frame mutation arms fail with "the mutation changed nothing"
+(pre-existing on clean HEAD). The closer cannot certify the row until
+those arms are repaired; the repair belongs with the prewarm port, which
+touches the same files. Items 6/16/18 discarded 2026-11-23: core1-workers
+branch deleted (archive/exp/3ds-core1-workers tag on the fork),
+.claude/worktrees/merge-main deleted, capture_oracle.sh MDK_FRAME_WAIT
+edit approved by the owner (OPEN_ITEMS.md updated).
