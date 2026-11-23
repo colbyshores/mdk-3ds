@@ -201,6 +201,9 @@ Campaign update 2 (same day):
   surface cache once per run of same-surface draws, not per draw
   (fx 3.0/2.9/2.7 → 3.1/2.8/2.5, p95 22.3 → 21.4 ms; marginal but
   non-negative, same memo shape as the sprite cache's).
+- Per-draw UV-scale cache in the replay: measured neutral
+  (end 1.87 → 1.96, draw 1.60 → 1.53 ms whole-run; noise both
+  ways) and reverted — the two divides were not the replay cost.
 
 Final campaign audit (2026-11-23, against "steady 60 fps-class,
 features-off"): steady frames meet it (p50 at the one-vblank
