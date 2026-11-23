@@ -314,7 +314,17 @@ formats::Palette& LevelData::paletteOf(const formats::Arena* arena) {
         const std::string& name = source->name();
         const std::string owner = name.size() > 1 ? name.substr(1) : std::string();
         const formats::Arena* borrowed = owner.empty() ? nullptr : mto_.getArena(owner);
-        source = borrowed ? borrowed : (arenas_.empty() ? arena : arenas_[0]);
+        if (borrowed) {
+            // Share the owner's palette OBJECT, not a copy of its bytes. The
+            // surface cache keys a texture by (texture, palette), so a copied
+            // palette made the corridor re-expand every strip its arena already
+            // had under its own key: measured 134 ms of duplicate expansion two
+            // frames after the arena dropped (Old 3DS, 2026-11-23, frame 827).
+            // The bytes are identical either way -- same construction below --
+            // so no pixel can tell the difference, and the golden proves it.
+            return paletteOf(borrowed);
+        }
+        source = arenas_.empty() ? arena : arenas_[0];
     }
 
     formats::Palette made = dti_.palette().withArenaColors(source->paletteRgb(),

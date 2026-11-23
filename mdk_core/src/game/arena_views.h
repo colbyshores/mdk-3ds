@@ -161,6 +161,11 @@ private:
     void forgetFailed(const std::string& name);
     void sweepOrphans(const std::string& current, const std::string& second,
                       const std::vector<std::string>& drawn);
+    // Whether a resident view draws through this palette object. A corridor
+    // shares its arena's (LevelData::paletteOf), so a palette can outlive the
+    // arena named by the view that first made it; `exceptIndex` skips the view
+    // being released (views_.size() to skip none).
+    bool paletteInUse(const formats::Palette& palette, size_t exceptIndex);
 
     MdkRenderer renderer_ = nullptr;
     LevelData* level_ = nullptr;

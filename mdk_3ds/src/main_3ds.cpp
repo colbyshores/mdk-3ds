@@ -361,7 +361,10 @@ bool loadOrigPack(int32_t level, mdk::ModImages* out) {
 // falls through to the hash path: a stale or absent byname.txt costs time,
 // never correctness. Keyed by the arena's PALETTE because that is what the
 // lookup is handed -- and the palette is what the .t3x's pixels were encoded
-// through, so it identifies the arena exactly.
+// through. A corridor shares its arena's palette OBJECT (LevelData::paletteOf),
+// so the two collide here on purpose: their rows name the same file (checked
+// for all 3156 corridor rows of the shipped pack, 2026-11-23), and a row that
+// ever disagrees is logged rather than silently kept.
 struct OrigByName {
     std::map<std::pair<const void*, std::string>, std::string> paths;
 };
@@ -411,8 +414,25 @@ bool loadOrigByName(int32_t level, mdk::LevelData& levelData, OrigByName* out) {
             continue;
         }
         const mdk::formats::Palette& palette = levelData.paletteOf(arena);
-        out->paths[std::make_pair((const void*)&palette, lowerName3ds(fields[2]))] =
-            std::string(kOrigPackRoot) + "/" + fields[3] + ".t3x";
+        const std::pair<const void*, std::string> key(
+            (const void*)&palette, lowerName3ds(fields[2]));
+        const std::string path = std::string(kOrigPackRoot) + "/" + fields[3] + ".t3x";
+        const std::map<std::pair<const void*, std::string>, std::string>::iterator known =
+            out->paths.find(key);
+        if (known != out->paths.end() && known->second != path) {
+            // Only reachable if the exporter ships a corridor and its arena
+            // different files for one name. The arena with colours of its own
+            // is the owner (a corridor borrows, so it has none): it wins.
+            const bool ownerRow = arena->paletteRgbBytes() != 0;
+            mdk::log3dsPrintf("orig: byname collision arena=%s name=%s keeping=%s ignoring=%s",
+                              fields[1].c_str(), fields[2].c_str(),
+                              ownerRow ? path.c_str() : known->second.c_str(),
+                              ownerRow ? known->second.c_str() : path.c_str());
+            if (!ownerRow) {
+                continue;
+            }
+        }
+        out->paths[key] = path;
     }
     fclose(file);
     return !out->paths.empty();

@@ -269,8 +269,14 @@ private:
     const MaterialResolver* resolver_;
     ModModels* swaps_ = nullptr;
     // A map, not a vector: layoutOf hands out a pointer into it, and a map's
-    // elements do not move when later entries are inserted.
-    std::map<std::pair<const formats::Model*, const formats::Palette*>,
+    // elements do not move when later entries are inserted. The key carries the
+    // look's first archive as well as its palette: a corridor shares its arena's
+    // palette OBJECT (LevelData::paletteOf) but searches a different archive
+    // order, so the palette alone would let one arena's layout answer for the
+    // other and resolve materials through the wrong archive.
+    std::map<std::pair<const formats::Model*,
+                       std::pair<const formats::Palette*,
+                                 const formats::TextureArchive*> >,
              std::unique_ptr<ObjectLayout> > layouts_;
 };
 

@@ -265,8 +265,16 @@ ObjectLayout* ObjectView::layoutOf(const formats::Model* model, const ObjectLook
     if (model == nullptr || look.palette == nullptr) {
         return nullptr;
     }
-    const std::pair<const formats::Model*, const formats::Palette*> key(model, look.palette);
-    std::map<decltype(key), std::unique_ptr<ObjectLayout> >::iterator found = layouts_.find(key);
+    // The archives' first entry is the arena's own archive, unique per arena:
+    // it separates a corridor's look from the owner arena's now that they share
+    // one palette object (LevelData::paletteOf). See the layouts_ comment.
+    typedef std::pair<const formats::Model*,
+                      std::pair<const formats::Palette*, const formats::TextureArchive*> >
+        LayoutKey;
+    const LayoutKey key(
+        model, std::make_pair(look.palette,
+                              look.archives.empty() ? nullptr : look.archives[0]));
+    std::map<LayoutKey, std::unique_ptr<ObjectLayout> >::iterator found = layouts_.find(key);
     if (found != layouts_.end()) {
         return found->second.get();
     }

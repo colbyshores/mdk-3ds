@@ -189,6 +189,19 @@ bool ArenaViews::build(const std::string& name) {
     return true;
 }
 
+bool ArenaViews::paletteInUse(const formats::Palette& palette, size_t exceptIndex) {
+    for (size_t i = 0; i < views_.size(); i++) {
+        if (i == exceptIndex) {
+            continue;
+        }
+        const formats::Arena* other = level_->arenaNamed(views_[i].name);
+        if (other && &level_->paletteOf(other) == &palette) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ArenaViews::release(size_t index) {
     const Entry entry = views_[index];
     entry.view->unload();
@@ -196,7 +209,15 @@ void ArenaViews::release(size_t index) {
     // through its palette, its objects'. The cache makes them again on the next
     // draw that asks, so nothing has to know they went.
     if (const formats::Arena* arena = level_->arenaNamed(entry.name)) {
-        surfaces_->releasePalette(&level_->paletteOf(arena));
+        // A corridor borrows its arena's palette OBJECT (LevelData::paletteOf),
+        // so the palette can outlive the arena that made it. Evicting it under a
+        // resident borrower would drop that view's textures mid-play and the draw
+        // would re-expand them: measured 134 ms two frames after the drop
+        // (Old 3DS, 2026-11-23, frame 827).
+        formats::Palette* palette = &level_->paletteOf(arena);
+        if (!paletteInUse(*palette, index)) {
+            surfaces_->releasePalette(palette);
+        }
     }
     delete entry.view;
     views_.erase(views_.begin() + (std::ptrdiff_t)index);
@@ -252,7 +273,9 @@ void ArenaViews::sweepOrphans(const std::string& current, const std::string& sec
             continue;
         }
         const formats::Palette* palette = &level_->paletteOf(arenas[i]);
-        if (surfaces_->hasPalette(palette)) {
+        // Same guard as release(): a resident corridor can be drawing through
+        // this arena's palette object even though the arena itself is gone.
+        if (surfaces_->hasPalette(palette) && !paletteInUse(*palette, views_.size())) {
             surfaces_->releasePalette(palette);
             stats_.orphansReleased++;
         }
