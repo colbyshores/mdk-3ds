@@ -102,6 +102,23 @@ Whole-run stats (same 90 s route):
 | pump bound | 22.8 | 19.0 | 35.4 | 49.4 | 249 | 2769 |
 | census (task 1 diag) | 22.9 | 19.0 | 35.3 | 51.4 | 266 | — |
 | chunked + warm (§5.2) | 23.2 | 19.0 | 36.1 | 50.1 | 271 | — |
+| sorted batches (campaign) | 18.9 | 16.8 | 28.7 | 42.2 | 196 | — |
+
+Sorted build (`e32d30ae`, branch `perf/renderer-campaign`): corridor
+frames 785–820 are 35.0–35.8 ms (was ~45–50), `end` 12.0–12.3 (was
+19–20), draws/eye 272 → 152 (merged batches span the arena, so the
+frustum cull now rejects almost nothing: culled 133 → 13, submitted
+triangles +8%). Command list 11.1k → 5.2k words/frame; texture binds
+165 → 39/frame. Agent reports that sized this: merge (oracle sort,
+135–529 → 12–31 batches/arena), forsaken (~35 µs/draw in both engines;
+544 vs ~118 draws/frame), gpu (`end` is CPU replay, not GPU; sky dome
+is 2736 of ~4700 tris/eye and never culled; no GPU time has ever been
+measured — `gputime:` PROFILE lines now sample
+C3D_GetDrawingTime/GetProcessingTime), sim (draw-count reduction is
+the lever to one vblank). Next campaign increments, in order: GPU
+timing readout, sky-dome culling, sun-frustum cull on shadow casters,
+and the unattributed ~10 ms corridor `draw` span (drawsub only prints
+on >60 ms spikes).
 
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's
