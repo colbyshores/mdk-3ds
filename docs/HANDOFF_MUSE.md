@@ -197,6 +197,11 @@ Campaign update 2 (same day):
   name per triangle) → 3.0/2.9/2.7 ms. The remaining ~2.7 ms is
   per-effect quad/batch layout from the C# design.
 
+- Draw-loop surface memo: `EffectsDraw`/`ObjectDraw` ask the
+  surface cache once per run of same-surface draws, not per draw
+  (fx 3.0/2.9/2.7 → 3.1/2.8/2.5, p95 22.3 → 21.4 ms; marginal but
+  non-negative, same memo shape as the sprite cache's).
+
 Final campaign audit (2026-11-23, against "steady 60 fps-class,
 features-off"): steady frames meet it (p50 at the one-vblank
 boundary, 16.8 ms; whole-run spans sim 1.48 / draw 1.60 / end

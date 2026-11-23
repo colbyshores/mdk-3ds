@@ -62,6 +62,13 @@ void EffectsDraw::draw(MdkRenderer renderer, SurfaceCache* surfaces, const Effec
     }
     mdk_render_update_mesh(renderer, mesh_, frame.vertices.data(), count);
 
+    // Consecutive draws share their surface (the build batches by it):
+    // the cache's answer for the same texture through the same palette
+    // is the same id, so it is asked once per run of them, not per draw.
+    const formats::Texture* lastTexture = nullptr;
+    const formats::Palette* lastPalette = nullptr;
+    MdkTextureId lastTextureId = -1;
+    MdkPaletteId lastPaletteId = -1;
     for (size_t i = 0; i < frame.draws.size(); i++) {
         const EffectsDrawItem& queued = frame.draws[i];
         if (queued.count <= 0) {
@@ -75,8 +82,18 @@ void EffectsDraw::draw(MdkRenderer renderer, SurfaceCache* surfaces, const Effec
         draw.primitive = Primitive::Triangles;
         const Mat4 identity = Mat4::identity();
         memcpy(draw.world, identity.m, sizeof(draw.world));
-        draw.material.texture = surfaces->surfaceId(queued.surface, queued.palette);
-        draw.material.palette = surfaces->paletteId(queued.palette);
+        if (queued.surface.texture != nullptr && queued.surface.texture == lastTexture &&
+            queued.palette == lastPalette) {
+            draw.material.texture = lastTextureId;
+            draw.material.palette = lastPaletteId;
+        } else {
+            draw.material.texture = surfaces->surfaceId(queued.surface, queued.palette);
+            draw.material.palette = surfaces->paletteId(queued.palette);
+            lastTexture = queued.surface.texture;
+            lastPalette = queued.palette;
+            lastTextureId = draw.material.texture;
+            lastPaletteId = draw.material.palette;
+        }
         draw.material.frame_count = queued.surface.frameCount;
         draw.material.pass = queued.surface.pass;
         draw.material.shading = queued.surface.shading;

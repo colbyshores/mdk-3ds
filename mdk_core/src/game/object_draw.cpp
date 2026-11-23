@@ -98,6 +98,13 @@ void ObjectDraw::draw(MdkRenderer renderer, SurfaceCache* surfaces, const Object
     // does before the frame is drawn. The draws below then read slices of it.
     mdk_render_update_mesh(renderer, mesh_, stream.vertices.data(), count);
 
+    // Consecutive draws share their surface where the batching made
+    // them: the cache's answer for the same texture through the same
+    // palette is the same id (see EffectsDraw::draw).
+    const formats::Texture* lastTexture = nullptr;
+    const formats::Palette* lastPalette = nullptr;
+    MdkTextureId lastTextureId = -1;
+    MdkPaletteId lastPaletteId = -1;
     for (size_t i = 0; i < stream.draws.size(); i++) {
         const ObjectStreamDraw& queued = stream.draws[i];
         if (queued.corners <= 0) {
@@ -117,9 +124,19 @@ void ObjectDraw::draw(MdkRenderer renderer, SurfaceCache* surfaces, const Object
             // A mod surface's own picture: its RGBA texture, no palette.
             draw.material.texture = imageTexture(renderer, queued.image);
             draw.material.palette = -1;
+            lastTexture = nullptr;
+            lastPalette = nullptr;
+        } else if (queued.surface.texture != nullptr &&
+                   queued.surface.texture == lastTexture && queued.palette == lastPalette) {
+            draw.material.texture = lastTextureId;
+            draw.material.palette = lastPaletteId;
         } else {
             draw.material.texture = surfaces->surfaceId(queued.surface, queued.palette);
             draw.material.palette = surfaces->paletteId(queued.palette);
+            lastTexture = queued.surface.texture;
+            lastPalette = queued.palette;
+            lastTextureId = draw.material.texture;
+            lastPaletteId = draw.material.palette;
         }
         draw.material.frame_count = queued.surface.frameCount;
         draw.material.pass = queued.surface.pass;
