@@ -205,6 +205,11 @@ Campaign update 2 (same day):
   (end 1.87 → 1.96, draw 1.60 → 1.53 ms whole-run; noise both
   ways) and reverted — the two divides were not the replay cost.
 
+Generality check: level 8 at spawn (features-off, Kurt idle) is
+the same class, not a slideshow: mean 21.9 ms, p50 17.5 ms, 73% of
+frames at one vblank, GPU drawing 7.0 ms, sim 3.3 ms (its spawn
+scripts are heavier than level 7's walk). `/tmp/kilo/l8-last.log`.
+
 Final campaign audit (2026-11-23, against "steady 60 fps-class,
 features-off"): steady frames meet it (p50 at the one-vblank
 boundary, 16.8 ms; whole-run spans sim 1.48 / draw 1.60 / end
