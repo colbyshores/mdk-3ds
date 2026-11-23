@@ -135,6 +135,9 @@ private:
 
     // pumpSurfaces()'s cursor into scene_.batches; reset by load().
     size_t pumpAt_ = 0;
+    // pumpSurfaces()'s large-surface scan cursor (see pumpSurfaces): the
+    // batches whose textures are expensive to make are started first.
+    size_t pumpLargeAt_ = 0;
 
     // tear()'s state: how many of the end's torn triangles are collapsed already (the
     // C#'s _tornShown), whether mesh_ is the dynamic copy, and the triangles' first

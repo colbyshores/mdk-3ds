@@ -1597,8 +1597,13 @@ def adjudicate(text, quiet=False):
                                   r"\s*==\s*0", tbi_body) is not None)
     forgets = {
         "installEye": "forgetTextureBinds(r);" in (body(text, "installEye") or ""),
-        "makeTexture": "forgetTextureBinds(renderer);" in fn_body(text, "makeTexture"),
-        "the HD import": re.search(r"forgetTextureBinds\(renderer\);[^\n]*\n\s*Tex3DS_Texture t3x = "
+        "makeTexture": "forgetTextureBinds(renderer);" in fn_body(text, "makeTexture") or
+                       "forgetTextureBinds(renderer);" in fn_body(text, "makeTextureNow"),
+        # The forget and the import may have the PROFILE timing lines (an
+        # #ifdef and its tick read) between them; the order is what is pinned.
+        "the HD import": re.search(r"forgetTextureBinds\(renderer\);[^\n]*\n"
+                                   r"(?:\s*#[^\n]*\n|\s*const uint64_t[^\n]*\n)*"
+                                   r"\s*Tex3DS_Texture t3x = "
                                    r"Tex3DS_TextureImport\(", body(text, "pumpHdTextures") or "")
                          is not None,
     }
@@ -1845,6 +1850,25 @@ def adjudicate(text, quiet=False):
         body = text[sp[0]:sp[1]]
         parens = [sp[0] + m.end() - 1
                   for m in re.finditer(helper_call_re(text), body)]
+        if not parens:
+            # One delegation level (the chunked expansion's row helper): an
+            # expansion that fills its buffer through a file-local helper it
+            # calls is adjudicated over that helper's body too -- the bytes
+            # are written there, so that is where the pins must read. A
+            # helper with direct writes is caught by the same bypass scan
+            # over the merged body.
+            for callee in re.findall(r"(?:^|[^.\w])([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(",
+                                     blank_comments(body)):
+                csp = fn_body_span(text, callee)
+                if csp is None or csp == sp:
+                    continue
+                cbody = text[csp[0]:csp[1]]
+                cparens = [csp[0] + m.end() - 1
+                           for m in re.finditer(helper_call_re(text), cbody)]
+                if cparens:
+                    body = body + "\n" + cbody
+                    parens = cparens
+                    break
         return sp, body, parens
 
     def texel_bypasses(body):
@@ -2619,10 +2643,21 @@ def adjudicate(text, quiet=False):
     # helper, and the set is measured rather than named -- an empty set is a failure.
     fillers = texel_fillers(text)
     helper_pat = re.compile(helper_call_re(text))
-    bad_fillers = ["%s (%s)" % (n, "no pica::texelBytes call" if not helper_pat.search(b)
+    # One delegation level, as in expansion(): a filler that fills through a
+    # file-local helper-writer it calls rotates through the helper.
+    helper_writer_names = helper_writers(text)
+
+    def filler_rotates(name, b):
+        if helper_pat.search(b):
+            return True
+        return any(w != name and re.search(r"(?:^|[^.\w])" + re.escape(w) + r"[ \t]*\(",
+                                           blank_comments(b))
+                   for w in helper_writer_names)
+
+    bad_fillers = ["%s (%s)" % (n, "no pica::texelBytes call" if not filler_rotates(n, b)
                                 else "; ".join(texel_bypasses(b)))
                    for n, b in fillers
-                   if not helper_pat.search(b) or texel_bypasses(b)]
+                   if not filler_rotates(n, b) or texel_bypasses(b)]
     rep.check("every-texel-filler-rotates-through-the-helper",
               bool(fillers) and not bad_fillers,
               "%d texel-filling function(s) in the file, %d wrong: %s (a texel filler is any "
@@ -2640,6 +2675,14 @@ def adjudicate(text, quiet=False):
     # (review-16 R2's rule, that a check rejecting a legal shape gets routed around).
     sinks = sink_calls(text)
     writers = helper_writers(text)
+    # One delegation level: a producer that fills through a helper-writer it
+    # calls (the chunked expansion's row helper) is a helper writer too.
+    for wname, wsp in fn_spans(text):
+        wbody = text[wsp[0]:wsp[1]]
+        if wname not in writers and any(
+                re.search(r"(?:^|[^.\w])" + re.escape(w) + r"[ \t]*\(", blank_comments(wbody))
+                for w in list(writers)):
+            writers.add(wname)
     bad_sinks = []
     for pos, sargs in sinks:
         sarg = sargs[1] if len(sargs) > 1 else None
@@ -2686,7 +2729,9 @@ def adjudicate(text, quiet=False):
     #   * the pack covers every level uploaded.
     # And the canvas half: a texture drawn on the canvas is pinned RGBA8 and its
     # 16-bit copy is re-made at the next frame boundary (stale), never in place.
-    mk_sp = fn_body_span(text, "makeTexture")
+    # The make is makeTextureNow (makeTexture is its timing/pending wrapper):
+    # span the function that actually packs and uploads.
+    mk_sp = fn_body_span(text, "makeTextureNow") or fn_body_span(text, "makeTexture")
     mk = text[mk_sp[0]:mk_sp[1]] if mk_sp else None
     mk_code = blank_comments(mk) if mk else ""
     pack_re = r"\b(?:mdk::)?(?:pica::)?packTexels16[ \t]*\("
@@ -2726,11 +2771,15 @@ def adjudicate(text, quiet=False):
               % (alloc_rhs or "(no params.format)", store or "(no pack)"))
 
     chosen = binding(store, mk_code) if store else None
-    chooser = re.match(r"(?:mdk::)?(?:pica::)?expandedTexelFormat[ \t]*\(", chosen or "")
+    # The store may be a preset ternary (a chunked expansion arrives with the
+    # format its stage 3 chose from the same expanded texels): the chooser
+    # call is then the ternary's other branch, and it is the one adjudicated.
+    chooser = re.match(r"(?:[^?:]*\?[^:]*:[ \t]*)?(?:mdk::)?(?:pica::)?expandedTexelFormat[ \t]*\(",
+                       chosen or "")
     chooser_args = []
     if chooser and store:
         decl = re.search(r"\b" + re.escape(store) +
-                         r"[ \t]*=[ \t]*(?:mdk::)?(?:pica::)?expandedTexelFormat[ \t]*\(",
+                         r"[ \t]*=[ \t]*(?:[^;]*:[ \t]*)?(?:mdk::)?(?:pica::)?expandedTexelFormat[ \t]*\(",
                          mk_code)
         if decl:
             chooser_args = [a.strip() for a in (call_args_at(mk, decl.end() - 1) or [])]

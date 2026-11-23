@@ -1312,6 +1312,28 @@ void testThe16BitStore() {
     PICA_CHECK(wordAt(texels, 0) == 0xF00Fu);
     PICA_CHECK(wordAt(texels, 3) == mdk::pica::rgba4Word(16, 32, 48, 128));
 
+    // THE RANGED PACK (chunked expansion): packing in slices at an odd
+    // boundary gives the whole-pack bytes, texel for texel.
+    {
+        uint8_t whole[9 * 4];
+        uint8_t sliced[9 * 4];
+        for (size_t i = 0; i < 9; i++) {
+            mdk::pica::texelBytes(whole + i * 4u, (uint8_t)(i * 27u), (uint8_t)(200u - i * 13u),
+                                  (uint8_t)(i * 41u), (i % 3u) == 0 ? 0u : 255u);
+        }
+        const TexelFormat formats[3] = {TexelFormat::Rgb565, TexelFormat::Rgba5551,
+                                        TexelFormat::Rgba4};
+        for (int f = 0; f < 3; f++) {
+            memcpy(sliced, whole, sizeof(whole));
+            uint8_t expected[9 * 4];
+            memcpy(expected, whole, sizeof(expected));
+            mdk::pica::packTexels16(expected, 9, formats[f]);
+            mdk::pica::packTexels16Range(sliced, 0, 4, formats[f]);
+            mdk::pica::packTexels16Range(sliced, 4, 5, formats[f]);
+            PICA_CHECK(memcmp(expected, sliced, 9 * 2) == 0);
+        }
+    }
+
     // END TO END, THE WAY makeTexture DOES IT: a 20x20 cut-out in 32x32 with its
     // chain, expanded and prepared in RGBA8, chosen, packed in place -- and every
     // level read back at the offset makeTexture uploads it from

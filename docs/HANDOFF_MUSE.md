@@ -88,7 +88,7 @@ Crossing-sequence frames:
 |---|---|---|---|---|---|
 | 771 pair/stream-in | 226 | 216 | 154 | 157 | CDANT_1 geometry upload + first makes |
 | 791 crossing | 89.9 | 71.4 | 71.9 | 75.9 | entry |
-| 795 strip make | 138 | 138 | 135 | 134.8 | one 64x704 strip, 77 ms, on-demand in draw |
+| 795 strip make | 138 | 138 | 135 | **42.8** | TRAIL effect texture (64x704 stacked): chunked expansion + effect warm — see §5.2 |
 | 827 burst | 317 | 292.5 | **50.6** | 50.6 | was 7 duplicate texture makes (134 ms) — gone |
 | sustained 774–826 | ~50 | ~45–50 | ~45–50 | ~45–50 | corridor's own visible cost |
 
@@ -100,6 +100,8 @@ Whole-run stats (same 90 s route):
 | cull | 22.6 | 18.7 | 35.2 | 49.2 | 248 | 2983 |
 | palette share | 23.1 | 19.2 | 35.4 | 49.4 | 259 | 2831 |
 | pump bound | 22.8 | 19.0 | 35.4 | 49.4 | 249 | 2769 |
+| census (task 1 diag) | 22.9 | 19.0 | 35.3 | 51.4 | 266 | — |
+| chunked + warm (§5.2) | 23.2 | 19.0 | 36.1 | 50.1 | 271 | — |
 
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's
@@ -167,11 +169,28 @@ own cost.
    without a clipped-area (per-pixel) measurement that contradicts the
    draw-count correlation. (`docs/DOCTRINE.md` is absent on this branch —
    the fidelity rule applied here is AGENTS.md/SPEC.md's.)
-2. **Frame-795 77 ms strip make** (64x704, once per crossing). Fixes that
-   don't touch fidelity: split the indexed expansion across ~8 pump frames
-   (chunked expansion in the 3DS texmake path), or form the pair earlier
-   (relocates the spike into the walk-up, doesn't remove it). Note the pump
-   already gives an unfinished view the whole budget (2/frame).
+2. **Frame-795 77 ms strip make — DONE 2026-11-23.** The strip is `TRAIL`
+   (64x64 x 11 frames = a 64x704 stacked texture), a script-effect texture
+   (scripts/effects.cpp), first asked for at its spawn frame (~795) -- not
+   an arena batch, so neither the sequential pump nor a large-first pump
+   scan could ever reach it. The fix is three parts, no fidelity change:
+   (a) the 3DS texmake expands a large indexed texture (>= 32768 texels)
+   in slices across frame boundaries (rows by a 16384-texel budget, then
+   filter, mips, 16384-texel pack slices via the host-tested
+   `packTexels16Range`, then the ordinary upload consuming the finished
+   buffer as a preset; at most 4 pending chains, 3 pump steps a frame; a
+   draw that needs one finishes it synchronously, so no frame binds a
+   half-made texture); (b) the core pump starts large surfaces first and
+   `LevelView::load` starts them at view load; (c) `EffectsView::warm`
+   starts the large script-effect textures of the resident arenas on the
+   residency change (3DS frontend, on `streamCurrent`/`streamSecond`).
+   Measured (`/tmp/kilo/chunk6-last.log`, same route): TRAIL starts at
+   frame 1, ready at frame 26; **frame 795: 135 -> 42.8 ms, `tex=0`** (the
+   corridor's ordinary ~43 ms), whole-run p50 unchanged at 19.0 ms.
+   Known limits: a texture larger than the measured class (a 780x360
+   chain needs ~40 steps) can still finish in its draw if first asked
+   late; eviction re-makes stay synchronous, as before. The pump already
+   gives an unfinished view the whole budget (2/frame).
 3. **DANT_2 entry ~527 ms** (from the board/ledger, AT route): `draw 448 ms`
    = arena GEOMETRY upload, not textures (orig pack + byname index already
    killed the texture tax there: 788→88 ms). Plus the three PICA-refused

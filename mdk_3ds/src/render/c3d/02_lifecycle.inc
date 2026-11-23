@@ -499,6 +499,13 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     // Freeing the textures before that wait would hand back memory the GPU
     // may still be reading (AGENTS.md P3); the heap itself goes when the
     // process exits, which is the only caller of this destructor.
+    // Chunked-expansion buffers are plain malloc, never GPU memory: free
+    // them here (the linear-heap textures below deliberately are not freed).
+    for (size_t i = 0; i < r->textures.size(); i++) {
+        free(r->textures[i].expandPixels);
+        r->textures[i].expandPixels = nullptr;
+        r->textures[i].expandPending = false;
+    }
     releaseGlow(r);
     releaseShadowMap(r);
     releaseEyeTargets(r);

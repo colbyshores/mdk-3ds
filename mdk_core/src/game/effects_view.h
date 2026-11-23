@@ -141,6 +141,19 @@ public:
     // same as the triangle's own: a triangle whose surface does not resolve is skipped.
     void build(const scripts::ScriptRuntime& scripts, const Camera& camera, EffectsFrame* frame);
 
+    // Start an arena's script-effect textures (the wound, the drops, the
+    // bubble and its pop, the trail: scripts/effects.cpp's names) through
+    // the caller's surface cache, before any effect spawns. An effect's
+    // first frame is its spawn frame, so a texture first asked for at its
+    // draw is made in that draw; warming at arena residency gives a
+    // backend that makes textures in slices the frames in between.
+    // Idempotent (the cache answers), and a name the arena lacks resolves
+    // to nothing. The start is a plain callback (the frame-count pattern
+    // scripts/effects.h uses), so this file names no cache.
+    using SurfaceStartFn = void (*)(void* user, const Surface& surface,
+                                    const formats::Palette* palette);
+    void warm(const std::string& arena, SurfaceStartFn start, void* user);
+
     // Drops the cached looks and sprite surfaces (a level change).
     void clear() {
         looks_.clear();

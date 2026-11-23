@@ -1011,6 +1011,12 @@ TexelFormat indexTexelFormatBound(bool texture16, int32_t paddedWidth, int32_t p
 // read). A no-op for Rgba8 (and for the ETC formats, which are never expanded).
 void packTexels16(uint8_t* chain, size_t texels, TexelFormat format);
 
+// The same pack over texels [first, first + count) only: a chunked expansion
+// (04_textures.inc) packs a chain in slices across frames. In-place safety is
+// per texel (read at 4i before the word lands at 2i), so any slice boundary
+// gives the whole-pack bytes; the host test pins that equivalence.
+void packTexels16Range(uint8_t* chain, size_t first, size_t count, TexelFormat format);
+
 // The texels of level 0 plus `levels` levels below it, the size of one buffer
 // holding the whole chain, levels consecutive (level k after level k-1).
 size_t mipChainTexels(int32_t paddedWidth, int32_t paddedHeight, int32_t levels);

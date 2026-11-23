@@ -82,8 +82,26 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
     const int32_t id = acquireTextureSlot(renderer);
     C3dTexture& slot = renderer->textures[(size_t)id];
     slot = std::move(texture);
+    // A large indexed texture expands in slices across frames instead of
+    // in one make (04_textures.inc, THE CHUNKED EXPANSION); the id is good
+    // now, the GPU copy lands at a frame boundary or on first draw.
+    if ((size_t)w * (size_t)h >= kChunkMinTexels) {
+        const int32_t started = startExpansion(renderer, slot, false);
+        if (started > 0) {
+            logCreation(renderer, 0, id);
+            return id;
+        }
+        if (started < 0) {
+            // Deferred by the pending cap: the frame pump starts it when a
+            // slot frees, or the first draw finishes it.
+            slot.expandWanted = true;
+            logCreation(renderer, 0, id);
+            return id;
+        }
+    }
     if (!makeTexture(renderer, slot, true)) {
         // The failed slot goes back to being free: no GPU copy, no source.
+        dropExpansion(slot);
         slot = C3dTexture();
         return -1;
     }
@@ -331,6 +349,9 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     // from, so a texture evicted before its turn below comes back WITH the hole.
     const size_t bytes = (size_t)w * (size_t)h * (texture.indexed ? 1u : 4u);
     texture.source.assign(px, px + bytes);
+    // A chunked expansion in flight is built from the OLD source: drop it,
+    // and the next make expands the new source instead.
+    dropExpansion(texture);
     texture.hasHoles = mdk::pica::textureSourceHasHoles(texture.source.data(),
                                                         texture.source.size(), texture.indexed);
 
@@ -594,6 +615,7 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     // (game/arena_views.h) must hand the heap back for the next arena's stream.
     std::vector<uint8_t>().swap(texture.source);
     std::vector<uint8_t>().swap(texture.palette);
+    dropExpansion(texture);
     texture.stale = false;
     texture.restamped = false;
     texture.streamed = false;

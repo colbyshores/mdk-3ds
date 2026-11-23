@@ -33,6 +33,12 @@ static bool evictTextures(RendererC3D* renderer, size_t needed) {
         if (!texture.valid || texture.releasePending) {
             continue;
         }
+        // A chunked expansion in flight is never a victim: its source and
+        // palette are what its next slice reads. (Pending textures are not
+        // valid, so this is belt on that braces -- stated, not inferred.)
+        if (texture.expandPending || texture.expandPixels || texture.expandWanted) {
+            continue;
+        }
         if (renderer->inFrame && texture.lastUsed >= renderer->frameStartUse) {
             continue;
         }
@@ -61,7 +67,10 @@ static bool evictTextures(RendererC3D* renderer, size_t needed) {
 static int32_t acquireTextureSlot(RendererC3D* renderer) {
     for (size_t i = 0; i < renderer->textures.size(); i++) {
         const C3dTexture& texture = renderer->textures[i];
-        if (!texture.valid && !texture.releasePending && texture.source.empty()) {
+        // A pending chunked expansion owns its slot and its buffer until it
+        // finishes or is dropped: never hand the slot to a new texture.
+        if (!texture.valid && !texture.releasePending && texture.source.empty() &&
+            !texture.expandPending && !texture.expandPixels && !texture.expandWanted) {
             return (int32_t)i;
         }
     }
@@ -85,6 +94,30 @@ static int32_t acquireTextureSlot(RendererC3D* renderer) {
 // RGBA in memory, the hardware reads `[A, B, G, R]`, and writing the palette's
 // order straight through is what pinned the console's red channel to 255 on
 // every painted pixel. See `pica::texelBytes`.
+// Rows [fromY, toY) of the expansion below, into an already-zeroed chain
+// buffer; returns whether any index-0 texel was seen. Split out so a
+// chunked expansion can do a slice of rows a frame; the whole-range call
+// is exactly the old loop.
+static bool expandIndexRows(const uint8_t* indices, int32_t width, int32_t fromY, int32_t toY,
+                            const uint8_t* paletteRgba, int32_t paddedWidth, uint8_t* pixels) {
+    bool sawTransparent = false;
+    for (int32_t y = fromY; y < toY; y++) {
+        const uint8_t* source = indices + (size_t)y * (size_t)width;
+        for (int32_t x = 0; x < width; x++) {
+            const uint8_t index = source[x];
+            if (index == 0) {
+                sawTransparent = true;
+                continue;
+            }
+            const size_t slot =
+                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);
+            mdk::pica::texelBytes(pixels + slot * 4u, paletteRgba[index * 4 + 0],
+                                  paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);
+        }
+    }
+    return sawTransparent;
+}
+
 static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t height,
                               const uint8_t* paletteRgba, int32_t paddedWidth,
                               int32_t paddedHeight, int32_t mipLevels) {
@@ -109,25 +142,10 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
 #ifdef MDK_HW_PROFILE
     const uint64_t expT0 = svcGetSystemTick();
 #endif
-    bool sawTransparent = false;
-    for (int32_t y = 0; y < height; y++) {
-        const uint8_t* source = indices + (size_t)y * (size_t)width;
-        for (int32_t x = 0; x < width; x++) {
-            const uint8_t index = source[x];
-            if (index == 0) {
-                // Transparent: the colour is irrelevant, but it must not be
-                // black-with-alpha-255, which is what the palette says. The
-                // memset already left the slot all-zero, so there is nothing
-                // to write -- and no tile slot to compute.
-                sawTransparent = true;
-                continue;
-            }
-            const size_t slot =
-                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);
-            mdk::pica::texelBytes(pixels + slot * 4u, paletteRgba[index * 4 + 0],
-                                  paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);
-        }
-    }
+    // Transparent texels need no write (the memset left the slot all-zero,
+    // and black-with-alpha-255 is what the palette would wrongly give).
+    const bool sawTransparent =
+        expandIndexRows(indices, width, 0, height, paletteRgba, paddedWidth, pixels);
 #ifdef MDK_HW_PROFILE
     const uint64_t expT1 = svcGetSystemTick();
 #endif
@@ -398,9 +416,242 @@ static bool makeStreamed(RendererC3D* renderer, C3dTexture& texture) {
 // texture. The textures that are being drawn stay; the ones that are not
 // are made again when they are next needed.
 static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diagnostics);
+
+// ---------------------------------------------------------------------------
+// THE CHUNKED EXPANSION (HANDOFF_MUSE.md task 2). A large indexed texture's
+// make measured 64x704: expand 41.9 ms + pack 18.4 ms + alloc/load ~5 ms in
+// one frame (frame 795's 77 ms texmake). The pump cannot reach that batch in
+// the pair window, so the make itself is sliced: rows in slices, then the
+// filter and mip passes as single steps, then the 16-bit pack in texel
+// slices, then the ordinary upload (makeTextureNow consuming the finished
+// buffer as a preset). The frame-boundary pump advances every pending
+// expansion ONE step a frame; a draw that needs the texture first finishes
+// it synchronously, so no frame ever binds a half-made texture and the
+// picture is unchanged -- only its timing is.
+// ---------------------------------------------------------------------------
+static const size_t kChunkMinTexels = 32768u;   // below this a make is < ~20 ms: synchronous
+static const int32_t kChunkRowTexels = 16384;   // one row step's texel budget (64 wide: 256 rows)
+static const size_t kChunkPackTexels = 16384u;  // 64x1024 chain: 4 pack steps
+static const int32_t kPumpStepsPerFrame = 3;    // total steps the frame pump does, all textures
+
+static void dropExpansion(C3dTexture& texture) {
+    free(texture.expandPixels);
+    texture.expandPixels = nullptr;
+    texture.expandPending = false;
+    texture.expandWanted = false;
+    texture.expandRow = 0;
+    texture.expandStage = 0;
+    texture.expandPackAt = 0;
+    texture.expandSawTransparent = false;
+    texture.expandLevels = 0;
+    texture.expandFormat = mdk::pica::TexelFormat::Rgba8;
+}
+
+// Simultaneous chunked expansions each hold a full RGBA8 chain in the
+// system heap; the cap keeps the large-first pump from holding an arena's
+// worth at once (the emulator's bigger heap would hide that, AGENTS.md P8).
+static const int32_t kMaxPendingExpansions = 4;
+
+static int32_t pendingExpansions(RendererC3D* renderer) {
+    int32_t count = 0;
+    for (size_t i = 0; i < renderer->textures.size(); i++) {
+        if (renderer->textures[i].expandPending) {
+            count++;
+        }
+    }
+    return count;
+}
+
+// 1 = started (or already in flight), 0 = not a chunked candidate or the
+// source is invalid, -1 = deferred by the pending cap (expandWanted is the
+// caller's to set; the frame pump starts it when a slot frees). A draw's
+// finish (force) ignores the cap: the texture is needed now.
+static int32_t startExpansion(RendererC3D* renderer, C3dTexture& texture, bool force) {
+    if (texture.expandPending || texture.expandPixels) {
+        return 1;
+    }
+    if (!texture.indexed || texture.compressed || texture.streamed) {
+        return 0;
+    }
+    if (!force && pendingExpansions(renderer) >= kMaxPendingExpansions) {
+        return -1;
+    }
+    const size_t realBytes = (size_t)texture.realWidth * (size_t)texture.realHeight;
+    if (texture.source.size() != realBytes || texture.palette.size() < 256 * 4) {
+        mdk::log3dsPrintf("texture %dx%d source is invalid", (int)texture.realWidth,
+                          (int)texture.realHeight);
+        return 0;
+    }
+    texture.expandLevels = renderer->toggles.enableMipmaps
+                               ? mdk::pica::mipLevelsFor(texture.paddedWidth,
+                                                         texture.paddedHeight)
+                               : 0;
+    const size_t texels = mdk::pica::mipChainTexels(texture.paddedWidth, texture.paddedHeight,
+                                                    texture.expandLevels);
+    texture.expandPixels = static_cast<uint8_t*>(malloc(texels * 4u));
+    if (!texture.expandPixels) {
+        return 0;
+    }
+    memset(texture.expandPixels, 0, texels * 4u);
+    texture.expandRow = 0;
+    texture.expandStage = 0;
+    texture.expandSawTransparent = false;
+    texture.expandPackAt = 0;
+    texture.expandPending = true;
+#ifdef MDK_HW_PROFILE
+    mdk::log3dsPrintf("texchunk: %dx%d start frame %d", (int)texture.realWidth,
+                      (int)texture.realHeight, (int)renderer->frame);
+#endif
+    return 1;
+}
+
+// One step (or all of them, when a draw needs the texture now). Returns
+// false only when the finishing upload fails; the state is then clean and
+// a later make retries synchronously from the kept source. The levels are
+// frozen at the start (the chain buffer is sized by them) and the store is
+// chosen at stage 3, so an enableMipmaps flip mid-expansion reaches this
+// texture only at its next making; the texture16 store follows the flip.
+// PROFILE builds charge the step to textureMakeTicks, so the pump's
+// work stays visible in the arena table instead of vanishing from texMs.
+static bool advanceExpansionSteps(RendererC3D* renderer, C3dTexture& texture, bool finishAll) {
+    if (!texture.expandPending) {
+        return texture.valid;
+    }
+    for (;;) {
+        switch (texture.expandStage) {
+            case 0: {
+                int32_t stepRows = kChunkRowTexels / (texture.realWidth > 0 ? texture.realWidth : 1);
+                if (stepRows < 1) {
+                    stepRows = 1;
+                }
+                int32_t to = finishAll ? texture.realHeight : texture.expandRow + stepRows;
+                if (to > texture.realHeight) {
+                    to = texture.realHeight;
+                }
+                if (expandIndexRows(texture.source.data(), texture.realWidth, texture.expandRow,
+                                    to, texture.palette.data(), texture.paddedWidth,
+                                    texture.expandPixels)) {
+                    texture.expandSawTransparent = true;
+                }
+                texture.expandRow = to;
+                if (to >= texture.realHeight) {
+                    texture.expandStage = 1;
+                }
+                break;
+            }
+            case 1:
+                mdk::pica::prepareForFiltering(texture.expandPixels, texture.realWidth,
+                                               texture.realHeight, texture.paddedWidth,
+                                               texture.paddedHeight,
+                                               texture.expandSawTransparent);
+                texture.expandStage = 2;
+                break;
+            case 2:
+                mdk::pica::buildMipChain(texture.expandPixels, texture.paddedWidth,
+                                         texture.paddedHeight, texture.realWidth,
+                                         texture.realHeight, texture.expandLevels);
+                texture.expandStage = 3;
+                break;
+            case 3: {
+                if (texture.expandPackAt == 0) {
+                    texture.expandFormat = mdk::pica::expandedTexelFormat(
+                        renderer->toggles.texture16, texture.keepRgba8, texture.paddedWidth,
+                        texture.paddedHeight, texture.expandPixels,
+                        (size_t)texture.paddedWidth * (size_t)texture.paddedHeight);
+                }
+                const size_t chain = mdk::pica::mipChainTexels(
+                    texture.paddedWidth, texture.paddedHeight, texture.expandLevels);
+                if (texture.expandFormat == mdk::pica::TexelFormat::Rgba8) {
+                    // No pack to slice: the chain is already in its store.
+                    texture.expandPackAt = chain;
+                    texture.expandStage = 4;
+                    break;
+                }
+                size_t count = chain - texture.expandPackAt;
+                if (!finishAll && count > kChunkPackTexels) {
+                    count = kChunkPackTexels;
+                }
+                mdk::pica::packTexels16Range(texture.expandPixels, texture.expandPackAt, count,
+                                             texture.expandFormat);
+                texture.expandPackAt += count;
+                if (texture.expandPackAt >= chain) {
+                    texture.expandStage = 4;
+                }
+                break;
+            }
+            default: {
+                // The finished buffer stays on the texture as a preset;
+                // makeTextureNow consumes (and frees) it in its upload.
+                texture.expandPending = false;
+                const bool made = makeTextureNow(renderer, texture, false);
+                if (!made) {
+                    dropExpansion(texture);
+                }
+#ifdef MDK_HW_PROFILE
+                if (made) {
+                    mdk::log3dsPrintf("texchunk: %dx%d ready frame %d", (int)texture.realWidth,
+                                      (int)texture.realHeight, (int)renderer->frame);
+                }
+#endif
+                return made;
+            }
+        }
+        if (!finishAll) {
+            return true;
+        }
+    }
+}
+
+static bool advanceExpansion(RendererC3D* renderer, C3dTexture& texture, bool finishAll) {
+#ifdef MDK_HW_PROFILE
+    const uint64_t stepStart = svcGetSystemTick();
+    const bool stepped = advanceExpansionSteps(renderer, texture, finishAll);
+    renderer->textureMakeTicks += svcGetSystemTick() - stepStart;
+    return stepped;
+#else
+    return advanceExpansionSteps(renderer, texture, finishAll);
+#endif
+}
+
+// The frame-boundary pump: one step per pending expansion per frame, after
+// C3D_FrameBegin's wait (03_frame.inc), so an upload's evictions are legal.
+static void pumpExpansions(RendererC3D* renderer) {
+    // Starts deferred by the pending cap go first, as slots free.
+    int32_t pending = pendingExpansions(renderer);
+    for (size_t i = 0; i < renderer->textures.size() && pending < kMaxPendingExpansions; i++) {
+        C3dTexture& texture = renderer->textures[i];
+        if (texture.expandWanted && !texture.expandPending) {
+            const int32_t started = startExpansion(renderer, texture, false);
+            if (started > 0) {
+                texture.expandWanted = false;
+                pending++;
+            } else if (started == 0) {
+                texture.expandWanted = false;   // a definitive failure is not retried
+            }
+        }
+    }
+    // One step a texture, oldest first, up to the frame's step budget: the
+    // pump's work in a frame is bounded however many expansions are pending.
+    int32_t steps = 0;
+    for (size_t i = 0; i < renderer->textures.size() && steps < kPumpStepsPerFrame; i++) {
+        if (renderer->textures[i].expandPending) {
+            advanceExpansion(renderer, renderer->textures[i], false);
+            steps++;
+        }
+    }
+}
+
 static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnostics) {
     if (texture.valid) {
         return true;
+    }
+    if (texture.expandWanted && !texture.expandPending) {
+        // Started or definitively failed: wanted is spent either way, and a
+        // failure falls through to the synchronous make below.
+        texture.expandWanted = startExpansion(renderer, texture, true) < 0;
+    }
+    if (texture.expandPending) {
+        return advanceExpansion(renderer, texture, true);
     }
 #ifdef MDK_HW_PROFILE
     // Timed for the arena-entry table (textureMakeTicks): one tick read a
@@ -471,7 +722,16 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     // rewrite), load (memcpy), flush (GSPGPU_FlushDataCache).
     const uint64_t texT0 = svcGetSystemTick();
 #endif
-    if (texture.indexed) {
+    // A chunked expansion's finished buffer arrives as a preset: already
+    // expanded, filtered, mip-built and packed in expandFormat/expandLevels,
+    // so neither the expansion nor the pack below runs again.
+    bool prepacked = false;
+    if (texture.expandPixels) {
+        pixels = texture.expandPixels;
+        texture.expandPixels = nullptr;
+        prepacked = true;
+        levels = texture.expandLevels;
+    } else if (texture.indexed) {
         pixels = expandIndices(texture.source.data(), texture.realWidth, texture.realHeight,
                                texture.palette.data(), texture.paddedWidth, texture.paddedHeight,
                                levels);
@@ -490,10 +750,12 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     // texture), RGBA4 with partial alpha. pica::expandedTexelFormat carries the
     // reasons (the alpha test's two references survive each). Decided here, when
     // the texture is made: the toggle reaches a texture at its next making.
-    const mdk::pica::TexelFormat format = mdk::pica::expandedTexelFormat(
-        renderer->toggles.texture16, texture.keepRgba8, texture.paddedWidth,
-        texture.paddedHeight, pixels,
-        (size_t)texture.paddedWidth * (size_t)texture.paddedHeight);
+    const mdk::pica::TexelFormat format =
+        prepacked ? texture.expandFormat
+                  : mdk::pica::expandedTexelFormat(
+                        renderer->toggles.texture16, texture.keepRgba8, texture.paddedWidth,
+                        texture.paddedHeight, pixels,
+                        (size_t)texture.paddedWidth * (size_t)texture.paddedHeight);
     size_t gpuBytes = mdk::pica::textureBytes(format, texture.paddedWidth, texture.paddedHeight,
                                               levels);
     bool allocated = false;
@@ -603,6 +865,8 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     // nothing for RGBA8. After the expansion (which builds the chain in RGBA8:
     // the filter's colour bleed and the mip averaging stay one implementation),
     // before the first upload.
+    // (Skipped for a chunked expansion's preset buffer: it arrives packed.)
+    if (!prepacked)
     mdk::pica::packTexels16(pixels,
                             mdk::pica::mipChainTexels(texture.paddedWidth, texture.paddedHeight,
                                                       levels),

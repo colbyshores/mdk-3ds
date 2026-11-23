@@ -8,6 +8,35 @@
 
 namespace mdk {
 
+// The stacked texels a batch's texture will be made with -- the same
+// product surface_cache.cpp's textureId creates by (width x height x
+// frames) and the 3DS backend chunks above (its kChunkMinTexels). One
+// expression, so the pump's idea of "large" cannot drift from the make's.
+static int64_t surfaceTexels(const ArenaBatch& batch) {
+    const formats::Texture* texture = batch.surface.texture;
+    if (!texture) {
+        return 0;
+    }
+    return (int64_t)texture->width() * (int64_t)texture->height() *
+           (int64_t)texture->frameCount();
+}
+
+static const int64_t kLargeSurfaceTexels = 32768;
+
+// Start every large surface of a freshly built scene (see pumpSurfaces for
+// the size rule and the measured 64x704 case). At load this is the whole
+// point: the backend's sliced expansion then has every frame until the
+// arena is drawn, instead of the pump's sequential walk reaching a late
+// batch after its first draw already needed it.
+static void startLargeSurfaces(const ArenaScene& scene, SurfaceCache* surfaces,
+                               const formats::Palette* palette) {
+    for (size_t i = 0; i < scene.batches.size(); i++) {
+        if (surfaceTexels(scene.batches[i]) >= kLargeSurfaceTexels) {
+            surfaces->surfaceId(scene.batches[i].surface, palette);
+        }
+    }
+}
+
 bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Arena* arena,
                      SurfaceCache* surfaces) {
     if (!renderer || !level || !arena || !surfaces) {
@@ -23,6 +52,7 @@ bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Aren
     dynamic_ = false;
     triangleFirsts_.clear();
     pumpAt_ = 0;
+    pumpLargeAt_ = 0;
 
     palette_ = &level->paletteOf(arena);
     const std::vector<const formats::TextureArchive*> archives = level->archivesOf(arena);
@@ -38,6 +68,8 @@ bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Aren
     if (mesh_ < 0) {
         return false;
     }
+    startLargeSurfaces(scene_, surfaces_, palette_);
+    pumpLargeAt_ = scene_.batches.size();   // the load already did the scan
 
     // The palette and the textures are made by the shared cache when they are
     // first drawn, not here: an arena that is loaded and never drawn costs
@@ -57,6 +89,7 @@ void LevelView::unload() {
     dynamic_ = false;
     triangleFirsts_.clear();
     pumpAt_ = 0;
+    pumpLargeAt_ = 0;
 }
 
 int32_t LevelView::pumpSurfaces(int32_t budget) {
@@ -64,7 +97,29 @@ int32_t LevelView::pumpSurfaces(int32_t budget) {
         return 0;
     }
     int32_t pumped = 0;
-    for (int32_t i = 0; i < budget && pumpAt_ < scene_.batches.size(); i++) {
+    // LARGE SURFACES FIRST. A sequential walk reaches a late batch's texture
+    // only after every batch before it, and the pair window is ~20 frames:
+    // measured on the Old 3DS, the 64x704 strip (batch far down CDANT_1's
+    // list) was first asked for by its own draw and made in that frame
+    // (77 ms). A texture of 32768+ texels is the expensive kind (the 3DS
+    // backend expands those in slices across frames once started), so the
+    // scan starts them within the same budget before the sequential walk
+    // spends it on cheap ones. The scan itself is one pass over the batch
+    // list across all calls; it makes nothing.
+    while (pumped < budget && pumpLargeAt_ < scene_.batches.size()) {
+        const ArenaBatch& batch = scene_.batches[pumpLargeAt_++];
+        if (surfaceTexels(batch) < kLargeSurfaceTexels) {
+            continue;
+        }
+        // Hidden batches ARE started: the corridor strip's group is
+        // script-hidden until its door unlocks, so a visibility skip leaves
+        // exactly the surfaces this scan exists for to their first draw.
+        // The cost of a never-shown start is bounded by the backend's
+        // pending-expansion cap; the sequential walk below keeps its skip.
+        surfaces_->surfaceId(batch.surface, palette_);
+        pumped++;
+    }
+    for (int32_t i = pumped; i < budget && pumpAt_ < scene_.batches.size(); i++) {
         const ArenaBatch& batch = scene_.batches[pumpAt_];
         // The same skip draw() makes: a group the scripts hid is not drawn, so
         // its texture is left to the frame that shows it again.
@@ -217,6 +272,8 @@ bool LevelView::refresh() {
 
     scene_.vertices.swap(rebuilt.vertices);
     scene_.batches.swap(rebuilt.batches);
+    pumpLargeAt_ = 0;   // the rebuilt scene's large surfaces get their scan
+    pumpAt_ = 0;        // ... and its sequential walk starts over (cache hits)
     // The rebuilt scene is whole and its mesh static again: an end of a level in
     // progress tears it again on the next tear().
     tornShown_ = 0;

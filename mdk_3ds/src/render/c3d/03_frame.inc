@@ -70,6 +70,7 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
 // because the frame boundary calls them before they are defined.
 static void dropHd(RendererC3D* renderer, HdCopy& copy);
 static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom);
+static void pumpExpansions(RendererC3D* renderer);
 static bool evictHd(RendererC3D* renderer, uint32_t protectFrom, bool unlinkedOnly);
 
 // Settle the texture changes that could not be made while the GPU might
@@ -1221,6 +1222,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     r->frameStartUse = r->drawCounter + 1;
     settleDeferredTextures(r);
     settleDeferredMeshes(r);
+    pumpExpansions(r);
     pumpHdTextures(r, previousFrameStart);
     // The stream's state, every 300 frames once it has done anything: the
     // evidence a budget is read from (docs/HD_TEXTURES_3DS_SPEC.md 4.2).

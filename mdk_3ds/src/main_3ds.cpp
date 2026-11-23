@@ -606,6 +606,13 @@ static mdk::Lighting cachedLighting(
     return cache.back().second;
 }
 
+// The effects warmer's start (EffectsView::warm): ask the shared cache for
+// one surface's texture, starting its make.
+static void startEffectSurface(void* user, const mdk::Surface& surface,
+                               const mdk::formats::Palette* palette) {
+    static_cast<mdk::SurfaceCache*>(user)->surfaceId(surface, palette);
+}
+
 int main(int argc, char** argv) {
     // P1 lifecycle (AGENTS.md 11): know when the console sleeps and
     // wakes. The hook only records the wake; the loop rebases its clock
@@ -1770,6 +1777,8 @@ int main(int argc, char** argv) {
     std::unique_ptr<mdk::audio::LevelMusic> music;
     // The arena whose track the bank was last asked to prefetch (below).
     std::string musicPrefetchedFor;
+    std::string effectsWarmedCurrent;
+    std::string effectsWarmedSecond;
     // THE BANK'S BLOCKING READS, ALL OF THEM SAID (spec Phase 3: "log every
     // stall"). A streamed sound that is asked for while it is not in memory is
     // read whole, wherever the asker is -- the music's enter(), a script's play
@@ -1884,6 +1893,8 @@ int main(int argc, char** argv) {
         mdk::audioDspDetach();
         music.reset();   // its voices are the runtime's mixer's
         musicPrefetchedFor.clear();
+        effectsWarmedCurrent.clear();
+        effectsWarmedSecond.clear();
         // A fresh camera with the fresh level (its clip view's context is the runtime
         // going now). It is reset HERE, before the runtime below binds its clip view, its
         // shake and its seed to it: reset after them, as it was until package #15, it
@@ -2982,6 +2993,19 @@ int main(int argc, char** argv) {
             // upload with no SD read. Two a frame; the entry stall was 442 ms
             // for nine at once.
             arenaViews.pumpSurfaces(2);
+            // The script effects' textures for the resident arenas, started
+            // on the change (as the music prefetch below): an effect's first
+            // frame is its spawn frame, so without this its texture is made
+            // in its first draw (measured: TRAIL, 64x704 stacked, 77 ms at
+            // the DANT_1 -> CDANT_1 crossing).
+            if (streamCurrent != effectsWarmedCurrent || streamSecond != effectsWarmedSecond) {
+                effectsWarmedCurrent = streamCurrent;
+                effectsWarmedSecond = streamSecond;
+                effectsView.warm(streamCurrent, startEffectSurface, &surfaces);
+                if (!streamSecond.empty() && streamSecond != streamCurrent) {
+                    effectsView.warm(streamSecond, startEffectSurface, &surfaces);
+                }
+            }
 #ifdef MDK_HW_PROFILE
             hwViewsMs = (float)((stream2 - stream1) * 1000.0);
             hwViewsBuilt = builtViews;

@@ -682,7 +682,7 @@ TexelFormat indexTexelFormatBound(bool texture16, int32_t paddedWidth, int32_t p
     return TexelFormat::Rgba5551;
 }
 
-void packTexels16(uint8_t* chain, size_t texels, TexelFormat format) {
+void packTexels16Range(uint8_t* chain, size_t first, size_t count, TexelFormat format) {
     if (!chain || (format != TexelFormat::Rgb565 && format != TexelFormat::Rgba5551 &&
                    format != TexelFormat::Rgba4)) {
         return;
@@ -691,22 +691,27 @@ void packTexels16(uint8_t* chain, size_t texels, TexelFormat format) {
     // over the whole chain (measured 2026-11-22: 140 ms for a 780x360 chain).
     // Three loops, one per format -- same words, same order, same in-place
     // compaction (read texel i whole before its word lands at 2i).
+    const size_t end = first + count;
     if (format == TexelFormat::Rgb565) {
-        for (size_t i = 0; i < texels; i++) {
+        for (size_t i = first; i < end; i++) {
             const uint8_t* t = chain + i * 4u;
             texel16Bytes(chain + i * 2u, rgb565Word(t[3], t[2], t[1]));
         }
     } else if (format == TexelFormat::Rgba5551) {
-        for (size_t i = 0; i < texels; i++) {
+        for (size_t i = first; i < end; i++) {
             const uint8_t* t = chain + i * 4u;
             texel16Bytes(chain + i * 2u, rgba5551Word(t[3], t[2], t[1], t[0]));
         }
     } else {
-        for (size_t i = 0; i < texels; i++) {
+        for (size_t i = first; i < end; i++) {
             const uint8_t* t = chain + i * 4u;
             texel16Bytes(chain + i * 2u, rgba4Word(t[3], t[2], t[1], t[0]));
         }
     }
+}
+
+void packTexels16(uint8_t* chain, size_t texels, TexelFormat format) {
+    packTexels16Range(chain, 0, texels, format);
 }
 
 void streamTexelsRgb565(const uint8_t* indices, int32_t width, int32_t height,

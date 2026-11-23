@@ -248,6 +248,24 @@ struct C3dTexture {
     // flight. The copy waits for the next frame boundary; the id is already
     // invalid to the caller.
     bool releasePending = false;
+
+    // A CHUNKED EXPANSION in progress (04_textures.inc): a large indexed
+    // texture is expanded in slices across frame boundaries instead of in
+    // one ~40-80 ms make. `expandPixels` is the private RGBA8 chain buffer
+    // (malloc, freed by dropExpansion or the finishing upload); the stage
+    // walks rows -> filter -> mips -> format+pack slices -> upload. While
+    // pending the texture is not valid and must never be bound; a draw that
+    // needs it finishes the expansion synchronously (makeTexture), so the
+    // picture is never wrong, only early.
+    bool expandPending = false;
+    bool expandWanted = false;   // chunked start deferred by the pending cap
+    uint8_t* expandPixels = nullptr;
+    int32_t expandRow = 0;
+    int32_t expandStage = 0;
+    bool expandSawTransparent = false;
+    int32_t expandLevels = 0;
+    size_t expandPackAt = 0;
+    mdk::pica::TexelFormat expandFormat = mdk::pica::TexelFormat::Rgba8;
 };
 
 // A mesh: the vertices, in LINEAR memory, where the GPU reads them.

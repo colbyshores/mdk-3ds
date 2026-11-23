@@ -210,6 +210,33 @@ EffectsView::SpriteEntry& EffectsView::sprite(const std::string& arena,
     return spriteCache_.emplace(key, entry).first->second;
 }
 
+void EffectsView::warm(const std::string& arena, SurfaceStartFn start, void* user) {
+    if (start == nullptr || arena.empty()) {
+        return;
+    }
+    // The script effects' textures (scripts/effects.cpp: the wound, the two
+    // drops, the bubble and its pop, the trail). Resolved through sprite(),
+    // so the entry the first effect draws is the entry warmed here.
+    static const char* const kEffectTextures[] = {"SL_BIG", "SL_MED", "SL_SMA",
+                                                  "TRAIL",  "BUBB",   "BUBB_POP"};
+    for (size_t i = 0; i < sizeof(kEffectTextures) / sizeof(kEffectTextures[0]); i++) {
+        SpriteEntry& entry = sprite(arena, kEffectTextures[i]);
+        if (!entry.present || entry.palette == nullptr || entry.surface.texture == nullptr) {
+            continue;
+        }
+        // Only the large ones: a small texture's make at its spawn is a few
+        // ms, and making six of them synchronously here would be the stall
+        // this avoids. The large ones are what a sliced make spreads (the
+        // same 32768-texel rule as the arena pump's).
+        const formats::Texture& texture = *entry.surface.texture;
+        const int64_t texels = (int64_t)texture.width() * (int64_t)texture.height() *
+                               (int64_t)texture.frameCount();
+        if (texels >= 32768) {
+            start(user, entry.surface, entry.palette);
+        }
+    }
+}
+
 EffectsView::Batch& EffectsView::batchFor(const Surface& surface, const formats::Palette* palette) {
     for (int32_t i = 0; i < batchCount_; i++) {
         if (batches_[i].palette == palette && sameSurface(batches_[i].surface, surface)) {
