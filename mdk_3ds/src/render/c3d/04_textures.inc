@@ -373,11 +373,17 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     if (texture.valid) {
         return true;
     }
-    // Timed for the arena-entry table (textureMakeTicks): one tick read a making.
+#ifdef MDK_HW_PROFILE
+    // Timed for the arena-entry table (textureMakeTicks): one tick read a
+    // making. Profile builds only — an SVC per make does not belong in the
+    // shipped path, least of all in the stutter being measured.
     const uint64_t start = svcGetSystemTick();
     const bool made = makeTextureNow(renderer, texture, diagnostics);
     renderer->textureMakeTicks += svcGetSystemTick() - start;
     return made;
+#else
+    return makeTextureNow(renderer, texture, diagnostics);
+#endif
 }
 
 static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diagnostics) {
@@ -791,12 +797,19 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             continue;
         }
         forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)
+#ifdef MDK_HW_PROFILE
         const uint64_t importStart = svcGetSystemTick();
         Tex3DS_Texture t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
         if (!t3x && evictHd(renderer, protectFrom, false)) {
             t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
         }
         renderer->hdImportTicks += svcGetSystemTick() - importStart;
+#else
+        Tex3DS_Texture t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
+        if (!t3x && evictHd(renderer, protectFrom, false)) {
+            t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
+        }
+#endif
         free(bytes);
         if (!t3x) {
             hdFailed(renderer, copy, "import FAILED");
