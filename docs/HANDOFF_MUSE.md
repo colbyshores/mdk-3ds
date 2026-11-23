@@ -175,6 +175,12 @@ Campaign update 2 (same day):
   outside the frustum), or accepting the C# layout cost as ported.
   Effects (~3.7 ms at ~850 verts / ~100 draws / ~95 glows) is the
   same per-frame layout class in `EffectsView::build`.
+- Object-level frustum cull (the obvious next lever) is NOT safe as
+  a frontend-only test: the exact frusta are per-eye (backend
+  `pica::frustumPlanes` on the engine VP per eye), and a center-eye
+  sphere test pops near objects at the stereo edges. The safe form
+  needs the backend's eye matrices or a seam exposing them — a
+  design decision for the next round, not a quick skip.
 
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's
