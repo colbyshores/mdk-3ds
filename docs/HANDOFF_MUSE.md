@@ -164,6 +164,17 @@ Campaign update 2 (same day):
   (`/tmp/kilo/noflush-cap.log.bmp`, 400x240, 14,185 distinct colours)
   shows Kurt and the DANT canyon textured and lit as expected with
   the flush gone — dynamic-mesh objects render on real hardware.
+- Object pass, final sizing (`drawcounts:` PROFILE lines): only **22
+  runtime objects** produce the corridor's 3,417 corners / 38 draws,
+  so obj's ~3.9 ms is per-object iteration over big models' corner
+  lists (~180 µs/object), not per-draw or per-corner cost. A
+  kept-corner cache per (layout, hidden mask) measured **no gain**
+  (masks differ per object, so the cache rebuilds per object) and was
+  reverted. The next real lever here is an object-level frustum cull
+  before streaming (skip addObject for objects whose world sphere is
+  outside the frustum), or accepting the C# layout cost as ported.
+  Effects (~3.7 ms at ~850 verts / ~100 draws / ~95 glows) is the
+  same per-frame layout class in `EffectsView::build`.
 
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's

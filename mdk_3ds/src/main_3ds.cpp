@@ -3418,8 +3418,9 @@ int main(int argc, char** argv) {
             // level-7 walk): how much geometry the object and effects
             // passes lay out in a corridor frame.
             if (frame == 785 || frame == 805 || frame == 815) {
-                mdk::log3dsPrintf("drawcounts: frame %d objects %d corners %d draws, effects %d verts %d draws %d glows",
+                mdk::log3dsPrintf("drawcounts: frame %d objects %d corners %d draws (runtime %d), effects %d verts %d draws %d glows",
                                   (int)frame, (int)objectCorners, (int)objectDraws,
+                                  (int)runtime->objects().size(),
                                   (int)effectsFrame.vertices.size(), (int)effectsFrame.draws.size(),
                                   (int)effectsFrame.glows.size());
             }
