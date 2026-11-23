@@ -248,6 +248,40 @@ void EffectsView::warm(const std::string& arena, SurfaceStartFn start, void* use
     }
 }
 
+bool EffectsView::resolveCached(int32_t material, const std::vector<std::string>& names,
+                                const ObjectLook& look, Pass pass, Surface* out) {
+    // The memo's lifetime is the view's: clear() runs wherever the
+    // runtime is rebuilt (level load/respawn, main_3ds.cpp), which is
+    // also where the recycled-address hazard its comment names lives.
+    // The names vector's address is part of the key, so two arenas'
+    // material tables are never confused; the surface is plain data
+    // (texture pointer, name, colour, counts) with no frame state.
+    const std::pair<std::pair<int32_t, Pass>,
+                    std::pair<const std::vector<std::string>*,
+                              std::pair<const formats::Palette*,
+                                        const formats::TextureArchive*> > >
+        key(std::make_pair(material, pass),
+            std::make_pair(&names, std::make_pair(look.palette, look.archives.empty()
+                                                                      ? nullptr
+                                                                      : look.archives[0])));
+    std::map<std::pair<std::pair<int32_t, Pass>,
+                       std::pair<const std::vector<std::string>*,
+                                 std::pair<const formats::Palette*,
+                                           const formats::TextureArchive*> > >,
+             Surface>::iterator found = resolveMemo_.find(key);
+    if (found != resolveMemo_.end()) {
+        *out = found->second;
+        return true;
+    }
+    Surface surface;
+    if (!resolver_->resolve(material, names, *look.palette, look.archives, &surface, pass)) {
+        return false;
+    }
+    resolveMemo_.emplace(key, surface);
+    *out = surface;
+    return true;
+}
+
 EffectsView::Batch& EffectsView::batchFor(const Surface& surface, const formats::Palette* palette) {
     for (int32_t i = 0; i < batchCount_; i++) {
         if (batches_[i].palette == palette && sameSurface(batches_[i].surface, surface)) {
@@ -299,8 +333,7 @@ void EffectsView::addEndPieces(const scripts::EndLevel& end) {
             material = groupMaterial;
         }
         Surface surface;
-        if (!resolver_->resolve(material, arena->materials(), *look.palette, look.archives,
-                                &surface, Pass::DoubleSided)) {
+        if (!resolveCached(material, arena->materials(), look, Pass::DoubleSided, &surface)) {
             continue;
         }
         Batch& batch = batchFor(surface, look.palette);
@@ -422,8 +455,8 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
                                     (float)rgba[index * 4 + 1] / 255.0f,
                                     (float)rgba[index * 4 + 2] / 255.0f, 1.0f};
                 resolver_->resolveFlat(colour, &surface, Pass::DoubleSided);
-            } else if (!resolver_->resolve(piece.materials[t], *piece.names, *look.palette,
-                                           look.archives, &surface, Pass::DoubleSided)) {
+            } else if (!resolveCached(piece.materials[t], *piece.names, look, Pass::DoubleSided,
+                                      &surface)) {
                 continue;
             }
             Batch& batch = batchFor(surface, look.palette);

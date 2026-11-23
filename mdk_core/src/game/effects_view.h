@@ -158,6 +158,7 @@ public:
     void clear() {
         looks_.clear();
         spriteCache_.clear();
+        resolveMemo_.clear();
         lastSpriteEntry_ = nullptr;
     }
 
@@ -219,6 +220,19 @@ public:
     int32_t unmeasuredGlows() const { return lastUnmeasured_; }
 
 private:
+    // The debris/end-piece material memo: resolve() searches the
+    // archives by name for every triangle, and a frame's pieces repeat
+    // the same materials hundreds of times. Keyed by the material, the
+    // palette and the look's first archive (the archive order is the
+    // look's, as in ObjectView's layout key); cleared with the view.
+    bool resolveCached(int32_t material, const std::vector<std::string>& names,
+                        const ObjectLook& look, Pass pass, Surface* out);
+    std::map<std::pair<std::pair<int32_t, Pass>,
+                       std::pair<const std::vector<std::string>*,
+                                 std::pair<const formats::Palette*,
+                                           const formats::TextureArchive*> > >,
+             Surface>
+        resolveMemo_;
 
     std::vector<Batch> batches_;
     int32_t batchCount_ = 0;
