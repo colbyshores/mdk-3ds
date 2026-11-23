@@ -94,6 +94,15 @@ void SniperView::drawClip(MdkRenderer renderer, const Player& player,
     }
     const Scope& scope = player.scope();
     clipStream_.reset();
+    // The clip's rounds are placed in the clip keys' studio space (an
+    // origin the clip camera looks at), not in the world: a world cull
+    // frustum on the shared ObjectView (the 3DS frontend sets one for
+    // its world objects) would drop every round. Suspend it for the
+    // clip's own adds and put it back.
+    const bool hadFrustum = objects.cullFrustum() != nullptr;
+    const Frustum savedFrustum = hadFrustum ? *objects.cullFrustum() : Frustum{};
+    const float savedMargin = objects.cullMargin();
+    objects.setCullFrustum(nullptr, 0.0f);
     bool open = false;
     for (int32_t i = 0; i < Scope::kClipSize; i++) {
         const float t = scope.clipTime + (float)i;
@@ -111,6 +120,7 @@ void SniperView::drawClip(MdkRenderer renderer, const Player& player,
         objects.addObject(round, look, round.transform(), &clipStream_);
     }
 
+    objects.setCullFrustum(hadFrustum ? &savedFrustum : nullptr, savedMargin);
     if (open) {
         clipDraw_.draw(renderer, surfaces, clipStream_);
         mdk_render_end_inset(renderer);

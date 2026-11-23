@@ -277,6 +277,12 @@ public:
         cullMargin_ = margin;
     }
 
+    // The current cull, for a caller that must suspend it and put it back
+    // (SniperView::drawClip: its rounds are placed in a studio space the
+    // world frustum does not describe).
+    const Frustum* cullFrustum() const { return hasCullFrustum_ ? &cullFrustum_ : nullptr; }
+    float cullMargin() const { return cullMargin_; }
+
     // The C#'s Preload: lay a model out before it is drawn (a level's load).
     void preload(const formats::Model* model, const ObjectLook& look) { (void)layoutOf(model, look); }
 
