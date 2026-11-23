@@ -852,3 +852,36 @@ The owner paused the session (weekly usage) to hand the project on. State at thi
 - CIA packaging and testing come last.
 
 **5. Worktrees and branches from today** (all local, under `.claude/worktrees/`): `hw-session` (detached at dca4a031, used by the console runs), `hw-e11`, `hw-e14`, `agent-a929628fc005c0d8f` (the playthrough, merged), `agent-aa9c0555e90e42ef9` (stopped stutter work). The console runs' raw logs are in the session scratchpad (`scratchpad/hw/`), which a reboot clears. The numbers that matter are copied into `docs/evidence/2026-11-21-hardware-session.md`.
+
+### ARENA-ENTRY STUTTER — root cause and fix (2026-11-22)
+
+**Root cause (measured, not inferred).** The ~1.7 s stutter on arena entry is
+`mdk::enhancedLighting()` running on the arena-change frame in
+`main_3ds.cpp`. It re-walks the sky panorama — 1804x360 = 649,440 pixels,
+three `powf` each (~1.95 M powf) — every time the arena changes. The HD-on
+profile (`/tmp/kilo/hw-l7-hdon2.log`) shows `light: arena CDANT_1` /
+`light: arena DANT_2` landing immediately before `STALL 1736 ms at frame 224`
+and the frame-1137 stall; the arena walks (544–1266 triangles) are negligible
+by probe. A host probe put the rebuild at 14 ms on x86 — the powf is what does
+not scale to the ARM11.
+
+**Fix (`a98e7c4b`).** `level_light.cpp` now builds the 256 linear palette
+colours once per palette (keyed on the palette's own bytes) and the panorama
+loop indexes that table directly. Bit-identical by construction (same powf,
+same inputs, memoized): the probe's rig bits match to the bit, the
+`EnhancedLightingMatchesTheOracle` test passes, and the pinned L3_f1 capture
+is byte-identical to the reference golden (`cpp=58615fc8`).
+
+**Also this batch.** `fde6f026` UNLOCK= harness aid (frees locked doors on a
+schedule; the corridor route needs it); `42ee7a22` the make/import tick spans
+become profile-build-only (review finding: an SVC per texture make does not
+belong in the shipped path). Independent adversarial review (deepseek vs qwen
+builder) raised the per-pixel-memcmp defect that the first cut had — the
+validation is hoisted out of the pixel loop per its finding.
+
+**Pending.** Hardware verification: the profile payload (LEVEL=7 FIXED=1
+PROFILE=1 AT=0,380,15,90 UNLOCK=200 HDROMFS=1, 131 MB, chainload verified) is
+built and staged in the worktree; the console is with the forsaken agent by
+owner instruction 2026-11-22. When it frees: `hw_cycle.sh --profile` and
+confirm no `STALL` at frames 223/1137 and the change-frame draw is tens of ms.
+The HD-off comparison run is still owed too.
