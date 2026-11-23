@@ -5,6 +5,7 @@
 #include "game/object_view.h"
 
 #include <algorithm>
+#include <math.h>
 #include <string>
 #include <vector>
 #include <string.h>
@@ -139,6 +140,20 @@ bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
     out->keys.clear();
 
     const int32_t parts = (int32_t)model.partList.size();
+
+    // The largest part's bounds diagonal, for the object cull's sweep
+    // inflation (a posed part can swing that far past the rest bounds).
+    out->partSweep = 0.0f;
+    for (int32_t p = 0; p < parts; p++) {
+        const formats::Box& partBounds = model.partList[(size_t)p].bounds;
+        const float pdx = partBounds.max.x - partBounds.min.x;
+        const float pdy = partBounds.max.y - partBounds.min.y;
+        const float pdz = partBounds.max.z - partBounds.min.z;
+        const float diagonal = sqrtf(pdx * pdx + pdy * pdy + pdz * pdz);
+        if (diagonal > out->partSweep) {
+            out->partSweep = diagonal;
+        }
+    }
 
     // The model's material names, which is what the C# passes as
     // model.Materials.
@@ -310,6 +325,42 @@ bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look
     ObjectLayout* layout = layoutOf(obj.model, look);
     if (layout == nullptr) {
         return false;
+    }
+
+    // The object cull (setCullFrustum): the model's bounds through this
+    // object's transform, as a world sphere. One test per object, not
+    // per corner: six plane distances and a comparison each -- the same
+    // test the backend's per-eye batch cull makes per draw, here at
+    // object granularity so the corners are never streamed.
+    if (hasCullFrustum_ && layout->swap == nullptr) {
+        // (A swapped model's drawn geometry is the swap's, whose bounds
+        // the model's do not describe: never culled.)
+        const formats::Box& bounds = obj.model->bounds;
+        const float local[3] = {(bounds.min.x + bounds.max.x) * 0.5f,
+                                (bounds.min.y + bounds.max.y) * 0.5f,
+                                (bounds.min.z + bounds.max.z) * 0.5f};
+        const float dx = bounds.max.x - bounds.min.x;
+        const float dy = bounds.max.y - bounds.min.y;
+        const float dz = bounds.max.z - bounds.min.z;
+        const float localRadius = sqrtf(dx * dx + dy * dy + dz * dz) * 0.5f;
+        const float* m = transform.m;
+        // The Frobenius norm of the linear part: an upper bound on the
+        // transform's largest scale for any composition, where the max
+        // row length is only exact for a uniform scale after rotation.
+        float frobenius = 0.0f;
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                frobenius += m[i * 4 + j] * m[i * 4 + j];
+            }
+        }
+        const float scale = sqrtf(frobenius);
+        const Vec3 center{local[0] * m[0] + local[1] * m[4] + local[2] * m[8] + m[12],
+                          local[0] * m[1] + local[1] * m[5] + local[2] * m[9] + m[13],
+                          local[0] * m[2] + local[1] * m[6] + local[2] * m[10] + m[14]};
+        const float radius = (localRadius + layout->partSweep) * scale + cullMargin_;
+        if (frustumSphereOutside(cullFrustum_, center, radius)) {
+            return true;
+        }
     }
 
     const std::vector<std::vector<formats::Vec3f> >& pose = obj.pose_parts();

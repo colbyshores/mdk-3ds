@@ -31,6 +31,25 @@ namespace mdk {
 bool buildLookAtCamera(Camera* camera, const Vec3& eye, const Vec3& target, const Vec3& up,
                        float fovDegrees, float aspect, float nearPlane, float farPlane);
 
+// The view frustum as six planes (a,b,c,d per plane, a point inside has
+// a*x + b*y + c*z + d >= 0 on all six), extracted from a Camera's
+// view-projection in the engine's row-vector convention -- the same
+// Gribb-Hartmann read the 3DS backend does per eye, so a game-side cull
+// and the backend's per-eye cull agree about the volume.
+struct Frustum {
+    float planes[6][4] = {{0}};
+};
+
+bool buildFrustum(const Camera& camera, Frustum* out);
+
+// Whether a world sphere is wholly outside the frustum: true only when
+// it is on the outside of some plane by more than its radius, so an
+// inside or intersecting sphere is never outside. A caller covering
+// both stereo eyes inflates the radius by half the eye separation
+// (the eyes are this frustum translated along the camera's right axis
+// by at most that much, eyePlan's clamped symmetric split).
+bool frustumSphereOutside(const Frustum& frustum, const Vec3& center, float radius);
+
 // A camera at `eye` looking along a heading in the XY plane.
 //
 // `headingDegrees` is the level's angle convention: 90 faces +Y, and 0

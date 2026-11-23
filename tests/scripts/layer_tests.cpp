@@ -299,6 +299,34 @@ void pulledCamera(const Camera& camera, Primitive primitive, int32_t layer, floa
     multiply(pull, viewProjection, out);
 }
 
+// The object cull's frustum: a sphere ahead of the camera is kept, one
+// behind or far to the side is outside, and a sphere crossing a plane is
+// kept (the test is conservative). Ahead uses the C# camera's own axes.
+void testFrustumSphere() {
+    const Camera camera = testCamera();
+    Frustum frustum;
+    LAYER_CHECK(buildFrustum(camera, &frustum));
+    LAYER_CHECK(!frustumSphereOutside(frustum, ahead(100.0f), 2.0f));
+    LAYER_CHECK(frustumSphereOutside(
+        frustum, Vec3{kEye.x, kEye.y + 500.0f, kEye.z}, 2.0f));
+    LAYER_CHECK(frustumSphereOutside(
+        frustum, Vec3{kEye.x + 5000.0f, kEye.y, kEye.z}, 2.0f));
+    LAYER_CHECK(!frustumSphereOutside(frustum, ahead(100.0f), 500.0f));
+    // The [0,1] depth planes: behind the near plane and past the far
+    // plane (0.5..20000) are both outside -- the near extraction is the
+    // one assertion a golden cannot make for this code.
+    LAYER_CHECK(frustumSphereOutside(
+        frustum, Vec3{kEye.x - 0.3f * 10.0f, kEye.y + 10.0f, kEye.z + 0.1f * 10.0f}, 1.0f));
+    LAYER_CHECK(frustumSphereOutside(frustum, ahead(30000.0f), 10.0f));
+    // A point the NDC read places inside the volume is never outside.
+    const Vec3 inside = ahead(50.0f);
+    float vp[16];
+    multiply(camera.view, camera.projection, vp);
+    const Ndc at = ndc(inside, vp);
+    LAYER_CHECK(at.x > -1.0f && at.x < 1.0f && at.z > 0.0f && at.z < 1.0f);
+    LAYER_CHECK(!frustumSphereOutside(frustum, inside, 0.5f));
+}
+
 void testPlainTrianglesStayPut() {
     float pull[16];
     buildDepthPullMatrix(kEye, Primitive::Triangles, 0, pull);
@@ -373,6 +401,7 @@ int runDepthLayerTests(const formats::MdkData& data) {
     testOtherPlanesStayFlat();
     testLevel6Arenas(data);
     testPlainTrianglesStayPut();
+    testFrustumSphere();
     testAnEdgeIsPulledTowardsTheEye();
     testALayerIsNearerThanItsWallInTheDepthBuffer();
 

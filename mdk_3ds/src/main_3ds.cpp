@@ -3273,6 +3273,17 @@ int main(int argc, char** argv) {
             // objects and Kurt (Viewer.cs:705-706) are not ported; see the
             // header. The effects (Viewer.cs:707) draw below.
             const float tickAlpha = runtime->tick_blend(pending);
+            // The object cull for this frame: the centre frustum, with the
+            // sphere margin covering both stereo eyes (half the configured
+            // separation; the eyes are this frustum translated along the
+            // camera's right axis).
+            mdk::Frustum objectFrustum;
+            if (mdk::buildFrustum(sceneCamera, &objectFrustum)) {
+                objectView.setCullFrustum(&objectFrustum,
+                                          g_gameSettings.stereoSeparation * 0.5f);
+            } else {
+                objectView.setCullFrustum(nullptr, 0.0f);
+            }
             objectStream.reset();
             for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
                 if (strikeFrame) {
@@ -3293,6 +3304,8 @@ int main(int argc, char** argv) {
                 // turned by its yaw), through this same pass -- which sets every GPU state
                 // it needs per draw.
                 const mdk::scripts::MdkObject& subject = runtime->strikeScene()->subject();
+                // The strike's subject is the frame: never culled.
+                objectView.setCullFrustum(nullptr, 0.0f);
                 objectView.addObject(subject, objectLook(subject.arena), subject.transform(),
                                      &objectStream);
             }

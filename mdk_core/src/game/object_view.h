@@ -46,6 +46,7 @@
 #include <utility>
 #include <vector>
 
+#include "render/camera_builder.h"
 #include "render/material_resolver.h"
 #include "render/render_types.h"
 #include "scripts/object.h"
@@ -122,6 +123,11 @@ struct ObjectLayout {
     // The model's mod replacement, when one replaced a part (its fitted
     // poses are the layout's scratch, fitted per draw in addObject).
     const ModelSwap* swap = nullptr;
+
+    // The largest part's bounds diagonal: a posed part can sweep that
+    // far past the model's rest bounds, so the object cull inflates by
+    // it. Filled by buildObjectLayout.
+    float partSweep = 0.0f;
 };
 
 // Whether `part` is hidden by the `hidden` mask (the C#'s IsHidden). The shift
@@ -256,6 +262,21 @@ public:
     bool addObject(const scripts::MdkObject& obj, const ObjectLook& look,
                    const Mat4& transform, ObjectStream* stream);
 
+    // The object cull: when set, addObject skips an object whose world
+    // sphere (its model bounds through its transform) is wholly outside
+    // the frustum -- streaming its corners would only be clipped by the
+    // GPU. `margin` inflates the sphere; a stereo frontend passes half
+    // the eye separation, which covers both eyes' translated frusta
+    // exactly (the eyes are the centre frustum translated along the
+    // camera's right axis). Null (the default) culls nothing.
+    void setCullFrustum(const Frustum* frustum, float margin) {
+        hasCullFrustum_ = frustum != nullptr;
+        if (frustum != nullptr) {
+            cullFrustum_ = *frustum;
+        }
+        cullMargin_ = margin;
+    }
+
     // The C#'s Preload: lay a model out before it is drawn (a level's load).
     void preload(const formats::Model* model, const ObjectLook& look) { (void)layoutOf(model, look); }
 
@@ -268,6 +289,9 @@ public:
 private:
     const MaterialResolver* resolver_;
     ModModels* swaps_ = nullptr;
+    Frustum cullFrustum_;
+    bool hasCullFrustum_ = false;
+    float cullMargin_ = 0.0f;
     // A map, not a vector: layoutOf hands out a pointer into it, and a map's
     // elements do not move when later entries are inserted. The key carries the
     // look's first archive as well as its palette: a corridor shares its arena's

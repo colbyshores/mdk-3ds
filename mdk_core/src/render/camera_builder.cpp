@@ -116,6 +116,60 @@ bool buildLookAtCamera(Camera* camera, const Vec3& eye, const Vec3& target, cons
     return true;
 }
 
+bool buildFrustum(const Camera& camera, Frustum* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    // view * projection, row-vector (the multiply the renderer composes).
+    float vp[16];
+    for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+            float sum = 0.0f;
+            for (int k = 0; k < 4; k++) {
+                sum += camera.view[row * 4 + k] * camera.projection[k * 4 + col];
+            }
+            vp[row * 4 + col] = sum;
+        }
+    }
+    // Gribb-Hartmann in the row-vector convention (the backend's
+    // pica::frustumPlanes, element for element): the planes are column
+    // sums/differences of vp, near is column 2 (z >= 0 in [0,1] depth).
+    for (int j = 0; j < 4; j++) {
+        const float c0 = vp[j * 4 + 0], c1 = vp[j * 4 + 1];
+        const float c2 = vp[j * 4 + 2], c3 = vp[j * 4 + 3];
+        out->planes[0][j] = c3 + c0;
+        out->planes[1][j] = c3 - c0;
+        out->planes[2][j] = c3 + c1;
+        out->planes[3][j] = c3 - c1;
+        out->planes[4][j] = c2;
+        out->planes[5][j] = c3 - c2;
+    }
+    // Unit normals, so the sphere test is a distance, not a ratio.
+    for (int p = 0; p < 6; p++) {
+        float* plane = out->planes[p];
+        const float length = sqrtf(plane[0] * plane[0] + plane[1] * plane[1] +
+                                   plane[2] * plane[2]);
+        if (length > 0.0f) {
+            for (int j = 0; j < 4; j++) {
+                plane[j] /= length;
+            }
+        }
+    }
+    return true;
+}
+
+bool frustumSphereOutside(const Frustum& frustum, const Vec3& center, float radius) {
+    for (int p = 0; p < 6; p++) {
+        const float* plane = frustum.planes[p];
+        const float distance =
+            plane[0] * center.x + plane[1] * center.y + plane[2] * center.z + plane[3];
+        if (distance < -radius) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool buildHeadingCamera(Camera* camera, const Vec3& eye, float headingDegrees, float pitchDegrees,
                         float fovDegrees, float aspect, float nearPlane, float farPlane) {
     // The level's heading: 90 faces +Y, 0 faces +X. The heading is a

@@ -175,12 +175,21 @@ Campaign update 2 (same day):
   outside the frustum), or accepting the C# layout cost as ported.
   Effects (~3.7 ms at ~850 verts / ~100 draws / ~95 glows) is the
   same per-frame layout class in `EffectsView::build`.
-- Object-level frustum cull (the obvious next lever) is NOT safe as
-  a frontend-only test: the exact frusta are per-eye (backend
-  `pica::frustumPlanes` on the engine VP per eye), and a center-eye
-  sphere test pops near objects at the stereo edges. The safe form
-  needs the backend's eye matrices or a seam exposing them — a
-  design decision for the next round, not a quick skip.
+- Object-level frustum cull — **done, safely** (the earlier caution
+  is superseded): the eyes are the centre frustum translated along
+  the camera's right axis by at most half the separation
+  (eyePlan's clamped symmetric split, 0.125 world units at the
+  default), so `ObjectView` culls against the centre frustum
+  (`camera_builder`'s `Frustum`, same Gribb-Hartmann as the
+  backend's) with the sphere inflated by half the configured
+  separation, the transform's Frobenius scale bound, and the
+  largest part's sweep (posed parts can leave the rest bounds).
+  Swapped models are never culled. Measured features-off: obj
+  4.6 → 1.5–2.8 ms, streamed corners 3,417 → 591–2,154, on-screen
+  triangles unchanged, p95 27.8 → 22.4 ms. **Proof: the frame-800
+  hardware capture with the cull on is byte-identical to the one
+  without it** (`/tmp/kilo/objcull-cap.log.bmp` vs
+  `noflush-cap.log.bmp`, 0 of 96,000 pixels differ).
 
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's
