@@ -10,6 +10,7 @@
 #include "formats/texture.h"
 
 #include <cmath>
+#include <cstring>
 
 namespace mdk {
 namespace {
@@ -69,12 +70,46 @@ bool faceOf(const formats::Arena& arena, int32_t triangle, Face* out) {
     return true;
 }
 
+// The palette has 256 colours, but the sky panorama asks for one 649,440
+// times per arena change (1804x360 pixels, three powf each — measured on
+// level 7's DTI). On the ARM11 that powf storm is the arena-change light
+// rebuild: the rebuild's stall measured 1.7 s on old3ds-lan167 on
+// 2026-11-21, and the powf count is the only cost of that order in it.
+// So the 256 linear colours are built once per palette, and the panorama
+// loop indexes the table directly — the palette check runs once per
+// skyMean, never per pixel (a per-pixel check would cost more than the
+// powf it saves). The table is keyed on the palette's own bytes, so a
+// level change or an arena-colour patch rebuilds it, and an unchanged
+// palette returns the identical bits: powf runs once per colour, on the
+// same inputs as before. Main thread only (level load and arena
+// changes); no worker calls this. The console re-measure of the change
+// frame is pending (hw_cycle --profile).
+struct LinearPalette {
+    uint8_t rgba[formats::Palette::kSize * 4];
+    Vec3 linear[formats::Palette::kSize];
+};
+LinearPalette g_linear;
+bool g_linearBuilt = false;
+
+// The palette's 256 linear colours, rebuilt only when the palette's bytes
+// differ from the cached ones.
+const Vec3* linearTable(const formats::Palette& palette) {
+    if (!g_linearBuilt || std::memcmp(g_linear.rgba, palette.rgba(), sizeof(g_linear.rgba)) != 0) {
+        const uint8_t* rgba = palette.rgba();
+        for (int32_t i = 0; i < formats::Palette::kSize; i++) {
+            const Vec3 srgb{rgba[(size_t)i * 4] / 255.0f, rgba[(size_t)i * 4 + 1] / 255.0f,
+                            rgba[(size_t)i * 4 + 2] / 255.0f};
+            g_linear.linear[i] = Vec3{std::pow(srgb.x, kSkyGamma), std::pow(srgb.y, kSkyGamma),
+                                       std::pow(srgb.z, kSkyGamma)};
+        }
+        std::memcpy(g_linear.rgba, rgba, sizeof(g_linear.rgba));
+        g_linearBuilt = true;
+    }
+    return g_linear.linear;
+}
+
 Vec3 linearOf(const formats::Palette& palette, int32_t index) {
-    const uint8_t* rgba = palette.rgba();
-    const Vec3 srgb{rgba[(size_t)index * 4] / 255.0f, rgba[(size_t)index * 4 + 1] / 255.0f,
-                    rgba[(size_t)index * 4 + 2] / 255.0f};
-    return Vec3{std::pow(srgb.x, kSkyGamma), std::pow(srgb.y, kSkyGamma),
-                std::pow(srgb.z, kSkyGamma)};
+    return linearTable(palette)[(size_t)index];
 }
 
 // The mean linear colour of sky rows [first, end) over the full turn's
@@ -82,10 +117,11 @@ Vec3 linearOf(const formats::Palette& palette, int32_t index) {
 Vec3 skyMean(const formats::Dti& dti, int32_t first, int32_t end) {
     const formats::Texture& sky = dti.sky();
     const int32_t columns = dti.skyWrapWidth() < sky.width() ? dti.skyWrapWidth() : sky.width();
+    const Vec3* table = linearTable(dti.palette());
     Vec3 sum{0.0f, 0.0f, 0.0f};
     for (int32_t row = first; row < end; row++) {
         for (int32_t column = 0; column < columns; column++) {
-            const Vec3 linear = linearOf(dti.palette(), sky.indices()[(size_t)row * (size_t)sky.width() + (size_t)column]);
+            const Vec3 linear = table[sky.indices()[(size_t)row * (size_t)sky.width() + (size_t)column]];
             sum.x += linear.x;
             sum.y += linear.y;
             sum.z += linear.z;
