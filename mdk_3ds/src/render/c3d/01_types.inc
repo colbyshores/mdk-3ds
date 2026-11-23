@@ -269,6 +269,59 @@ struct C3dTexture {
     int32_t expandLevels = 0;
     size_t expandPackAt = 0;
     mdk::pica::TexelFormat expandFormat = mdk::pica::TexelFormat::Rgba8;
+    // ASYNC EXPANSION (04_textures.inc): this texture's current stamp,
+    // taken from the renderer's monotonic sequence at queue and at drop
+    // (dropExpansion), so a core-1 job finishing late can tell its texture
+    // was dropped or recreated under it and discard its buffer instead of
+    // uploading stale pixels into a recycled slot. A slot reset by
+    // assignment reads 0, which the sequence never issues.
+    uint32_t expandGeneration = 0;
+    // This texture's expansion is queued or running on the worker: the main
+    // thread must not advance its stages (the worker owns its own copies).
+    bool expandAsync = false;
+    // The texture16 toggle as of this expansion's start (startExpansion):
+    // both expansion paths choose the stage-3 store from it.
+    bool expandTexture16 = false;
+};
+
+// One core-1 expansion job (04_textures.inc). The worker owns everything in
+// it -- COPIES of the source indices and palette, and the chain buffer it
+// fills -- so it never touches a C3dTexture: the texture table can grow
+// (push_back) and slots can be recycled while a job is in flight, and the
+// generation check at pickup is what keeps a late finish out of a slot that
+// no longer names the same texture. Only stages 0-3 (the CPU expansion)
+// run on the worker; the GPU upload stays on the main thread at the frame
+// pump (AGENTS.md P2/P3).
+struct ExpandJob {
+    enum State : uint8_t { Free, Queued, Running, Done };
+    State state = Free;
+    int32_t textureIndex = -1;
+    uint32_t generation = 0;
+    uint8_t* source = nullptr;    // malloc'd copy of the indices
+    uint8_t* palette = nullptr;   // malloc'd copy, 256*4
+    uint8_t* pixels = nullptr;    // the chain buffer the worker fills
+    int32_t realWidth = 0;
+    int32_t realHeight = 0;
+    int32_t paddedWidth = 0;
+    int32_t paddedHeight = 0;
+    int32_t levels = 0;
+    bool texture16 = false;
+    bool keepRgba8 = false;
+    // The stage state, advanced only by the worker (advanceExpandWork).
+    int32_t row = 0;
+    int32_t stage = 0;
+    bool sawTransparent = false;
+    size_t packAt = 0;
+    mdk::pica::TexelFormat format = mdk::pica::TexelFormat::Rgba8;
+    // dropExpansion under a running job: the worker frees the job's
+    // buffers itself when it sees this (under expandLock).
+    bool discarded = false;
+    // The chain buffer was startExpansion's (already zeroed on the main
+    // thread): the worker must not zero it again.
+    bool adopted = false;
+    // The worker could not allocate the chain buffer: Done with no pixels,
+    // and the pickup rebuilds the expansion on the main thread.
+    bool failed = false;
 };
 
 // A mesh: the vertices, in LINEAR memory, where the GPU reads them.
@@ -907,6 +960,25 @@ struct RendererC3D {
     // The SD reads, on their own thread (platform/async_file_reader.h): started
     // with the renderer, stopped and joined before C3D_Fini.
     mdk::AsyncFileReader hdReader;
+    // THE ASYNC EXPANSION WORKER (04_textures.inc): stages 0-3 of a chunked
+    // expansion on core 1 (platform/worker_core.h), the upload at the frame
+    // pump. Started with the renderer, stopped and joined before the
+    // textures go away. expandUseWorker is false when the thread could not
+    // be created (or MDK_HW_EXPAND_MAIN): the main-thread chunked pump then
+    // runs exactly as before.
+    static constexpr int32_t kExpandJobCount = 4;
+    ExpandJob expandJobs[kExpandJobCount];
+    LightLock expandLock;
+    LightEvent expandWake;
+    Thread expandThread = nullptr;
+    bool expandRunning = false;
+    bool expandExit = false;   // under expandLock only
+    bool expandUseWorker = false;
+    int32_t expandJobsDone = 0;   // pickups at the pump (profile evidence)
+    // Monotonic stamp source for expandGeneration: a queue takes the next
+    // value, a drop takes the next, so a value is never reissued -- a slot
+    // reset to C3dTexture() (generation 0) can never match a stale job.
+    uint32_t expandGenerationSeq = 0;
     size_t hdResidentBytes = 0;
     int32_t hdImported = 0;
     int32_t hdEvicted = 0;

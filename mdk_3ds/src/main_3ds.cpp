@@ -110,6 +110,7 @@
 #include "game/sky_modes.h"
 #include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
+#include "platform/worker_core.h"
 #include "platform/log_3ds.h"
 #include "menu_screens_3ds.h"
 #include "stream_3ds.h"
@@ -679,6 +680,13 @@ int main(int argc, char** argv) {
                       (unsigned)(envGetHeapSize() + envGetLinearHeapSize()));
     mdk::log3dsPrintf("main: FZ/DN ok (fpscr=0x%08lx)",
                       (unsigned long)mdk::vfpReadFpscr());
+    // Core 1's time grant for the workers (platform/worker_core.h), before
+    // any worker starts: the async texture-expansion worker runs there.
+    // Skipped in the EXPANDCORE=0 A/B, whose build must be the pre-worker
+    // configuration exactly (no grant, no core probes).
+#ifndef MDK_HW_EXPAND_MAIN
+    mdk::workerCoreInit();
+#endif
 #ifdef MDK_AUTOQUIT
     // WHICH PAYLOAD THIS IS, in the log itself. A build without MDK_AUTOQUIT
     // links harness_3ds.cpp's no-op answers: harnessAutoquitDue() is a

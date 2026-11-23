@@ -66,6 +66,7 @@
 #include "render/sun_shadow.h"
 #include "mdk_c3d_shbin.h"
 #include "platform/vfp_fpscr.h"
+#include "platform/worker_core.h"
 #include "platform/log_3ds.h"
 #include "platform/async_file_reader.h"
 

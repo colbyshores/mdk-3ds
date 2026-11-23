@@ -225,6 +225,30 @@ $(error MENU=$(MENU) needs AUTOQUIT: the menu presses are a harness-build featur
 endif
 DEFINES += -DMDK_HW_MENU='"$(MENU)"'
 endif
+# `make AUTOQUIT=90 EXPANDCORE=0` builds the harness WITHOUT the core-1
+# expansion worker (04_textures.inc's MDK_HW_EXPAND_MAIN: the main-thread
+# chunked pump exactly as before), for the A/B against the default, which
+# has it. Release builds always have it. Only renderer_c3d.cpp reads it:
+# touch it (or `make clean`) after changing EXPANDCORE.
+ifneq ($(strip $(EXPANDCORE)),)
+ifndef AUTOQUIT
+$(error EXPANDCORE=$(EXPANDCORE) needs AUTOQUIT: the expansion-worker switch is a harness-build feature)
+endif
+ifeq ($(strip $(EXPANDCORE)),0)
+DEFINES += -DMDK_HW_EXPAND_MAIN=1
+endif
+endif
+# `make AUTOQUIT=90 WORKERCORE=0` puts the expansion worker back on the
+# process's default core (platform/worker_core.h's MDK_HW_WORKERCORE_DEFAULT:
+# no core-1 time grant), for the placement A/B inside the worker-on build.
+ifneq ($(strip $(WORKERCORE)),)
+ifndef AUTOQUIT
+$(error WORKERCORE=$(WORKERCORE) needs AUTOQUIT: the worker-core switch is a harness-build feature)
+endif
+ifeq ($(strip $(WORKERCORE)),0)
+DEFINES += -DMDK_HW_WORKERCORE_DEFAULT=1
+endif
+endif
 # THE SET PIECES' AIDS (game/harness_aids.h; the Linux build's --give, --ride, --aim),
 # for playthroughs that start at a set piece. The first level's only. A refused value
 # is logged ("main: harness aids ... REFUSED") and that aid dropped. Only main_3ds.cpp

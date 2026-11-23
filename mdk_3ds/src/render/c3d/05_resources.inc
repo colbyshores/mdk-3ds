@@ -101,7 +101,7 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
     }
     if (!makeTexture(renderer, slot, true)) {
         // The failed slot goes back to being free: no GPU copy, no source.
-        dropExpansion(slot);
+        dropExpansion(renderer, slot);
         slot = C3dTexture();
         return -1;
     }
@@ -376,7 +376,7 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     texture.source.assign(px, px + bytes);
     // A chunked expansion in flight is built from the OLD source: drop it,
     // and the next make expands the new source instead.
-    dropExpansion(texture);
+    dropExpansion(renderer, texture);
     texture.hasHoles = mdk::pica::textureSourceHasHoles(texture.source.data(),
                                                         texture.source.size(), texture.indexed);
 
@@ -640,7 +640,7 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     // (game/arena_views.h) must hand the heap back for the next arena's stream.
     std::vector<uint8_t>().swap(texture.source);
     std::vector<uint8_t>().swap(texture.palette);
-    dropExpansion(texture);
+    dropExpansion(renderer, texture);
     texture.stale = false;
     texture.restamped = false;
     texture.streamed = false;

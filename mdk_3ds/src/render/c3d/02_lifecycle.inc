@@ -4,6 +4,10 @@ static void logDedupeWindow(RendererC3D* r);
 // Defined in 03_frame.inc beside mdk_render_set_enhanced_toggles; called from
 // mdk_render_create below.
 static void applyFramePacing(RendererC3D* r);
+// The async expansion worker's lifecycle (04_textures.inc), called from
+// mdk_render_create / mdk_render_destroy below.
+static bool startExpandWorker(RendererC3D* renderer);
+static void stopExpandWorker(RendererC3D* renderer);
 
 // 02_lifecycle.inc -- create/destroy, the backend name and capabilities.
 // Part of renderer_c3d.cpp's single translation unit (see its header).
@@ -440,6 +444,10 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
 
     r->ready = true;
     r->hdReader.start();
+    // The async expansion worker (04_textures.inc), with the renderer: it
+    // names no renderer state but its own jobs, and it is stopped and
+    // joined in destroy before any texture goes away.
+    startExpandWorker(r);
 
     // THE CANVAS'S WHITE TEXTURE, made once here and never released.
     //
@@ -482,6 +490,9 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     // The HD reader first: its thread is joined and the buffers it still holds
     // are freed before anything it could name goes away (AGENTS.md P4).
     r->hdReader.stop();
+    // The expansion worker likewise (04_textures.inc): joined before the
+    // textures it might name at pickup go away.
+    stopExpandWorker(r);
     // The dedupe's last window, once (03_frame.inc logDedupeWindow): the profile's
     // A/B evidence without an SD write inside its frames.
     logDedupeWindow(r);

@@ -434,11 +434,18 @@ static const int32_t kChunkRowTexels = 16384;   // one row step's texel budget (
 static const size_t kChunkPackTexels = 16384u;  // 64x1024 chain: 4 pack steps
 static const int32_t kPumpStepsPerFrame = 3;    // total steps the frame pump does, all textures
 
-static void dropExpansion(C3dTexture& texture) {
+static void dropExpansion(RendererC3D* renderer, C3dTexture& texture) {
     free(texture.expandPixels);
     texture.expandPixels = nullptr;
     texture.expandPending = false;
     texture.expandWanted = false;
+    // A core-1 job naming this texture is now stale: the texture takes a
+    // fresh stamp from the renderer's monotonic sequence, so the job's
+    // stamp no longer matches and the pump discards its buffer at pickup
+    // instead of uploading it. The worker owns the job's buffers until
+    // then. The sequence never reissues a value (and never 0).
+    texture.expandGeneration = ++renderer->expandGenerationSeq;
+    texture.expandAsync = false;
     texture.expandRow = 0;
     texture.expandStage = 0;
     texture.expandPackAt = 0;
@@ -487,6 +494,7 @@ static int32_t startExpansion(RendererC3D* renderer, C3dTexture& texture, bool f
                                ? mdk::pica::mipLevelsFor(texture.paddedWidth,
                                                          texture.paddedHeight)
                                : 0;
+    texture.expandTexture16 = renderer->toggles.texture16;
     const size_t texels = mdk::pica::mipChainTexels(texture.paddedWidth, texture.paddedHeight,
                                                     texture.expandLevels);
     texture.expandPixels = static_cast<uint8_t*>(malloc(texels * 4u));
@@ -506,80 +514,134 @@ static int32_t startExpansion(RendererC3D* renderer, C3dTexture& texture, bool f
     return 1;
 }
 
+// The CPU stages (0-3) of an expansion, over EXPLICIT buffers and stage
+// state -- shared by the main thread's chunked pump (advanceExpansionSteps,
+// over a C3dTexture's fields) and the core-1 worker (over an ExpandJob's
+// owned copies), so the two paths expand a texel identically. One step (or
+// all of them, finishAll); returns true when the work reaches stage 4 (the
+// chain buffer is finished and ready to upload). Every helper it calls
+// is reentrant (audited 2026-11-23): expandIndexRows lives in this file
+// and touches only its arguments; the other six (prepareForFiltering,
+// buildMipChain, packTexels16Range, expandedTexelFormat, mipChainTexels,
+// mipLevelsFor) are all defined in mdk_3ds/src/render/pica_matrix.cpp,
+// whose only statics are read-only const tables (kMortonInvX/Y,
+// kReciprocal, kIdentity) with no shared mutable state. So a main-thread
+// step and a worker job may run concurrently over DIFFERENT buffers,
+// never the same one (job ownership, above).
+static bool advanceExpandWork(const uint8_t* source, const uint8_t* palette, uint8_t* pixels,
+                              int32_t realWidth, int32_t realHeight, int32_t paddedWidth,
+                              int32_t paddedHeight, bool texture16, bool keepRgba8,
+                              int32_t& row, int32_t& stage, bool& sawTransparent, int32_t levels,
+                              size_t& packAt, mdk::pica::TexelFormat& format, bool finishAll) {
+    for (;;) {
+        switch (stage) {
+            case 0: {
+                int32_t stepRows = kChunkRowTexels / (realWidth > 0 ? realWidth : 1);
+                if (stepRows < 1) {
+                    stepRows = 1;
+                }
+                int32_t to = finishAll ? realHeight : row + stepRows;
+                if (to > realHeight) {
+                    to = realHeight;
+                }
+                if (expandIndexRows(source, realWidth, row, to, palette, paddedWidth, pixels)) {
+                    sawTransparent = true;
+                }
+                row = to;
+                if (to >= realHeight) {
+                    stage = 1;
+                }
+                break;
+            }
+            case 1:
+                mdk::pica::prepareForFiltering(pixels, realWidth, realHeight, paddedWidth,
+                                               paddedHeight, sawTransparent);
+                stage = 2;
+                break;
+            case 2:
+                mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, realWidth, realHeight,
+                                         levels);
+                stage = 3;
+                break;
+            case 3: {
+                if (packAt == 0) {
+                    format = mdk::pica::expandedTexelFormat(
+                        texture16, keepRgba8, paddedWidth, paddedHeight, pixels,
+                        (size_t)paddedWidth * (size_t)paddedHeight);
+                }
+                const size_t chain =
+                    mdk::pica::mipChainTexels(paddedWidth, paddedHeight, levels);
+                if (format == mdk::pica::TexelFormat::Rgba8) {
+                    // No pack to slice: the chain is already in its store.
+                    packAt = chain;
+                    stage = 4;
+                    break;
+                }
+                size_t count = chain - packAt;
+                if (!finishAll && count > kChunkPackTexels) {
+                    count = kChunkPackTexels;
+                }
+                mdk::pica::packTexels16Range(pixels, packAt, count, format);
+                packAt += count;
+                if (packAt >= chain) {
+                    stage = 4;
+                }
+                break;
+            }
+            default:
+                return true;
+        }
+        if (stage >= 4) {
+            return true;
+        }
+        if (!finishAll) {
+            return false;
+        }
+    }
+}
+
 // One step (or all of them, when a draw needs the texture now). Returns
 // false only when the finishing upload fails; the state is then clean and
 // a later make retries synchronously from the kept source. The levels are
 // frozen at the start (the chain buffer is sized by them) and the store is
 // chosen at stage 3, so an enableMipmaps flip mid-expansion reaches this
-// texture only at its next making; the texture16 store follows the flip.
+// texture only at its next making. The texture16 store is read from the
+// snapshot taken when the expansion started (expandTexture16), on BOTH
+// the main thread and the worker, so the store cannot differ by thread.
 // PROFILE builds charge the step to textureMakeTicks, so the pump's
 // work stays visible in the arena table instead of vanishing from texMs.
 static bool advanceExpansionSteps(RendererC3D* renderer, C3dTexture& texture, bool finishAll) {
     if (!texture.expandPending) {
         return texture.valid;
     }
+    if (texture.expandAsync) {
+        // The worker owns this expansion's stages: the main thread never
+        // advances it (pickupExpandJob hands the finished buffer over).
+        return texture.valid;
+    }
+    if (texture.expandStage < 4 && !texture.expandPixels) {
+        // No chain buffer (a job owned it and was discarded): rebuild the
+        // pending state, or clear it and make the texture whole below.
+        dropExpansion(renderer, texture);
+        if (startExpansion(renderer, texture, true) <= 0) {
+            dropExpansion(renderer, texture);
+            return false;
+        }
+    }
+    if (texture.expandStage < 4) {
+        const bool worked = advanceExpandWork(
+            texture.source.data(), texture.palette.data(), texture.expandPixels,
+            texture.realWidth, texture.realHeight, texture.paddedWidth, texture.paddedHeight,
+            texture.expandTexture16, texture.keepRgba8, texture.expandRow, texture.expandStage,
+            texture.expandSawTransparent, texture.expandLevels, texture.expandPackAt,
+            texture.expandFormat, finishAll);
+        (void)worked;
+        if (texture.expandStage < 4) {
+            return true;
+        }
+    }
     for (;;) {
         switch (texture.expandStage) {
-            case 0: {
-                int32_t stepRows = kChunkRowTexels / (texture.realWidth > 0 ? texture.realWidth : 1);
-                if (stepRows < 1) {
-                    stepRows = 1;
-                }
-                int32_t to = finishAll ? texture.realHeight : texture.expandRow + stepRows;
-                if (to > texture.realHeight) {
-                    to = texture.realHeight;
-                }
-                if (expandIndexRows(texture.source.data(), texture.realWidth, texture.expandRow,
-                                    to, texture.palette.data(), texture.paddedWidth,
-                                    texture.expandPixels)) {
-                    texture.expandSawTransparent = true;
-                }
-                texture.expandRow = to;
-                if (to >= texture.realHeight) {
-                    texture.expandStage = 1;
-                }
-                break;
-            }
-            case 1:
-                mdk::pica::prepareForFiltering(texture.expandPixels, texture.realWidth,
-                                               texture.realHeight, texture.paddedWidth,
-                                               texture.paddedHeight,
-                                               texture.expandSawTransparent);
-                texture.expandStage = 2;
-                break;
-            case 2:
-                mdk::pica::buildMipChain(texture.expandPixels, texture.paddedWidth,
-                                         texture.paddedHeight, texture.realWidth,
-                                         texture.realHeight, texture.expandLevels);
-                texture.expandStage = 3;
-                break;
-            case 3: {
-                if (texture.expandPackAt == 0) {
-                    texture.expandFormat = mdk::pica::expandedTexelFormat(
-                        renderer->toggles.texture16, texture.keepRgba8, texture.paddedWidth,
-                        texture.paddedHeight, texture.expandPixels,
-                        (size_t)texture.paddedWidth * (size_t)texture.paddedHeight);
-                }
-                const size_t chain = mdk::pica::mipChainTexels(
-                    texture.paddedWidth, texture.paddedHeight, texture.expandLevels);
-                if (texture.expandFormat == mdk::pica::TexelFormat::Rgba8) {
-                    // No pack to slice: the chain is already in its store.
-                    texture.expandPackAt = chain;
-                    texture.expandStage = 4;
-                    break;
-                }
-                size_t count = chain - texture.expandPackAt;
-                if (!finishAll && count > kChunkPackTexels) {
-                    count = kChunkPackTexels;
-                }
-                mdk::pica::packTexels16Range(texture.expandPixels, texture.expandPackAt, count,
-                                             texture.expandFormat);
-                texture.expandPackAt += count;
-                if (texture.expandPackAt >= chain) {
-                    texture.expandStage = 4;
-                }
-                break;
-            }
             default: {
                 // The finished buffer stays on the texture as a preset;
                 // makeTextureNow consumes (and frees) it in its upload.
@@ -595,7 +657,7 @@ static bool advanceExpansionSteps(RendererC3D* renderer, C3dTexture& texture, bo
                 }
                 const bool made = makeTextureNow(renderer, texture, false);
                 if (!made) {
-                    dropExpansion(texture);
+                    dropExpansion(renderer, texture);
                 }
 #ifdef MDK_HW_PROFILE
                 if (made) {
@@ -636,9 +698,443 @@ static bool startStaleExpansion(RendererC3D* renderer, C3dTexture& texture) {
     return startExpansion(renderer, texture, true) > 0;
 }
 
+// ---------------------------------------------------------------------------
+// THE ASYNC EXPANSION WORKER: stages 0-3 on CORE 1 (platform/worker_core.h).
+//
+// A chunked candidate the frame pump would advance on the main thread is
+// instead QUEUED as an ExpandJob: main copies the indices and palette into
+// the job (a memcpy, not an expansion), the worker expands from its copies
+// into the job's chain buffer (advanceExpandWork, the same steps the main
+// thread's pump runs), and the main thread picks the finished buffer up at
+// a later frame pump and uploads it there (the stage-4 default case in
+// advanceExpansionSteps, frame boundary, GPU done with the old copy --
+// AGENTS.md P2/P3). A draw that needs the texture first WAITS for the job
+// (the work is already running on the other core; the worst case is the
+// same synchronous finish as before, minus the steps already done) and
+// then uploads it on the spot, exactly as a synchronous finish does.
+//
+// The worker never touches a C3dTexture or the GPU: jobs are keyed by
+// (texture index, expandGeneration); dropExpansion bumps the generation,
+// so a job whose texture was dropped or recreated in flight is discarded
+// at pickup. Job buffers are freed by whoever ends the job's ownership:
+// the worker frees a discarded job's buffers, main frees them at pickup
+// and at stop (after the join, when the worker can no longer write).
+// MDK_HW_EXPAND_MAIN (EXPANDCORE=0) is the A/B: no worker, today's pump.
+// ---------------------------------------------------------------------------
+
+static void freeExpandJobBuffers(ExpandJob& job) {
+    // source and palette are ONE allocation (the palette rides behind the
+    // indices): freeing source frees both.
+    free(job.source);
+    free(job.pixels);
+    job.source = nullptr;
+    job.palette = nullptr;
+    job.pixels = nullptr;
+}
+
+// Queue texture `index` for the worker. False (the caller falls back to the
+// main-thread chunked path) when the worker is off, no slot is free, or an
+// allocation fails. Adopts the texture's chain buffer when startExpansion
+// already made one (the stale path); otherwise the job allocates its own
+// and the WORKER zeroes it.
+static bool queueExpandJob(RendererC3D* renderer, int32_t index) {
+    C3dTexture& texture = renderer->textures[(size_t)index];
+    if (!renderer->expandUseWorker || texture.expandAsync) {
+        return texture.expandAsync;
+    }
+    if (!texture.indexed || texture.compressed || texture.streamed) {
+        return false;
+    }
+    const size_t realBytes = (size_t)texture.realWidth * (size_t)texture.realHeight;
+    if (texture.source.size() != realBytes || texture.palette.size() < 256 * 4) {
+        return false;
+    }
+    LightLock_Lock(&renderer->expandLock);
+    int32_t slot = -1;
+    for (int32_t i = 0; i < RendererC3D::kExpandJobCount; i++) {
+        if (renderer->expandJobs[i].state == ExpandJob::Free) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        LightLock_Unlock(&renderer->expandLock);
+        return false;
+    }
+    ExpandJob& job = renderer->expandJobs[slot];
+    job = ExpandJob();
+    // One allocation for both copies: the palette (256 entries of RGBA,
+    // 1024 bytes) rides behind the indices, so the job frees one block.
+    job.source = static_cast<uint8_t*>(malloc(realBytes + 1024));
+    job.palette = job.source ? job.source + realBytes : nullptr;
+    if (texture.expandPixels) {
+        job.pixels = texture.expandPixels;   // adopted (already zeroed)
+        job.adopted = true;
+        texture.expandPixels = nullptr;
+    } else {
+        // The chain buffer is the WORKER's to allocate (and zero): an
+        // arena-sized malloc here on the main thread would put this
+        // function in the texel-filling set the frame test measures, and
+        // the allocation's cost belongs with the rest of the make.
+        job.levels = renderer->toggles.enableMipmaps
+                         ? mdk::pica::mipLevelsFor(texture.paddedWidth, texture.paddedHeight)
+                         : 0;
+    }
+    if (!job.source || !job.palette) {
+        if (job.adopted) {
+            // The adopted chain buffer is the texture's, not the job's:
+            // hand it back so the main-thread path can finish into it.
+            texture.expandPixels = job.pixels;
+            job.pixels = nullptr;
+        }
+        freeExpandJobBuffers(job);
+        job = ExpandJob();
+        LightLock_Unlock(&renderer->expandLock);
+        return false;
+    }
+    // The copies are the queue's one main-thread cost: realBytes+1024,
+    // bounded by the largest indexed source (the explosion strips are
+    // 128x3328 = ~426 KB); a memcpy of that size is well under a
+    // millisecond and happens once per queued expansion, never per frame.
+    memcpy(job.source, texture.source.data(), realBytes);
+    memcpy(job.palette, texture.palette.data(), 256 * 4);
+    job.textureIndex = index;
+    // A fresh stamp for this delegation: any older job for this index is
+    // stale from this moment, whatever the slot's history.
+    texture.expandGeneration = ++renderer->expandGenerationSeq;
+    job.generation = texture.expandGeneration;
+    job.realWidth = texture.realWidth;
+    job.realHeight = texture.realHeight;
+    job.paddedWidth = texture.paddedWidth;
+    job.paddedHeight = texture.paddedHeight;
+    if (job.adopted) {
+        // startExpansion's state (a fresh start: stage 0, but the levels
+        // and format are already chosen). The expansion continues from it,
+        // not restarts.
+        job.row = texture.expandRow;
+        job.stage = texture.expandStage;
+        job.sawTransparent = texture.expandSawTransparent;
+        job.packAt = texture.expandPackAt;
+        job.format = texture.expandFormat;
+        job.levels = texture.expandLevels;
+    }
+    if (!job.adopted) {
+        // No startExpansion ran for this expansion (the pump's queue loop
+        // only hands it pending textures, which startExpansion started --
+        // so this is defensive): the queue is its start, and it freezes
+        // the same snapshot startExpansion would.
+        texture.expandTexture16 = renderer->toggles.texture16;
+    }
+    job.texture16 = texture.expandTexture16;
+    job.keepRgba8 = texture.keepRgba8;
+    job.state = ExpandJob::Queued;
+    texture.expandAsync = true;
+    texture.expandPending = true;
+    LightLock_Unlock(&renderer->expandLock);
+    LightEvent_Signal(&renderer->expandWake);
+    return true;
+}
+
+// The worker's loop: claim a queued job, run its stages to stage 4 one step
+// at a time (checking discard/exit between steps), mark it Done.
+static void runExpandWorker(RendererC3D* renderer) {
+    for (;;) {
+        int32_t slot = -1;
+        LightLock_Lock(&renderer->expandLock);
+        if (renderer->expandExit) {
+            LightLock_Unlock(&renderer->expandLock);
+            return;
+        }
+        for (int32_t i = 0; i < RendererC3D::kExpandJobCount; i++) {
+            if (renderer->expandJobs[i].state == ExpandJob::Queued) {
+                renderer->expandJobs[i].state = ExpandJob::Running;
+                slot = i;
+                break;
+            }
+        }
+        LightLock_Unlock(&renderer->expandLock);
+        if (slot < 0) {
+            LightEvent_Wait(&renderer->expandWake);
+            continue;
+        }
+        ExpandJob& job = renderer->expandJobs[slot];
+        if (!job.adopted && job.pixels == nullptr) {
+            // The chain buffer is allocated (and zeroed) here, on the
+            // worker: the malloc and the memset of an arena-sized chain
+            // are part of the make's cost and belong off the main thread
+            // with the rest of it.
+            const size_t texels = mdk::pica::mipChainTexels(job.paddedWidth, job.paddedHeight,
+                                                            job.levels);
+            job.pixels = static_cast<uint8_t*>(malloc(texels * 4u));
+            if (job.pixels == nullptr) {
+                LightLock_Lock(&renderer->expandLock);
+                job.failed = true;
+                job.state = ExpandJob::Done;
+                LightLock_Unlock(&renderer->expandLock);
+                LightEvent_Signal(&renderer->expandWake);
+                continue;
+            }
+            memset(job.pixels, 0, texels * 4u);
+        }
+        bool discarded = false;
+        while (job.stage < 4) {
+            advanceExpandWork(job.source, job.palette, job.pixels, job.realWidth, job.realHeight,
+                              job.paddedWidth, job.paddedHeight, job.texture16, job.keepRgba8,
+                              job.row, job.stage, job.sawTransparent, job.levels, job.packAt,
+                              job.format, false);
+            LightLock_Lock(&renderer->expandLock);
+            discarded = job.discarded || renderer->expandExit;
+            LightLock_Unlock(&renderer->expandLock);
+            if (discarded) {
+                break;
+            }
+        }
+        LightLock_Lock(&renderer->expandLock);
+        if (discarded || job.discarded) {
+            freeExpandJobBuffers(job);
+            job = ExpandJob();
+        } else {
+            job.state = ExpandJob::Done;
+        }
+        LightLock_Unlock(&renderer->expandLock);
+        LightEvent_Signal(&renderer->expandWake);
+    }
+}
+
+// THE THREAD'S ENTRY, a plain function so the R1 gate (tools/runner/gates_vfp.py)
+// can resolve the routine threadCreate names and read its body.
+static void texExpandWorkerThread(void* self) {
+    // R1, AT THE WORKER'S ENTRY. Flush-to-zero and default-NaN are MDK's
+    // chosen numerical mode, and FPSCR is per thread: the main thread's
+    // state is not evidence of this one's. The expansion's filtering can
+    // reach subnormals as values decay, and modern libctru already
+    // initialises the mode on its supported thread entry -- so this is the
+    // defensive, read-back form the contract asks every thread to carry.
+    const bool fzdn = mdk::vfpThreadFzDn();
+    if (!fzdn) {
+        mdk::log3dsPrintf("texexpand: worker FZ/DN read-back FAILED");
+    }
+    runExpandWorker(static_cast<RendererC3D*>(self));
+}
+
+static bool startExpandWorker(RendererC3D* renderer) {
+#ifdef MDK_HW_EXPAND_MAIN
+    renderer->expandUseWorker = false;
+    mdk::log3dsPrintf("texexpand: worker OFF (MDK_HW_EXPAND_MAIN A/B)");
+    return true;
+#else
+    LightLock_Init(&renderer->expandLock);
+    LightEvent_Init(&renderer->expandWake, RESET_ONESHOT);
+    renderer->expandExit = false;
+    s32 priority = 0x30;
+    svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
+    const s32 workerPriority = priority < 0x3F ? priority + 1 : priority;
+    // Core 1 (the owner's core for workers, platform/worker_core.h: the
+    // APT time grant in main makes the time there); refused there, the
+    // process's default core; refused again, no worker at all.
+    // No grant, no core 1: an accepted-yet-starved worker would hang the
+    // draws that wait on it (the bounded wait in pickupExpandJob is the
+    // second line of defence, not the first).
+    int32_t core = mdk::workerCoreGrantOk() ? mdk::kWorkerCore : mdk::kWorkerCoreFallback;
+    // 32 KB of stack, measured (arm-none-eabi-g++ -fstack-usage on
+    // pica_matrix.cpp, 2026-11-23): the worst frame on the worker's call
+    // chain is buildMipChain 48 B into downsampleTiled 72 B and
+    // prepareForFiltering 16 B -- ~136 B transitive, plus advanceExpandWork's
+    // own frame. 32 KB is that bound with two orders of magnitude spare.
+    renderer->expandThread =
+        threadCreate(texExpandWorkerThread, renderer, 32 * 1024, workerPriority, core, false);
+    if (!renderer->expandThread && core != mdk::kWorkerCoreFallback) {
+        core = mdk::kWorkerCoreFallback;
+        renderer->expandThread =
+            threadCreate(texExpandWorkerThread, renderer, 32 * 1024, workerPriority, core, false);
+    }
+    renderer->expandRunning = renderer->expandThread != nullptr;
+    renderer->expandUseWorker = renderer->expandRunning;
+    mdk::log3dsPrintf("texexpand: worker %s (priority 0x%X, core %d)",
+                      renderer->expandRunning ? "started" : "FAILED -- main-thread pump",
+                      (unsigned)workerPriority, (int)core);
+    return true;
+#endif
+}
+
+static void stopExpandWorker(RendererC3D* renderer) {
+    if (renderer->expandRunning) {
+        LightLock_Lock(&renderer->expandLock);
+        renderer->expandExit = true;
+        for (int32_t i = 0; i < RendererC3D::kExpandJobCount; i++) {
+            renderer->expandJobs[i].discarded = true;
+        }
+        LightLock_Unlock(&renderer->expandLock);
+        LightEvent_Signal(&renderer->expandWake);
+        threadJoin(renderer->expandThread, U64_MAX);
+        threadFree(renderer->expandThread);
+        renderer->expandThread = nullptr;
+        renderer->expandRunning = false;
+        renderer->expandUseWorker = false;
+    }
+    // After the join the worker can no longer write: every buffer left is
+    // the main thread's to free.
+    for (int32_t i = 0; i < RendererC3D::kExpandJobCount; i++) {
+        freeExpandJobBuffers(renderer->expandJobs[i]);
+        renderer->expandJobs[i] = ExpandJob();
+    }
+}
+
+// Wait for texture `index`'s job to finish (a draw needs it now), then hand
+// its buffer to the texture as the preset advanceExpansionSteps' stage-4
+// case consumes. False when there is no usable job (stale generation, or
+// the job was discarded): the caller then makes the texture synchronously
+// from its kept source, as before the worker existed.
+static bool pickupExpandJob(RendererC3D* renderer, int32_t index, bool wait) {
+    C3dTexture& texture = renderer->textures[(size_t)index];
+    int32_t waitTicks = 0;
+    for (;;) {
+        LightLock_Lock(&renderer->expandLock);
+        int32_t slot = -1;
+        // In preference order: a finished job carrying the texture's
+        // CURRENT stamp (the live delegation), then any finished job
+        // (a stale one, collected so its slot frees), then any live one.
+        for (int pass = 0; pass < 3 && slot < 0; pass++) {
+            for (int32_t i = 0; i < RendererC3D::kExpandJobCount; i++) {
+                const ExpandJob& cand = renderer->expandJobs[i];
+                if (cand.textureIndex != index || cand.state == ExpandJob::Free) {
+                    continue;
+                }
+                const bool match = pass == 2 ||
+                                   (cand.state == ExpandJob::Done &&
+                                    (pass == 1 || cand.generation == texture.expandGeneration));
+                if (match) {
+                    slot = i;
+                    break;
+                }
+            }
+        }
+        if (slot < 0) {
+            LightLock_Unlock(&renderer->expandLock);
+            texture.expandAsync = false;
+            return false;
+        }
+        ExpandJob& job = renderer->expandJobs[slot];
+        if (job.state != ExpandJob::Done) {
+            const bool abandon = wait && ++waitTicks > 500;
+            if (abandon) {
+                // 500 ms is far past any single expansion's remaining
+                // stages: the worker is starved (a core-1 thread with no
+                // time grant) or wedged, and a draw must never wait
+                // forever. Discard the job (the worker frees it at its
+                // next step boundary) and let the caller finish the
+                // texture synchronously from its kept source.
+                job.discarded = true;
+            }
+            LightLock_Unlock(&renderer->expandLock);
+            if (!wait) {
+                return false;
+            }
+            if (abandon) {
+                texture.expandAsync = false;
+                return false;
+            }
+            // The worker signals expandWake on every finish; sleep a tick
+            // and re-check (the signal can name another job's finish).
+            svcSleepThread(1000ULL * 1000ULL);
+            continue;
+        }
+        // The job IS the texture's delegated expansion exactly when its
+        // stamp is the texture's current stamp (stamps are never
+        // reissued, and a slot reset by assignment reads 0, which is
+        // never issued). A stale job coexisting with it does not
+        // disqualify it; a candidate whose stamp is not current is only
+        // ever collected, never uploaded and never rebuilt over.
+        const bool delegated = texture.expandAsync && texture.expandPending;
+        const bool isCurrent = job.generation == texture.expandGeneration;
+        bool otherCurrent = false;
+        for (int32_t i = 0; i < RendererC3D::kExpandJobCount; i++) {
+            if (i != slot && renderer->expandJobs[i].textureIndex == index &&
+                renderer->expandJobs[i].state != ExpandJob::Free &&
+                renderer->expandJobs[i].generation == texture.expandGeneration) {
+                otherCurrent = true;
+                break;
+            }
+        }
+        const bool usable = delegated && isCurrent && !job.failed && job.pixels != nullptr &&
+                            !job.discarded;
+        uint8_t* pixels = nullptr;
+        int32_t levels = 0;
+        mdk::pica::TexelFormat format = mdk::pica::TexelFormat::Rgba8;
+        if (usable) {
+            pixels = job.pixels;
+            levels = job.levels;
+            format = job.format;
+            job.pixels = nullptr;   // the texture takes the buffer
+        }
+        freeExpandJobBuffers(job);
+        job = ExpandJob();
+        LightLock_Unlock(&renderer->expandLock);
+        if (!otherCurrent) {
+            // No other job carries the current delegation.
+            texture.expandAsync = false;
+        }
+        if (!usable) {
+            if (delegated && isCurrent && texture.expandPending) {
+                // The synchronous fall-through (a draw waiting, or the
+                // pump's step loop) advances expandPixels, which the job
+                // owned and has just been freed: rebuild the pending
+                // state so it has a chain buffer, or clear it so the
+                // caller makes the texture whole instead.
+                dropExpansion(renderer, texture);
+                if (startExpansion(renderer, texture, true) <= 0) {
+                    dropExpansion(renderer, texture);
+                }
+            }
+            return false;
+        }
+        texture.expandPixels = pixels;
+        texture.expandLevels = levels;
+        texture.expandFormat = format;
+        texture.expandStage = 4;
+        renderer->expandJobsDone++;
+        return true;
+    }
+}
+
 // The frame-boundary pump: one step per pending expansion per frame, after
 // C3D_FrameBegin's wait (03_frame.inc), so an upload's evictions are legal.
 static void pumpExpansions(RendererC3D* renderer) {
+    // THE ASYNC WORKER'S PICKUPS FIRST: a finished job's buffer is uploaded
+    // HERE, at the frame boundary (the stage-4 case), never on the worker.
+    if (renderer->expandUseWorker) {
+        // The finished jobs, collected under one lock (not one lock per
+        // texture). Ungated on expandAsync on purpose: a dropped texture's
+        // job (expandAsync cleared by dropExpansion) must still be picked
+        // up here so its slot and buffers are freed, not orphaned.
+        int32_t doneIdx[RendererC3D::kExpandJobCount];
+        int32_t doneCount = 0;
+        LightLock_Lock(&renderer->expandLock);
+        for (int32_t i = 0; i < RendererC3D::kExpandJobCount; i++) {
+            if (renderer->expandJobs[i].state == ExpandJob::Done) {
+                const int32_t idx = renderer->expandJobs[i].textureIndex;
+                if (idx < 0 || (size_t)idx >= renderer->textures.size()) {
+                    // Its texture is gone (the table only grows, so this
+                    // is defensive): free the job here, do not re-collect
+                    // it every frame.
+                    freeExpandJobBuffers(renderer->expandJobs[i]);
+                    renderer->expandJobs[i] = ExpandJob();
+                    continue;
+                }
+                doneIdx[doneCount++] = idx;
+            }
+        }
+        LightLock_Unlock(&renderer->expandLock);
+        for (int32_t d = 0; d < doneCount; d++) {
+            const int32_t i = doneIdx[d];
+            if (i < 0 || (size_t)i >= renderer->textures.size()) {
+                continue;
+            }
+            if (pickupExpandJob(renderer, i, false)) {
+                advanceExpansion(renderer, renderer->textures[(size_t)i], true);
+            }
+        }
+    }
     // Starts deferred by the pending cap go first, as slots free.
     int32_t pending = pendingExpansions(renderer);
     for (size_t i = 0; i < renderer->textures.size() && pending < kMaxPendingExpansions; i++) {
@@ -653,11 +1149,22 @@ static void pumpExpansions(RendererC3D* renderer) {
             }
         }
     }
+    // Hand pending chunked expansions to the worker (it advances them
+    // during the GPU's frame, not in slices of this thread's); whatever it
+    // cannot take (slots full, worker off) keeps the main-thread steps.
+    if (renderer->expandUseWorker) {
+        for (size_t i = 0; i < renderer->textures.size(); i++) {
+            C3dTexture& texture = renderer->textures[i];
+            if (texture.expandPending && !texture.expandAsync) {
+                queueExpandJob(renderer, (int32_t)i);
+            }
+        }
+    }
     // One step a texture, oldest first, up to the frame's step budget: the
     // pump's work in a frame is bounded however many expansions are pending.
     int32_t steps = 0;
     for (size_t i = 0; i < renderer->textures.size() && steps < kPumpStepsPerFrame; i++) {
-        if (renderer->textures[i].expandPending) {
+        if (renderer->textures[i].expandPending && !renderer->textures[i].expandAsync) {
             advanceExpansion(renderer, renderer->textures[i], false);
             steps++;
         }
@@ -672,6 +1179,23 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
         // Started or definitively failed: wanted is spent either way, and a
         // failure falls through to the synchronous make below.
         texture.expandWanted = startExpansion(renderer, texture, true) < 0;
+    }
+    if (texture.expandAsync) {
+        // A draw needs the worker's texture NOW: wait for the job (the
+        // other core has been expanding it since the pump queued it; the
+        // wait is the remaining stages, never more than the synchronous
+        // finish below), take its buffer, and upload it here through the
+        // same stage-4 path. A stale job ahead of the live one is
+        // collected and the live one retried (the bound covers every job
+        // slot); no usable job at all: fall through to the synchronous
+        // finish from the kept source.
+        const int32_t index = (int32_t)(&texture - renderer->textures.data());
+        for (int32_t tries = 0; tries < RendererC3D::kExpandJobCount && texture.expandAsync;
+             tries++) {
+            if (pickupExpandJob(renderer, index, true)) {
+                return advanceExpansion(renderer, texture, true);
+            }
+        }
     }
     if (texture.expandPending) {
         return advanceExpansion(renderer, texture, true);
