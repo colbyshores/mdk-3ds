@@ -185,6 +185,9 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
             }
         }
         if (outside) {
+            if (r->census.active) {
+                r->census.culled++;
+            }
             return;
         }
     }

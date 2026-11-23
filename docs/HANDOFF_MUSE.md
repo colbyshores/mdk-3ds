@@ -135,12 +135,38 @@ own cost.
 
 1. **Sustained ~45 ms corridor frames, frames ~771–830 (~2 s of judder)** —
    now the dominant stutter. `draw≈10.5 + end≈19` ⇒ misses vsync (2 vblanks).
-   The ~19 ms GPU is the corridor's own stereo fill at close range (original
-   drew this mono at 400×240; we draw two eyes). NOT yet proven whether it is
-   fill-rate or per-batch/state overhead — first next step: count CDANT_1's
-   batches and screen coverage vs DANT_1, or a capture with the corridor
-   half-off-screen. Any real fix (internal resolution, fewer layers) is a
-   **fidelity decision — owner call**, per `docs/DOCTRINE.md`.
+   **MEASURED 2026-11-23 (census run `/tmp/kilo/census-last.log`, same route):
+   per-batch/state overhead, NOT fill-rate.** A PROFILE-only census (arm at
+   frames 765/785/805/815/845 in `03_frame.inc`; submitted draws, culled
+   batches, on-screen triangles and NDC area per eye) gave:
+
+   | Frame | Scene | draws/eye | culled | tris submitted | tris on-screen | GPU `end` |
+   |---|---|---|---|---|---|---|
+   | 765 | DANT_1 only | 148 | 120 | 4178 | 907 | ~12 ms |
+   | 785 | corridor pair | 272 | 133 | 4762 | 1126 | 20.4 ms |
+   | 805 | corridor pair | 251 | 164 | 4686 | 891 | 18.8 ms |
+   | 815 | corridor pair | 234 | 177 | 4625 | 776 | 17.7 ms |
+   | 845 | CDANT_1 only | 164 | 66 | 3405 | 567 | 12.7 ms |
+
+   Submitted triangles rise only ~12% and on-screen triangles are flat, while
+   submitted draws rise ~70–84% and `end` tracks the draw count almost
+   linearly (~65 µs per extra submitted draw). (Counts are first-eye only —
+   the census logs after the first eye's replay; the `end` figures cited are
+   the uncensused `pump-last` run's, since the census loop perturbs its own
+   sampled frames. The census run's sampled `end` values, 17.7–20.4 ms in
+   the corridor vs 12.7 ms at frame 845, agree.) Frame 845 is the control: its
+   raw NDC area sum is the largest of the five (52.5, unclipped) yet its
+   `end` is 12.7 ms at 164 draws. Fill (pixel/triangle load) therefore does
+   not explain the corridor's ~19 ms; the per-draw GPU/command cost of
+   ~250 small batches per eye (mean ~18 tris/draw; run-total dedupe counters
+   show ~165 texture rebinds written per frame, ~146 UV writes per frame)
+   does. **No fidelity change is needed to attack this** — candidate fixes
+   that keep every pixel: merge same-texture/same-state batches in the arena
+   scene build, or cut per-draw state writes in `drawRecorded`. The old
+   "stereo fill at close range" reading is disproven; do not reopen it
+   without a clipped-area (per-pixel) measurement that contradicts the
+   draw-count correlation. (`docs/DOCTRINE.md` is absent on this branch —
+   the fidelity rule applied here is AGENTS.md/SPEC.md's.)
 2. **Frame-795 77 ms strip make** (64x704, once per crossing). Fixes that
    don't touch fidelity: split the indexed expansion across ~8 pump frames
    (chunked expansion in the 3DS texmake path), or form the pair earlier
@@ -168,3 +194,11 @@ own cost.
   read; judge pushes by `transfers.log`, never `3dslink`'s stdout; a timeout
   is the console, not the build).
 - The `c3d_frame` arm failure in `tests/scripts` is pre-existing (see §4).
+- Session note 2026-11-23 (muse): Obsidian/Cognee/Pi-knowledge MCP tools are
+  absent from this session's tool list (P9 session fault, not a lookup).
+  The vault on disk IS reachable at `/mnt/nas/Vaults/port-docs` (owner:
+  `../../Vault/port-docs` from the Development folder); task 1's vault
+  search found no corridor/fill note, and
+  `findings/3ds-perf-pass-2026-11-19.md` corroborates the per-draw reading
+  (state dedupe shipped: command list halved, −2.4 ms). Cognee graph search
+  remains unavailable; record any later MCP restoration before claiming it.

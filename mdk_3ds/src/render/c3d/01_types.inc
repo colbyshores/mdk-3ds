@@ -296,6 +296,7 @@ struct Census {
                              // and reading it as "the GPU will show it" over-reads
                              // it (review-1 F5).
     int32_t depthOut = 0;    // of those, the ones wholly outside [-1,1] in ndc z
+    int32_t culled = 0;      // BATCHES the frustum cull rejected (the rest count triangles)
     int32_t cw = 0;          // on-screen, negative signed area in NDC (y up)
     int32_t ccw = 0;         // on-screen, positive
     int32_t near60 = 0;      // on-screen AND within 60 units of the eye

@@ -1179,7 +1179,21 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // The one frame that gets censused (see `Census`). Everything else pays the
     // compare and nothing more.
     r->census.active = mdk::log3dsPeriodic() && r->frame == kCensusFrame;
+#if defined(MDK_HW_PROFILE)
+    // Corridor fill-vs-batch samples (HANDOFF_MUSE.md task 1): DANT_1-only
+    // (765), pair corridor (785/805/815), CDANT_1-only after the drop (845).
+    // Route-specific to the FIXED=1 level-7 walk (HANDOFF_MUSE.md sec.2); a
+    // different route must re-derive the frames. PROFILE builds silence the
+    // periodic census, so arm it explicitly here; the per-triangle loop
+    // perturbs these frames, so only their COUNTS are evidence, never their
+    // periods (timing comes from uncensused runs).
+    if (r->frame == 765 || r->frame == 785 || r->frame == 805 || r->frame == 815 ||
+        r->frame == 845) {
+        r->census.active = true;
+    }
+#endif
     r->census.triangles = 0;
+    r->census.culled = 0;
     r->census.behind = 0;
     r->census.offscreen = 0;
     r->census.onscreen = 0;
@@ -1345,8 +1359,8 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
 // first eye's replay of frame `kCensusFrame`.
 static void logCensus(RendererC3D* r) {
     const Census& c = r->census;
-    mdk::log3dsPrintf("census frame=%d draws=%d tris=%d behind=%d offscreen=%d onscreen=%d depthout=%d near60=%d cw=%d ccw=%d w=[%.1f,%.1f] areaset=%.4f",
-                      r->frame, (int)r->drawCount, (int)c.triangles, (int)c.behind,
+    mdk::log3dsPrintf("census frame=%d draws=%d culled=%d tris=%d behind=%d offscreen=%d onscreen=%d depthout=%d near60=%d cw=%d ccw=%d w=[%.1f,%.1f] areaset=%.4f",
+                      r->frame, (int)r->drawCount, (int)c.culled, (int)c.triangles, (int)c.behind,
                       (int)c.offscreen, (int)c.onscreen, (int)c.depthOut, (int)c.near60,
                       (int)c.cw, (int)c.ccw, c.minW,
                       c.maxW, c.areaSum);
