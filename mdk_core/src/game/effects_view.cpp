@@ -181,9 +181,16 @@ const ObjectLook& EffectsView::lookOf(const std::string& arena) {
 
 EffectsView::SpriteEntry& EffectsView::sprite(const std::string& arena,
                                               const std::string& texture) {
+    if (lastSpriteEntry_ != nullptr && lastSpriteArena_ == arena &&
+        lastSpriteTexture_ == texture) {
+        return *lastSpriteEntry_;
+    }
     const std::pair<std::string, std::string> key(arena, texture);
     std::map<std::pair<std::string, std::string>, SpriteEntry>::iterator found = spriteCache_.find(key);
     if (found != spriteCache_.end()) {
+        lastSpriteArena_ = arena;
+        lastSpriteTexture_ = texture;
+        lastSpriteEntry_ = &found->second;
         return found->second;
     }
     const ObjectLook& look = lookOf(arena);
@@ -207,7 +214,11 @@ EffectsView::SpriteEntry& EffectsView::sprite(const std::string& arena,
             entry.glowMeasured = true;
         }
     }
-    return spriteCache_.emplace(key, entry).first->second;
+    SpriteEntry& placed = spriteCache_.emplace(key, entry).first->second;
+    lastSpriteArena_ = arena;
+    lastSpriteTexture_ = texture;
+    lastSpriteEntry_ = &placed;
+    return placed;
 }
 
 void EffectsView::warm(const std::string& arena, SurfaceStartFn start, void* user) {

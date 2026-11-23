@@ -158,6 +158,7 @@ public:
     void clear() {
         looks_.clear();
         spriteCache_.clear();
+        lastSpriteEntry_ = nullptr;
     }
 
 private:
@@ -198,6 +199,13 @@ private:
 
     std::map<std::string, ObjectLook> looks_;
     std::map<std::pair<std::string, std::string>, SpriteEntry> spriteCache_;
+    // sprite()'s last answer: a frame's effects are mostly one arena's
+    // one texture (a slime's trail), so the map's string-key find is
+    // paid once per run of them, not once per effect. Map nodes are
+    // stable, so the pointer outlives later inserts; clear() drops it.
+    std::string lastSpriteArena_;
+    std::string lastSpriteTexture_;
+    SpriteEntry* lastSpriteEntry_ = nullptr;
     // The last build's sprite effects, the ones given a halo, and the ones whose
     // texture could not be measured yet (pixels not resident): a platform's log
     // reads them (spriteEffects / glowingEffects / unmeasuredGlows).

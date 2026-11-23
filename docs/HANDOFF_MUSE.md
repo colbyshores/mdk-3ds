@@ -190,6 +190,11 @@ Campaign update 2 (same day):
   hardware capture with the cull on is byte-identical to the one
   without it** (`/tmp/kilo/objcull-cap.log.bmp` vs
   `noflush-cap.log.bmp`, 0 of 96,000 pixels differ).
+- Effects: a one-entry memo on `EffectsView::sprite` (a frame's
+  effects are mostly one arena's one texture) measured fx
+  3.9/3.5/3.3 → 3.7/3.6/3.0 ms. The remaining ~3.3 ms is per-effect
+  quad/batch layout from the C# design; a deeper cut needs the
+  build's per-effect breakdown, not another memo.
 
 GPU `end` in the pair window: 26 ms (baseline) → 18.5–19 ms (cull). The drop
 proves the cull removes the departing arena; the residual is the corridor's
