@@ -19,6 +19,9 @@ struct MdkC3dFirstUse {
     int32_t texturesMade = 0;   // textures made (any store, compressed included)
     int32_t hdImported = 0;     // HD copies imported (docs/HD_TEXTURES_3DS_SPEC.md)
     int32_t hdEvicted = 0;
+    int32_t texturesEvicted = 0;     // GPU copies the LRU freed (made again on next draw)
+    uint64_t textureMakeTicks = 0;   // svcGetSystemTick spent making textures
+    uint64_t hdImportTicks = 0;      // ... and importing HD copies
 };
 
 void mdk_render_c3d_first_use(MdkRenderer r, MdkC3dFirstUse* out);

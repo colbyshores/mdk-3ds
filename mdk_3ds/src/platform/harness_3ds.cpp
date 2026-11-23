@@ -160,9 +160,9 @@ uint64_t g_playerT = 0, g_runtimeT = 0, g_cameraT = 0, g_solidT = 0;
 // last kArenaBefore+1 frames in a ring, and the kept windows' rows in a flat
 // table filled in frame order. Raw ticks while measuring; converted at exit.
 constexpr uint32_t kArenaBefore = 3;
-constexpr uint32_t kArenaAfter = 24;
+constexpr uint32_t kArenaAfter = 60;
 constexpr uint32_t kArenaRing = kArenaBefore + 1;
-constexpr uint32_t kArenaRows = 384;
+constexpr uint32_t kArenaRows = 640;
 constexpr uint32_t kArenaEvents = 32;
 constexpr uint32_t kArenaName = 16;
 enum : uint8_t {
@@ -171,6 +171,7 @@ enum : uint8_t {
     kArenaFlagSwitch = 4,   // W: the arena stream switched (an MTO arena began streaming)
     kArenaFlagViews = 8,    // V: arena views were built this frame
     kArenaFlagStall = 16,   // T: an arena was shown before its stream was done
+    kArenaFlagEvict = 32,   // E: the GPU texture LRU evicted (a thrash shows as a run of E)
 };
 struct ArenaRow {
     uint32_t frame;
@@ -180,6 +181,9 @@ struct ArenaRow {
     uint32_t streamBytes;   // read by the arena stream this frame
     float streamMs, viewsMs;
     uint16_t viewsBuilt, textures, hd, kurtReads, kurtHolds, logLines;
+    uint16_t texEvicted, hdEvicted;
+    float texMs, hdMs;
+    uint32_t linearFreeKB;
     uint8_t flags;
 };
 struct ArenaEvent {
@@ -211,6 +215,14 @@ int32_t g_arenaPrevSwitches = 0, g_arenaPrevStalls = 0, g_arenaPrevTextures = 0;
 int32_t g_arenaPrevHd = 0, g_arenaPrevKurtReads = 0, g_arenaPrevKurtHolds = 0;
 int64_t g_arenaPrevBytes = 0;
 uint32_t g_arenaPrevLog = 0;
+int32_t g_arenaPrevTexEvicted = 0, g_arenaPrevHdEvicted = 0;
+uint64_t g_arenaPrevTexTicks = 0, g_arenaPrevHdTicks = 0;
+// The whole run's first-use cost (the table shows the windows; this is the total).
+uint64_t g_runTexTicks = 0, g_runHdTicks = 0;
+uint32_t g_runTexEvicted = 0, g_runHdEvicted = 0, g_runTextures = 0, g_runHd = 0;
+uint32_t g_runLinearMinKB = 0xFFFFFFFFu;
+float g_runTexWorstMs = 0.0f, g_runHdWorstMs = 0.0f;
+uint32_t g_runTexWorstFrame = 0, g_runHdWorstFrame = 0;
 
 uint32_t clampTicks(uint64_t ticks) {
     return ticks > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)ticks;
@@ -368,6 +380,10 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
         g_arenaPrevKurtReads = s.kurtReads;
         g_arenaPrevKurtHolds = s.kurtHolds;
         g_arenaPrevLog = s.logLines;
+        g_arenaPrevTexEvicted = s.texturesEvicted;
+        g_arenaPrevHdEvicted = s.hdEvicted;
+        g_arenaPrevTexTicks = s.textureMakeTicks;
+        g_arenaPrevHdTicks = s.hdImportTicks;
     }
     ArenaRow row;
     memset(&row, 0, sizeof(row));
@@ -387,6 +403,31 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
     row.kurtReads = clamp16((int64_t)s.kurtReads - g_arenaPrevKurtReads);
     row.kurtHolds = clamp16((int64_t)s.kurtHolds - g_arenaPrevKurtHolds);
     row.logLines = clamp16((int64_t)s.logLines - (int64_t)g_arenaPrevLog);
+    row.texEvicted = clamp16((int64_t)s.texturesEvicted - g_arenaPrevTexEvicted);
+    row.hdEvicted = clamp16((int64_t)s.hdEvicted - g_arenaPrevHdEvicted);
+    {
+        const double msPerTick = 1000.0 / (double)SYSCLOCK_ARM11;
+        const uint64_t texTicks = s.textureMakeTicks - g_arenaPrevTexTicks;
+        const uint64_t hdTicks = s.hdImportTicks - g_arenaPrevHdTicks;
+        row.texMs = (float)((double)texTicks * msPerTick);
+        row.hdMs = (float)((double)hdTicks * msPerTick);
+        g_runTexTicks += texTicks;
+        g_runHdTicks += hdTicks;
+        if (row.texMs > g_runTexWorstMs) {
+            g_runTexWorstMs = row.texMs;
+            g_runTexWorstFrame = frame;
+        }
+        if (row.hdMs > g_runHdWorstMs) {
+            g_runHdWorstMs = row.hdMs;
+            g_runHdWorstFrame = frame;
+        }
+    }
+    row.linearFreeKB = s.linearFreeKB;
+    if (s.linearFreeKB < g_runLinearMinKB) g_runLinearMinKB = s.linearFreeKB;
+    g_runTexEvicted += row.texEvicted;
+    g_runHdEvicted += row.hdEvicted;
+    g_runTextures += row.textures;
+    g_runHd += row.hd;
     const bool arenaChanged = strncmp(g_arenaName, arena, kArenaName - 1) != 0;
     const bool secondChanged = strncmp(g_arenaSecond, second, kArenaName - 1) != 0 ||
                                g_arenaSecondActive != s.secondActive;
@@ -395,6 +436,7 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
     if (s.streamSwitches != g_arenaPrevSwitches) row.flags |= kArenaFlagSwitch;
     if (s.viewsBuilt > 0) row.flags |= kArenaFlagViews;
     if (s.streamStalls != g_arenaPrevStalls) row.flags |= kArenaFlagStall;
+    if (row.texEvicted != 0) row.flags |= kArenaFlagEvict;
     g_arenaPrevSwitches = s.streamSwitches;
     g_arenaPrevStalls = s.streamStalls;
     g_arenaPrevBytes = s.streamBytes;
@@ -403,6 +445,10 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
     g_arenaPrevKurtReads = s.kurtReads;
     g_arenaPrevKurtHolds = s.kurtHolds;
     g_arenaPrevLog = s.logLines;
+    g_arenaPrevTexEvicted = s.texturesEvicted;
+    g_arenaPrevHdEvicted = s.hdEvicted;
+    g_arenaPrevTexTicks = s.textureMakeTicks;
+    g_arenaPrevHdTicks = s.hdImportTicks;
 
     if (row.flags != 0) {
         if (g_arenaEventCount < kArenaEvents) {
@@ -462,13 +508,14 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
 #ifdef MDK_HW_PROFILE
 namespace {
 void flagText(uint8_t flags, char* out) {
-    // Always five characters plus the terminator: "AW-V-" style.
+    // Always six characters plus the terminator: "AW-V--" style.
     out[0] = (flags & kArenaFlagArena) ? 'A' : '-';
     out[1] = (flags & kArenaFlagSecond) ? '2' : '-';
     out[2] = (flags & kArenaFlagSwitch) ? 'W' : '-';
     out[3] = (flags & kArenaFlagViews) ? 'V' : '-';
     out[4] = (flags & kArenaFlagStall) ? 'T' : '-';
-    out[5] = '\0';
+    out[5] = (flags & kArenaFlagEvict) ? 'E' : '-';
+    out[6] = '\0';
 }
 
 // At exit, never inside a measured frame: one line per event, then one per kept
@@ -483,7 +530,7 @@ void arenaReport(uint32_t steadyUs) {
                       (unsigned long)g_arenaRowCount, (unsigned long)g_arenaRowsDropped,
                       (unsigned long)kArenaBefore, (unsigned long)kArenaAfter,
                       (unsigned long)(slowUs / 1000u), (unsigned long)(slowUs % 1000u / 100u));
-    char flags[6];
+    char flags[7];
     for (uint32_t i = 0; i < g_arenaEventCount; i++) {
         const ArenaEvent& e = g_arenaEvents[i];
         flagText(e.flags, flags);
@@ -496,17 +543,18 @@ void arenaReport(uint32_t steadyUs) {
                           e.second[0] ? (e.secondActive ? " (active)" : " (inactive)") : "");
     }
     mdk::log3dsPrintf("profile: arena  frame period    sim(st)  begin   draw    end  "
-                      "strmKB strmMs views viewMs  tex  hd kRd kSI log flags "
-                      "(ms; period = this frame's start to the next's; tex/hd/kRd/kSI/log = "
-                      "textures made, HD imports, Kurt animations read, Kurt held draws, SD "
-                      "log lines, this frame)");
+                      "strmKB strmMs views viewMs  tex  texMs tEv  hd  hdMs hEv linKB kRd kSI "
+                      "log flags (ms; period = this frame's start to the next's; tex/texMs/tEv "
+                      "= textures made, ms making them, textures the LRU evicted; hd/hdMs/hEv "
+                      "= HD imports, ms importing, HD evicted; linKB = linear free; kRd/kSI/log "
+                      "= Kurt animations read, Kurt held draws, SD log lines, this frame)");
     const double msPerTick = 1000.0 / (double)SYSCLOCK_ARM11;
     uint32_t hidden = 0;
     for (uint32_t i = 0; i < g_arenaRowCount; i++) {
         const ArenaRow& r = g_arenaRows[i];
         const bool work = r.streamBytes != 0 || r.viewsBuilt != 0 || r.textures != 0 ||
                           r.hd != 0 || r.kurtReads != 0 || r.kurtHolds != 0 ||
-                          r.logLines != 0;
+                          r.logLines != 0 || r.texEvicted != 0 || r.hdEvicted != 0;
         const bool slow = slowUs == 0u || r.periodUs == 0u || r.periodUs > slowUs;
         if (r.flags == 0 && !work && !slow) {
             hidden++;
@@ -514,19 +562,30 @@ void arenaReport(uint32_t steadyUs) {
         }
         flagText(r.flags, flags);
         mdk::log3dsPrintf("profile: arena %6lu %6lu.%01lu %5.1f(%lu) %6.1f %6.1f %6.1f %7lu "
-                          "%6.1f %5u %6.1f %4u %3u %3u %3u %3u %s",
+                          "%6.1f %5u %6.1f %4u %6.1f %3u %3u %5.1f %3u %5lu %3u %3u %3u %s",
                           (unsigned long)r.frame, (unsigned long)(r.periodUs / 1000u),
                           (unsigned long)(r.periodUs % 1000u / 100u),
                           (double)r.simT * msPerTick, (unsigned long)r.steps,
                           (double)r.beginT * msPerTick, (double)r.drawT * msPerTick,
                           (double)r.endT * msPerTick, (unsigned long)(r.streamBytes / 1024u),
                           (double)r.streamMs, (unsigned)r.viewsBuilt, (double)r.viewsMs,
-                          (unsigned)r.textures, (unsigned)r.hd, (unsigned)r.kurtReads,
+                          (unsigned)r.textures, (double)r.texMs, (unsigned)r.texEvicted,
+                          (unsigned)r.hd, (double)r.hdMs, (unsigned)r.hdEvicted,
+                          (unsigned long)r.linearFreeKB, (unsigned)r.kurtReads,
                           (unsigned)r.kurtHolds, (unsigned)r.logLines, flags);
     }
     mdk::log3dsPrintf("profile: arena table end (%lu kept rows hidden: unflagged, not slow, "
                       "no first-use work)",
                       (unsigned long)hidden);
+    mdk::log3dsPrintf("profile: first-use run totals: %lu textures made in %.1f ms (worst frame "
+                      "%lu: %.1f ms), %lu evicted; %lu HD imports in %.1f ms (worst frame %lu: "
+                      "%.1f ms), %lu HD evicted; linear free min %lu KiB",
+                      (unsigned long)g_runTextures, (double)g_runTexTicks * msPerTick,
+                      (unsigned long)g_runTexWorstFrame, (double)g_runTexWorstMs,
+                      (unsigned long)g_runTexEvicted, (unsigned long)g_runHd,
+                      (double)g_runHdTicks * msPerTick, (unsigned long)g_runHdWorstFrame,
+                      (double)g_runHdWorstMs, (unsigned long)g_runHdEvicted,
+                      (unsigned long)(g_runLinearMinKB == 0xFFFFFFFFu ? 0u : g_runLinearMinKB));
 }
 } // namespace
 #endif

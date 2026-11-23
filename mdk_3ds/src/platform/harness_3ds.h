@@ -89,6 +89,14 @@ struct HarnessArenaFrame {
     int32_t kurtReads = 0;       // KurtSprite::StreamStats::reads (cumulative)
     int32_t kurtHolds = 0;       // KurtSprite::StreamStats holds + holdMisses (cumulative): draws whose wanted frame was still being read
     uint32_t logLines = 0;       // log3dsLinesWritten() (cumulative SD log writes)
+    // WHAT FIRST USE COST (render_c3d_stats.h, cumulative): GPU textures the LRU
+    // evicted, HD copies evicted, and the ticks spent making textures (the
+    // palette expansion and upload) and importing HD copies (tex3ds' LZ and copy).
+    int32_t texturesEvicted = 0;
+    int32_t hdEvicted = 0;
+    uint64_t textureMakeTicks = 0;
+    uint64_t hdImportTicks = 0;
+    uint32_t linearFreeKB = 0;   // linearSpaceFree() at the frame's end, KiB (not cumulative)
 };
 void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& sample);
 
