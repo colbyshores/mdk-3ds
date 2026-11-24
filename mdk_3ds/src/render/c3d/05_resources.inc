@@ -273,9 +273,19 @@ MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t w, int32_t
         return -1;
     }
     std::vector<uint8_t> bytes;
+#ifdef MDK_HW_PROFILE
+    // The read's share of a packed-original make (texmake times only the
+    // import that follows): profile builds only, like texmake.
+    const uint64_t readStart = svcGetSystemTick();
+#endif
     if (!readWholeFile(path, &bytes)) {
         return -1;
     }
+#ifdef MDK_HW_PROFILE
+    mdk::log3dsPrintf("packread %u bytes %.1f ms %s", (unsigned)bytes.size(),
+                      (double)(svcGetSystemTick() - readStart) * 1000.0 / (double)SYSCLOCK_ARM11,
+                      path);
+#endif
     const MdkTextureId id = mdk_render_create_compressed_texture(r, w, h, bytes.data(),
                                                                  (int32_t)bytes.size());
     if (id < 0) {

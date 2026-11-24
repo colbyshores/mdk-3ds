@@ -1,0 +1,47 @@
+Orig pack: uncompressed .t3x containers (2026-11-24)
+=====================================================
+
+Question. A packed-original make (romfs:/orig, SurfaceCache::surfaceId ->
+mdk_render_create_compressed_file) is synchronous on the main thread, and a
+room's first frames made several at once (the 300-400 ms mid-tunnel frames).
+Which part is the cost: the RomFS read, or the import?
+
+Instrument (PROFILE only): `packread <bytes> <ms> <path>` around readWholeFile;
+the existing `texmake ... pack <ms>` times the import (Tex3DS_TextureImport).
+A first cut also logged a `packimport` line INSIDE the timed import; one SD log
+write costs ~10 ms on the Old 3DS, so run A's import times carry ~10 ms each
+of logging (calibrated by the Kurt frames: an 8 KB decode read 10.3 ms with the
+line, ~0.1 ms without). That line was removed before run B.
+
+Hardware: old3ds-lan167, Old 3DS model 0, 268 MHz, L2 off, stereo on.
+Route: LEVEL=7 FIXED=1 UNLOCK=650,750,790,830,870
+       WALK='forward+turbo@60-800;forward+turbo@800-1120', AUTOQUIT=90, PROFILE=1.
+Both FRESH via mdk_3ds/tools/hw_cycle.sh --profile.
+
+A  tex3ds default container compression (862 LZ11, 70 Huffman, 29 LZ10,
+   44 RLE, 22 none; 21 MiB)                       log /tmp/kilo/mdk-packA.log
+B  the same converter with `-z none` (37.2 MiB)   log /tmp/kilo/mdk-packB.log
+   Same ETC data: the decoded payload and header of 335 LZ11 files compared
+   byte-identical to B's (0 differ), so the picture cannot change.
+
+                         A (LZ)        B (none)
+39 packed makes, read    543 ms        592 ms     (11-27 ms each; ~11 ms floor)
+39 packed makes, import  690 ms*        37 ms     (B: 0.1-4.2 ms each)
+all texture makes        1588.8 ms     904.9 ms
+steady mean              18.84 ms      18.52 ms
+p99                      61.9 ms       55.5 ms
+frames > 33.3 ms         157           133
+frame 549 (4 packs)      229.0 ms      148.0 ms
+  * includes ~10 ms/make of the in-timer log line (see above)
+
+Verdict. The import was the LZ/Huffman decode on the ARM11; without container
+compression it is a copy, ~20x cheaper even after the log correction. Adopted:
+arena_etc1_convert.py encodes with `-z none` (SETTINGS gains `z=none`, so an
+old LZ pack is re-encoded, not kept). RomFS grows 16 MiB (.3dsx 144.7 ->
+161.7 MB).
+
+What remains is the READ: ~11-27 ms per make, still synchronous on the main
+thread when the pump or a draw first asks. That is the next increment (the
+async request-then-publish path on the existing AsyncFileReader). The profile
+rows above also carry the instrumentation's own SD writes (frame 549 wrote 8
+log lines in B), so the release-build frames are lower than these.

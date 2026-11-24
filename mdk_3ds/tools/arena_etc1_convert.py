@@ -55,6 +55,12 @@
 #      host). NO Y-FLIP: the image is fed top row first, exactly as
 #      hd_pack_convert.py and kurt_etc1_convert.py feed theirs, and the backend
 #      draws all three through the same tex3ds orientation (06_draw.inc).
+#      `-z none`: NO CONTAINER COMPRESSION. tex3ds' default (auto, mostly LZ11)
+#      halves the pack on disk, but the 3DS then decompresses every texture on
+#      the main thread at first use -- measured on the Old 3DS 2026-11-24
+#      (docs/evidence/2026-11-24-orig-pack-uncompressed.txt): 39 arena makes
+#      imported in 690 ms with LZ against 37 ms without, the same ETC blocks
+#      byte for byte. The pack grows from 21 to 37 MiB of RomFS.
 #
 # THE LOOK. ETC1's colour is one base pair and a modifier table per 4x4 block,
 # so a sharp colour edge inside a block softens (the "4x4 block look"); the
@@ -86,7 +92,7 @@ TEX3DS = os.environ.get("TEX3DS", "/opt/devkitpro/tools/bin/tex3ds")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 EXPORTER_DIR = os.path.join(ROOT, "mdk_3ds", "tools", "arena_etc1")
 CAP = 1024  # the PICA's largest texture, per axis (the HD pack budgets 512; arenas go to 1024)
-SETTINGS = "orig;etc1+etc1a4;q=high;m=gaussian;bleed=flood;pad=pot;rgb565;v1"
+SETTINGS = "orig;etc1+etc1a4;q=high;m=gaussian;bleed=flood;pad=pot;rgb565;z=none;v1"
 
 
 def parse_levels(spec):
@@ -162,7 +168,8 @@ def convert(job):
         staged = os.path.join(tmp, "in.png")
         img.save(staged)
         out = dst + ".tmp"
-        r = subprocess.run([TEX3DS, "-f", fmt, "-q", "high", "-m", "gaussian", staged, "-o", out],
+        r = subprocess.run([TEX3DS, "-f", fmt, "-q", "high", "-m", "gaussian", "-z", "none",
+                            staged, "-o", out],
                            capture_output=True, text=True)
         if r.returncode != 0 or not os.path.exists(out):
             return (src, None, "tex3ds failed: " + (r.stderr or r.stdout).strip()[:200])

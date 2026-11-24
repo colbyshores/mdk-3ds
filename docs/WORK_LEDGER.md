@@ -885,3 +885,26 @@ built and staged in the worktree; the console is with the forsaken agent by
 owner instruction 2026-11-22. When it frees: `hw_cycle.sh --profile` and
 confirm no `STALL` at frames 223/1137 and the change-frame draw is tens of ms.
 The HD-off comparison run is still owed too.
+
+### ORIG PACK UNCOMPRESSED (2026-11-24): the packed-original import was the LZ decode
+
+**What.** `arena_etc1_convert.py` encodes the orig pack with `tex3ds -z none`
+(SETTINGS gains `z=none`, so an existing LZ pack is re-encoded, not kept).
+PROFILE builds time each packed-original read (`packread`) beside the existing
+`texmake` import time.
+
+**Why.** The mid-tunnel 300-400 ms frames were several packed originals made
+synchronously on one frame. Measured A/B on the Old 3DS (same route, same ETC
+blocks byte for byte): import 690 ms (LZ) vs 37 ms (none) for 39 makes; p99
+61.9 -> 55.5 ms; frames > 33.3 ms 157 -> 133. RomFS +16 MiB (.3dsx 161.7 MB).
+Evidence: `docs/evidence/2026-11-24-orig-pack-uncompressed.txt`.
+
+**Still open.** The RomFS read (11-27 ms a make) is still on the main thread:
+the next increment moves it to the AsyncFileReader (request at door intent,
+publish at the frame boundary under a budget, completion after the frustum
+cull only as a last resort).
+
+**Known pre-existing defect.** `make -C tests/scripts test` fails on the
+committed HEAD `f1083ef3` as well: `c3d_frame` adjudicates only 148 of 157
+mutation arms (nine index-expansion / 16-bit-store arms whose mutations no
+longer apply or are no longer caught). Not caused by this batch; not yet fixed.

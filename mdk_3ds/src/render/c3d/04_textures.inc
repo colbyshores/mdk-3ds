@@ -333,10 +333,24 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture) {
         return false;
     }
     Tex3DS_Texture t3x = nullptr;
+#ifdef MDK_HW_PROFILE
+    // How many evictions the import took to fit (profile builds only; logged
+    // only when it took more than one try, so the timed make stays clean of
+    // an SD write -- one costs ~10 ms on the Old 3DS).
+    int32_t importTries = 0;
+#endif
     for (;;) {
+#ifdef MDK_HW_PROFILE
+        importTries++;
+#endif
         t3x = Tex3DS_TextureImport(texture.source.data(), texture.source.size(), &texture.tex,
                                    nullptr, false);
         if (t3x) {
+#ifdef MDK_HW_PROFILE
+            if (importTries > 1) {
+                mdk::log3dsPrintf("packimport needed %d tries (evictions)", (int)importTries);
+            }
+#endif
             break;
         }
         if (evictHd(renderer, renderer->frameStartUse, true) ||
