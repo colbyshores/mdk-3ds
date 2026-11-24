@@ -1163,10 +1163,12 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         }
         renderer->hdReads++;
         renderer->hdReadBytes += (int64_t)size;
-        // The file is the chain plus a small header, so its size is the budget's
-        // measure before the import; the exact bytes are booked after it.
+        // Reserve the decoded upper bound, not the file's compressed size:
+        // Tex3DS allocates the expanded ETC chain inside the import, so
+        // admitting against `size` can overshoot the budget before the exact
+        // total is booked below. Dispatch already plans around this bound.
         bool room = true;
-        while (renderer->hdResidentBytes + size > kHdBudgetBytes) {
+        while (renderer->hdResidentBytes + kHdLargestBytes > kHdBudgetBytes) {
             if (!evictHd(renderer, protectFrom, false)) {
                 room = false;
                 break;

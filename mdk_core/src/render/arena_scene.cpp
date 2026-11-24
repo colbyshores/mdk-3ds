@@ -20,12 +20,6 @@ const float kPlaneSteps = 64.0f;
 const float kMinOverlap = 1.0e-3f;
 const int32_t kTriangleCorners = 3;
 
-struct PlaneEntry {
-    int32_t triangle = 0;
-    float area = 0.0f;
-    formats::Vec3f normal = {0.0f, 0.0f, 0.0f};
-};
-
 formats::Vec3f subtract(const formats::Vec3f& a, const formats::Vec3f& b) {
     return formats::Vec3f{a.x - b.x, a.y - b.y, a.z - b.z};
 }

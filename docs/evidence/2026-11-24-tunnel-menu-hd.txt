@@ -1,0 +1,47 @@
+MID-TUNNEL, MENU AND HD ADMISSION FOLLOW-UP -- 2026-11-24
+
+Hardware: old3ds-lan167 (original 3DS, 268 MHz, stereo on), PROFILE builds.
+
+Mid-tunnel (LEVEL=7 DANT_1 -> CDANT_1 -> toward DANT_2)
+-------------------------------------------------------
+The door itself remains clean: viewMs = 0.0 at frames 769-771 and the
+activation frame is 83.9 ms. New source columns separate the rest:
+
+- Frame 549: 115.6 ms, draw 94.5, first=4, pack=4 -- a small cluster of
+  packed-original surface imports inside gameplay, not a view build.
+- Frame 803: 407.0 ms, viewsMs 288.4, end 79.0, first=7, pack=7. This is
+  after entering CDANT_1, when DANT_2's surfaces are being prepared. The
+  synchronous packed-original imports remain a mid-corridor hazard; the
+  door bubble covers doorway views, not every mid-tunnel texture cluster.
+- Frames 783/813: 115.7/100.8 ms with every new source column at zero and
+  most of the time in `end`; there is no texture, HD, music, view, or MTO
+  signature in the current attribution. These should not be labelled GPU
+  time from this evidence alone.
+
+Initial menu / Kurt logo
+------------------------
+A no-LEVEL PROFILE run enters screen 1 (main menu; INTRO1A first),
+plays 5186 frames, and reports frames=0: the front-screens loop does not
+feed harnessProfileFrame. Guest evidence is therefore limited to its own
+logs. It shows the 600x360 menu/video texture made at frames 0-60 and
+again at frame 607, with one 18.6 ms streamed-texture make at frame 1;
+steady GPU processing is about 6.1-6.9 ms per 300-frame window, with the
+600-900 window at 8.69 ms. There is no support in this run for a large
+MDK12.FLC decode stall. The owner's exact hitch still needs front-screen
+frame periods, which are an instrumentation gap rather than a proven
+decode problem.
+
+HD admission
+------------
+The reader dispatch already reserves `kHdLargestBytes` per in-flight read
+(hdMayDispatch). The remaining overshoot was at import: admission used
+the compressed file size while Tex3DS allocated the decoded ETC chain.
+The import check now reserves the same decoded upper bound before
+importing; the exact total is still booked after import. This can evict
+more conservatively, but it cannot import into an accounting state the
+budget did not plan for.
+
+Follow-ups, deliberately not folded in here: instrument front-screen
+frame periods, then sample the menu hitch; sample a mid-corridor route
+long enough for the frame-800 surface cluster to say whether packed
+originals, their expansion fallbacks, or the end span owns it.
