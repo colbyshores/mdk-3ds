@@ -1,0 +1,29 @@
+VELOCITY-SCALED BUBBLE RADIUS — 2026-11-23
+Owner playtest of the bubble build (6f25a4a1): transitions definitely
+smoother; sprinting at a door still hitches (fixed 120-unit radius =
+~180 frames at walk, ~60 at sprint closing speed).
+
+CHANGE: radius = 120 + smoothedEyeSpeed(units/sec) * 2.5 s, cap 420,
+hysteresis +40. Speed is time-normalised (|dEye|/dt, EMA 0.15) so a
+single long frame cannot inflate it (validator F1: per-frame delta had
+a slow-frame -> more-work feedback loop). Named constants
+kBubbleBaseRadius/kBubbleLeadSeconds/kBubbleMaxRadius/kBubbleHysteresis.
+
+TRIED AND REVERTED in the same batch: bubbling through the SECOND
+arena's doorways (the tunnel's far door during room->corridor). It made
+the door cluster worse (frames 771-773 = 131.6/88.1/99.5 ms vs 82/36/33
+without): the next room's build starts exactly at activation instead of
+during the corridor walk, where the current arena's own bubble covers
+it anyway. The named-arena query overload came out with it.
+
+HARDWARE (old3ds-lan167, LEVEL=7 DANT_1->CDANT_1, forward+turbo route,
+frame PERIOD in ms, lower is better, one run each build):
+  no bubble (sliced)   : 771 = 110.5, 772 = 107.1
+  fixed 120 bubble     : 771 = 80.3,  772 = 37.5
+  scaled (this)        : 771 = 82.2,  772 = 36.3, band (33) by 773
+  run mean 18.86 vs 18.61 campaign control; viewMs 0.0 at 771;
+  guarantee fired once, at level start; DANT_2 (the tunnel's next
+  room) built ahead from CDANT_1's doors during the walk.
+Frame 791 (the crossing itself) remains ~60-123 ms across builds: the
+new arena's scripts starting (sim), two arenas on the GPU (draw), and
+the NEXT room's build beginning -- not loading of the room entered.

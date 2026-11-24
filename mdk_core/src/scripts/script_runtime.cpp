@@ -554,7 +554,8 @@ bool crossesDoorway(const formats::Dti::Record& record, const Vec3& from, const 
 
 void ScriptRuntime::doorBubbleArenas(const Vec3& position, float radius,
                                      std::vector<std::string>* out) const {
-    if (!out || radius <= 0.0f || currentArena_.empty()) {
+    const std::string& arena = currentArena_;
+    if (!out || radius <= 0.0f || arena.empty()) {
         return;
     }
     // arenaRecords is non-const (it builds the arena's record list on
@@ -562,7 +563,7 @@ void ScriptRuntime::doorBubbleArenas(const Vec3& position, float radius,
     // itself runs for the current arena -- the query changes no script
     // state beyond that lazy build.
     const std::vector<formats::Dti::Record>* records =
-        const_cast<ScriptRuntime*>(this)->arenaRecords(currentArena_);
+        const_cast<ScriptRuntime*>(this)->arenaRecords(arena);
     if (records == nullptr) {
         return;
     }
@@ -574,9 +575,9 @@ void ScriptRuntime::doorBubbleArenas(const Vec3& position, float radius,
             continue;
         }
         std::map<std::pair<std::string, int32_t>, std::string>::const_iterator other =
-            connections_.find(std::make_pair(currentArena_, record.id));
+            connections_.find(std::make_pair(arena, record.id));
         if (other == connections_.end() || other->second.empty() ||
-            other->second == currentArena_) {
+            other->second == arena) {
             continue;
         }
         // Distance from the position to the doorway box (clamped per

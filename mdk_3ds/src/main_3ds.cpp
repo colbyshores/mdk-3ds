@@ -1784,6 +1784,11 @@ int main(int argc, char** argv) {
     std::vector<std::string> warmDeferred;
     // The door bubble's hints for this frame (rebuilt every frame).
     std::vector<std::string> bubbleHints;
+    // Last frame's camera position, for the bubble's speed scaling.
+    mdk::Vec3 bubblePrevEye;
+    bool bubbleHavePrevEye = false;
+    double bubblePrevTime = 0.0;
+    float bubbleSpeed = 0.0f;
     // Hinted arenas still inside the wider hysteresis radius.
     std::vector<std::string> bubbleSticky;
     // THE BANK'S BLOCKING READS, ALL OF THEM SAID (spec Phase 3: "log every
@@ -3006,7 +3011,41 @@ int main(int argc, char** argv) {
             // names kept, the nearest built ahead first (up to the
             // three kept can build over time as the nearest changes) --
             // never the level.
-            const float kDoorBubbleRadius = 120.0f;
+            // The radius scales with the camera's speed IN UNITS PER
+            // SECOND (time-normalised and smoothed, so a single long
+            // frame cannot inflate it -- the feedback the alternative
+            // invites), keeping the LEAD TIME constant at ~2.5 s of
+            // travel: sprinting closes the base radius in a third of
+            // the time walking does, and the fixed radius ran out. The
+            // clamp is a plain scalar bound, not a simulation branch.
+            const float kBubbleBaseRadius = 120.0f;
+            const float kBubbleLeadSeconds = 2.5f;
+            const float kBubbleMaxRadius = 420.0f;
+            const float kBubbleHysteresis = 40.0f;
+            float bubbleRadius = kBubbleBaseRadius;
+            if (runtime && bubbleHavePrevEye) {
+                const double now = nowSeconds();
+                const float dt = (float)(now - bubblePrevTime);
+                if (dt > 0.001f) {
+                    const float dx = runtime->eye.x - bubblePrevEye.x;
+                    const float dy = runtime->eye.y - bubblePrevEye.y;
+                    const float dz = runtime->eye.z - bubblePrevEye.z;
+                    const float perSecond = sqrtf(dx * dx + dy * dy + dz * dz) / dt;
+                    bubbleSpeed += (perSecond - bubbleSpeed) * 0.15f;
+                    bubblePrevTime = now;
+                }
+                bubbleRadius = kBubbleBaseRadius + bubbleSpeed * kBubbleLeadSeconds;
+                if (bubbleRadius > kBubbleMaxRadius) {
+                    bubbleRadius = kBubbleMaxRadius;
+                }
+            }
+            if (runtime) {
+                if (!bubbleHavePrevEye) {
+                    bubblePrevTime = nowSeconds();
+                }
+                bubblePrevEye = runtime->eye;
+                bubbleHavePrevEye = true;
+            }
             // Hysteresis: a hinted arena stays hinted until it is 40
             // units past the radius, so idling at the bubble's edge does
             // not release and rebuild its view repeatedly. At most two
@@ -3016,9 +3055,9 @@ int main(int argc, char** argv) {
             bubbleHints.clear();
             if (runtime) {
                 std::vector<std::string> fresh;
-                runtime->doorBubbleArenas(runtime->eye, kDoorBubbleRadius, &fresh);
+                runtime->doorBubbleArenas(runtime->eye, bubbleRadius, &fresh);
                 std::vector<std::string> wide;
-                runtime->doorBubbleArenas(runtime->eye, kDoorBubbleRadius + 40.0f, &wide);
+                runtime->doorBubbleArenas(runtime->eye, bubbleRadius + kBubbleHysteresis, &wide);
                 // Fresh names first, nearest first (the query's order):
                 // sync builds only the first hinted name ahead, so that
                 // is the build priority. Sticky names follow for KEEP
