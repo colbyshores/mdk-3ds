@@ -255,3 +255,50 @@ MDK_TEST(ArenaViewsRetriesFailedRefreshAtSync) {
     MDK_CHECK(mdk_test_meshes > createsAfterFailure);
     views.clear();
 }
+
+MDK_TEST(ArenaViewsReadyRefreshBacksOffAcrossSyncs) {
+    mdk::LevelData level;
+    MDK_CHECK(loadLevel3(&level));
+    if (level.arenas().empty()) {
+        return;
+    }
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    const mdk::formats::Arena* arena = firstDrawableArena(&level, &surfaces, renderer);
+    MDK_CHECK(arena != nullptr);
+    if (arena == nullptr) {
+        return;
+    }
+
+    mdk::ArenaViews views;
+    views.start(renderer, &level, &surfaces, mdk::Shading::Original);
+    const std::vector<std::string> drawn(1, arena->name());
+    views.sync(arena->name(), std::string(), drawn);
+    MDK_CHECK(views.find(arena->name()) != nullptr && views.find(arena->name())->ready());
+
+    // A refused refresh on a READY view must ladder like a failed build:
+    // three quick retries (one per sync), then kRetrySyncs of silence. The
+    // publication loop used to erase the record the retry loop had just
+    // written, so attempts never left 1 and the full scene rebuild ran on
+    // EVERY sync forever. Failed attempts are counted by the seam's
+    // failMeshCreates counter, which only decrements on a refusal.
+    mdk_test_failMeshCreates = 100;
+    MDK_CHECK(!views.refresh(arena->name()));
+    MDK_CHECK_EQ(mdk_test_failMeshCreates, 99);
+    for (int i = 0; i < 3; i++) {
+        views.sync(arena->name(), std::string(), drawn);
+    }
+    MDK_CHECK_EQ(mdk_test_failMeshCreates, 96);   // the three quick retries
+    for (int i = 0; i < 30; i++) {
+        views.sync(arena->name(), std::string(), drawn);
+    }
+    MDK_CHECK_EQ(mdk_test_failMeshCreates, 96);   // inside the long backoff
+    mdk_test_failMeshCreates = 0;
+    const int createsBefore = mdk_test_meshes;
+    for (int i = 0; i < 120; i++) {
+        views.sync(arena->name(), std::string(), drawn);
+    }
+    MDK_CHECK_EQ(mdk_test_meshes, createsBefore + 1);   // the backoff expired
+    MDK_CHECK(!views.find(arena->name())->pendingRefresh());
+    views.clear();
+}

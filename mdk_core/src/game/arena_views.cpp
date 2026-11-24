@@ -411,9 +411,15 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
         }
     }
     // Publication is the only success that clears failure history: a start
-    // that later failed at the mesh must not reset its backoff.
+    // that later failed at the mesh must not reset its backoff. A Ready view
+    // with a refresh still pending is NOT a success -- the retry loop above
+    // has just recorded its failure for this sync, and erasing it here would
+    // restart the ladder at attempt 1, retrying a full scene rebuild every
+    // sync forever (measured on the ladder's shape 2026-11-24: attempts never
+    // reached kQuickRetries, so kRetrySyncs was unreachable). The retry
+    // loop's own forgetFailed on success is what clears the history.
     for (size_t i = 0; i < views_.size(); i++) {
-        if (views_[i].view->ready()) {
+        if (views_[i].view->ready() && !views_[i].view->pendingRefresh()) {
             forgetFailed(views_[i].name);
         }
     }
