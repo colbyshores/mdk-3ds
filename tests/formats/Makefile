@@ -23,6 +23,7 @@ LDFLAGS :=
 SOURCES := \
 	main.cpp \
 	render_seam_stubs.cpp \
+	arena_view_tests.cpp \
 	path_tests.cpp \
 	format_tests.cpp \
 	colour_tests.cpp \

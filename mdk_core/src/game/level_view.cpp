@@ -369,7 +369,22 @@ bool LevelView::refresh() {
     MaterialResolver resolver(&level_->dti(), shading_);
     const std::vector<const formats::TextureArchive*> archives = level_->archivesOf(arena_);
     ArenaScene rebuilt;
-    buildArenaScene(arena_, resolver, *palette_, archives, &rebuilt);
+    if (!buildArenaScene(arena_, resolver, *palette_, archives, &rebuilt)) {
+        return false;
+    }
+
+    // Publish only after the replacement mesh exists. A mesh refusal is
+    // common enough under linear-heap pressure that turning a live room
+    // into an empty one would be a visible regression: the caller still
+    // has the last drawable scene, its mesh, and its torn state.
+    MdkMeshId candidate = -1;
+    if (!rebuilt.vertices.empty()) {
+        candidate = mdk_render_create_mesh(renderer_, rebuilt.vertices.data(),
+                                           (int32_t)rebuilt.vertices.size());
+        if (candidate < 0) {
+            return false;
+        }
+    }
 
     scene_.vertices.swap(rebuilt.vertices);
     scene_.batches.swap(rebuilt.batches);
@@ -381,17 +396,11 @@ bool LevelView::refresh() {
     dynamic_ = false;
     triangleFirsts_.clear();
 
-    // The mesh is rebuilt. The C# creates a new mesh on Rebuild and lets the old
-    // one live until the level ends; here the old GPU buffer is released first.
     if (mesh_ >= 0) {
         mdk_render_release_mesh(renderer_, mesh_);
-        mesh_ = -1;
     }
-    if (!scene_.vertices.empty()) {
-        mesh_ = mdk_render_create_mesh(renderer_, scene_.vertices.data(),
-                                       (int32_t)scene_.vertices.size());
-    }
-    return mesh_ >= 0 || scene_.vertices.empty();
+    mesh_ = candidate;
+    return true;
 }
 
 } // namespace mdk
