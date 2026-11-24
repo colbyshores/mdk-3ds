@@ -118,38 +118,63 @@ void effectsGlowOf(const uint8_t* indices, int32_t texelCount, const uint8_t* pa
     if (!indices || !paletteRgba || texelCount <= 0) {
         return;
     }
-    // Which palette entries pass, decided once per entry (256 powf), then a
-    // count over the texels: integer work per texel.
+    // Which palette entries pass and what each adds, decided once per entry,
+    // then a HISTOGRAM of the texels -- one integer increment per texel --
+    // summed per entry. The per-texel float sums it replaces were most of a
+    // large sprite's effects-warm step on the Old 3DS (L7 walk, the corridor
+    // crossing: SL_BIG's 64x1920 strip, 11.3 ms); the means differ from them by
+    // rounding only (a count times an excess against that many additions).
+    //
+    // A channel byte's linear value is one of 256, so the powf is taken once
+    // per byte value for the run (the same powf of the same input: the same
+    // floats), not 768 times per sprite.
+    static float linearOf[256];
+    static bool linearReady = false;
+    if (!linearReady) {
+        for (int32_t v = 0; v < 256; v++) {
+            linearOf[v] = powf((float)v / 255.0f, 2.2f);
+        }
+        linearReady = true;
+    }
     bool bright[256];
+    float excess[256][3];
     for (int32_t i = 0; i < 256; i++) {
         bright[i] = false;
         for (int32_t c = 0; c < 3; c++) {
-            const float srgb = (float)paletteRgba[i * 4 + c] / 255.0f;
-            if (powf(srgb, 2.2f) > kGlowThreshold) {
+            const float linear = linearOf[paletteRgba[i * 4 + c]];
+            if (linear > kGlowThreshold) {
                 bright[i] = true;
             }
-        }
-    }
-    float excess[256][3];
-    for (int32_t i = 0; i < 256; i++) {
-        for (int32_t c = 0; c < 3; c++) {
-            const float linear = powf((float)paletteRgba[i * 4 + c] / 255.0f, 2.2f);
             excess[i][c] = linear > kGlowThreshold ? linear - kGlowThreshold : 0.0f;
         }
+    }
+    // Four histograms, one per texel of each group of four, added after: a
+    // run of one index (a sprite's flat areas) would otherwise make every
+    // increment wait on the previous one's store to the same counter.
+    uint32_t counts[4][256];
+    memset(counts, 0, sizeof(counts));
+    int32_t t = 0;
+    for (; t + 4 <= texelCount; t += 4) {
+        counts[0][indices[t]]++;
+        counts[1][indices[t + 1]]++;
+        counts[2][indices[t + 2]]++;
+        counts[3][indices[t + 3]]++;
+    }
+    for (; t < texelCount; t++) {
+        counts[0][indices[t]]++;
+    }
+    for (int32_t i = 0; i < 256; i++) {
+        counts[0][i] += counts[1][i] + counts[2][i] + counts[3][i];
     }
     int32_t opaque = 0;
     int32_t passing = 0;
     float sum[3] = {0.0f, 0.0f, 0.0f};
-    for (int32_t t = 0; t < texelCount; t++) {
-        const uint8_t index = indices[t];
-        if (index == 0) {
-            continue;   // transparent
-        }
-        opaque++;
-        if (bright[index]) {
-            passing++;
+    for (int32_t i = 1; i < 256; i++) {   // index 0 is transparent
+        opaque += (int32_t)counts[0][i];
+        if (bright[i] && counts[0][i] > 0) {
+            passing += (int32_t)counts[0][i];
             for (int32_t c = 0; c < 3; c++) {
-                sum[c] += excess[index][c];
+                sum[c] += (float)counts[0][i] * excess[i][c];
             }
         }
     }

@@ -97,10 +97,11 @@ bool LevelView::loadBegin(MdkRenderer renderer, LevelData* level, const formats:
 }
 
 bool LevelView::buildStep() {
-    // Triangles a step: at the measured cost of the corridor arenas this
-    // keeps a step near a millisecond, and a view is ready a few frames
-    // after it starts -- inside the pair window the door gives it.
-    const int32_t kBuildTrianglesPerStep = 1200;
+    // Triangles a step: a view is ready a few frames after it starts --
+    // inside the pair window the door gives it. Measured on the Old 3DS (L7
+    // walk, DANT_2's build at the corridor crossing): 1200 were ~7 ms a
+    // step; 600 keep a step near the depth steps' few milliseconds.
+    const int32_t kBuildTrianglesPerStep = 600;
     switch (buildState_) {
         case BuildState::Scene:
             if (builder_.step(kBuildTrianglesPerStep)) {

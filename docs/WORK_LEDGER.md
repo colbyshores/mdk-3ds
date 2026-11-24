@@ -1020,3 +1020,54 @@ sprite2.log): frame 650 129.3 ms -> no longer a spike; p99 49.9 -> 46.6 ms;
 >33.3 ms 161 -> 136; steady 18.43 -> 18.33 ms; texture-make total 990 ->
 814 ms. Host: two surface-cache tests and EffectsWarmAsksEverySprite (five
 mutations each turned a test red). Gates green; pinned frames unchanged.
+
+### CORRIDOR CROSSING (2026-11-24): the door build's depth step and the effects warm's glow
+
+**Attributed first.** The crossing's 50-68 ms frames (793-799 of the L7 walk)
+were the sliced build of the bubble's DANT_2 view (`viewMs` 18-22 ms every
+frame) plus the effects warm. A host probe of ArenaSceneBuilder's steps (every
+step type ~0.15 ms on x86, 91% of DANT_2's build in DepthLayersBuilder) and
+callgrind (a third of it in malloc/free) named the depth layers' overlap test:
+four std::vector allocations and a software-divide `%` per corner, per pair of
+triangles. A new PROFILE-only `flowrow:` table (rows kept in memory, said at
+exit: no SD line on the frames being measured) splits the warm by role and
+showed the effects warm's cost was the sprite's glow measurement (ask and start
+both ~0 ms): SL_BIG 64x1920 11.3 ms, TRAIL 4.9 ms.
+
+**Kept (measured on the Old 3DS, model 0, 268 MHz, L2 off, stereo; logs in
+.git/hw-logs/2026-11-24-cross{A,B,D}.log; baseline sprite2):**
+
+- A. overlap()/clipBy() in fixed storage (two 24-corner buffers, ping-pong; the
+  bound is the loop's: a clip at most doubles, three clips) and the wrap as a
+  compare, not `%`. Bit-identical: depth layers and full scenes of every arena
+  of levels 3-8 hash-equal before/after (host). Sync per step 18-22 -> 3.9-6.8 ms;
+  frames 793-798 sum 414 -> 282 ms; p99 46.6 -> 44.3.
+- B. Step budgets: 1200 -> 600 triangles a loop step; a collected depth triangle
+  counts two units of the 600 (measured ~twice an overlap test). Every sync step
+  now 3.3-5.9 ms (the mesh step 8.4); DANT_2 14 steps (was 11), DANT_5 41 (was
+  37); the sync guarantee still fired once (level start, as before). p99 42.7;
+  steady 18.25; 3+-vblank frames 54 -> 49.
+- C+D. effectsGlowOf: a 256-entry linear table (the same powf of the same input,
+  once per run, not 768 per sprite) and a texel histogram (four interleaved, so
+  a run of one index does not serialise on one counter) instead of per-texel
+  float sums. Glow share identical and colour within 7.9e-5 of the old sums over
+  all 7692 (level texture, arena palette) pairs of levels 3-8. SL_BIG's warm step
+  11.3 -> 8.2 (C) -> 4.1 ms (D); frame 1's effects warm 11.3 -> under the 8 ms row
+  threshold.
+
+**Result (crossD vs sprite2):** crossing frames 793-806 without an SD log line
+now 30-34 ms (were 50-68); 792 65.4 -> 47.3 (a PROFILE `texmake` line in it);
+the 796/797 50-66 ms frames carry the existing PROFILE `objwarm` line (the
+X_STRIKB parse itself is 5-6 ms). p99 46.6 -> 43.0; steady 18.33 -> 18.23;
+3+-vblank frames 55 -> 47; frame 1 263.4 -> 244.7; door activation 771 52.8 ->
+43.6; texture-make total 814 -> 822 ms (unchanged work). The >33.3 count
+(136 -> 139) is dominated by frames at 33.3-33.9 ms (two vblanks plus jitter;
+sprite1/sprite2 on identical code read 154/136), so it is not the comparison.
+
+**Measured, not needed:** the warm's makes (`start`, startExpansion's
+malloc+zero-fill) and its pack asks were ~0 ms in every row, so neither the
+zero-fill nor a per-frame warm cap was changed.
+
+**Still open:** the activation frame 791 (draw 44 ms, the second arena's first
+draw); the mesh step (8.4 ms at frame 801); the object warm's per-model parse
+of a CMI model (X_STRIKB 5-6 ms).

@@ -121,26 +121,42 @@ float sign(float value) {
     return 0.0f;
 }
 
+// A clipped polygon in fixed storage. overlap() runs once per pair of
+// triangles in a plane, quadratic in the plane's size, and the depth build is
+// sliced across play frames (ArenaSceneBuilder::step): with a std::vector per
+// clip it was four heap allocations and frees a pair, plus a runtime `%` (a
+// software divide on the ARM11, AGENTS.md R11) per corner -- measured on the
+// Old 3DS, a 600-pair depth step was ~20 ms of a corridor-crossing frame.
+// The bound: a clip keeps each corner at most once and adds at most one
+// crossing per edge of the polygon, so it at most doubles the count, and a
+// triangle is clipped three times: 3 -> 6 -> 12 -> 24. (A convex clip of a
+// triangle never passes 6; the capacity is the loop's bound, so no input --
+// a NaN corner included -- can overrun it.)
+const size_t kClipMaxCorners = 24;
+
+struct ClipPolygon {
+    Vec2f corners[kClipMaxCorners];
+    size_t count = 0;
+};
+
 // The part of a polygon on the inner side of the edge from a to b (the C#
-// ClipBy).
-std::vector<Vec2f> clipBy(const std::vector<Vec2f>& polygon, const Vec2f& a, const Vec2f& b,
-                          float winding) {
-    std::vector<Vec2f> kept;
-    kept.reserve(polygon.size() + 1);
-    for (size_t k = 0; k < polygon.size(); k++) {
-        const Vec2f& p = polygon[k];
-        const Vec2f& q = polygon[(k + 1) % polygon.size()];
+// ClipBy), into `kept`. The same arithmetic, in the same order, as the C#.
+void clipBy(const ClipPolygon& polygon, const Vec2f& a, const Vec2f& b, float winding,
+            ClipPolygon* kept) {
+    kept->count = 0;
+    for (size_t k = 0; k < polygon.count; k++) {
+        const Vec2f& p = polygon.corners[k];
+        const Vec2f& q = polygon.corners[k + 1 < polygon.count ? k + 1 : 0];
         const float sideP = winding * cross(subtract(b, a), subtract(p, a));
         const float sideQ = winding * cross(subtract(b, a), subtract(q, a));
         if (sideP >= 0.0f) {
-            kept.push_back(p);
+            kept->corners[kept->count++] = p;
         }
         if ((sideP >= 0.0f) != (sideQ >= 0.0f)) {
             const float at = sideP / (sideP - sideQ);
-            kept.push_back(Vec2f{p.x + (q.x - p.x) * at, p.y + (q.y - p.y) * at});
+            kept->corners[kept->count++] = Vec2f{p.x + (q.x - p.x) * at, p.y + (q.y - p.y) * at};
         }
     }
-    return kept;
 }
 
 // The area two triangles in one plane share. One is clipped by the other's
@@ -160,25 +176,30 @@ float overlap(const std::vector<formats::Vec3f>& vertices,
         return Vec2f{dot(relative, u), dot(relative, v)};
     };
 
-    std::vector<Vec2f> polygon;
-    polygon.push_back(flat(origin));
-    polygon.push_back(flat(corner(vertices, triangleIndices, triangle, 1)));
-    polygon.push_back(flat(corner(vertices, triangleIndices, triangle, 2)));
+    // Two buffers, clipped back and forth.
+    ClipPolygon buffers[2];
+    buffers[0].corners[0] = flat(origin);
+    buffers[0].corners[1] = flat(corner(vertices, triangleIndices, triangle, 1));
+    buffers[0].corners[2] = flat(corner(vertices, triangleIndices, triangle, 2));
+    buffers[0].count = 3;
+    int32_t current = 0;
 
     const Vec2f clip0 = flat(corner(vertices, triangleIndices, other, 0));
     const Vec2f clip1 = flat(corner(vertices, triangleIndices, other, 1));
     const Vec2f clip2 = flat(corner(vertices, triangleIndices, other, 2));
     const float winding = sign(cross(subtract(clip1, clip0), subtract(clip2, clip0)));
 
-    for (int32_t edge = 0; edge < kTriangleCorners && !polygon.empty(); edge++) {
+    for (int32_t edge = 0; edge < kTriangleCorners && buffers[current].count > 0; edge++) {
         const Vec2f& a = edge == 0 ? clip0 : (edge == 1 ? clip1 : clip2);
         const Vec2f& b = edge == 0 ? clip1 : (edge == 1 ? clip2 : clip0);
-        polygon = clipBy(polygon, a, b, winding);
+        clipBy(buffers[current], a, b, winding, &buffers[1 - current]);
+        current = 1 - current;
     }
 
+    const ClipPolygon& polygon = buffers[current];
     float twice = 0.0f;
-    for (size_t k = 0; k < polygon.size(); k++) {
-        twice += cross(polygon[k], polygon[(k + 1) % polygon.size()]);
+    for (size_t k = 0; k < polygon.count; k++) {
+        twice += cross(polygon.corners[k], polygon.corners[k + 1 < polygon.count ? k + 1 : 0]);
     }
     return std::fabs(twice) / 2.0f;
 }
@@ -228,9 +249,12 @@ bool DepthLayersBuilder::step(int32_t budget) {
     if (phase_ == Phase::Collect) {
         // The triangles of each plane, keyed by a rounded normal and plane
         // distance. The key puts nearly coplanar triangles together.
+        // A collected triangle is TWO units of the budget: on the Old 3DS one
+        // costs about twice an overlap test below (L7 walk, DANT_2's build:
+        // 600 triangles ~7 ms a step against 600 tests ~4 ms).
         while (nextTriangle_ < triangleCount && spent < budget) {
             const int32_t triangle = nextTriangle_++;
-            spent++;
+            spent += 2;
             const formats::Vec3f a = corner(*vertices_, *triangleIndices_, triangle, 0);
             const formats::Vec3f b = corner(*vertices_, *triangleIndices_, triangle, 1);
             const formats::Vec3f c = corner(*vertices_, *triangleIndices_, triangle, 2);
@@ -462,7 +486,10 @@ bool ArenaSceneBuilder::step(int32_t maxTriangles) {
         // bigger surface is a layer above it, and the renderer pulls it towards
         // the eye so the two do not fight for the same depth. Sliced like the
         // loop below: the per-plane stacking is quadratic in a plane's size
-        // and was the first sync's whole cost when it ran unsliced.
+        // and was the first sync's whole cost when it ran unsliced. Measured on
+        // the Old 3DS (L7 walk, DANT_2's build at the corridor crossing): 600
+        // units are ~4 ms of overlap tests (DepthLayersBuilder counts a
+        // collected triangle as two units, its measured relative cost).
         const int32_t kDepthWorkPerStep = 600;
         if (!depth_.step(kDepthWorkPerStep)) {
             if (depth_.failed()) {

@@ -667,12 +667,38 @@ struct WarmAsk {
     HdPackSource* source = nullptr;
 };
 
+#ifdef MDK_HW_PROFILE
+// THE FLOW'S SLOW FRAMES, said at exit rather than as they happen: the frames
+// this names are the corridor crossing's, and an SD line costs ~10 ms of the
+// frame it is written in. A row is kept for a frame whose view sync and warms
+// pass 8 ms (the first 64 such frames): the sync, the effects warm by role
+// (current, bubble hints, second), the object warm, and -- across all the
+// warms -- the time asking the pack and starting makes, with the last
+// surface a start was asked for.
+struct HwFlowRow {
+    unsigned long frame;
+    float sync, fxCurrent, fxHints, fxSecond, objects, ask, start;
+    char started[32];
+};
+static HwFlowRow g_hwFlowRows[64];
+static int32_t g_hwFlowRowCount = 0;
+static float g_hwAskMs = 0.0f;
+static float g_hwStartMs = 0.0f;
+static char g_hwStarted[32];
+#endif
+
 static void requestPackedSurface(void* user, const mdk::Surface& surface,
                                  const mdk::formats::Palette* palette) {
+#ifdef MDK_HW_PROFILE
+    const double t0 = nowSeconds();
+#endif
     WarmAsk* ask = static_cast<WarmAsk*>(user);
     ask->source->hint = true;
     ask->surfaces->requestPacked(surface, palette);
     ask->source->hint = false;
+#ifdef MDK_HW_PROFILE
+    g_hwAskMs += (float)((nowSeconds() - t0) * 1000.0);
+#endif
 }
 
 // The effects warm's start for a large sprite (EffectsView::warmStep): ask the
@@ -680,7 +706,18 @@ static void requestPackedSurface(void* user, const mdk::Surface& surface,
 // pack holds it, else a sliced expansion.
 static void startEffectSurface(void* user, const mdk::Surface& surface,
                                const mdk::formats::Palette* palette) {
+#ifdef MDK_HW_PROFILE
+    const double t0 = nowSeconds();
+#endif
     static_cast<WarmAsk*>(user)->surfaces->prepare(surface, palette);
+#ifdef MDK_HW_PROFILE
+    g_hwStartMs += (float)((nowSeconds() - t0) * 1000.0);
+    if (surface.texture != nullptr) {
+        snprintf(g_hwStarted, sizeof(g_hwStarted), "%s %dx%d", surface.texture->name().c_str(),
+                 (int)surface.texture->width(),
+                 (int)(surface.texture->height() * surface.texture->frameCount()));
+    }
+#endif
 }
 
 int main(int argc, char** argv) {
@@ -3224,9 +3261,15 @@ int main(int argc, char** argv) {
             // builds above it.
 #ifdef MDK_HW_PROFILE
             const double warm0 = nowSeconds();
+            g_hwAskMs = 0.0f;
+            g_hwStartMs = 0.0f;
+            g_hwStarted[0] = '\0';
 #endif
             effectsView.warmStep(streamCurrent, requestPackedSurface, startEffectSurface,
                                  &warmAsk);
+#ifdef MDK_HW_PROFILE
+            const double warmHints0 = nowSeconds();
+#endif
             // The bubble's arenas warm too: they are approached, not yet
             // resident, and their lead is the whole point (no deferral --
             // the bubble IS the early start).
@@ -3236,6 +3279,9 @@ int main(int argc, char** argv) {
                                          startEffectSurface, &warmAsk);
                 }
             }
+#ifdef MDK_HW_PROFILE
+            const double warmSecond0 = nowSeconds();
+#endif
             if (!streamSecond.empty() && streamSecond != streamCurrent) {
                 // Not the change frame either (see the music step below):
                 // each name's first warm step is deferred exactly once
@@ -3255,6 +3301,9 @@ int main(int argc, char** argv) {
                                          startEffectSurface, &warmAsk);
                 }
             }
+#ifdef MDK_HW_PROFILE
+            const double warmObjects0 = nowSeconds();
+#endif
             // THE OBJECTS' TEXTURES for the pair (warmObjectStep): one model a
             // frame per arena -- its own models, then every type the scripts
             // can spawn -- each Lit surface the orig pack holds asked for as a
@@ -3314,7 +3363,20 @@ int main(int argc, char** argv) {
                 }
             }
 #ifdef MDK_HW_PROFILE
-            hwWarmMs = (float)((nowSeconds() - warm0) * 1000.0);
+            const double warmEnd = nowSeconds();
+            hwWarmMs = (float)((warmEnd - warm0) * 1000.0);
+            if ((stream2 - stream1 + warmEnd - warm0) * 1000.0 > 8.0 && g_hwFlowRowCount < 64) {
+                HwFlowRow& row = g_hwFlowRows[g_hwFlowRowCount++];
+                row.frame = (unsigned long)frame;
+                row.sync = (float)((stream2 - stream1) * 1000.0);
+                row.fxCurrent = (float)((warmHints0 - warm0) * 1000.0);
+                row.fxHints = (float)((warmSecond0 - warmHints0) * 1000.0);
+                row.fxSecond = (float)((warmObjects0 - warmSecond0) * 1000.0);
+                row.objects = (float)((warmEnd - warmObjects0) * 1000.0);
+                row.ask = g_hwAskMs;
+                row.start = g_hwStartMs;
+                snprintf(row.started, sizeof(row.started), "%s", g_hwStarted);
+            }
 #endif
 #ifdef MDK_HW_PROFILE
             hwViewsMs = (float)((stream2 - stream1) * 1000.0);
@@ -4335,6 +4397,16 @@ int main(int argc, char** argv) {
     printf("[3ds] exiting after %lu frames\n", (unsigned long)frame);
 
     mdk::harnessProfileReport();
+#ifdef MDK_HW_PROFILE
+    for (int32_t i = 0; i < g_hwFlowRowCount; i++) {
+        const HwFlowRow& row = g_hwFlowRows[i];
+        mdk::log3dsPrintf("flowrow: frame %lu sync %.1f fx cur %.1f hints %.1f second %.1f "
+                          "obj %.1f (ask %.1f start %.1f last %s)",
+                          row.frame, (double)row.sync, (double)row.fxCurrent,
+                          (double)row.fxHints, (double)row.fxSecond, (double)row.objects,
+                          (double)row.ask, (double)row.start, row.started);
+    }
+#endif
     mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
                       (unsigned)steps, exitReason);
     aptUnhook(&s_lifecycleCookie);
