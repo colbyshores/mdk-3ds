@@ -206,7 +206,7 @@ struct ArenaRow {
     uint32_t streamBytes;   // read by the arena stream this frame
     float streamMs, viewsMs;
     uint16_t viewsBuilt, textures, hd, kurtReads, kurtHolds, logLines;
-    uint16_t texFirst, texRemade, mtoReads, packedOrig, hdReads, musicDemand;
+    uint16_t texFirst, texRemade, mtoReads, packImp, packSync, packLand, hdReads, musicDemand;
     uint16_t texEvicted, hdEvicted;
     float texMs, hdMs;
     uint32_t linearFreeKB;
@@ -243,7 +243,8 @@ int64_t g_arenaPrevBytes = 0;
 uint32_t g_arenaPrevLog = 0;
 int32_t g_arenaPrevTexEvicted = 0, g_arenaPrevHdEvicted = 0;
 int32_t g_arenaPrevTexFirst = 0, g_arenaPrevTexRemade = 0, g_arenaPrevMto = 0;
-int32_t g_arenaPrevPacked = 0, g_arenaPrevHdReads = 0, g_arenaPrevMusicDemand = 0;
+int32_t g_arenaPrevPackImp = 0, g_arenaPrevPackSync = 0, g_arenaPrevPackLand = 0,
+        g_arenaPrevHdReads = 0, g_arenaPrevMusicDemand = 0;
 uint64_t g_arenaPrevTexTicks = 0, g_arenaPrevHdTicks = 0;
 // The whole run's first-use cost (the table shows the windows; this is the total).
 uint64_t g_runTexTicks = 0, g_runHdTicks = 0;
@@ -507,7 +508,9 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
         g_arenaPrevTexFirst = s.texturesFirstMade;
         g_arenaPrevTexRemade = s.texturesRemade;
         g_arenaPrevMto = s.mtoDemandReads;
-        g_arenaPrevPacked = s.packedOriginalImports;
+        g_arenaPrevPackImp = s.packImported;
+        g_arenaPrevPackSync = s.packSync;
+        g_arenaPrevPackLand = s.packLanded;
         g_arenaPrevHdReads = s.hdReads;
         g_arenaPrevMusicDemand = s.musicDemandReads;
         g_arenaPrevTexTicks = s.textureMakeTicks;
@@ -536,7 +539,9 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
     row.texFirst = clamp16((int64_t)s.texturesFirstMade - g_arenaPrevTexFirst);
     row.texRemade = clamp16((int64_t)s.texturesRemade - g_arenaPrevTexRemade);
     row.mtoReads = clamp16((int64_t)s.mtoDemandReads - g_arenaPrevMto);
-    row.packedOrig = clamp16((int64_t)s.packedOriginalImports - g_arenaPrevPacked);
+    row.packImp = clamp16((int64_t)s.packImported - g_arenaPrevPackImp);
+    row.packSync = clamp16((int64_t)s.packSync - g_arenaPrevPackSync);
+    row.packLand = clamp16((int64_t)s.packLanded - g_arenaPrevPackLand);
     row.hdReads = clamp16((int64_t)s.hdReads - g_arenaPrevHdReads);
     row.musicDemand = clamp16((int64_t)s.musicDemandReads - g_arenaPrevMusicDemand);
     {
@@ -595,7 +600,9 @@ void harnessArenaFrame(uint32_t frame, const HarnessArenaFrame& s) {
     g_arenaPrevTexFirst = s.texturesFirstMade;
     g_arenaPrevTexRemade = s.texturesRemade;
     g_arenaPrevMto = s.mtoDemandReads;
-    g_arenaPrevPacked = s.packedOriginalImports;
+    g_arenaPrevPackImp = s.packImported;
+    g_arenaPrevPackSync = s.packSync;
+    g_arenaPrevPackLand = s.packLanded;
     g_arenaPrevHdReads = s.hdReads;
     g_arenaPrevMusicDemand = s.musicDemandReads;
     g_arenaPrevTexTicks = s.textureMakeTicks;
@@ -688,8 +695,10 @@ void arenaReport(uint32_t steadyUs) {
                       "= textures made, ms making them, textures the LRU evicted; hd/hdMs/hEv "
                       "= HD imports, ms importing, HD evicted; linKB = linear free; kRd/kSI/log "
                       "= Kurt animations read, Kurt held draws, SD log lines, this frame; src = "
-                      "first/remade texture makes, MTO demand reads, packed-original imports, "
-                      "HD file reads, music demand reads this frame)");
+                      "first/remade texture makes, MTO demand reads, packed originals imported "
+                      "at the boundary / read by a draw on the main thread / made by a draw from "
+                      "the reader's finished read, HD file reads, music demand reads this "
+                      "frame)");
     const double msPerTick = 1000.0 / (double)SYSCLOCK_ARM11;
     uint32_t hidden = 0;
     for (uint32_t i = 0; i < g_arenaRowCount; i++) {
@@ -698,7 +707,9 @@ void arenaReport(uint32_t steadyUs) {
                           r.hd != 0 || r.kurtReads != 0 || r.kurtHolds != 0 ||
                           r.logLines != 0 || r.texEvicted != 0 || r.hdEvicted != 0 ||
                           r.texFirst != 0 || r.texRemade != 0 || r.mtoReads != 0 ||
-                          r.packedOrig != 0 || r.hdReads != 0 || r.musicDemand != 0;
+                          r.packImp != 0 || r.packSync != 0 || r.packLand != 0 ||
+                          r.hdReads != 0 ||
+                          r.musicDemand != 0;
         const bool slow = slowUs == 0u || r.periodUs == 0u || r.periodUs > slowUs;
         if (r.flags == 0 && !work && !slow) {
             hidden++;
@@ -707,7 +718,8 @@ void arenaReport(uint32_t steadyUs) {
         flagText(r.flags, flags);
         mdk::log3dsPrintf("profile: arena %6lu %6lu.%01lu %5.1f(%lu) %6.1f %6.1f %6.1f %7lu "
                           "%6.1f %5u %6.1f %4u %6.1f %3u %3u %5.1f %3u %5lu %3u %3u %3u %s "
-                          "first=%u rem=%u mto=%u pack=%u hdR=%u music=%u",
+                          "first=%u rem=%u mto=%u packImp=%u packSync=%u packLand=%u hdR=%u "
+                          "music=%u",
                           (unsigned long)r.frame, (unsigned long)(r.periodUs / 1000u),
                           (unsigned long)(r.periodUs % 1000u / 100u),
                           (double)r.simT * msPerTick, (unsigned long)r.steps,
@@ -719,7 +731,8 @@ void arenaReport(uint32_t steadyUs) {
                           (unsigned long)r.linearFreeKB, (unsigned)r.kurtReads,
                           (unsigned)r.kurtHolds, (unsigned)r.logLines, flags,
                           (unsigned)r.texFirst, (unsigned)r.texRemade, (unsigned)r.mtoReads,
-                          (unsigned)r.packedOrig, (unsigned)r.hdReads,
+                          (unsigned)r.packImp, (unsigned)r.packSync, (unsigned)r.packLand,
+                          (unsigned)r.hdReads,
                           (unsigned)r.musicDemand);
     }
     mdk::log3dsPrintf("profile: arena table end (%lu kept rows hidden: unflagged, not slow, "

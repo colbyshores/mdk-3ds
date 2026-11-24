@@ -197,17 +197,27 @@ int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t hei
 MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t width, int32_t height,
                                                   const uint8_t* t3x, int32_t size);
 
-// The same, from a FILE: the backend reads `path` (a pack's .t3x) and makes the
-// compressed texture from those bytes, stamping `paletteRgba` (256 RGBA8
+// The same, from a FILE (a pack's .t3x), stamping `paletteRgba` (256 RGBA8
 // entries, may be null) on the texture so a later pixel update can fall back
 // through it (mdk_render_update_texture's rule for a stamped compressed
-// texture). This is the arena pack's pre-creation path: a surface the pack
-// holds as a .t3x of the ORIGINAL look is made from the file and the ARM11
-// never expands the palette (render/surface_cache.h's surfaceId). Returns -1
-// when the backend has no compressed textures, the file cannot be read, or the
-// bytes do not import -- the caller then makes the index texture as always.
+// texture). This is the arena pack's path: a surface the pack holds as a .t3x of
+// the ORIGINAL look is made from the file and the ARM11 never expands the
+// palette (render/surface_cache.h's surfaceId). The texture is ASKED FOR, not
+// made: the id is good at once and costs no I/O -- the backend reads the file
+// off the main thread and makes the GPU copy at a frame boundary, and a draw
+// that cannot wait for it makes it then. So the call is safe mid-frame. Returns
+// -1 only when the backend has no compressed textures (the caller then makes
+// the index texture as always) or the path is unusable. A file that turns out
+// unreadable, or not a .t3x of this size, is reported later through
+// mdk_render_texture_needs_pixels.
 MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t width, int32_t height,
                                                const char* path, const uint8_t* paletteRgba);
+
+// A texture made from a FILE could not be (unreadable, or not this set's .t3x):
+// the backend wants its index pixels through mdk_render_update_texture to draw
+// it the ordinary way. False for every other texture, and on backends without
+// files.
+bool mdk_render_texture_needs_pixels(MdkRenderer r, MdkTextureId texture);
 
 // The GPU bytes a MADE texture holds right now, in the store it was actually
 // made in (an index texture's RGBA8 or 16-bit store and its mip chain, a

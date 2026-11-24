@@ -10,6 +10,8 @@
 #include <vector>
 #include <string.h>
 
+#include "formats/arena.h"
+#include "formats/cmi.h"
 #include "formats/model.h"
 #include "formats/texture.h"
 #include "formats/texture_archive.h"
@@ -129,6 +131,75 @@ void resolveSwapSurfaces(const ModelSwap& swap, const formats::Model& model,
 
 } // namespace
 
+// The model's material names, in its own order: what the resolver is handed
+// (the C#'s model.Materials). One helper for the layout and the warm.
+static void modelMaterialNames(const formats::Model& model, std::vector<std::string>* names) {
+    names->clear();
+    names->reserve(model.materials.size());
+    for (size_t i = 0; i < model.materials.size(); i++) {
+        names->push_back(model.materials[i].nameString());
+    }
+}
+
+void objectModelSurfaces(const formats::Model& model, const ObjectLook& look,
+                         const MaterialResolver& resolver, std::vector<Surface>* out) {
+    out->clear();
+    if (look.palette == nullptr) {
+        return;
+    }
+    std::vector<std::string> names;
+    modelMaterialNames(model, &names);
+    // Each distinct triangle material once (a model has a handful).
+    std::vector<int32_t> seen;
+    for (size_t p = 0; p < model.partList.size(); p++) {
+        const std::vector<int32_t>& materials = model.partList[p].triangleMaterials;
+        for (size_t t = 0; t < materials.size(); t++) {
+            if (std::find(seen.begin(), seen.end(), materials[t]) != seen.end()) {
+                continue;
+            }
+            seen.push_back(materials[t]);
+            Surface surface;
+            if (resolver.resolve(materials[t], names, *look.palette, look.archives, &surface,
+                                 Pass::DoubleSided)) {
+                out->push_back(surface);
+            }
+        }
+    }
+}
+
+bool warmObjectStep(const formats::Arena& arena, const formats::Cmi* cmi,
+                    const ObjectLook& look, const MaterialResolver& resolver,
+                    ObjectSurfaceFn start, void* user, size_t* cursor) {
+    const size_t own = (size_t)arena.modelCount();
+    const size_t global = cmi ? cmi->modelOffsets().size() : 0;
+    if (start == nullptr || cursor == nullptr || *cursor >= own + global) {
+        return true;
+    }
+    const size_t at = (*cursor)++;
+    formats::Model parsed;
+    const formats::Model* model = nullptr;
+    if (at < own) {
+        model = arena.model(arena.modelName((int32_t)at));
+    } else {
+        // A global model, parsed as Cmi::model parses it but not kept (that
+        // cache, and the scripts' own, hold only the types actually spawned).
+        const std::pair<std::string, int32_t>& entry = cmi->modelOffsets()[at - own];
+        if (entry.second != 0 &&
+            formats::Model::parse(&parsed, entry.first, cmi->bytes().data(),
+                                  (int32_t)cmi->bytes().size(), entry.second)) {
+            model = &parsed;
+        }
+    }
+    if (model != nullptr) {
+        std::vector<Surface> surfaces;
+        objectModelSurfaces(*model, look, resolver, &surfaces);
+        for (size_t i = 0; i < surfaces.size(); i++) {
+            start(user, surfaces[i], look.palette);
+        }
+    }
+    return *cursor >= own + global;
+}
+
 bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
                        const MaterialResolver& resolver, ObjectLayout* out,
                        const ModelSwap* swap) {
@@ -158,10 +229,7 @@ bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
     // The model's material names, which is what the C# passes as
     // model.Materials.
     std::vector<std::string> names;
-    names.reserve(model.materials.size());
-    for (size_t i = 0; i < model.materials.size(); i++) {
-        names.push_back(model.materials[i].nameString());
-    }
+    modelMaterialNames(model, &names);
 
     SwapSurfaces swapSurfaces;
     const bool hasSwapSurfaces = swap != nullptr;

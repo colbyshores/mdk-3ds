@@ -143,6 +143,21 @@ static constexpr int32_t kHdRetryFrames = 120;
 static constexpr int32_t kHdMaxFailures = 3;
 // An unlinked copy is freed after this many frames (10 s at 60 fps).
 static constexpr int32_t kHdUnlinkedFrames = 600;
+// THE ORIG PACK'S READS (C3dTexture::packPath, 04_textures.inc pumpPackOriginals):
+// at most this many of its files are with the reader at once -- an unpolled
+// finished read still holds its slot, so the import budget below throttles the
+// reads as well -- and at most this many are imported per frame boundary. An
+// uncompressed .t3x imports in ~0.1-4 ms on the Old 3DS (the largest, 1024x512
+// with its chain, is the 4), so two keep the boundary's share small.
+static constexpr int32_t kPackReadsInFlight = 2;
+static constexpr int32_t kPackImportsPerFrame = 2;
+// A packed original NO DRAW ASKED FOR (a hint: the pump's walk, its re-ask, a
+// hidden group) is read and imported only into FREE linear memory, this much of
+// it kept back for the makes the player's view needs: it never evicts. Without
+// the rule, a resident set bigger than the pool (level 7's is: 762 of 1686 makes
+// failed at full residency) turned hints into an endless evict-and-read-again
+// cycle. A first figure, not a measured one: one large arena make's worth.
+static constexpr size_t kPackHintReserveBytes = 1024u * 1024u;
 
 struct C3dTexture {
     C3D_Tex tex;
@@ -209,6 +224,9 @@ struct C3dTexture {
     //
     // The source is in SYSTEM memory, not the GPU's: the palette indices
     // are a quarter of the expanded RGBA8 and an eighth of the padded one.
+    //
+    // A PACKED ORIGINAL (packPath below) keeps NO source: its file is the
+    // source, and an eviction is undone by reading it again.
     std::vector<uint8_t> source;
     // The 256x1 palette the indices expand through (index textures only).
     std::vector<uint8_t> palette;
@@ -217,8 +235,9 @@ struct C3dTexture {
     bool indexed = false;
 
     // A COMPRESSED texture (mdk_render_create_compressed_texture: Kurt's original
-    // frames as ETC1A4, EnhancedToggles::kurtCompressed). `source` holds the .t3x
-    // file's bytes and the GPU copy is tex3ds' import of them (importCompressed,
+    // frames as ETC1A4, EnhancedToggles::kurtCompressed; and the PACKED ORIGINAL,
+    // packPath below, whose bytes are read from its file instead). `source` holds
+    // the .t3x file's bytes and the GPU copy is tex3ds' import of them (importCompressed,
     // 04_textures.inc) -- NEVER a palette expansion; an eviction is undone by
     // importing again. `rect` is the real image's rectangle in the imported
     // texture (pica::compressedFrameRect), drawn through like an HD copy's, and
@@ -226,6 +245,26 @@ struct C3dTexture {
     bool compressed = false;
     mdk::pica::CompressedRect rect;
     uint32_t gpuBytes = 0;
+
+    // THE PACKED ORIGINAL (mdk_render_create_compressed_file: an arena texture's
+    // original look from the orig pack, romfs:/orig): a compressed texture made
+    // from a FILE the reader thread reads. The bytes are not kept -- three
+    // hundred arena textures' .t3x would be ~11 MB of the main heap -- so an
+    // eviction is undone by reading the file again. Its id is good from creation
+    // while its GPU copy waits (valid=false), as a chunked expansion's does:
+    //   PackIdle    made (valid), or evicted and not asked for yet;
+    //   PackQueued  in RendererC3D::packQueue, waiting for a reader slot;
+    //   PackReading with the reader on kChannelOrig, tagged by the texture's id;
+    //   PackFailed  unreadable, or not this set's .t3x: the core gives it its
+    //               index pixels (mdk_render_texture_needs_pixels) and it is an
+    //               ordinary index texture from then on.
+    // `palette` holds the stamp those index pixels expand through.
+    enum PackState : uint8_t { PackIdle, PackQueued, PackReading, PackFailed };
+    std::string packPath;
+    PackState packState = PackIdle;
+    // The frame whose draw-time make found no room for it (finishPackNow): the
+    // file is not read again by a later record or the other eye of that frame.
+    int32_t packNoRoomFrame = -1;
 
     // The source changed while the old GPU copy may still be in flight. The
     // replacement waits for the next frame boundary (AGENTS.md P3).
@@ -385,6 +424,10 @@ struct PreparedDraw {
     int32_t meshIndex = -1;
     int32_t texIndex = -1;          // into textures, or hdCopies when texHd
     bool texHd = false;
+    // A PACKED ORIGINAL whose GPU copy was not made at prepare (C3dTexture::
+    // packPath): the record is kept, and the submit makes the copy only if the
+    // batch is in the eye's frustum, then takes its uv from the made texture.
+    bool texPending = false;
     int32_t texUnit = 0;
     float scaleX = 1.0f, scaleY = 1.0f, offsetX = 0.0f, offsetY = 0.0f;
     // The original texture's UV, when the bound surface is an HD copy: a
@@ -914,6 +957,24 @@ struct RendererC3D {
     int32_t hdImported = 0;
     int32_t hdEvicted = 0;
     int32_t hdFailedCount = 0;
+
+    // THE ORIG PACK'S READS (04_textures.inc pumpPackOriginals): the packed
+    // originals waiting for a reader slot (texture ids; an entry whose texture
+    // is no longer PackQueued is dropped when the pump next scans), and what
+    // happened. packSync counts the draws that could not wait and READ THE FILE
+    // on the main thread, inside the frame (finishPackNow) -- the number this
+    // stream exists to keep near zero -- and packSyncTicks their time (PROFILE);
+    // packLanded the draws that took a read the reader had already finished
+    // (an import inside the frame, but no read).
+    std::vector<int32_t> packQueue;
+    int32_t packImported = 0;
+    int32_t packSync = 0;
+    int32_t packLanded = 0;
+    int32_t packFailed = 0;
+    uint64_t packSyncTicks = 0;
+    // The last draw-time make's kind, for makeTexture's profile line (logged
+    // there, after its timed window, never inside it).
+    bool packLastLanded = false;
 
     // THE STORES makeTexture chose (EnhancedToggles::texture16), counted per
     // making -- an evicted texture made again counts again -- indexed by

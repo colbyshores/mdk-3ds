@@ -17,11 +17,17 @@
 // submitted, nothing may be evicted.
 //
 // The evicted texture KEEPS ITS SOURCE, so it can be made again: the
-// eviction gives the VRAM back without making the id a dead end.
+// eviction gives the VRAM back without making the id a dead end. (A packed
+// original keeps its FILE -- packPath, PackIdle -- and is read again.)
+//
+// `protectFrom`: inside a frame, a texture stamped at or after it is kept. The
+// makes pass the frame's own first stamp (frameStartUse: this frame's commands
+// read it); the orig pack's boundary import passes the PREVIOUS frame's, so a
+// texture a draw asked for never evicts what the player just saw (and one no
+// draw asked for evicts nothing at all, pumpPackOriginals).
 //
 // Returns false when there is no texture that may be freed.
-static bool evictTextures(RendererC3D* renderer, size_t needed) {
-    (void)needed;
+static bool evictTextures(RendererC3D* renderer, uint32_t protectFrom) {
     if (!renderer || renderer->gpuPending) {
         return false;
     }
@@ -39,7 +45,7 @@ static bool evictTextures(RendererC3D* renderer, size_t needed) {
         if (texture.expandPending || texture.expandPixels || texture.expandWanted) {
             continue;
         }
-        if (renderer->inFrame && texture.lastUsed >= renderer->frameStartUse) {
+        if (renderer->inFrame && texture.lastUsed >= protectFrom) {
             continue;
         }
         if (texture.lastUsed < oldestUse) {
@@ -64,12 +70,17 @@ static bool evictTextures(RendererC3D* renderer, size_t needed) {
 // that when its residency budget says a frame has to go -- must not grow
 // the table for ever. A slot with a source is NOT free: it is an evicted
 // texture that can be made again, and its source is the only copy there is.
+// Nor is a slot with a PACK PATH: a packed original keeps no source, and one
+// evicted or still being read is exactly `!valid` with an empty source -- the
+// caller holds its id, and handing the slot out again would give one id two
+// textures.
 static int32_t acquireTextureSlot(RendererC3D* renderer) {
     for (size_t i = 0; i < renderer->textures.size(); i++) {
         const C3dTexture& texture = renderer->textures[i];
         // A pending chunked expansion owns its slot and its buffer until it
         // finishes or is dropped: never hand the slot to a new texture.
         if (!texture.valid && !texture.releasePending && texture.source.empty() &&
+            texture.packPath.empty() &&
             !texture.expandPending && !texture.expandPixels && !texture.expandWanted) {
             return (int32_t)i;
         }
@@ -293,9 +304,10 @@ static void classifyTextureMade(RendererC3D* renderer, C3dTexture& texture) {
 }
 
 // THE COMPRESSED TEXTURE'S GPU COPY (EnhancedToggles::kurtCompressed): tex3ds'
-// import of the .t3x bytes kept in `source` -- an LZ decompress and a copy into
-// the linear heap, the ETC blocks already tiled by tex3ds on the host. Nothing is
-// expanded, which is the point: a Kurt frame made from its palette indices was a
+// import of a .t3x's bytes -- Kurt's kept in `source`, a packed original's just
+// read from its file -- an LZ decompress (none for the uncompressed orig pack)
+// and a copy into the linear heap, the ETC blocks already tiled by tex3ds on
+// the host. Nothing is expanded, which is the point: a Kurt frame made from its palette indices was a
 // 256 KB RGBA8 expansion of several ms on the ARM11, re-made nearly every frame
 // once the animations outran the residency (measured on the Old 3DS: clusters of
 // 13-16 frames with a 20-40 ms draw build).
@@ -309,10 +321,15 @@ static void classifyTextureMade(RendererC3D* renderer, C3dTexture& texture) {
 // (kurt_etc1_convert.py --check proves it per frame).
 //
 // The same eviction ladder as makeTexture: a nobody's HD copy, then the least
-// recently used original, then any HD copy this frame has not drawn.
-static bool importCompressed(RendererC3D* renderer, C3dTexture& texture) {
-    if (texture.source.empty()) {
-        return false;
+// recently used original, then any HD copy -- each kept from `protectFrom` on
+// (evictTextures) -- unless `mayEvict` is false (a packed original no draw asked
+// for: free memory or nothing). `refused` (may be null) is set when the bytes
+// are not this set's .t3x: a property of the file, where a false without it is a
+// full heap.
+static bool importCompressed(RendererC3D* renderer, C3dTexture& texture, const uint8_t* bytes,
+                             size_t size, uint32_t protectFrom, bool mayEvict, bool* refused) {
+    if (refused) {
+        *refused = false;
     }
     // THE HEADER FIRST, so a file that is not this set's never reaches the
     // eviction ladder below: an import that fails for a broken file would
@@ -320,16 +337,18 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture) {
     // u16 subtextures, u8 log2(width) - 3 | (log2(height) - 3) << 3, u8 format.
     // Only ETC1/ETC1A4 (GPU_ETC1 = 12, GPU_ETC1A4 = 13): the compressed seam's
     // contract, and the formats `format` below can name.
-    const uint8_t* header = texture.source.data();
+    const uint8_t* header = bytes;
     const bool headerOk =
-        texture.source.size() > 6 && (header[0] | (header[1] << 8)) >= 1 &&
+        bytes && size > 6 && (header[0] | (header[1] << 8)) >= 1 &&
         (header[3] == (uint8_t)GPU_ETC1 || header[3] == (uint8_t)GPU_ETC1A4) &&
         (8 << (header[2] & 7)) >= texture.realWidth &&
         (8 << ((header[2] >> 3) & 7)) >= texture.realHeight;
     if (!headerOk) {
         mdk::log3dsPrintf("texture %dx%d: not an ETC .t3x of that size (%u bytes), refused",
-                          (int)texture.realWidth, (int)texture.realHeight,
-                          (unsigned)texture.source.size());
+                          (int)texture.realWidth, (int)texture.realHeight, (unsigned)size);
+        if (refused) {
+            *refused = true;
+        }
         return false;
     }
     Tex3DS_Texture t3x = nullptr;
@@ -343,8 +362,7 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture) {
 #ifdef MDK_HW_PROFILE
         importTries++;
 #endif
-        t3x = Tex3DS_TextureImport(texture.source.data(), texture.source.size(), &texture.tex,
-                                   nullptr, false);
+        t3x = Tex3DS_TextureImport(bytes, size, &texture.tex, nullptr, false);
         if (t3x) {
 #ifdef MDK_HW_PROFILE
             if (importTries > 1) {
@@ -353,14 +371,19 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture) {
 #endif
             break;
         }
-        if (evictHd(renderer, renderer->frameStartUse, true) ||
-            evictTextures(renderer, texture.source.size() * 4u) ||
-            evictHd(renderer, renderer->frameStartUse, false)) {
+        if (mayEvict && (evictHd(renderer, protectFrom, true) ||
+                         evictTextures(renderer, protectFrom) ||
+                         evictHd(renderer, protectFrom, false))) {
             continue;
         }
-        mdk::log3dsPrintf("texture %dx%d: compressed import FAILED (%u bytes)",
-                          (int)texture.realWidth, (int)texture.realHeight,
-                          (unsigned)texture.source.size());
+        // A hint's failure is not logged: it is an expected "no room" in a heap
+        // the free-space check called big enough (a total, not a contiguous
+        // block), and the line is an SD write at the boundary, again every time
+        // the hint is re-asked. The pump leaves it idle; nothing is counted.
+        if (mayEvict) {
+            mdk::log3dsPrintf("texture %dx%d: compressed import FAILED (%u bytes)",
+                              (int)texture.realWidth, (int)texture.realHeight, (unsigned)size);
+        }
         return false;
     }
     Tex3DS_TextureFree(t3x);
@@ -404,7 +427,7 @@ static bool makeStreamed(RendererC3D* renderer, C3dTexture& texture) {
     params.type = GPU_TEX_2D;
     params.onVram = false;
     if (!C3D_TexInitWithParams(&texture.tex, nullptr, params)) {
-        if (!evictTextures(renderer, bytes) ||
+        if (!evictTextures(renderer, renderer->frameStartUse) ||
             !C3D_TexInitWithParams(&texture.tex, nullptr, params)) {
             mdk::log3dsPrintf("streamed texture %dx%d FAILED: no texture memory",
                               (int)texture.realWidth, (int)texture.realHeight);
@@ -712,14 +735,133 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     // WHICH make was the expensive one: the entry table says how many and how
     // long; this names each by size and path (the oversized refused strips are
     // identifiable by dimension alone: sl_big 64x1920, fire 64x2628,
-    // explode 128x3328). Profile builds only, like the tick read above.
-    mdk::log3dsPrintf("texmake %dx%d %s %.1f ms", (int)texture.realWidth, (int)texture.realHeight,
-                      texture.compressed ? "pack" : (texture.streamed ? "stream" : "expand"),
-                      (double)mk * 1000.0 / (double)SYSCLOCK_ARM11);
+    // explode 128x3328). Profile builds only, like the tick read above. A
+    // packed original's draw-time make is its own line (`packsync`, the read
+    // included; landed=1: the reader's read was taken, no read here), named by
+    // its file so a hitch's textures can be traced to the surfaces asking.
+    if (!texture.packPath.empty()) {
+        mdk::log3dsPrintf("packsync %dx%d %.1f ms landed=%d %s", (int)texture.realWidth,
+                          (int)texture.realHeight, (double)mk * 1000.0 / (double)SYSCLOCK_ARM11,
+                          renderer->packLastLanded ? 1 : 0, texture.packPath.c_str());
+    } else {
+        mdk::log3dsPrintf("texmake %dx%d %s %.1f ms", (int)texture.realWidth,
+                          (int)texture.realHeight,
+                          texture.compressed ? "pack" : (texture.streamed ? "stream" : "expand"),
+                          (double)mk * 1000.0 / (double)SYSCLOCK_ARM11);
+    }
     return made;
 #else
     return makeTextureNow(renderer, texture, diagnostics);
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// THE ORIG PACK'S READS (C3dTexture::packPath). A packed original is created
+// with no I/O (mdk_render_create_compressed_file): it is QUEUED, its file read
+// on the reader thread (kChannelOrig), and the bytes imported at a frame
+// boundary under kPackImportsPerFrame (pumpPackOriginals, at the end of this
+// file). Only a draw that cannot wait reads on this thread (finishPackNow).
+// ---------------------------------------------------------------------------
+
+// The whole of a file, on the calling thread (05_resources.inc): the last
+// resort's read below, and nothing else.
+static bool readWholeFile(const char* path, std::vector<uint8_t>* out);
+
+// Asks for a packed original's file: queued for the boundary pump. Only an
+// idle one -- made textures are idle too, so the caller checks `valid` -- and
+// once per wait (a queued or reading one is already asked for, a failed one
+// waits for its index pixels).
+static void queuePackRead(RendererC3D* renderer, int32_t id) {
+    C3dTexture& texture = renderer->textures[(size_t)id];
+    if (texture.packPath.empty() || texture.packState != C3dTexture::PackIdle) {
+        return;
+    }
+    texture.packState = C3dTexture::PackQueued;
+    renderer->packQueue.push_back(id);
+}
+
+// A packed original that cannot be made from its file: unreadable, or not this
+// set's .t3x. Not retried -- a property of the file -- and the core is told
+// (mdk_render_texture_needs_pixels) so it hands the index pixels over and the
+// texture draws the ordinary way. Counted and logged, once per texture.
+static void markPackFailed(RendererC3D* renderer, C3dTexture& texture, const char* why) {
+    texture.packState = C3dTexture::PackFailed;
+    renderer->packFailed++;
+    mdk::log3dsPrintf("pack: %s: %s (%d failed)", why, texture.packPath.c_str(),
+                      (int)renderer->packFailed);
+}
+
+// Whether a draw may make this packed original now (drawRecorded's revive,
+// finishPackNow): not failed, and not already found without room this frame --
+// a later record or the other eye must not read the same file again.
+static bool packMakeableNow(const RendererC3D* renderer, const C3dTexture& texture) {
+    return !texture.packPath.empty() && texture.packState != C3dTexture::PackFailed &&
+           texture.packNoRoomFrame != renderer->frame;
+}
+
+// THE LAST RESORT (makeTextureNow, from drawRecorded's revive): a packed
+// original whose batch is IN THIS EYE'S FRUSTUM and whose GPU copy the pump has
+// not made. A read that has landed is taken by its tag; otherwise the read is
+// dropped -- so it can never land on the copy made here -- and the file is read
+// HERE, on the main thread, inside the frame. Never capped: a cap turns a slow
+// surface into a missing one, and a texture behind the camera never gets here
+// (the cull runs first), which already makes this cheaper than the old
+// make-everything-at-prepare. The import keeps this frame's draws
+// (frameStartUse), as every mid-frame make's evictions do. Counted: packSync
+// when the file was read here (the number the pump exists to keep near zero,
+// timed in profile builds), packLanded when the reader's read was taken; the
+// profile line (`packsync`) is makeTexture's, after its timed window. A failure
+// draws nothing this frame, and nothing later this frame reads the file again.
+static bool finishPackNow(RendererC3D* renderer, C3dTexture& texture) {
+    if (!packMakeableNow(renderer, texture)) {
+        return false;
+    }
+    const int32_t id = (int32_t)(&texture - renderer->textures.data());
+#ifdef MDK_HW_PROFILE
+    const uint64_t start = svcGetSystemTick();
+#endif
+    uint8_t* landedBytes = nullptr;
+    size_t landedSize = 0;
+    bool ok = false;
+    const bool landed = texture.packState == C3dTexture::PackReading &&
+                        renderer->hdReader.pollTag(mdk::AsyncFileReader::kChannelOrig, id,
+                                                   &landedBytes, &landedSize, &ok);
+    std::vector<uint8_t> read;
+    if (!landed) {
+        renderer->hdReader.discard(mdk::AsyncFileReader::kChannelOrig, id);
+        ok = readWholeFile(texture.packPath.c_str(), &read);
+    }
+    renderer->packLastLanded = landed;
+    if (landed) {
+        renderer->packLanded++;
+    } else {
+        renderer->packSync++;
+    }
+    bool made = false;
+    bool refused = false;
+    if (ok) {
+        const uint8_t* bytes = landed ? landedBytes : read.data();
+        const size_t size = landed ? landedSize : read.size();
+        made = importCompressed(renderer, texture, bytes, size, renderer->frameStartUse, true,
+                                &refused);
+    }
+    free(landedBytes);
+    if (made) {
+        texture.packState = C3dTexture::PackIdle;
+    } else if (!ok || refused) {
+        markPackFailed(renderer, texture, ok ? "not an ETC .t3x of that size" : "cannot read");
+    } else {
+        // No room even after the evictions: idle, asked for again by the next
+        // frame's draw (prepareDraw queues it) -- not by this frame's.
+        texture.packState = C3dTexture::PackIdle;
+        texture.packNoRoomFrame = renderer->frame;
+    }
+#ifdef MDK_HW_PROFILE
+    if (!landed) {
+        renderer->packSyncTicks += svcGetSystemTick() - start;
+    }
+#endif
+    return made;
 }
 
 static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diagnostics) {
@@ -728,7 +870,13 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     // contents (03_frame.inc, THE DEDUPE).
     forgetTextureBinds(renderer);
     if (texture.compressed) {
-        return importCompressed(renderer, texture);
+        // Kurt's frames import the bytes they keep; a packed original has only
+        // its file, and a draw that reaches here cannot wait for the reader.
+        return texture.packPath.empty()
+                   ? importCompressed(renderer, texture, texture.source.data(),
+                                      texture.source.size(), renderer->frameStartUse, true,
+                                      nullptr)
+                   : finishPackNow(renderer, texture);
     }
     if (texture.streamed) {
         return makeStreamed(renderer, texture);
@@ -862,7 +1010,7 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
         if (evictHd(renderer, renderer->frameStartUse, true)) {
             continue;
         }
-        if (!evictTextures(renderer, gpuBytes)) {
+        if (!evictTextures(renderer, renderer->frameStartUse)) {
             // The HD copies share this heap: one not drawn this frame goes before
             // an original fails to be made (review F1). Mid-frame, so only copies
             // older than this frame's first draw (the GPU finished the last one
@@ -1092,10 +1240,34 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     // THE TOGGLE OFF: no reads, no imports, and the resident copies are freed
     // (this is a frame boundary, so none is in flight) -- off means the memory is
     // the original look's again (review F5). Turned back on, draws ask anew.
+    //
+    // AND THE READS GO TOO. A read handed out before the toggle went off would
+    // finish and sit in its slot for ever (nothing polls kChannelHd while off),
+    // and every slot it holds counts against kStreamSlots -- which shuts the orig
+    // pack's dispatch out, so every packed original would be read by its draw.
+    // So the copies being read are discarded (a queued read freed now, one in
+    // progress when the worker ends it), and anything already finished is taken
+    // and freed. Only while there is something to drop: off costs a frame two
+    // slot counts, not a walk of the table.
     if (!renderer->toggles.enableHdTextures) {
-        if (renderer->hdResidentBytes > 0) {
+        if (renderer->hdResidentBytes > 0 || !renderer->hdQueue.empty() ||
+            renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd) > 0) {
             for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
-                dropHd(renderer, renderer->hdCopies[i]);
+                HdCopy& copy = renderer->hdCopies[i];
+                if (copy.state == HdCopy::Reading) {
+                    renderer->hdReader.discard(mdk::AsyncFileReader::kChannelHd, (int32_t)i);
+                }
+                dropHd(renderer, copy);
+            }
+            renderer->hdQueue.clear();
+            int32_t tag = -1;
+            uint8_t* bytes = nullptr;
+            size_t size = 0;
+            bool ok = false;
+            char path[mdk::AsyncFileReader::kPathMax];
+            while (renderer->hdReader.poll(mdk::AsyncFileReader::kChannelHd, &tag, path, &bytes,
+                                           &size, &ok)) {
+                free(bytes);
             }
         }
         return;
@@ -1125,6 +1297,11 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     const bool evictable = !renderer->hdQueue.empty() && hdHasEvictable(renderer, protectFrom);
     size_t next = 0;
     for (; next < renderer->hdQueue.size(); next++) {
+        // One slot stays free for Kurt's read and the menus' (kStreamSlots); the
+        // orig pack's reads, handed out first this boundary, count against it.
+        if (renderer->hdReader.busyAll() >= mdk::AsyncFileReader::kStreamSlots) {
+            break;
+        }
         const size_t reading =
             (size_t)renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd);
         if (!mdk::pica::hdMayDispatch(renderer->hdResidentBytes, reading, kHdLargestBytes,
@@ -1202,9 +1379,9 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         // is the HD pack's copy landing on its expansion (the profile timing
         // below, hdImportTicks, counts it; the file read ran on the reader
         // thread, off the frame). The ORIG pack's textures do NOT come through
-        // here: they are made from their .t3x at creation
-        // (mdk_render_create_compressed_file), and that import runs through
-        // importCompressed below, timed as texture-make work. No sampler state
+        // here: they have their own pump (pumpPackOriginals, below, run before
+        // this one) and import through importCompressed, timed as texture-make
+        // work. No sampler state
         // is set here: 06_draw.inc rewrites filter and maxLevel per draw, so a
         // full mip chain holds at NEAREST level 0 in the original look; only
         // the wrap, which the draw does not rewrite, is set below from the
@@ -1267,6 +1444,146 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
                               copy.left, copy.top, copy.right, copy.bottom,
                               (int)renderer->hdImported, (unsigned)renderer->hdResidentBytes,
                               (int)renderer->hdEvicted, (int)renderer->hdFailedCount);
+        }
+    }
+}
+
+// THE ORIG PACK'S PUMP, at the frame boundary, BEFORE the HD stream's
+// (03_frame.inc) -- after C3D_FrameBegin has waited for the previous frame, so
+// an import's evictions never free what the GPU is reading (P3), and an import
+// only ever fills a texture with no GPU copy. Two halves, as pumpHdTextures:
+//
+// (1) QUEUED FILES TO THE READER, at most kPackReadsInFlight of them with it
+//     and never past kStreamSlots of all its slots. A DEMANDED texture goes
+//     first -- one a draw of the frame that just ended wanted (prepareDraw
+//     stamps a pending texture), the largest of those, whose read saves the
+//     most -- else the queue's head, in the order the core asked (the arena
+//     pair, the drawn views, then the hints nearest first). A HINT (not
+//     demanded) is only read while the linear pool has room for the largest
+//     pack texture above kPackHintReserveBytes: otherwise it waits in the
+//     queue, unread, until memory frees or a draw demands it -- so a pool the
+//     resident set has filled costs no reads at all.
+// (2) FINISHED READS IMPORTED, at most kPackImportsPerFrame. Each is checked
+//     before it is used: a read whose texture was released, made by the draw's
+//     last resort, or given its index pixels since it was asked for is thrown
+//     away, never imported over a live copy. NO import evicts what the last
+//     frame drew (`protectFrom` is its first stamp) -- not even a demanded one:
+//     a texture still pending here was culled in both eyes last frame (a draw
+//     in view would have made it), so it must not push out what is on screen.
+//     A HINT evicts NOTHING: it is imported only into free memory above the
+//     reserve, or not at all (idle again; the re-ask asks again, and the read
+//     waits for room as above). Nor is it stamped newest: it keeps the stamp
+//     its last draw left (0 if none), so the LRU takes it before anything the
+//     player has seen since -- a texture read ahead of time never outranks one
+//     on screen. A demanded import is stamped fresh, as any make is.
+//
+// `previousFrameStart` is the first draw stamp of the frame that just ended.
+static void pumpPackOriginals(RendererC3D* renderer, uint32_t previousFrameStart) {
+    // The entries whose texture is no longer waiting (made by a draw, released,
+    // failed, or a second entry for one already handed out) are dropped here.
+    std::vector<int32_t>& queue = renderer->packQueue;
+    size_t kept = 0;
+    for (size_t i = 0; i < queue.size(); i++) {
+        const int32_t id = queue[i];
+        if (id >= 0 && (size_t)id < renderer->textures.size() &&
+            renderer->textures[(size_t)id].packState == C3dTexture::PackQueued) {
+            queue[kept++] = id;
+        }
+    }
+    queue.resize(kept);
+
+    // (1) Hand out reads.
+    while (!queue.empty() && renderer->hdReader.running() &&
+           renderer->hdReader.busy(mdk::AsyncFileReader::kChannelOrig) < kPackReadsInFlight &&
+           renderer->hdReader.busyAll() < mdk::AsyncFileReader::kStreamSlots) {
+        size_t pick = 0;
+        bool demanded = false;
+        int32_t pickTexels = 0;
+        for (size_t i = 0; i < queue.size(); i++) {
+            const C3dTexture& texture = renderer->textures[(size_t)queue[i]];
+            if (texture.lastUsed < previousFrameStart) {
+                continue;
+            }
+            const int32_t texels = texture.realWidth * texture.realHeight;
+            if (!demanded || texels > pickTexels) {
+                pick = i;
+                pickTexels = texels;
+                demanded = true;
+            }
+        }
+        if (!demanded && linearSpaceFree() < kPackHintReserveBytes + kHdLargestBytes) {
+            break;   // only hints wait, and there is no room for one: no read
+        }
+        const int32_t id = queue[pick];
+        C3dTexture& texture = renderer->textures[(size_t)id];
+        if (texture.packState == C3dTexture::PackQueued) {
+            if (!renderer->hdReader.requestFile(mdk::AsyncFileReader::kChannelOrig, id,
+                                                texture.packPath.c_str(), nullptr)) {
+                break;   // every slot is busy: it waits in the queue
+            }
+            texture.packState = C3dTexture::PackReading;
+        }
+        queue.erase(queue.begin() + (long)pick);
+    }
+
+    // (2) Import finished reads.
+    int32_t imported = 0;
+    int32_t id = -1;
+    uint8_t* bytes = nullptr;
+    size_t size = 0;
+    bool ok = false;
+    char path[mdk::AsyncFileReader::kPathMax];
+    while (imported < kPackImportsPerFrame &&
+           renderer->hdReader.poll(mdk::AsyncFileReader::kChannelOrig, &id, path, &bytes, &size,
+                                   &ok)) {
+        if (id < 0 || (size_t)id >= renderer->textures.size()) {
+            free(bytes);
+            continue;
+        }
+        C3dTexture& texture = renderer->textures[(size_t)id];
+        if (texture.packState != C3dTexture::PackReading || texture.valid ||
+            texture.releasePending || texture.packPath != path) {
+            free(bytes);
+            continue;
+        }
+        if (!ok) {
+            free(bytes);
+            markPackFailed(renderer, texture, "cannot read");
+            continue;
+        }
+        const bool demanded = texture.lastUsed >= previousFrameStart;
+        if (!demanded && linearSpaceFree() < kPackHintReserveBytes + size) {
+            // A hint and no free room for it (the pool filled since its read was
+            // handed out): idle, not imported, nothing evicted.
+            free(bytes);
+            texture.packState = C3dTexture::PackIdle;
+            continue;
+        }
+        forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)
+        bool refused = false;
+#ifdef MDK_HW_PROFILE
+        const uint64_t importStart = svcGetSystemTick();
+#endif
+        const bool made = importCompressed(renderer, texture, bytes, size, previousFrameStart,
+                                           demanded, &refused);
+#ifdef MDK_HW_PROFILE
+        renderer->textureMakeTicks += svcGetSystemTick() - importStart;
+#endif
+        free(bytes);
+        imported++;
+        if (made) {
+            texture.packState = C3dTexture::PackIdle;
+            if (demanded) {
+                texture.lastUsed = ++renderer->drawCounter;   // fresh: not the next victim
+            }
+            renderer->packImported++;
+        } else if (refused) {
+            markPackFailed(renderer, texture, "not an ETC .t3x of that size");
+        } else {
+            // No room (a demanded one: without evicting what is protected; a
+            // hint: without evicting at all): idle, asked for again by the next
+            // prepare or draw that wants it -- the pump itself never re-reads it.
+            texture.packState = C3dTexture::PackIdle;
         }
     }
 }

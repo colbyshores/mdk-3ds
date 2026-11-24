@@ -62,6 +62,17 @@ uint8_t* readRange(const char* path, uint32_t offset, uint32_t length) {
     return bytes;
 }
 
+// A channel's place in the worker's order (async_file_reader.h, WHICH READ GOES
+// NEXT): lower goes first.
+int32_t channelRank(int32_t channel) {
+    switch (channel) {
+        case AsyncFileReader::kChannelPack: return 0;
+        case AsyncFileReader::kChannelFile: return 1;
+        case AsyncFileReader::kChannelOrig: return 2;
+        default: return 3;   // kChannelHd
+    }
+}
+
 // THE THREAD'S ENTRY, a plain function so the R1 gate (tools/runner/gates_vfp.py)
 // can resolve the routine threadCreate names and read its body.
 void asyncFileReaderThread(void* self) {
@@ -145,6 +156,7 @@ bool AsyncFileReader::queue(int32_t channel, int32_t tag, const char* path, uint
             slots_[i].offset = offset;
             slots_[i].length = length;
             slots_[i].work = work;
+            slots_[i].order = nextOrder_++;
             snprintf(slots_[i].path, kPathMax, "%s", path);
             queued = true;
             break;
@@ -258,16 +270,29 @@ void AsyncFileReader::run() {
             LightLock_Unlock(&lock_);
             return;
         }
+        // The best-ranked channel's oldest request (WHICH READ GOES NEXT). The
+        // order is compared by difference, so a wrapped counter still orders.
         for (int32_t i = 0; i < kSlots; i++) {
-            if (slots_[i].state == Requested) {
-                slots_[i].state = Reading;
-                memcpy(path, slots_[i].path, kPathMax);
-                offset = slots_[i].offset;
-                length = slots_[i].length;
-                work = slots_[i].work;
-                slot = i;
-                break;
+            if (slots_[i].state != Requested) {
+                continue;
             }
+            if (slot < 0) {
+                slot = i;
+                continue;
+            }
+            const int32_t rank = channelRank(slots_[i].channel);
+            const int32_t bestRank = channelRank(slots_[slot].channel);
+            if (rank < bestRank ||
+                (rank == bestRank && (int32_t)(slots_[i].order - slots_[slot].order) < 0)) {
+                slot = i;
+            }
+        }
+        if (slot >= 0) {
+            slots_[slot].state = Reading;
+            memcpy(path, slots_[slot].path, kPathMax);
+            offset = slots_[slot].offset;
+            length = slots_[slot].length;
+            work = slots_[slot].work;
         }
         LightLock_Unlock(&lock_);
         if (slot < 0) {

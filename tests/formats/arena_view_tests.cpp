@@ -302,3 +302,194 @@ MDK_TEST(ArenaViewsReadyRefreshBacksOffAcrossSyncs) {
     MDK_CHECK(!views.find(arena->name())->pendingRefresh());
     views.clear();
 }
+
+// ---------------------------------------------------------------------------
+// THE PUMP AND A SCRIPT-HIDDEN GROUP (LevelView::pumpSurfaces): the walk skips a
+// hidden batch's texture -- it would be a palette expansion for a surface nobody
+// may see -- but one the orig pack holds is a pending id with no make, so it is
+// asked for (SurfaceCache::requestPacked) and its file read before a script
+// shows the group (measured on the Old 3DS: level 7, four such reads in the
+// frame a group was shown, 154 ms).
+// ---------------------------------------------------------------------------
+
+extern MdkTextureId mdk_test_compressedFileId;
+extern int mdk_test_compressedFileCalls;
+extern int mdk_test_prepareCalls;
+
+namespace {
+
+// The lookup answers for ONE texture only (the hidden one): a compressedOriginal
+// when g_packAnswer, a miss otherwise. Every other surface is a miss.
+const mdk::formats::Texture* g_packTarget = nullptr;
+bool g_packAnswer = true;
+int g_packLookups = 0;
+
+bool targetLookup(void*, const mdk::Surface& surface, const mdk::formats::Palette*,
+                  mdk::ColourReplacement* out) {
+    if (surface.texture == nullptr || surface.texture != g_packTarget) {
+        return false;
+    }
+    g_packLookups++;
+    if (!g_packAnswer) {
+        return false;
+    }
+    out->compressedPath = "romfs:/orig/textures/HIDDEN.t3x";
+    out->compressedOriginal = true;
+    return true;
+}
+
+// A small Lit texture that ONLY batches of one non-zero group draw, so hiding
+// that group hides every use of it (a texture also drawn by a shown batch would
+// be made by the walk anyway, and the test would read nothing). Small: the
+// large-surface scan prepares hidden large textures on purpose.
+bool findHiddenOnlyTexture(const mdk::ArenaScene& scene, int32_t* group,
+                           const mdk::ArenaBatch** batchOut) {
+    for (size_t i = 0; i < scene.batches.size(); i++) {
+        const mdk::ArenaBatch& candidate = scene.batches[i];
+        const mdk::formats::Texture* texture = candidate.surface.texture;
+        if (texture == nullptr || candidate.group == 0 ||
+            candidate.surface.shading != mdk::Shading::Lit ||
+            (int64_t)texture->width() * texture->height() * texture->frameCount() >= 32768) {
+            continue;
+        }
+        bool only = true;
+        for (size_t j = 0; j < scene.batches.size() && only; j++) {
+            if (scene.batches[j].surface.texture == texture &&
+                scene.batches[j].group != candidate.group) {
+                only = false;
+            }
+        }
+        if (only) {
+            *group = candidate.group;
+            *batchOut = &candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Pumps `view` with a fresh cache and the target lookup until its walk is done;
+// returns whether a hidden-only texture was found in `arena` to run it on, and
+// (through prepared) whether the hidden pair ended up with a texture id.
+bool pumpWithHiddenTarget(mdk::LevelData* level, const mdk::formats::Arena* arena,
+                          bool packAnswer, bool* prepared) {
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    mdk::LevelView view;
+    view.setShading(mdk::Shading::Lit);
+    if (!view.load(renderer, level, arena, &surfaces)) {
+        return false;
+    }
+    int32_t group = 0;
+    const mdk::ArenaBatch* batch = nullptr;
+    if (!findHiddenOnlyTexture(view.scene(), &group, &batch)) {
+        view.unload();
+        return false;
+    }
+    mdk::formats::Arena* mutableArena = level->arenaNamedMutable(arena->name());
+    if (mutableArena != arena) {
+        view.unload();
+        return false;
+    }
+    const uint32_t oldState = mutableArena->groupState(group);
+    mutableArena->setGroupState(group, oldState | mdk::formats::Arena::kGroupHidden);
+    g_packTarget = batch->surface.texture;
+    g_packAnswer = packAnswer;
+    g_packLookups = 0;
+    mdk_test_compressedFileId = 42;
+    mdk_test_compressedFileCalls = 0;
+    surfaces.setColourReplacementLookup(targetLookup, nullptr);
+    for (int i = 0; i < 100000 && view.pumpSurfaces(64, true) > 0; i++) {
+    }
+    mdk_test_prepareCalls = 0;
+    surfaces.prepareCached(batch->surface, &level->paletteOf(arena));
+    *prepared = mdk_test_prepareCalls == 1;
+    mutableArena->setGroupState(group, oldState);
+    mdk_test_compressedFileId = -1;
+    view.unload();
+    return true;
+}
+
+} // namespace
+
+MDK_TEST(LevelViewPumpAsksForAHiddenBatchsPackedOriginal) {
+    mdk::LevelData level;
+    MDK_CHECK(loadLevel3(&level));
+    bool exercised = false;
+    for (size_t i = 0; i < level.arenas().size() && !exercised; i++) {
+        bool prepared = false;
+        if (!pumpWithHiddenTarget(&level, level.arenas()[i], true, &prepared)) {
+            continue;
+        }
+        exercised = true;
+        MDK_CHECK_EQ(g_packLookups, 1);                // asked once for the pair
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1); // ... and its pending id made
+        MDK_CHECK(prepared);                           // ... and cached for the draw
+    }
+    MDK_CHECK(exercised);
+}
+
+MDK_TEST(LevelViewPumpMakesNothingForAHiddenNonPackSurface) {
+    mdk::LevelData level;
+    MDK_CHECK(loadLevel3(&level));
+    bool exercised = false;
+    for (size_t i = 0; i < level.arenas().size() && !exercised; i++) {
+        bool prepared = true;
+        if (!pumpWithHiddenTarget(&level, level.arenas()[i], false, &prepared)) {
+            continue;
+        }
+        exercised = true;
+        MDK_CHECK_EQ(g_packLookups, 1);                // asked (a miss), once
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0); // nothing from a file
+        MDK_CHECK(!prepared);                          // and no index texture made
+    }
+    MDK_CHECK(exercised);
+}
+
+// THE RE-ASK IS THE PAIR'S AND THE DRAWN VIEWS' ONLY (ArenaViews::sync sets it,
+// LevelView::pumpSurfaces honours it): a hint-only resident re-asking its made
+// textures would fill the linear pool with surfaces nobody is looking at (on
+// the 3DS an evicted packed original re-asked is a read). The same view, pumped
+// the same number of times, asks for more once it is the current arena; as a
+// hint only its large-surface scan prepares (that scan is not the re-ask).
+MDK_TEST(ArenaViewsReaskOnlyThePairAndTheDrawn) {
+    mdk::LevelData level;
+    MDK_CHECK(loadLevel3(&level));
+    if (level.arenas().empty()) {
+        return;
+    }
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    const mdk::formats::Arena* arena = firstDrawableArena(&level, &surfaces, renderer);
+    MDK_CHECK(arena != nullptr);
+    if (arena == nullptr) {
+        return;
+    }
+    mdk::ArenaViews views;
+    views.start(renderer, &level, &surfaces, mdk::Shading::Original);
+    const std::vector<std::string> none;
+    const std::vector<std::string> hints(1, arena->name());
+    for (int i = 0; i < 400 && !(views.find(arena->name()) && views.find(arena->name())->ready());
+         i++) {
+        views.sync("", "", none, hints);
+    }
+    MDK_CHECK(views.find(arena->name()) != nullptr && views.find(arena->name())->ready());
+    for (int i = 0; i < 2000; i++) {
+        views.sync("", "", none, hints);
+        views.pumpSurfaces(64);   // the walk finishes; the hint does not re-ask
+    }
+    mdk_test_prepareCalls = 0;
+    for (int i = 0; i < 100; i++) {
+        views.sync("", "", none, hints);
+        views.pumpSurfaces(64);
+    }
+    const int asHint = mdk_test_prepareCalls;
+    mdk_test_prepareCalls = 0;
+    for (int i = 0; i < 100; i++) {
+        views.sync(arena->name(), "", none, hints);
+        views.pumpSurfaces(64);
+    }
+    const int asCurrent = mdk_test_prepareCalls;
+    MDK_CHECK(asCurrent > asHint);
+    views.clear();
+}

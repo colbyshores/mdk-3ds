@@ -41,6 +41,17 @@ extern int mdk_test_replaceFirstByte;
 extern int mdk_test_compressedCalls;
 extern int32_t mdk_test_compressedTexture;
 extern std::string mdk_test_compressedPath;
+// The packed original's side (render_seam_stubs.cpp).
+extern MdkTextureId mdk_test_compressedFileId;
+extern int mdk_test_compressedFileCalls;
+extern MdkTextureId mdk_test_needsPixels;
+extern int mdk_test_updateCalls;
+extern MdkTextureId mdk_test_updateTexture;
+extern int32_t mdk_test_updateWidth;
+extern int32_t mdk_test_updateHeight;
+extern int mdk_test_prepareCalls;
+extern int mdk_test_indexTextures;
+extern int mdk_test_texturesReleased;
 
 namespace {
 
@@ -339,6 +350,193 @@ MDK_TEST(surfaceCacheHandsACompressedReplacementToItsSeam) {
     MDK_CHECK_EQ(cache.replacementFound(), 1);
     cache.surfaceId(lit, &palette);
     MDK_CHECK_EQ(mdk_test_compressedCalls, 1);   // once per pair
+}
+
+namespace {
+
+// THE ORIG PACK'S HIT (main_3ds.cpp's lookup): the original look, asked for from
+// its file instead of expanded.
+const char* const kOrigPath = "romfs:/orig/textures/LEVEL3/WALL.t3x";
+const MdkTextureId kPendingId = 42;
+
+bool origLookup(void*, const mdk::Surface& surface, const mdk::formats::Palette*,
+                mdk::ColourReplacement* out) {
+    if (surface.name != "WALL") {
+        return false;
+    }
+    out->compressedPath = kOrigPath;
+    out->compressedOriginal = true;
+    return true;
+}
+
+// WALL with two stacked frames, so the fallback's height (h x frames) is tested.
+mdk::formats::Texture origTexture() {
+    mdk::formats::Texture texture = keyTexture();
+    texture.setFrameCount(2);
+    const uint8_t indices[] = {0, 1, 2, 1, 1, 2, 0, 1};
+    texture.setIndices(indices, 8);
+    return texture;
+}
+
+mdk::Surface origSurface(const mdk::formats::Texture* texture) {
+    mdk::Surface lit;
+    lit.texture = texture;
+    lit.name = "WALL";
+    lit.shading = mdk::Shading::Lit;
+    lit.frameCount = 2;
+    return lit;
+}
+
+// The stubs' packed-original state, as a fresh test wants it: the backend hands
+// out the pending id, nothing wants pixels, nothing counted yet.
+void resetPackedStubs() {
+    mdk_test_compressedFileId = kPendingId;
+    mdk_test_compressedFileCalls = 0;
+    mdk_test_needsPixels = -1;
+    mdk_test_updateCalls = 0;
+    mdk_test_updateTexture = -1;
+    mdk_test_updateWidth = 0;
+    mdk_test_updateHeight = 0;
+    mdk_test_prepareCalls = 0;
+    mdk_test_indexTextures = 0;
+    mdk_test_compressedCalls = 0;
+}
+
+} // namespace
+
+// The backend asks for the file and hands back a PENDING id (no I/O at the call):
+// the cache keeps that id, makes no index texture, links no HD copy, and asks
+// the backend once per pair.
+MDK_TEST(surfaceCacheKeepsAPackedOriginalsPendingId) {
+    resetPackedStubs();
+    mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+    cache.setColourReplacementLookup(origLookup, nullptr);
+    mdk::formats::Texture texture = origTexture();
+    mdk::formats::Palette palette = keyPalette();
+    const mdk::Surface lit = origSurface(&texture);
+    MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
+    MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);
+    MDK_CHECK_EQ(mdk_test_indexTextures, 0);    // the palette is never expanded
+    MDK_CHECK_EQ(mdk_test_compressedCalls, 0);  // not an HD copy of anything
+    MDK_CHECK_EQ(cache.replacementFound(), 1);
+    MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
+    MDK_CHECK_EQ(cache.prepare(lit, &palette), kPendingId);
+    MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);   // once per pair
+    MDK_CHECK_EQ(mdk_test_indexTextures, 0);
+    MDK_CHECK_EQ(mdk_test_updateCalls, 0);           // nothing wanted pixels
+    mdk_test_compressedFileId = -1;
+}
+
+// A file the backend could not make (mdk_render_texture_needs_pixels): the next
+// lookup hands the index pixels over once -- w x (h x frames), the size an index
+// texture is made with -- under the SAME id, and asks for it to be prepared.
+MDK_TEST(surfaceCacheGivesAFailedPackedOriginalItsIndexPixels) {
+    resetPackedStubs();
+    mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+    cache.setColourReplacementLookup(origLookup, nullptr);
+    mdk::formats::Texture texture = origTexture();
+    mdk::formats::Palette palette = keyPalette();
+    const mdk::Surface lit = origSurface(&texture);
+    MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
+    mdk_test_prepareCalls = 0;
+    mdk_test_needsPixels = kPendingId;
+    MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
+    MDK_CHECK_EQ(mdk_test_updateCalls, 1);
+    MDK_CHECK_EQ(mdk_test_updateTexture, kPendingId);
+    MDK_CHECK_EQ(mdk_test_updateWidth, 2);
+    MDK_CHECK_EQ(mdk_test_updateHeight, 4);
+    MDK_CHECK_EQ(mdk_test_prepareCalls, 1);
+    MDK_CHECK_EQ(mdk_test_indexTextures, 0);   // the same id, no second texture
+    // The backend took them (it converts the texture, needs_pixels goes false):
+    // nothing more is handed over.
+    mdk_test_needsPixels = -1;
+    MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
+    MDK_CHECK_EQ(mdk_test_updateCalls, 1);
+    MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);
+    mdk_test_compressedFileId = -1;
+}
+
+// The pending id is an ordinary id to the cache's other paths: a bullet hole's
+// refresh reaches it, and an arena's release gives it back (after which a draw
+// asks the backend for the file again).
+MDK_TEST(surfaceCacheRefreshesAndReleasesAPackedOriginal) {
+    resetPackedStubs();
+    mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+    cache.setColourReplacementLookup(origLookup, nullptr);
+    mdk::formats::Texture texture = origTexture();
+    mdk::formats::Palette palette = keyPalette();
+    const mdk::Surface lit = origSurface(&texture);
+    MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
+    MDK_CHECK_EQ(cache.refresh(&texture), 1);
+    MDK_CHECK_EQ(mdk_test_updateTexture, kPendingId);
+    MDK_CHECK_EQ(mdk_test_updateHeight, 4);
+    const int releasedBefore = mdk_test_texturesReleased;
+    MDK_CHECK_EQ(cache.paletteReleases(), 0);
+    MDK_CHECK_EQ(cache.releasePalette(&palette), 1);
+    MDK_CHECK_EQ(mdk_test_texturesReleased, releasedBefore + 1);
+    MDK_CHECK_EQ(cache.paletteReleases(), 1);   // the object warm's sign to start over
+    MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
+    MDK_CHECK_EQ(mdk_test_compressedFileCalls, 2);
+    MDK_CHECK_EQ(mdk_test_indexTextures, 0);
+    mdk_test_compressedFileId = -1;
+}
+
+// THE PUMP'S ASK FOR A HIDDEN SURFACE (SurfaceCache::requestPacked): a pack
+// answer makes the pending id surfaceId would have made (and surfaceId then
+// reuses it); any other answer makes nothing and leaves the pair to surfaceId.
+MDK_TEST(surfaceCacheRequestPackedMakesOnlyAPackedOriginal) {
+    resetPackedStubs();
+    mdk::formats::Texture texture = origTexture();
+    mdk::formats::Palette palette = keyPalette();
+    const mdk::Surface lit = origSurface(&texture);
+    {
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(origLookup, nullptr);
+        MDK_CHECK_EQ(cache.requestPacked(lit, &palette), kPendingId);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 0);
+        MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);   // the same id
+        MDK_CHECK_EQ(cache.requestPacked(lit, &palette), kPendingId);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);
+        mdk_test_prepareCalls = 0;
+        cache.prepareCached(lit, &palette);
+        MDK_CHECK_EQ(mdk_test_prepareCalls, 1);
+    }
+    {
+        // An HD-pack upscale (not a compressedOriginal): nothing made, nothing
+        // marked -- surfaceId still makes the index texture AND attaches it.
+        resetPackedStubs();
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(compressedLookup, nullptr);
+        MDK_CHECK_EQ(cache.requestPacked(lit, &palette), -1);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 0);
+        MDK_CHECK_EQ(mdk_test_compressedCalls, 0);
+        mdk_test_prepareCalls = 0;
+        cache.prepareCached(lit, &palette);
+        MDK_CHECK_EQ(mdk_test_prepareCalls, 0);   // nothing cached to prepare
+        cache.surfaceId(lit, &palette);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 1);
+        MDK_CHECK_EQ(mdk_test_compressedCalls, 1);
+    }
+    {
+        // A miss: nothing made; surfaceId makes the index texture, attaching
+        // nothing.
+        resetPackedStubs();
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(origLookup, nullptr);
+        mdk::formats::Texture other = origTexture();
+        other.setName("OTHER");
+        mdk::Surface miss = origSurface(&other);
+        miss.name = "OTHER";
+        MDK_CHECK_EQ(cache.requestPacked(miss, &palette), -1);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 0);
+        cache.surfaceId(miss, &palette);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 1);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
+    }
+    mdk_test_compressedFileId = -1;
 }
 
 MDK_TEST(modImagesFramesStripAndPerFrame) {

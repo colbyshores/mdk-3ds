@@ -49,14 +49,29 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t, int32_t, cons
     return 0;
 }
 
-void mdk_render_prepare_texture(MdkRenderer, MdkTextureId) {}
+int mdk_test_prepareCalls = 0;
+void mdk_render_prepare_texture(MdkRenderer, MdkTextureId) {
+    mdk_test_prepareCalls++;
+}
 
 void mdk_render_release_texture(MdkRenderer, MdkTextureId) {
     mdk_test_texturesReleased++;
 }
 
-// SurfaceCache::refresh's call (a bullet hole changed a texture's pixels).
-void mdk_render_update_texture(MdkRenderer, MdkTextureId, int32_t, int32_t, const uint8_t*) {}
+// SurfaceCache::refresh's call (a bullet hole changed a texture's pixels), and
+// the packed original's fallback (a file the backend could not make): counted,
+// with the last call's id and size, for mods_tests.cpp's packed-original cases.
+int mdk_test_updateCalls = 0;
+MdkTextureId mdk_test_updateTexture = -1;
+int32_t mdk_test_updateWidth = 0;
+int32_t mdk_test_updateHeight = 0;
+void mdk_render_update_texture(MdkRenderer, MdkTextureId texture, int32_t width, int32_t height,
+                               const uint8_t*) {
+    mdk_test_updateCalls++;
+    mdk_test_updateTexture = texture;
+    mdk_test_updateWidth = width;
+    mdk_test_updateHeight = height;
+}
 
 void mdk_render_release_palette(MdkRenderer, MdkPaletteId) {
     mdk_test_palettesReleased++;
@@ -104,9 +119,21 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t, int32_t,
     return -1;
 }
 
+// The packed original's side (mods_tests.cpp): what create_compressed_file
+// answers (-1 by default: no compressed textures, as before, so the other
+// tests are unchanged), how often it was called, and which id wants its index
+// pixels (mdk_render_texture_needs_pixels; -1: none).
+MdkTextureId mdk_test_compressedFileId = -1;
+int mdk_test_compressedFileCalls = 0;
+MdkTextureId mdk_test_needsPixels = -1;
 MdkTextureId mdk_render_create_compressed_file(MdkRenderer, int32_t, int32_t, const char*,
                                                const uint8_t*) {
-    return -1;
+    mdk_test_compressedFileCalls++;
+    return mdk_test_compressedFileId;
+}
+
+bool mdk_render_texture_needs_pixels(MdkRenderer, MdkTextureId texture) {
+    return texture >= 0 && texture == mdk_test_needsPixels;
 }
 
 int32_t mdk_render_texture_bytes(MdkRenderer, MdkTextureId) {

@@ -23,6 +23,10 @@ static int64_t surfaceTexels(const ArenaBatch& batch) {
 
 static const int64_t kLargeSurfaceTexels = 32768;
 
+// The re-ask pass's batches per call (see pumpSurfaces): a cache lookup and a
+// backend call each, no make, so it does not spend the caller's budget.
+static const int32_t kReaskPerCall = 8;
+
 // Start every large surface of a freshly built scene (see pumpSurfaces for
 // the size rule and the measured 64x704 case). At load this is the whole
 // point: the backend's sliced expansion then has every frame until the
@@ -71,6 +75,7 @@ bool LevelView::loadBegin(MdkRenderer renderer, LevelData* level, const formats:
     triangleFirsts_.clear();
     pumpAt_ = 0;
     pumpLargeAt_ = 0;
+    pumpReaskAt_ = 0;
 
     palette_ = &level->paletteOf(arena);
     const std::vector<const formats::TextureArchive*> archives = level->archivesOf(arena);
@@ -166,9 +171,10 @@ void LevelView::unload() {
     triangleFirsts_.clear();
     pumpAt_ = 0;
     pumpLargeAt_ = 0;
+    pumpReaskAt_ = 0;
 }
 
-int32_t LevelView::pumpSurfaces(int32_t budget) {
+int32_t LevelView::pumpSurfaces(int32_t budget, bool reask) {
     if (!renderer_ || surfaces_ == nullptr || !arena_ || !ready()) {
         return 0;
     }
@@ -216,8 +222,14 @@ int32_t LevelView::pumpSurfaces(int32_t budget) {
     for (int32_t i = 0; i < budget && pumpAt_ < scene_.batches.size(); i++) {
         const ArenaBatch& batch = scene_.batches[pumpAt_];
         // The same skip draw() makes: a group the scripts hid is not drawn, so
-        // its texture is left to the frame that shows it again.
-        if (arenaBatchVisible(arena_, batch)) {
+        // its texture is left to the frame that shows it again -- UNLESS the
+        // orig pack holds it (requestPacked): that is a pending id, no make,
+        // and its file is then read off the frame instead of by the draw of
+        // the frame a script shows the group (measured on the Old 3DS: level
+        // 7's DANT_1, 154 ms at frame 549, four such reads in one frame).
+        if (!arenaBatchVisible(arena_, batch)) {
+            surfaces_->requestPacked(batch.surface, palette_);
+        } else {
             // A negative id (the backend refused) is left to draw() to ask
             // again: a refused texture is CACHED as refused
             // (surface_cache.cpp), so pinning the cursor here would block every
@@ -230,6 +242,31 @@ int32_t LevelView::pumpSurfaces(int32_t budget) {
         }
         pumpAt_++;
         pumped++;
+    }
+    // THE RE-ASK, once the walk is done: a packed original keeps no pixels in
+    // the backend, so one evicted while its arena sits resident would be read
+    // again by the draw that next wants it (inside that frame). This pass asks
+    // the made textures of the shown small batches to be ready again
+    // (prepareCached: a backend no-op for a resident texture and for a small
+    // index one; an evicted packed original is queued for the reader). Large
+    // batches are the scan's above; hidden ones are not re-asked -- a texture
+    // nobody draws would only be read, evicted and read again -- and neither
+    // is a view the caller does not name (`reask`: only the pair and the drawn
+    // views; a hint-only resident's textures would fill the linear pool with
+    // surfaces nobody is looking at). It wraps, a few batches a call, and does
+    // not spend the budget (it makes nothing). The backend reads such a
+    // re-asked texture only into free memory (04_textures.inc, a hint never
+    // evicts).
+    if (reask && pumpAt_ >= scene_.batches.size() && !scene_.batches.empty()) {
+        for (int32_t i = 0; i < kReaskPerCall; i++) {
+            if (pumpReaskAt_ >= scene_.batches.size()) {
+                pumpReaskAt_ = 0;
+            }
+            const ArenaBatch& batch = scene_.batches[pumpReaskAt_++];
+            if (surfaceTexels(batch) < kLargeSurfaceTexels && arenaBatchVisible(arena_, batch)) {
+                surfaces_->prepareCached(batch.surface, palette_);
+            }
+        }
     }
     return pumped;
 }
@@ -413,6 +450,7 @@ bool LevelView::refresh() {
     scene_.batches.swap(rebuilt.batches);
     pumpLargeAt_ = 0;   // the rebuilt scene's large surfaces get their scan
     pumpAt_ = 0;        // ... and its sequential walk starts over (cache hits)
+    pumpReaskAt_ = 0;
     // The rebuilt scene is whole and its mesh static again: an end of a level in
     // progress tears it again on the next tear().
     tornShown_ = 0;

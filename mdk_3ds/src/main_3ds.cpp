@@ -252,9 +252,12 @@ const char kKurtPackPath[] = "romfs:/kurt/kurt.pak";
 // and .cia and the hardware loop needs no separate SD copy. Its point is the
 // level-load / arena-stream-in hitches: an arena index texture expanded on the
 // ARM11 (palette -> RGBA8 -> 16-bit pack -> mip chain) costs 600-1600 ms per
-// arena. A surface the pack holds is MADE from its .t3x at first use
-// (surface_cache.h's pre-creation consult -> mdk_render_create_compressed_file:
-// a RomFS read, an LZ decompress and a copy) and the expansion never runs.
+// arena. A surface the pack holds is ASKED FOR from its .t3x at first use
+// (surface_cache.h's pre-creation consult -> mdk_render_create_compressed_file):
+// the renderer's reader thread reads the file off the frame, a frame boundary
+// imports it (a copy: the containers are uncompressed), and only a surface in
+// view that is still unread is read on the main thread. The expansion never
+// runs.
 // With no pack staged (the tool did not run) the manifest open fails silently
 // and the expansion is today's, exactly.
 const char kOrigPackRoot[] = "romfs:/orig";
@@ -525,6 +528,9 @@ struct HdPackSource {
     mdk::ModImages* orig = nullptr;
     OrigByName* byname = nullptr;
     std::string path;
+    // Set by the object warm around its ask (requestObjectSurface): the ask is
+    // a HINT, and a hint never brings a texture's pixels back (below).
+    bool hint = false;
 };
 
 bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::Palette* palette,
@@ -553,6 +559,19 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
             }
         }
     }
+    // A HINT ANSWERS FROM THE NAME INDEX ONLY. The content hash below reads
+    // and hashes the texture's whole index array (and, for an arena texture
+    // whose pixels are away, first brings back its arena's whole texture block,
+    // LevelData::loadPixelsFromMto). Measured on the Old 3DS: the object warm's
+    // step for EXPLODE -- its 128x3328 strip is over the PICA's 1024, so the
+    // pack never holds it and the name index misses -- spent 104.0 ms of frame 1
+    // in that hash. A hint exists to take work OFF the frame, so it never pays
+    // for a hash: `true` with no path is SurfaceCache::requestPacked's "not a
+    // pack answer" -- nothing made, nothing marked -- and the texture's first
+    // draw asks the full lookup, exactly as without the warm.
+    if (source->hint) {
+        return true;
+    }
     // THE HD PACK FIRST, THE ORIG PACK SECOND: where both hold the key the HD
     // copy (the upscale) wins, and the orig pack fills the rest -- an arena the
     // HD pack does not cover still skips the ARM11 expansion. Both resolve by
@@ -566,11 +585,12 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     if (source->orig && source->orig->resolve(mdk::ModImages::Kind::Textures, name,
                                               *surface.texture, *palette, &source->path)) {
         out->compressedPath = source->path.c_str();
-        // THE ORIG PACK'S HIT IS MADE UP FRONT, not attached after an expansion:
-        // surfaceId's pre-creation consult (surface_cache.h) turns this into
-        // mdk_render_create_compressed_file, so the ARM11 expands nothing for
-        // this texture -- the arena's 600-1600 ms of palette expansion, filter
-        // and mip chain becomes a RomFS read and a decompress.
+        // THE ORIG PACK'S HIT IS ASKED FOR UP FRONT, not attached after an
+        // expansion: surfaceId's pre-creation consult (surface_cache.h) turns
+        // this into mdk_render_create_compressed_file, so the ARM11 expands
+        // nothing for this texture -- the arena's 600-1600 ms of palette
+        // expansion, filter and mip chain becomes a RomFS read on the reader
+        // thread and an import at a frame boundary.
         out->compressedOriginal = true;
         return true;
     }
@@ -611,6 +631,23 @@ static mdk::Lighting cachedLighting(
 static void startEffectSurface(void* user, const mdk::Surface& surface,
                                const mdk::formats::Palette* palette) {
     static_cast<mdk::SurfaceCache*>(user)->prepare(surface, palette);
+}
+
+// The object warm's ask (game/object_view.h warmObjectStep): a hint only, and
+// only for a surface the orig pack holds (SurfaceCache::requestPacked) -- any
+// other object texture is still made by its first draw, as before. The lookup
+// is told it is a hint (HdPackSource::hint: no pixel fetch for it).
+struct ObjectWarmAsk {
+    mdk::SurfaceCache* surfaces = nullptr;
+    HdPackSource* source = nullptr;
+};
+
+static void requestObjectSurface(void* user, const mdk::Surface& surface,
+                                 const mdk::formats::Palette* palette) {
+    ObjectWarmAsk* ask = static_cast<ObjectWarmAsk*>(user);
+    ask->source->hint = true;
+    ask->surfaces->requestPacked(surface, palette);
+    ask->source->hint = false;
 }
 
 int main(int argc, char** argv) {
@@ -1782,6 +1819,14 @@ int main(int argc, char** argv) {
     // The second arenas whose first effects-warm step was already
     // deferred once (per name; see the frame's warm).
     std::vector<std::string> warmDeferred;
+    // The object warm's place per arena (warmObjectStep's cursor), and the
+    // surface cache's palette-release count when the cursors were last checked
+    // against it (see the frame's object warm).
+    std::map<std::string, size_t> objectWarmAt;
+    int32_t objectWarmReleases = 0;
+    ObjectWarmAsk objectWarmAsk;
+    objectWarmAsk.surfaces = &surfaces;
+    objectWarmAsk.source = &hdSource;
     // The door bubble's hints for this frame (rebuilt every frame).
     std::vector<std::string> bubbleHints;
     // Last frame's camera position, for the bubble's speed scaling.
@@ -1907,6 +1952,7 @@ int main(int argc, char** argv) {
         musicPrefetchedFor.clear();
         musicBubbleFor.clear();
         warmDeferred.clear();
+        objectWarmAt.clear();
         // A fresh camera with the fresh level (its clip view's context is the runtime
         // going now). It is reset HERE, before the runtime below binds its clip view, its
         // shake and its seed to it: reset after them, as it was until package #15, it
@@ -3158,6 +3204,64 @@ int main(int argc, char** argv) {
                     effectsView.warmStep(streamSecond, startEffectSurface, &surfaces);
                 }
             }
+            // THE OBJECTS' TEXTURES for the pair (warmObjectStep): one model a
+            // frame per arena -- its own models, then every type the scripts
+            // can spawn -- each Lit surface the orig pack holds asked for as a
+            // pending id, read off the frame as a hint. Measured before it, on
+            // the Old 3DS level-7 walk: every in-play draw-time pack read was an
+            // object texture (doors, machinery, aliens) made the frame the
+            // object first showed. A finished arena costs one map lookup.
+            //
+            // A RELEASED PALETTE TAKES ITS ASKS WITH IT (SurfaceCache::
+            // releasePalette, an arena leaving the residency): an arena whose
+            // warm had finished would come back to the pair asking for nothing.
+            // So on any release, every arena NOT in the pair starts its warm
+            // over when it is next in it (the pair's own palettes are kept, so
+            // their cursors stand). Releases are rare; the check is one compare.
+            if (surfaces.paletteReleases() != objectWarmReleases) {
+                objectWarmReleases = surfaces.paletteReleases();
+                for (std::map<std::string, size_t>::iterator it = objectWarmAt.begin();
+                     it != objectWarmAt.end();) {
+                    if (it->first != streamCurrent && it->first != streamSecond) {
+                        objectWarmAt.erase(it++);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+            for (int k = 0; k < 2; k++) {
+                const std::string& name = k == 0 ? streamCurrent : streamSecond;
+                if (name.empty() || (k == 1 && name == streamCurrent)) {
+                    continue;
+                }
+                const mdk::formats::Arena* owner = level.arenaNamed(name);
+                if (owner != nullptr) {
+                    size_t& cursor = objectWarmAt[name];
+#ifdef MDK_HW_PROFILE
+                    // A slow step named (the model, and how long): the evidence
+                    // for the next hardware run that no step is large. Only
+                    // over 4 ms, so a normal step writes nothing to the SD card.
+                    const size_t stepAt = cursor;
+                    const double step0 = nowSeconds();
+#endif
+                    mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr, objectLook(name),
+                                        objectResolver, requestObjectSurface, &objectWarmAsk,
+                                        &cursor);
+#ifdef MDK_HW_PROFILE
+                    const double stepMs = (nowSeconds() - step0) * 1000.0;
+                    if (stepMs > 4.0 && stepAt != cursor) {
+                        const size_t own = (size_t)owner->modelCount();
+                        const std::string model =
+                            stepAt < own ? owner->modelName((int32_t)stepAt)
+                                         : (cmiReady && stepAt - own < cmi.modelOffsets().size()
+                                                ? cmi.modelOffsets()[stepAt - own].first
+                                                : std::string("?"));
+                        mdk::log3dsPrintf("objwarm %s model %u (%s) %.1f ms", name.c_str(),
+                                          (unsigned)stepAt, model.c_str(), stepMs);
+                    }
+#endif
+                }
+            }
 #ifdef MDK_HW_PROFILE
             hwWarmMs = (float)((nowSeconds() - warm0) * 1000.0);
 #endif
@@ -3814,7 +3918,9 @@ int main(int argc, char** argv) {
             sample.texturesRemade = made.texturesRemade;
             sample.mtoDemandReads = surfaces.sourceStats().mtoDemandReads;
             sample.mtoDemandBytes = surfaces.sourceStats().mtoDemandBytes;
-            sample.packedOriginalImports = surfaces.sourceStats().packedOriginalImports;
+            sample.packImported = made.packImported;
+            sample.packSync = made.packSync;
+            sample.packLanded = made.packLanded;
             sample.hdReads = made.hdReads;
             sample.musicDemandReads = bank.stats().demandReads;
             sample.musicPrefetchStalls = bank.stats().prefetchStalls;

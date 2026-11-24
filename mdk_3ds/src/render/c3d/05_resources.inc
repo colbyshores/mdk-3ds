@@ -115,6 +115,16 @@ void mdk_render_prepare_texture(MdkRenderer r, MdkTextureId t) {
         return;
     }
     C3dTexture& texture = renderer->textures[(size_t)t];
+    // A PACKED ORIGINAL (packPath) with no GPU copy -- not made yet, or evicted --
+    // has its file asked for: the boundary pump reads and imports it before a
+    // draw needs it. This is how an evicted one comes back (the pump's surface
+    // scan prepares the resident views' textures).
+    if (!texture.packPath.empty()) {
+        if (!texture.valid && !texture.releasePending) {
+            queuePackRead(renderer, t);
+        }
+        return;
+    }
     // An evicted large indexed texture is re-expanded in slices from here
     // (the frame pump advances it); anything else is either resident,
     // already in flight, or cheap enough to make at its draw as before.
@@ -235,9 +245,11 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t w, int3
     return id;
 }
 
-// Read a whole file into a vector (cold: the arena pack's pre-creation read,
-// render.h's mdk_render_create_compressed_file). False when it cannot be
-// opened or read; an empty file is not an error here, the import rejects it.
+// Read a whole file into a vector, on the calling thread: ONLY the packed
+// original's last resort (04_textures.inc finishPackNow -- a draw in the eye's
+// frustum whose file the reader thread has not delivered). Every other read of
+// the orig pack is the reader thread's. False when it cannot be opened or read;
+// an empty file is not an error here, the import rejects it.
 static bool readWholeFile(const char* path, std::vector<uint8_t>* out) {
     FILE* file = fopen(path, "rb");
     if (!file) {
@@ -266,39 +278,54 @@ static bool readWholeFile(const char* path, std::vector<uint8_t>* out) {
     return true;
 }
 
+// A PACKED ORIGINAL from its FILE (render.h): created with NO I/O and no
+// citro3d call -- safe mid-frame, where LevelView::draw asks for it -- as a
+// pending id (C3dTexture::packPath, PackQueued): the boundary pump has the
+// reader thread read the file and imports it (04_textures.inc
+// pumpPackOriginals), and a draw that cannot wait reads it itself, after the
+// eye's frustum cull (finishPackNow). The size is the image's; the import
+// sets the texture's. `paletteRgba` is the stamp the index fallback expands
+// through (mdk_render_update_texture's rule for a stamped compressed texture):
+// the bytes are the palette the texture stands in for, so the fallback is
+// bit-exact. -1 only when the renderer is not ready or the path is empty or
+// longer than the reader's slots hold (the same rule as recordHdPath's).
 MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t w, int32_t h,
                                                const char* path, const uint8_t* paletteRgba) {
     RendererC3D* renderer = asC3d(r);
-    if (!renderer || !renderer->ready || !path || !path[0]) {
+    if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !path ||
+        !path[0] || strlen(path) >= mdk::AsyncFileReader::kPathMax) {
         return -1;
     }
-    std::vector<uint8_t> bytes;
-#ifdef MDK_HW_PROFILE
-    // The read's share of a packed-original make (texmake times only the
-    // import that follows): profile builds only, like texmake.
-    const uint64_t readStart = svcGetSystemTick();
-#endif
-    if (!readWholeFile(path, &bytes)) {
-        return -1;
-    }
-#ifdef MDK_HW_PROFILE
-    mdk::log3dsPrintf("packread %u bytes %.1f ms %s", (unsigned)bytes.size(),
-                      (double)(svcGetSystemTick() - readStart) * 1000.0 / (double)SYSCLOCK_ARM11,
-                      path);
-#endif
-    const MdkTextureId id = mdk_render_create_compressed_texture(r, w, h, bytes.data(),
-                                                                 (int32_t)bytes.size());
-    if (id < 0) {
-        return -1;
-    }
-    // The stamp the pixel-update fallback needs (05_resources.inc's rule in
-    // mdk_render_update_texture): a stamped compressed texture with a palette
-    // converts to the index path when its pixels change. The bytes are the
-    // palette the texture was made to stand in for, so the restamp is bit-exact.
+    C3dTexture texture;
+    texture.realWidth = w;
+    texture.realHeight = h;
+    texture.compressed = true;
+    texture.indexed = false;
+    // As Kurt's compressed frames (mdk_render_create_compressed_texture): the
+    // sun's shadow pass never takes a pack-made surface.
+    texture.hasHoles = true;
+    texture.packPath = path;
     if (paletteRgba) {
-        renderer->textures[(size_t)id].palette.assign(paletteRgba, paletteRgba + 256 * 4);
+        texture.palette.assign(paletteRgba, paletteRgba + 256 * 4);
     }
+    const int32_t id = acquireTextureSlot(renderer);
+    renderer->textures[(size_t)id] = std::move(texture);
+    queuePackRead(renderer, id);
+    logCreation(renderer, 0, id);
     return id;
+}
+
+// Whether a packed original could not be made from its file (render.h): the
+// core then hands its index pixels over (mdk_render_update_texture), which
+// turns it into an ordinary index texture.
+bool mdk_render_texture_needs_pixels(MdkRenderer r, MdkTextureId t) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || t < 0 || (size_t)t >= renderer->textures.size()) {
+        return false;
+    }
+    const C3dTexture& texture = renderer->textures[(size_t)t];
+    return !texture.releasePending && !texture.packPath.empty() &&
+           texture.packState == C3dTexture::PackFailed;
 }
 
 int32_t mdk_render_texture_bytes(MdkRenderer r, MdkTextureId t) {
@@ -347,7 +374,8 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
         return;
     }
     C3dTexture& texture = renderer->textures[(size_t)t];
-    if (texture.source.empty() || texture.releasePending) {
+    // A packed original has no source -- its file is -- and is updated too.
+    if ((texture.source.empty() && texture.packPath.empty()) || texture.releasePending) {
         return;
     }
     if (w != texture.realWidth || h != texture.realHeight) {
@@ -366,9 +394,20 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     // mdk_render_create_compressed_texture never carries one): the stamp is
     // dropped, as it was when this guard refused every compressed texture --
     // a stale copy beats an invisible surface.
+    //
+    // A PACKED ORIGINAL converts the same way -- a bullet hole, or the core's
+    // answer to mdk_render_texture_needs_pixels (a file that could not be made)
+    // -- and stops being one: its read is dropped (a late one must not land on
+    // the index texture) and its path cleared BEFORE the index texture's first
+    // prepare, which may start a chunked expansion.
     if (texture.compressed) {
         if (texture.palette.size() < 256 * 4) {
             return;
+        }
+        if (!texture.packPath.empty()) {
+            renderer->hdReader.discard(mdk::AsyncFileReader::kChannelOrig, t);
+            std::string().swap(texture.packPath);
+            texture.packState = C3dTexture::PackIdle;
         }
         texture.compressed = false;
         texture.indexed = true;
@@ -454,6 +493,15 @@ void mdk_render_update_paletted(MdkRenderer r, MdkTextureId t, MdkPaletteId p,
     if (!texture.streamed) {
         texture.streamed = true;
         texture.restamped = false;
+        // A STREAMED texture is made by makeStreamed (RGB565, no mips), never
+        // through the chunked expansion -- but create_index_texture has already
+        // started one for a picture this large (movie_view.cpp's makeImage
+        // creates the 600x360 video frame and turns it streamed in the next
+        // call). Left pending, the first draw finished it synchronously and
+        // threw it away: measured on the Old 3DS, the menu's 554.8 ms frame 1
+        // and 392.5 ms reopen (texchunk 600x360 start -> ready one frame later).
+        // Dropped here, with its RGBA8 chain buffer.
+        dropExpansion(texture);
         // The HD copy is of the first picture only (mdk_render_update_texture's rule).
         if (texture.hdCopy >= 0 && (size_t)texture.hdCopy < renderer->hdCopies.size()) {
             HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
@@ -634,6 +682,15 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     }
     texture.hdCopy = -1;
     texture.hdCanvas = false;
+    // A PACKED ORIGINAL's read is the reader's, not this texture's: dropped (a
+    // finished one freed now, one in progress when it ends), and the path goes,
+    // which is what frees the slot (acquireTextureSlot). A queue entry for it is
+    // dropped by the pump's next scan.
+    if (!texture.packPath.empty()) {
+        renderer->hdReader.discard(mdk::AsyncFileReader::kChannelOrig, t);
+        std::string().swap(texture.packPath);
+        texture.packState = C3dTexture::PackIdle;
+    }
     if (texture.valid && !inFlight) {
         C3D_TexDelete(&texture.tex);
         texture.valid = false;

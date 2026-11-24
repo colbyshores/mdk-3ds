@@ -61,6 +61,7 @@
 #include "game/player.h"
 #include "util/math_minmax.h"
 #include "layer_tests.h"
+#include "object_warm_tests.h"
 #include "sky_dome_tests.h"
 #include "mve_audio_tests.h"
 #include "pica_matrix_tests.h"
@@ -8680,6 +8681,15 @@ int main(int argc, char** argv) {
     failures += layerFailures;
     if (layerFailures == 0) {
         printf("PASS DepthLayersAndDepthPull\n");
+    }
+
+    // The object warm hands over the object pass's own (texture, palette) keys
+    // (object_warm_tests.h): a packed original asked for under any other key is
+    // never found at the draw.
+    const int warmFailures = mdk::test::runObjectWarmTests(data);
+    failures += warmFailures;
+    if (warmFailures == 0) {
+        printf("PASS ObjectWarmKeys\n");
     }
 
     // The sprite cache's residency policy. The C# has no bound at all, so

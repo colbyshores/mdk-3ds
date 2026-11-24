@@ -105,7 +105,9 @@ struct HarnessArenaFrame {
     int32_t texturesRemade = 0;
     int32_t mtoDemandReads = 0;  // SurfaceCache::SourceStats (cumulative)
     int64_t mtoDemandBytes = 0;
-    int32_t packedOriginalImports = 0;
+    int32_t packImported = 0;    // render_c3d_stats.h (cumulative): orig pack, boundary imports
+    int32_t packSync = 0;        // ... draws that read the file on the main thread
+    int32_t packLanded = 0;      // ... draws that took the reader's finished read
     int32_t hdReads = 0;         // successful file reads, before import
     int32_t musicDemandReads = 0;    // SoundBank::Stats (cumulative)
     int32_t musicPrefetchStalls = 0;

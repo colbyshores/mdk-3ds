@@ -53,10 +53,12 @@ struct ColourReplacement {
     // mdk_render_replace_compressed instead; borrowed for the call only.
     const char* compressedPath = nullptr;
     // The compressedPath is the ORIGINAL look at the original size (the arena
-    // orig pack), not an upscale: surfaceId makes the texture from the file
-    // up front (mdk_render_create_compressed_file) and the backend never
-    // expands the palette. False for an HD-pack upscale, which keeps the
-    // expansion as its fallback and the toggle's per-draw choice.
+    // orig pack), not an upscale: surfaceId asks for the texture from the file
+    // up front (mdk_render_create_compressed_file: read and made by the backend
+    // off the frame) and the palette is never expanded -- unless the backend
+    // cannot make the file, when textureId hands it the index pixels. False
+    // for an HD-pack upscale, which keeps the expansion as its fallback and the
+    // toggle's per-draw choice.
     bool compressedOriginal = false;
 };
 
@@ -65,7 +67,7 @@ struct ColourReplacement {
 // C#'s MaterialResolver.Replace runs as surfaces resolve). It is asked
 // BEFORE the texture is made, so a compressedOriginal hit can be made from
 // its file instead of expanded; the replacement then lands on the id the
-// surface ends up with (the made file, or the made expansion for the other
+// surface ends up with (the file's, or the made expansion for the other
 // replacement kinds).
 typedef bool (*ColourReplacementLookup)(void* user, const Surface& surface,
                                         const formats::Palette* palette,
@@ -88,7 +90,10 @@ public:
 
     // The index texture for `texture` read through `palette` (the C#'s
     // TextureId), made on first use. The animation frames are stacked
-    // vertically, so the height the backend gets already includes them.
+    // vertically, so the height the backend gets already includes them. A
+    // packed original the backend could not make from its file
+    // (mdk_render_texture_needs_pixels) is handed its index pixels here, under
+    // the same id.
     MdkTextureId textureId(const formats::Texture* texture, const formats::Palette* palette);
 
     // A texture's pixels changed (a bullet hole, scripts/bullet_holes.h): every GPU
@@ -115,12 +120,38 @@ public:
     // the frame that first draws them again after an eviction.
     MdkTextureId prepare(const Surface& surface, const formats::Palette* palette);
 
+    // THE PUMP'S ASK FOR A HIDDEN SURFACE (LevelView::pumpSurfaces): a group the
+    // scripts hid is not drawn, so its texture is not made -- but a surface the
+    // orig pack holds costs nothing to ask for (a pending id, no I/O, no
+    // expansion; the backend reads it off the frame). So: the replacement
+    // lookup, and ONLY when its answer is a compressedOriginal, the pending id
+    // made and cached exactly as surfaceId makes it (one helper, createPacked).
+    // Any other answer makes nothing -- a hidden index texture would be a
+    // palette expansion for a surface nobody may ever see -- and leaves the pair
+    // to surfaceId: a miss is marked asked (surfaceId then makes the index
+    // texture, as it would after its own miss); a hit of another kind is NOT
+    // marked, so surfaceId asks again and attaches it to the texture it makes.
+    // Returns the pair's id, or -1 when none was made.
+    MdkTextureId requestPacked(const Surface& surface, const formats::Palette* palette);
+
+    // The pair's texture asked to be ready (mdk_render_prepare_texture) only if
+    // it is already made: nothing is looked up, nothing created. The pump's
+    // re-ask for a packed original evicted while its arena sits resident (the
+    // backend reads it again before the draw); a backend no-op for a resident
+    // texture and for a small index one.
+    void prepareCached(const Surface& surface, const formats::Palette* palette);
+
     // Release everything made through `palette`: its textures, their mod
     // replacements' bookkeeping, and the palette itself. An arena that is no
     // longer on the GPU gives its colours back this way (game/arena_views.h); a
     // later draw through the palette makes them again, replacements included.
     // Returns how many textures went.
     int32_t releasePalette(const formats::Palette* palette);
+
+    // How many palettes releasePalette has released, ever: a caller that keeps
+    // its own progress over this cache's entries (the frontend's object warm)
+    // tells from a change that some of them are gone.
+    int32_t paletteReleases() const { return paletteReleases_; }
 
     // Whether anything has been made through `palette` (its palette id exists:
     // every draw asks for the palette's id beside its texture's).
@@ -143,19 +174,31 @@ public:
     // Synchronous resource sources, for a profile frontend to attribute a
     // hitch instead of calling every first use a texture make. Counts are
     // cumulative; the byte count is index bytes returned by an MTO read.
+    // (The packed originals' reads and makes are the backend's to count: on
+    // the 3DS, render_c3d_stats.h's packImported / packSync.)
     struct SourceStats {
         int32_t mtoDemandReads = 0;
         int64_t mtoDemandBytes = 0;
-        int32_t packedOriginalImports = 0;
     };
     const SourceStats& sourceStats() const { return sourceStats_; }
 
 private:
+    typedef std::pair<const formats::Texture*, const formats::Palette*> Key;
+
+    // A compressedOriginal answer made into the pair's pending id
+    // (mdk_render_create_compressed_file), cached and marked asked. -1, with
+    // nothing marked, when the answer is not one or the backend has no
+    // compressed textures. surfaceId's and requestPacked's one implementation.
+    MdkTextureId createPacked(const Key& key, const Surface& surface,
+                              const formats::Palette* palette,
+                              const ColourReplacement& replacement);
+
     MdkRenderer renderer_ = nullptr;
     ColourReplacementLookup replacementLookup_ = nullptr;
     void* replacementUser_ = nullptr;
     std::map<std::pair<const formats::Texture*, const formats::Palette*>, bool> replacementLooked_;
     int32_t replacementFound_ = 0;
+    int32_t paletteReleases_ = 0;
     SourceStats sourceStats_;
 
     // A map, not a vector: these are borrowed pointers into LevelData, and a

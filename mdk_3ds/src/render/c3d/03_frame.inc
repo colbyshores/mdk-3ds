@@ -73,6 +73,7 @@ static bool startStaleExpansion(RendererC3D* renderer, C3dTexture& texture);
 // because the frame boundary calls them before they are defined.
 static void dropHd(RendererC3D* renderer, HdCopy& copy);
 static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom);
+static void pumpPackOriginals(RendererC3D* renderer, uint32_t previousFrameStart);
 static void pumpExpansions(RendererC3D* renderer);
 static bool evictHd(RendererC3D* renderer, uint32_t protectFrom, bool unlinkedOnly);
 
@@ -1240,6 +1241,9 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     settleDeferredTextures(r);
     settleDeferredMeshes(r);
     pumpExpansions(r);
+    // The orig pack's reads before the HD stream's: a packed original is a
+    // surface about to draw, an HD copy only replaces one that already does.
+    pumpPackOriginals(r, previousFrameStart);
     pumpHdTextures(r, previousFrameStart);
     // The stream's state, every 300 frames once it has done anything: the
     // evidence a budget is read from (docs/HD_TEXTURES_3DS_SPEC.md 4.2).
@@ -1251,6 +1255,17 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
                           (unsigned)kHdBudgetBytes, (int)r->hdEvicted, (int)r->hdFailedCount,
                           (int)r->hdQueue.size(),
                           (int)r->hdReader.busy(mdk::AsyncFileReader::kChannelHd));
+    }
+    // The orig pack's reads on the same clock: imported at the boundary, made by
+    // a draw that could not wait (the number to keep near zero), failed.
+    if (mdk::log3dsPeriodic() && (r->frame % 300) == 0 &&
+        (r->packImported > 0 || r->packSync > 0 || r->packLanded > 0 ||
+         !r->packQueue.empty())) {
+        mdk::log3dsPrintf("pack: frame %d: %d imported, %d read by a draw, %d landed for a "
+                          "draw, %d failed, %d queued, %d reading",
+                          (int)r->frame, (int)r->packImported, (int)r->packSync,
+                          (int)r->packLanded, (int)r->packFailed, (int)r->packQueue.size(),
+                          (int)r->hdReader.busy(mdk::AsyncFileReader::kChannelOrig));
     }
     // THE STORES THE TEXTURES WERE MADE IN (EnhancedToggles::texture16): once a
     // level's textures are made (frame 30), then every 300 frames when more were

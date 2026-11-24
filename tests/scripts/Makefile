@@ -175,6 +175,7 @@ SOURCES_VM := \
 	input_3ds_tests.cpp \
 	heap_split_tests.cpp \
 	sky_dome_tests.cpp \
+	object_warm_tests.cpp \
 	$(CORE)/render/sky_dome.cpp \
 	$(3DS)/render/pica_matrix.cpp \
 	$(CORE)/render/sun_shadow.cpp \

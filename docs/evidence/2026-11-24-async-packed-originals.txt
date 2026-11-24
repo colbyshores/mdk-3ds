@@ -1,0 +1,76 @@
+Async packed originals, object warm, menu streamed-drop (2026-11-24)
+====================================================================
+
+Follows docs/evidence/2026-11-24-orig-pack-uncompressed.txt (run B there is
+the baseline below). Hardware for every run: old3ds-lan167, Old 3DS model 0,
+268 MHz, L2 off, stereo on, hw_cycle.sh --profile, all FRESH.
+Walk route: LEVEL=7 FIXED=1 UNLOCK=650,750,790,830,870
+            WALK='forward+turbo@60-800;forward+turbo@800-1120', AUTOQUIT=90.
+(The workstation rebooted mid-campaign and /tmp was wiped: the runs below
+before async5 survive as these recorded numbers; async5, async6 and the menu
+run's device log are kept in the worktree's .git/hw-logs/.)
+
+WHAT CHANGED
+- Packed originals (romfs:/orig .t3x) are request-then-publish: created as a
+  pending id with no I/O; read on the AsyncFileReader worker (new channel
+  kChannelOrig; rank-ordered pick Kurt > menu > orig > HD, oldest first; one
+  slot kept back for Kurt/menus); imported at the frame boundary after
+  C3D_FrameBegin, at most kPackImportsPerFrame; a draw that finds one unmade
+  completes it synchronously only AFTER the per-eye frustum cull (before this,
+  prepareDraw made every batch's texture before the cull). The .t3x bytes are
+  no longer kept on the main heap (a remake re-reads the file). An unreadable
+  file falls back to the index texture through mdk_render_texture_needs_pixels.
+- Hints (a request no draw made last frame): import only into free linear
+  memory above a 1 MiB reserve, never evict, keep an old LRU stamp; answer
+  only from the orig pack's name index (no content hash).
+- Requests ahead: the arena pump asks for script-hidden batches' packed
+  originals; a re-ask pass re-queues evicted ones for the drawn pair; a new
+  object warm asks for every object model's packed originals (the arena's own
+  models, then every global CMI type), one model a frame, for the pair.
+- Menu: mdk_render_update_paletted drops a pending chunked expansion when a
+  texture turns streamed (the video/splash pictures).
+Reviewed adversarially (independent Opus review, three rounds): H1/H2/N1 and
+the W1/W3 findings fixed; final verdicts COMPLETE.
+
+WALK RESULTS (frame period, ms)
+run      change                          f549   f771  p99   >33.3  in-play syncs
+B        sync read, uncompressed pack    148.0  86.5  55.5  133    (all sync)
+async1   request-then-publish            154.3  99.3  57.4  138    30 (2 landed)
+async2   + hidden batches, re-ask        109.3  78.2  56.5  147    16
+async3   + hint never evicts (N1)        --     --    55.5  138    16, all objects
+async4   + object warm                   <60    <60   53.1  141    0 after frame 1
+async5   + W1/W3 (pixels-away guard)     <60    <60   52.8  145    0 after frame 1
+async6   + hints answer name index only  <60    <60   53.9  143    0 after frame 1
+("<60": the frame no longer appears among the >60 ms rows.)
+
+async1's packsync paths showed the draw had no lead time; async3's named
+every in-play sync: lock, x7door, xturbine, sw_h150, xe_*, xg_*, xf_* --
+object models, first drawn the frame the object appeared. The object warm
+removed them (async4). async5's objwarm line named the one slow step:
+DANT_1 model 1 (EXPLODE) 104.0 ms on frame 1 -- the content hash of its
+128x3328 strip (over 1024, so never in the pack); async6 answers hints from
+the name index only and the step is gone.
+
+STILL OPEN (measured, async6)
+- Frame 1 (first gameplay frame, 392 ms): the starting room's packed
+  originals and four object textures (lock, x7door, xturbine, sw_h150) are
+  read synchronously on it -- nothing had lead time. Next: finish them during
+  the load screen.
+- Music: frames 791-799 spend 11-17 ms each in music, 74.9 ms at 799 (demand
+  reads/decode inside the simulation).
+- The sliced door build (`sync` 18-21 ms/frame through 793-798) and the
+  effects warm (up to 16.7 ms).
+- Steady mean ~18.5 ms against a 16.7 ms vblank: render cost, not loading.
+
+MENU (no-LEVEL PROFILE run, front-screen histogram; device log
+.git/hw-logs/2026-11-24-menufix-and-async4.device.log)
+                         before (06:20)   after
+front frame 1            554.8            269.0
+menu reopen              392.5 (f547)     102.1 (f554)
+The video picture is made once as a streamed RGB565 texture (18.4 ms)
+instead of a forced 600x360 palette expansion. Still open: 104-218 ms at
+front frames 9-18 and 127-222 ms at 568-570 -- the menu background (MDKOPT
+600x360, screen_view.cpp) and font atlases (font_view.cpp, 1024x256 and
+1024x128) expanding with whole-image filter/mip steps, re-made on every menu
+reopen. The 60-80 ms spikes at 765-845 and every 300 frames are the
+profile's own SD log lines.

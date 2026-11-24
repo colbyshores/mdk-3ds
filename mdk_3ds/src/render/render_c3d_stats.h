@@ -26,6 +26,17 @@ struct MdkC3dFirstUse {
     int32_t texturesEvicted = 0;     // GPU copies the LRU freed (made again on next draw)
     uint64_t textureMakeTicks = 0;   // svcGetSystemTick spent making textures
     uint64_t hdImportTicks = 0;      // ... and importing HD copies
+    // THE ORIG PACK (04_textures.inc pumpPackOriginals): packed originals
+    // imported at a frame boundary from the reader thread's read; made by a draw
+    // that could not wait and READ THE FILE on the main thread (keep near zero)
+    // and the ticks those took (PROFILE builds); made by a draw from a read the
+    // reader had already finished (an import in the frame, no read); and files
+    // that could not be made.
+    int32_t packImported = 0;
+    int32_t packSync = 0;
+    uint64_t packSyncTicks = 0;
+    int32_t packLanded = 0;
+    int32_t packFailed = 0;
 };
 
 void mdk_render_c3d_first_use(MdkRenderer r, MdkC3dFirstUse* out);

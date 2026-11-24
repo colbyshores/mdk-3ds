@@ -423,6 +423,18 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
             forgetFailed(views_[i].name);
         }
     }
+    // WHICH VIEWS RE-ASK (LevelView::pumpSurfaces): the pair and the drawn ones
+    // only. A packed original evicted there is about to be drawn again; one of a
+    // hint-only or corridor view is not, and re-asking those would fill the
+    // linear pool with textures nobody is looking at.
+    for (size_t i = 0; i < views_.size(); i++) {
+        const std::string& name = views_[i].name;
+        bool nearPlayer = name == current || name == second;
+        for (size_t d = 0; d < drawn.size() && !nearPlayer; d++) {
+            nearPlayer = drawn[d] == name;
+        }
+        views_[i].reask = nearPlayer;
+    }
     // Every kOrphanSweepSyncs, counted forward (no remainder: the ARM11 has no
     // integer divide, AGENTS.md R11).
     if (syncs_ >= nextSweep_) {
@@ -472,7 +484,7 @@ void ArenaViews::pumpSurfaces(int32_t budget) {
         // The frame's budget is an upper bound on the makes a frame can do:
         // each view spends exactly the batches it pumped, so a view finishing
         // its tail cannot hand the budget to the next view as well.
-        budget -= views_[i].view->pumpSurfaces(budget);
+        budget -= views_[i].view->pumpSurfaces(budget, views_[i].reask);
     }
     pumpCursor_ += 1;
     if (pumpCursor_ >= n) {

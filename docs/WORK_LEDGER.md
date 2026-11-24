@@ -908,3 +908,28 @@ cull only as a last resort).
 committed HEAD `f1083ef3` as well: `c3d_frame` adjudicates only 148 of 157
 mutation arms (nine index-expansion / 16-bit-store arms whose mutations no
 longer apply or are no longer caught). Not caused by this batch; not yet fixed.
+
+### PACKED ORIGINALS OFF THE FRAME (2026-11-24): async reads, requests ahead, object warm; menu video
+
+**What.** Packed originals are request-then-publish on the AsyncFileReader
+(new orig channel, rank-ordered worker, a slot kept for Kurt/menus); imports
+at the frame boundary under a budget; a draw-time make only after the frustum
+cull, as a last resort. Requests ahead: script-hidden arena batches, a re-ask
+of evicted ones for the drawn pair, and an object warm over every model the
+level can spawn. Hints never evict and answer from the name index only. The
+menu's streamed pictures no longer finish a discarded palette expansion.
+
+**Why.** After the uncompressed pack, every in-play hitch frame was a
+synchronous RomFS read (11-27 ms each) on the frame a texture was first
+drawn; the profile's paths named them (arena surfaces, then objects).
+
+**Evidence.** `docs/evidence/2026-11-24-async-packed-originals.txt`: Old 3DS
+L7 walk, in-play texture reads 30 -> 0 after the level-start frame; frames
+549 (148 ms) and 771 (87 ms) no longer hitch; p99 55.5 -> 52.8-53.9. Menu
+first frame 554.8 -> 269.0 ms, reopen 392.5 -> 102.1 ms. Independent Opus
+review, three rounds, final COMPLETE.
+
+**Still open.** Level-start frame (392 ms: the starting room's reads; finish
+them on the load screen); music reads in the simulation (up to 75 ms);
+menu background/font atlases' whole-image expansion steps; with an HD pack
+installed the object warm answers nothing (name index is skipped).

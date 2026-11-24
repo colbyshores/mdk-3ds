@@ -35,6 +35,23 @@
 // of them never take each other's, and drop one they no longer want (discard):
 // a finished read is freed at once, a read in progress when the worker ends it.
 // They keep one or two reads in flight, never all the slots.
+//
+// A FOURTH CHANNEL, kChannelOrig: the orig pack's .t3x files (romfs:/orig, the
+// arena textures' ORIGINAL look pre-encoded), whole files, tagged by texture id.
+// The renderer asks for them at the frame boundary and imports them there
+// (04_textures.inc, pumpPackOriginals); a draw that cannot wait takes its read
+// by tag (pollTag) or drops it (discard) and reads the file itself.
+//
+// WHICH READ GOES NEXT. The worker takes the Requested slot whose channel ranks
+// first -- Kurt's pack (0), the menus' files (1), the orig pack (2), the HD
+// stream (3) -- and within a rank the oldest request (`order`, stamped by
+// queue()). Kurt's animation and a menu's picture are what a player is waiting
+// on; an orig texture is a surface about to be drawn; an HD copy only replaces a
+// surface that already draws. And the STREAMS (HD, orig) only ask while fewer
+// than kStreamSlots slots are busy, so the streams never fill the reader: one
+// slot is always left that only Kurt's read or a menu's can take. It is ONE slot
+// for the two of them -- shared, first come -- not one each: a menu's read in it
+// makes Kurt's wait for the next free slot like any other request.
 // ============================================================================
 
 #include <3ds.h>
@@ -51,6 +68,11 @@ public:
     static constexpr int32_t kChannelHd = 0;
     static constexpr int32_t kChannelPack = 1;
     static constexpr int32_t kChannelFile = 2;
+    static constexpr int32_t kChannelOrig = 3;
+    // The slots the streams (kChannelHd, kChannelOrig) may hold between them:
+    // one fewer than all, so one slot is left for Kurt's read and the menus'
+    // (shared between them, not one each).
+    static constexpr int32_t kStreamSlots = kSlots - 1;
     // The largest range read: more than any animation's frames (K_CHUTEC's 12
     // are 163,536 bytes); a corrupt index cannot size a bigger allocation.
     static constexpr uint32_t kMaxRangeBytes = 1u << 20;
@@ -133,6 +155,9 @@ private:
         // discard() on a read in progress: the worker frees it when it ends.
         bool discarded = false;
         Work work = nullptr;
+        // When it was asked for (queue()'s nextOrder_): the worker takes the
+        // oldest request of the best-ranked channel first.
+        uint32_t order = 0;
     };
 
 
@@ -145,6 +170,7 @@ private:
     Thread thread_ = nullptr;
     bool running_ = false;
     bool exit_ = false;   // read and written under lock_ only
+    uint32_t nextOrder_ = 0;   // read and written under lock_ only
 };
 
 } // namespace mdk

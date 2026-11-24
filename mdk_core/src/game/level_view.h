@@ -142,11 +142,15 @@ public:
     // linear pool cannot hold a level's ETC1 at once (measured 2026-11-22: 762
     // of level 7's 1686 makes fail). The pixels are in RAM (the resident MTO),
     // so a make is decode + upload only -- ~49 ms each -- and pumping spreads
-    // them over the frames before the arena is first drawn. Returns the number
-    // of batches pumped (0 once the arena is resolved, or when the view has no
-    // renderer to pump through, so a finished view costs one comparison and
-    // spends no budget).
-    int32_t pumpSurfaces(int32_t budget);
+    // them over the frames before the arena is first drawn. A HIDDEN batch's
+    // texture is not made, but one the orig pack holds is asked for
+    // (SurfaceCache::requestPacked). Returns the number of batches pumped (0
+    // once the arena is resolved, or when the view has no renderer to pump
+    // through, so a finished view spends no budget). With `reask` (the pair
+    // and the drawn views, ArenaViews::sync), a finished view then re-asks a
+    // few made textures a call to be ready (SurfaceCache::prepareCached, which
+    // makes nothing).
+    int32_t pumpSurfaces(int32_t budget, bool reask);
 
     // The arena this view is for.
     const formats::Arena* arena() const { return arena_; }
@@ -172,6 +176,10 @@ private:
     // pumpSurfaces()'s large-surface scan cursor (see pumpSurfaces): the
     // batches whose textures are expensive to make are started first.
     size_t pumpLargeAt_ = 0;
+    // pumpSurfaces()'s re-ask cursor (see pumpSurfaces): once the walk is
+    // done, the made textures are asked to be ready again, so a packed
+    // original evicted while the arena sits resident is read off the frame.
+    size_t pumpReaskAt_ = 0;
 
     // tear()'s state: how many of the end's torn triangles are collapsed already (the
     // C#'s _tornShown), whether mesh_ is the dynamic copy, and the triangles' first

@@ -150,6 +150,9 @@ private:
     struct Entry {
         std::string name;
         LevelView* view = nullptr;
+        // The pair or drawn (set by sync): only these views re-ask their made
+        // textures (LevelView::pumpSurfaces).
+        bool reask = false;
     };
 
     // pumpSurfaces()'s rotating start, so a view past the frame's budget

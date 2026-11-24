@@ -59,6 +59,8 @@ class ModelSwap;
 struct HdImage;
 
 namespace formats {
+class Arena;
+class Cmi;
 class Model;
 class Palette;
 class TextureArchive;
@@ -160,6 +162,31 @@ Surface shineSurface(const Surface& surface, bool shines);
 bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
                        const MaterialResolver& resolver, ObjectLayout* out,
                        const ModelSwap* swap = nullptr);
+
+// The surfaces a model's triangles draw through a look, each once: the same
+// resolver call buildObjectLayout makes per triangle, without the layout (no
+// corners, nothing kept). A triangle whose material does not resolve adds
+// nothing, as it adds no batch there.
+void objectModelSurfaces(const formats::Model& model, const ObjectLook& look,
+                         const MaterialResolver& resolver, std::vector<Surface>* out);
+
+// THE OBJECT WARM: an arena's object textures asked for before the first object
+// that draws them appears (on the 3DS a Lit object surface the orig pack holds is
+// a packed original; asked for here, its file is read off the frame instead of
+// by the draw of the frame the object first shows -- measured on the Old 3DS,
+// level 7: every in-play draw-time read was an object's, doors, machinery and
+// aliens). One MODEL per call, `*cursor` walking the arena's own models and then
+// the level's global ones (the CMI's: every type the scripts can spawn there --
+// ScriptRuntime::findModel's two sources). A global model is parsed into a
+// temporary and dropped, so the warm keeps no model alive. Each surface goes to
+// `start` with the look's palette -- the key the object pass will draw with
+// (the same look for the same arena). Returns true when the arena's list is
+// done. `cmi` may be null (a level with no scripts: the arena's own models only).
+using ObjectSurfaceFn = void (*)(void* user, const Surface& surface,
+                                 const formats::Palette* palette);
+bool warmObjectStep(const formats::Arena& arena, const formats::Cmi* cmi,
+                    const ObjectLook& look, const MaterialResolver& resolver,
+                    ObjectSurfaceFn start, void* user, size_t* cursor);
 
 // One batch's draw, as the object pass queues it (the C#'s DrawCommand, for the
 // object pass). The surface is the FORMAT's surface, not a GPU one: the backend

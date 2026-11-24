@@ -44,7 +44,29 @@ MdkTextureId SurfaceCache::textureId(const formats::Texture* texture,
     const std::pair<const formats::Texture*, const formats::Palette*> key(texture, palette);
     std::map<decltype(key), MdkTextureId>::const_iterator found = textures_.find(key);
     if (found != textures_.end()) {
-        return found->second;
+        const MdkTextureId id = found->second;
+        // A PACKED ORIGINAL the backend could not make from its file (surfaceId's
+        // compressedOriginal hit, unreadable or not this set's .t3x): it gets
+        // its index pixels, the same fetch as a first make's below, and from
+        // then on it is an ordinary index texture under the SAME id -- nothing
+        // the caller holds changes. Pixels that cannot be had yet are asked for
+        // again on the next call.
+        if (id >= 0 && mdk_render_texture_needs_pixels(renderer_, id)) {
+            const int32_t texels = texture->width() * texture->height() * texture->frameCount();
+            const bool pixelsWereAway = texture->pixelsAway();
+            const uint8_t* indices = texture->indices();
+            if (indices == nullptr || texels <= 0 || texture->indexCount() < texels) {
+                return id;
+            }
+            if (pixelsWereAway) {
+                sourceStats_.mtoDemandReads++;
+                sourceStats_.mtoDemandBytes += texels;
+            }
+            mdk_render_update_texture(renderer_, id, texture->width(),
+                                      texture->height() * texture->frameCount(), indices);
+            mdk_render_prepare_texture(renderer_, id);
+        }
+        return id;
     }
 
     // The pixels, which may have to be read back first (an arena's are streamed:
@@ -133,6 +155,7 @@ int32_t SurfaceCache::releasePalette(const formats::Palette* palette) {
         }
         palettes_.erase(found);
     }
+    paletteReleases_++;
     return released;
 }
 
@@ -166,20 +189,75 @@ MdkTextureId SurfaceCache::prepare(const Surface& surface, const formats::Palett
     return id;
 }
 
+MdkTextureId SurfaceCache::createPacked(const Key& key, const Surface& surface,
+                                        const formats::Palette* palette,
+                                        const ColourReplacement& replacement) {
+    if (!replacement.compressedOriginal || palette == nullptr || !replacement.compressedPath ||
+        !replacement.compressedPath[0]) {
+        return -1;
+    }
+    const MdkTextureId made = mdk_render_create_compressed_file(
+        renderer_, surface.texture->width(),
+        surface.texture->height() * surface.texture->frameCount(), replacement.compressedPath,
+        palette->rgba());
+    if (made < 0) {
+        return -1;
+    }
+    replacementLooked_[key] = true;
+    textures_[key] = made;
+    replacementFound_++;
+    return made;
+}
+
+MdkTextureId SurfaceCache::requestPacked(const Surface& surface,
+                                         const formats::Palette* palette) {
+    if (!renderer_ || surface.texture == nullptr || palette == nullptr) {
+        return -1;
+    }
+    const Key key(surface.texture, palette);
+    std::map<Key, MdkTextureId>::const_iterator found = textures_.find(key);
+    if (found != textures_.end()) {
+        return found->second;
+    }
+    if (!replacementLookup_ || surface.shading != Shading::Lit ||
+        replacementLooked_.find(key) != replacementLooked_.end()) {
+        return -1;
+    }
+    ColourReplacement replacement;
+    if (!replacementLookup_(replacementUser_, surface, palette, &replacement)) {
+        replacementLooked_[key] = true;   // a miss is surfaceId's miss too
+        return -1;
+    }
+    return createPacked(key, surface, palette, replacement);
+}
+
+void SurfaceCache::prepareCached(const Surface& surface, const formats::Palette* palette) {
+    if (!renderer_ || surface.texture == nullptr) {
+        return;
+    }
+    std::map<Key, MdkTextureId>::const_iterator found =
+        textures_.find(Key(surface.texture, palette));
+    if (found != textures_.end() && found->second >= 0) {
+        mdk_render_prepare_texture(renderer_, found->second);
+    }
+}
+
 MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Palette* palette) {
     if (surface.texture == nullptr) {
         return flatColourId(surface.colour);
     }
     // THE LOOKUP COMES FIRST, THE TEXTURE SECOND (the arena orig pack's whole
     // point). A Lit surface the pack holds as a .t3x of the ORIGINAL look is
-    // MADE from that file (mdk_render_create_compressed_file: a decompress and
-    // a copy) and the ARM11 never expands its palette -- the 600-1600 ms an
-    // arena's expansion costs is exactly the hitch the pack exists to remove.
-    // An HD-pack upscale is NOT this: it keeps the expansion as its fallback
-    // and the toggle's per-draw choice, so only a compressedOriginal hit takes
-    // this path, and a -1 (no compressed textures in this backend, an unreadable
-    // file) falls through to the ordinary expansion. Asked once per pair, as
-    // before; the bytes the lookup hands back are borrowed for the call only.
+    // ASKED FOR from that file (mdk_render_create_compressed_file: the backend
+    // reads and imports it off the frame) and the ARM11 never expands its
+    // palette -- the 600-1600 ms an arena's expansion costs is exactly the
+    // hitch the pack exists to remove. An HD-pack upscale is NOT this: it keeps
+    // the expansion as its fallback and the toggle's per-draw choice, so only a
+    // compressedOriginal hit takes this path, and a -1 (no compressed textures
+    // in this backend) falls through to the ordinary expansion. A file the
+    // backend later cannot make gets its index pixels in textureId's hit path.
+    // Asked once per pair, as before; the bytes the lookup hands back are
+    // borrowed for the call only.
     const std::pair<const formats::Texture*, const formats::Palette*> key(surface.texture,
                                                                            palette);
     ColourReplacement replacement;
@@ -193,23 +271,15 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
         lookedNow = replacementLookup_(replacementUser_, surface, palette, &replacement);
         if (!lookedNow) {
             replacementLooked_[key] = true;
-        } else if (replacement.compressedOriginal && palette != nullptr &&
-                   replacement.compressedPath && replacement.compressedPath[0]) {
-            const MdkTextureId made = mdk_render_create_compressed_file(
-                renderer_, surface.texture->width(),
-                surface.texture->height() * surface.texture->frameCount(),
-                replacement.compressedPath, palette->rgba());
+        } else {
+            const MdkTextureId made = createPacked(key, surface, palette, replacement);
             if (made >= 0) {
-                replacementLooked_[key] = true;
-                textures_[key] = made;
-                replacementFound_++;
-                sourceStats_.packedOriginalImports++;
                 return made;
             }
         }
     }
     const MdkTextureId id = textureId(surface.texture, palette);
-    // The replacement that is NOT made up front: the HD pack's compressed
+    // The replacement that is NOT asked for up front: the HD pack's compressed
     // upscale (attached to the expansion through the pump, the toggle deciding
     // per draw) and a decoded colour image. The backend copies the bytes, so
     // the lookup's image need only live for this call.

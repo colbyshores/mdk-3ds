@@ -311,4 +311,9 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     out->texturesEvicted = cr->texturesEvicted;
     out->textureMakeTicks = cr->textureMakeTicks;
     out->hdImportTicks = cr->hdImportTicks;
+    out->packImported = cr->packImported;
+    out->packSync = cr->packSync;
+    out->packSyncTicks = cr->packSyncTicks;
+    out->packLanded = cr->packLanded;
+    out->packFailed = cr->packFailed;
  }

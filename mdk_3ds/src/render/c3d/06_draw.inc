@@ -154,6 +154,20 @@ static C3D_TexEnv* stage0Variant(RendererC3D* r, int32_t index) {
     return &r->stage0Scene;
 }
 
+// A COMPRESSED texture's uv transform (Kurt's ETC1A4 frames, the orig pack's
+// arena textures): its image's rectangle (pica::compressedFrameRect), in
+// tex3ds' convention, with no last-row flip on top -- the converters feed
+// tex3ds the image's top row first, as hd_pack_convert.py does, and tex3ds' top
+// is t = 1. ONE function for the prepare and for a packed original made at
+// submit (drawRecorded), so the two cannot drift.
+static void compressedUv(const C3dTexture& resource, float* scaleX, float* scaleY,
+                         float* offsetX, float* offsetY) {
+    *scaleX = resource.rect.right - resource.rect.left;
+    *offsetX = resource.rect.left;
+    *scaleY = resource.rect.bottom - resource.rect.top;
+    *offsetY = resource.rect.top;
+}
+
 // THE PREPARE (STEREO-REPLAY analogue): resolve one queue record for the
 // frame. Everything here is eye-invariant; the per-eye drawRecorded below
 // keeps only the frustum cull, the matrix compose and the state/draw calls.
@@ -249,6 +263,19 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
                 resource.lastUsed = ++r->drawCounter;
                 copy->lastUsed = r->drawCounter;
                 hd = copy;
+            } else if (!resource.valid && !resource.packPath.empty() &&
+                       resource.packState != C3dTexture::PackFailed) {
+                // A PACKED ORIGINAL NOT MADE YET (or evicted): NOT made here. Its
+                // file is asked for (the boundary pump reads it), it is stamped --
+                // the pump's sign that a draw wants it, and its order among those
+                // -- and the record is kept: the submit makes it only if the batch
+                // is in the eye's frustum (drawRecorded, finishPackNow), so a
+                // texture behind the camera never costs a read inside the frame.
+                queuePackRead(r, draw->material.texture);
+                resource.lastUsed = ++r->drawCounter;
+                out->texPending = true;
+                out->texHd = false;
+                out->texIndex = draw->material.texture;
             } else {
                 if (!resource.valid && !resource.source.empty()) {
                     // THE EVICTION IS REVERSIBLE. The texture was made again from
@@ -278,7 +305,7 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
             }
         }
     }
-    if (!texture) {
+    if (!texture && !out->texPending) {
         return false;
     }
     // THE FILTER (SPEC.md 7.9 enableFiltering): bilinear for every draw while
@@ -403,14 +430,10 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
         scaleY = hd->bottom - hd->top;
         offsetY = hd->top;
     } else if (resource.compressed) {
-        // A COMPRESSED texture (Kurt's ETC1A4 frames) is a tex3ds texture too:
-        // its image's rectangle, in the same convention (pica::compressedFrameRect),
-        // and no last-row flip on top -- the converter feeds tex3ds the frame top
-        // row first, as hd_pack_convert.py does, and tex3ds' top is t = 1.
-        scaleX = resource.rect.right - resource.rect.left;
-        offsetX = resource.rect.left;
-        scaleY = resource.rect.bottom - resource.rect.top;
-        offsetY = resource.rect.top;
+        // A COMPRESSED texture is a tex3ds texture too: its image's rectangle
+        // (compressedUv). A packed original not made yet has no rectangle; its
+        // submit takes the made one's (drawRecorded).
+        compressedUv(resource, &scaleX, &scaleY, &offsetX, &offsetY);
     } else {
         // The PICA's t runs from the LAST memory row (pica::sceneUvFromTop has
         // the rule and the measurement). Every draw takes it, the canvas too:
@@ -568,7 +591,11 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     if (!texture && draw->material.texture >= 0 &&
         (size_t)draw->material.texture < r->textures.size()) {
         C3dTexture& resource = r->textures[(size_t)draw->material.texture];
-        if (!resource.valid && !resource.source.empty() && !resource.releasePending) {
+        // A packed original pending at prepare is made HERE, after the cull
+        // above: this eye sees its batch (finishPackNow, the last resort). One
+        // that failed, or found no room, earlier this frame is not tried again.
+        if (!resource.valid && !resource.releasePending &&
+            (!resource.source.empty() || (p->texPending && packMakeableNow(r, resource)))) {
             makeTexture(r, resource, false);
         }
         if (resource.valid) {
@@ -596,10 +623,16 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     bindTexUnitIfChanged(r, p->texUnit, texture);
     // The fallback to the original takes the original's transform.
     const bool origUv = p->texHd && !usedHd;
-    const float uvScaleX = origUv ? p->origScaleX : p->scaleX;
-    const float uvScaleY = origUv ? p->origScaleY : p->scaleY;
-    const float uvOffsetX = origUv ? p->origOffsetX : p->offsetX;
-    const float uvOffsetY = origUv ? p->origOffsetY : p->offsetY;
+    float uvScaleX = origUv ? p->origScaleX : p->scaleX;
+    float uvScaleY = origUv ? p->origScaleY : p->scaleY;
+    float uvOffsetX = origUv ? p->origOffsetX : p->offsetX;
+    float uvOffsetY = origUv ? p->origOffsetY : p->offsetY;
+    // A packed original pending at prepare had no rectangle then: it is made
+    // now (above, or by the first eye), so the uv is the made texture's.
+    if (p->texPending) {
+        compressedUv(r->textures[(size_t)draw->material.texture], &uvScaleX, &uvScaleY,
+                     &uvOffsetX, &uvOffsetY);
+    }
     setVsUniform(r, kDedupeUv, r->uvLocation, uvScaleX, uvScaleY, uvOffsetX, uvOffsetY);
     installAlphaTest(r, p->alphaRef, false);
     // A shadowed lit draw's stages are installShadowLitStages' (below, with
@@ -1556,6 +1589,7 @@ static bool coalesciblePair(const PreparedDraw* a, const PreparedDraw* b) {
     if (da->primitive != mdk::Primitive::Triangles ||
         db->primitive != mdk::Primitive::Triangles) return false;
     if (a->texHd != b->texHd || a->texIndex != b->texIndex || a->texUnit != b->texUnit) return false;
+    if (a->texPending != b->texPending) return false;
     if (a->overlay != b->overlay || a->lit != b->lit || a->shadowLit != b->shadowLit ||
         a->worldIdentity != b->worldIdentity ||
         a->haze != b->haze || a->mipped != b->mipped) return false;
