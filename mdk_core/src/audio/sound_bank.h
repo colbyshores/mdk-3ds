@@ -56,11 +56,34 @@
 // then the rest), so the track is in memory by the time Kurt walks in.
 //
 // prefetch() / prefetchStep() are that: begin reading a named sound, read one
-// step per call, decode it when the last step lands. A get() of a sound whose
-// prefetch is still in flight finishes it at once and counts the stall; a get()
-// of a streamed sound nobody prefetched reads it whole (counted as a demand
-// read). Either way the answer is the same Entry the whole-file bank gives --
-// the format tests decode every sound of every retail archive both ways.
+// step per call, then DECODE IT A SLICE PER CALL (kDecodeStepSamples) once the
+// last step has landed. A get() of a sound whose prefetch is still in flight
+// finishes it at once and counts the stall; a get() of a streamed sound nobody
+// prefetched reads it whole (counted as a demand read). Either way the answer is
+// the same Entry the whole-file bank gives -- the format tests decode every sound
+// of every retail archive both ways.
+//
+// NO STEP IS A WHOLE TRACK, AND ON THE 3DS NO STEP READS (measured on the Old
+// 3DS, level 7's corridor crossing: a step's fopen + seek + 64 KiB read was 11-17
+// ms of the main thread for eight frames, and the last step's decode of the
+// whole track -- about half a million samples -- 74.9 ms in one frame).
+//   - THE READS: a frontend with a file thread lends it (setReader; the 3DS's
+//     kChannelMusic), and a streamed archive's step is then ASKED FOR on that
+//     thread and taken back by a later call: the frame only appends the landed
+//     bytes. One read in flight, one step long, so the thread is never held by a
+//     track for more than an ordinary read. Without a reader (the desktop, the
+//     host tests) a step reads on the calling thread, as the original does.
+//   - THE DECODE: a slice a call, straight out of the read bytes (Wav::locate,
+//     pcmToSamples: no copy of the track, no whole-track zero fill), into a store
+//     the bank adopts when the last slice is in. On the main thread and not the
+//     file thread ON PURPOSE: the decode is CPU, the Old 3DS gives the
+//     application one core, and the reader thread runs only in the main thread's
+//     waits -- a whole-track decode there would hold the one reader (Kurt's pack,
+//     the orig pack's surfaces about to be drawn) for as many frames as it took
+//     to find ~60 ms of idle core. A bounded slice on the frame costs a known
+//     couple of milliseconds and holds nobody.
+// The stall and the demand read stay as the LAST RESORT (a track wanted before
+// its prefetch is in): read and decoded at once, and counted.
 // ============================================================================
 
 #include <stdint.h>
@@ -73,6 +96,8 @@
 
 #include "audio/sound.h"
 #include "formats/sni.h"
+#include "formats/wav.h"
+#include "game/async_read.h"
 
 namespace mdk {
 namespace formats {
@@ -103,6 +128,8 @@ public:
     // Nothing copies one today — every user holds a bank by pointer or as a local —
     // and deleting the copy is what keeps that true instead of hoping it stays true.
     SoundBank() = default;
+    // A read still in flight on a lent reader is cancelled (the thread frees it).
+    ~SoundBank() { stagingDrop(); }
     SoundBank(const SoundBank&) = delete;
     SoundBank& operator=(const SoundBank&) = delete;
 
@@ -117,6 +144,8 @@ public:
     struct Stats {
         int32_t prefetches = 0;       // prefetch() calls that began a read
         int32_t prefetchSteps = 0;    // steps read by prefetchStep()
+        int32_t prefetchReads = 0;    // ... of which on the lent reader's thread
+        int32_t decodeSteps = 0;      // decode slices of prefetchStep()
         int32_t prefetchStalls = 0;   // get() had to finish a prefetch in flight
         int64_t prefetchStallBytes = 0;
         int32_t prefetchDrops = 0;    // a prefetch replaced before it finished
@@ -131,6 +160,11 @@ public:
     // 0x10000 remain, then whatever is left.
     static const int32_t kPrefetchStepBytes = 0xf768;
     static const int32_t kPrefetchTailBytes = 0x10000;
+    // The decode's slice: 32768 samples (64 KiB of the int16 store) a call. A
+    // track of ~500,000 samples is ~16 slices; the whole-track decode measured
+    // 74.9 ms on the Old 3DS with its tail read, so a slice is a few ms at most
+    // and less now that it neither copies the WAV nor zero-fills the whole store.
+    static const int32_t kDecodeStepSamples = 32768;
 
     // A READ THAT FAILS IS NOT "THE LEVEL HAS NO SUCH SOUND". The C# caches null
     // for a name its archives do not carry, and so does this (missing_); but a
@@ -148,9 +182,16 @@ public:
     // is dropped: there is one staging buffer, as the original has one music
     // buffer.
     bool prefetch(const std::string& name);
-    // Read one step of the prefetch in flight, and decode the sound when it is
-    // complete. True while more steps remain.
+    // One step of the prefetch in flight: a read step (asked for on the lent
+    // reader, or taken back from it once it lands; read here without one), or,
+    // once every byte is in, a decode slice. The sound is in the bank when the
+    // last slice is. True while more steps remain.
     bool prefetchStep();
+    // The file thread the prefetch's streamed reads go to (game/async_read.h,
+    // requestRange/poll/cancel; one read in flight). Unset: they read on the
+    // calling thread. A read in flight is cancelled when the prefetch is dropped
+    // or the bank goes, so the reader's user must outlive the bank.
+    void setReader(const AsyncRead& reader) { reader_ = reader; }
     // The sound a prefetch is reading (empty: none).
     const std::string& prefetching() const { return staging_.name; }
     const Stats& stats() const { return stats_; }
@@ -237,10 +278,26 @@ private:
         size_t archive = 0;
         formats::Sni::Entry entry;
         std::vector<uint8_t> bytes;   // read so far
+        int32_t readTag = -1;    // the step asked of the reader (-1: none)
+        // The decode, once every byte is in: the format and the data chunk
+        // (Wav::locate), the samples it makes and how many are converted.
+        bool decoding = false;
+        formats::Wav format;
+        int32_t dataAt = 0;
+        int32_t dataSize = 0;
+        int32_t samples = 0;
+        Sound sound;
     };
-    // Read up to `limit` more bytes of the staging (0: all that remain). False
-    // on a read failure, which abandons the prefetch.
+    // Read up to `limit` more bytes of the staging (0: all that remain) on this
+    // thread. False on a read failure, which abandons the prefetch.
     bool stagingRead(int32_t limit);
+    // A read step on the lent reader: asked for, or taken back. False on a read
+    // failure (the prefetch is abandoned).
+    bool stagingReadAsync(int32_t step);
+    // One decode slice (the first locates the data chunk). False when the bytes
+    // are not a WAV (the name is then missing) or the sound is in.
+    bool stagingDecodeStep();
+    // The read in flight cancelled, and everything staged freed.
     void stagingDrop();
 
     // Mark a decoded sound as recently gotten, and evict over-budget
@@ -261,6 +318,8 @@ private:
     // Read failures per name, until kMaxReadFailures makes the name missing.
     std::map<std::string, int32_t> readFailures_;
     Staging staging_;
+    AsyncRead reader_;
+    int32_t nextReadTag_ = 0;
     Stats stats_;
 };
 

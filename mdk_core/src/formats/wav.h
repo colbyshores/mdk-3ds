@@ -48,6 +48,15 @@ public:
     // for the first two and throws for the third.
     static bool parse(const uint8_t* wav, int32_t byteCount, Wav* outWav);
 
+    // parse()'s walk WITHOUT THE COPY: the format into `outWav` (its data left
+    // empty, so its frames() is 0) and where the `data` chunk is in `wav` -- at
+    // `*dataAt`, `*dataSize` bytes. The music prefetch decodes a track a slice a
+    // frame straight out of the bytes it read (audio/sound_bank.h), and a copy of
+    // half a megabyte is exactly the kind of whole-track step it exists to avoid.
+    // The same answer as parse() for every file: parse() IS this, then the copy.
+    static bool locate(const uint8_t* wav, int32_t byteCount, Wav* outWav, int32_t* dataAt,
+                       int32_t* dataSize);
+
 private:
     int32_t channels_ = 0;
     int32_t sampleRate_ = 0;

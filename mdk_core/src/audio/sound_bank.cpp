@@ -5,6 +5,7 @@
 #include "audio/sound_bank.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "formats/mdk_data.h"
 #include "formats/wav.h"
@@ -52,6 +53,7 @@ bool SoundBank::withArchives(SoundBank* out, std::vector<formats::Sni>&& archive
     out->readFailures_.clear();
     out->pins_.clear();
     out->recent_.clear();
+    out->stagingDrop();   // a read in flight cancelled first
     out->staging_ = Staging();
     out->stats_ = Stats();
     return true;
@@ -298,8 +300,14 @@ void SoundBank::noteReadFailure(const std::string& name) {
 }
 
 void SoundBank::stagingDrop() {
+    if (staging_.readTag >= 0 && reader_.rangeActive()) {
+        reader_.cancel(reader_.user, staging_.readTag);
+    }
+    staging_.readTag = -1;
     staging_.name.clear();
     std::vector<uint8_t>().swap(staging_.bytes);
+    staging_.decoding = false;
+    staging_.sound = Sound();
 }
 
 bool SoundBank::stagingRead(int32_t limit) {
@@ -321,47 +329,140 @@ bool SoundBank::stagingRead(int32_t limit) {
     return true;
 }
 
+bool SoundBank::stagingReadAsync(int32_t step) {
+    const formats::Sni::Entry& entry = staging_.entry;
+    const int32_t have = (int32_t)staging_.bytes.size();
+    if (staging_.readTag < 0) {
+        // Ask for the step. Refused (the reader's music slot is still busy with a
+        // read this bank cancelled): asked again on the next call.
+        const int32_t tag = nextReadTag_;
+        if (reader_.requestRange(reader_.user, tag, archives_[staging_.archive].path().c_str(),
+                                 (uint32_t)(entry.offset + have), (uint32_t)step)) {
+            staging_.readTag = tag;
+            nextReadTag_ = (nextReadTag_ + 1) & 0x7FFFFFFF;
+        }
+        return true;
+    }
+    uint8_t* bytes = nullptr;
+    uint32_t size = 0;
+    bool ok = false;
+    if (!reader_.poll(reader_.user, staging_.readTag, &bytes, &size, &ok)) {
+        return true;   // still reading
+    }
+    staging_.readTag = -1;
+    if (!ok || bytes == nullptr || size != (uint32_t)step) {
+        free(bytes);
+        stats_.readFailures++;
+        stagingDrop();
+        return false;
+    }
+    staging_.bytes.insert(staging_.bytes.end(), bytes, bytes + size);
+    free(bytes);
+    stats_.prefetchSteps++;
+    stats_.prefetchReads++;
+    return true;
+}
+
+bool SoundBank::stagingDecodeStep() {
+    if (!staging_.decoding) {
+        // The first slice finds the data chunk (parse()'s walk, no copy).
+        if (!formats::Wav::locate(staging_.bytes.data(), (int32_t)staging_.bytes.size(),
+                                  &staging_.format, &staging_.dataAt, &staging_.dataSize)) {
+            missing_.insert(staging_.name);   // as a get() whose WAV will not parse
+            stagingDrop();
+            return false;
+        }
+        staging_.decoding = true;
+        staging_.samples =
+            pcmSampleCount(staging_.dataSize, staging_.format.bitsPerSample());
+        // The store's room at once, its elements a slice at a time: no
+        // whole-track zero fill, and no reallocation while it fills.
+        staging_.sound.samples.reserve((size_t)staging_.samples);
+    }
+    const int32_t done = (int32_t)staging_.sound.samples.size();
+    int32_t count = staging_.samples - done;
+    if (count > kDecodeStepSamples) {
+        count = kDecodeStepSamples;
+    }
+    if (count > 0) {
+        staging_.sound.samples.resize((size_t)(done + count));
+        pcmToSamples(staging_.bytes.data() + staging_.dataAt, staging_.format.bitsPerSample(), done,
+                     count, staging_.sound.samples.data() + done);
+        stats_.decodeSteps++;
+    }
+    if (done + count < staging_.samples) {
+        return true;
+    }
+    // The last slice: the sound goes into the bank, as decode() puts it.
+    const std::string name = staging_.name;
+    const formats::Sni::Entry& entry = staging_.entry;
+    Entry out;
+    out.volume = entry.volume;
+    out.looping = (entry.flags & formats::Sni::kFlagLoop) != 0;
+    out.music = (entry.flags & formats::Sni::kFlagMusic) != 0;
+    out.channels = staging_.format.channels();
+    out.sampleRate = staging_.format.sampleRate();
+    Sound& sound = sounds_[name];
+    sound.samples.swap(staging_.sound.samples);
+    sound.channels = out.channels;
+    sound.sampleRate = out.sampleRate;
+    sound.looping = out.looping;
+    // Sound.Frames, which is Wav::frames() of the same samples (once per sound).
+    out.frames = sound.frames();
+    out.sound = &sound;
+    stagingDrop();
+    readFailures_.erase(name);
+    cache_[name] = out;
+    touch(name);
+    evictOverBudget(name);
+    return false;
+}
+
 bool SoundBank::prefetchStep() {
     if (staging_.name.empty()) {
         return false;
     }
     const int32_t left = staging_.entry.length - (int32_t)staging_.bytes.size();
+    if (left <= 0) {
+        return stagingDecodeStep();
+    }
     const int32_t step = left > kPrefetchTailBytes ? kPrefetchStepBytes : left;
-    stats_.prefetchSteps++;
     const std::string reading = staging_.name;
+    const formats::Sni& archive = archives_[staging_.archive];
+    if (reader_.rangeActive() && archive.streamed() &&
+        (int64_t)staging_.entry.offset + staging_.entry.length <= (int64_t)0x7FFFFFFF) {
+        if (!stagingReadAsync(step)) {
+            noteReadFailure(reading);
+            return false;
+        }
+        // The landed bytes' frame is not also the first decode slice's.
+        return true;
+    }
+    stats_.prefetchSteps++;
     if (!stagingRead(step)) {
         // Abandoned, and counted against the name: a later get() reads it
         // whole, or finds it missing once the limit is reached.
         noteReadFailure(reading);
         return false;
     }
-    if ((int32_t)staging_.bytes.size() < staging_.entry.length) {
-        return true;
-    }
-    // The last step: decode, as a get() would have.
-    const std::string name = staging_.name;
-    Entry entry;
-    const bool ok = decode(name, staging_.entry, staging_.bytes, &entry);
-    stagingDrop();
-    if (ok) {
-        readFailures_.erase(name);
-        cache_[name] = entry;
-        touch(name);
-        evictOverBudget(name);
-    } else {
-        missing_.insert(name);
-    }
-    return false;
+    return true;
 }
 
 bool SoundBank::load(const std::string& name, Entry* out, bool* readFailed) {
     std::vector<uint8_t> bytes;
     formats::Sni::Entry entry;
     if (name == staging_.name) {
-        // The sound is wanted before its prefetch is done: finish it now.
+        // The sound is wanted before its prefetch is done: finish it now, on this
+        // thread -- the read still in flight on the reader dropped, the rest read
+        // here, and the whole decoded at once (a slice already made is thrown
+        // away; this is the last resort, and it is counted).
         const int64_t left = (int64_t)staging_.entry.length - (int64_t)staging_.bytes.size();
         stats_.prefetchStalls++;
         stats_.prefetchStallBytes += left;
+        if (staging_.readTag >= 0 && reader_.rangeActive()) {
+            reader_.cancel(reader_.user, staging_.readTag);
+            staging_.readTag = -1;
+        }
         if (!stagingRead(0)) {
             *readFailed = true;
             return false;

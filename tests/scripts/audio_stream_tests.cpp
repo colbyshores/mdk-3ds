@@ -19,6 +19,7 @@
 #include "formats/mdk_data.h"
 #include "formats/sni.h"
 #include "formats/sprite_animation.h"
+#include "game/async_read.h"
 
 namespace {
 
@@ -305,8 +306,16 @@ void testThePrefetchReadsAStepACall(const MdkData& data) {
             more = bank.prefetchStep();
             steps++;
         }
-        expect("the step count is the original's rule", steps, stepsFor(h1));
-        expect("the bank counted them", bank.stats().prefetchSteps, steps);
+        // The reads by the original's rule, then the decode a slice a step.
+        const int32_t slices =
+            ((int32_t)want.sound->samples.size() + SoundBank::kDecodeStepSamples - 1) /
+            SoundBank::kDecodeStepSamples;
+        check(slices > 4, "a track decodes in several slices, not one");
+        expect("the read steps are the original's rule", bank.stats().prefetchSteps,
+               stepsFor(h1));
+        expect("then the decode's slices", bank.stats().decodeSteps, slices);
+        expect("and nothing else", steps, stepsFor(h1) + slices);
+        expect("no read went to a reader (none is lent)", bank.stats().prefetchReads, 0);
         expect("the sound is decoded by the last step", bank.soundsDecoded(), 1);
         check(bank.prefetching().empty(), "the prefetch is over");
         check(!bank.prefetchStep(), "a step with nothing in flight does nothing");
@@ -347,7 +356,8 @@ void testThePrefetchReadsAStepACall(const MdkData& data) {
         while (bank.prefetchStep() && steps < 1000) {
             steps++;
         }
-        expect("H3 took its own steps from the start", steps + 1, stepsFor(h3));
+        expect("H3 took its own read steps from the start", bank.stats().prefetchSteps,
+               1 + stepsFor(h3));
         expect("only H3 is decoded", bank.soundsDecoded(), 1);
         SoundBank::Entry h1Entry;
         check(bank.get("H1", &h1Entry) && sameEntry(h1Entry, want),
@@ -627,11 +637,12 @@ void testSyntheticArchives(const mdk::formats::FileSystem* system) {
             const int32_t wantSteps[3] = {1, 2, 3};
             for (int n = 0; n < 3; n++) {
                 check(bank.prefetch(names[n]), "the prefetch begins", names[n]);
+                const int32_t readBefore = bank.stats().prefetchSteps;
                 int32_t steps = 1;
                 while (bank.prefetchStep() && steps < 100) {
                     steps++;
                 }
-                expect(names[n], steps, wantSteps[n]);
+                expect(names[n], bank.stats().prefetchSteps - readBefore, wantSteps[n]);
                 SoundBank::Entry got;
                 SoundBank::Entry want;
                 check(bank.get(names[n], &got) && reference.get(names[n], &want) &&
@@ -643,7 +654,8 @@ void testSyntheticArchives(const mdk::formats::FileSystem* system) {
             // A prefetched entry that is not a WAV: missing from then on, and
             // never read again.
             check(bank.prefetch("NOTWAV"), "the bad entry's prefetch begins (it says RIFF)");
-            check(!bank.prefetchStep(), "its one step ends it");
+            check(bank.prefetchStep() && !bank.prefetchStep(),
+                  "its one read step, then the decode finds no WAV and ends it");
             SoundBank::Entry bad;
             const int32_t demandBefore = bank.stats().demandReads;
             check(!bank.get("NOTWAV", &bad), "a WAV that does not parse is not a sound");
@@ -843,6 +855,269 @@ void testReadsThatFail(const MdkData& data) {
         expect("and costs no read", g_rangeReads - beforeMissing, 0);
     }
     g_rangeReadsLeft = -1;
+}
+
+// ---------------------------------------------------------------------------
+// 3d'. THE LENT READER (the 3DS's music channel): the prefetch's streamed steps
+//     are ASKED FOR and taken back, never read on the calling thread; the decode
+//     follows a slice a step; a read that fails, a drop, an early get() and the
+//     bank's end each leave nothing in flight. The test plays the reader's
+//     thread: a read is held until land() serves it.
+// ---------------------------------------------------------------------------
+struct FakeRead {
+    int32_t tag = -1;
+    std::string path;
+    uint32_t offset = 0;
+    uint32_t length = 0;
+    bool landed = false;
+    bool ok = false;
+    bool cancelled = false;
+    bool taken = false;
+};
+
+struct FakeReader {
+    std::vector<FakeRead> reads;   // every request, in order
+    int32_t cancels = 0;
+    int32_t refusals = 0;
+    bool refuse = false;           // the music slot is busy: requests fail
+};
+
+// The read the reader is holding (asked for, not landed, not cancelled), or null.
+FakeRead* fakePending(FakeReader* reader) {
+    for (size_t i = 0; i < reader->reads.size(); i++) {
+        FakeRead& read = reader->reads[i];
+        if (!read.landed && !read.cancelled) {
+            return &read;
+        }
+    }
+    return nullptr;
+}
+
+bool fakeRequestRange(void* user, int32_t tag, const char* path, uint32_t offset,
+                      uint32_t length) {
+    FakeReader* reader = static_cast<FakeReader*>(user);
+    if (reader->refuse || fakePending(reader) != nullptr) {
+        reader->refusals++;
+        return false;   // one read in flight, as render.h's music channel
+    }
+    FakeRead read;
+    read.tag = tag;
+    read.path = path;
+    read.offset = offset;
+    read.length = length;
+    reader->reads.push_back(read);
+    return true;
+}
+
+bool fakePoll(void* user, int32_t tag, uint8_t** bytes, uint32_t* size, bool* ok) {
+    FakeReader* reader = static_cast<FakeReader*>(user);
+    for (size_t i = 0; i < reader->reads.size(); i++) {
+        FakeRead& read = reader->reads[i];
+        if (read.tag != tag || !read.landed || read.cancelled || read.taken) {
+            continue;
+        }
+        read.taken = true;
+        *ok = false;
+        *bytes = nullptr;
+        *size = 0;
+        if (!read.ok) {
+            return true;
+        }
+        // The thread's read: the host's own, of exactly the range asked for.
+        FILE* file = fopen(read.path.c_str(), "rb");
+        uint8_t* block = static_cast<uint8_t*>(malloc(read.length));
+        if (file && block && fseek(file, (long)read.offset, SEEK_SET) == 0 &&
+            fread(block, 1, read.length, file) == read.length) {
+            *bytes = block;
+            *size = read.length;
+            *ok = true;
+        } else {
+            free(block);
+        }
+        if (file) {
+            fclose(file);
+        }
+        return true;
+    }
+    return false;
+}
+
+void fakeCancel(void* user, int32_t tag) {
+    FakeReader* reader = static_cast<FakeReader*>(user);
+    reader->cancels++;
+    for (size_t i = 0; i < reader->reads.size(); i++) {
+        if (reader->reads[i].tag == tag) {
+            reader->reads[i].cancelled = true;
+        }
+    }
+}
+
+// The held read lands (ok or failed). False when nothing is held.
+bool fakeLand(FakeReader* reader, bool ok) {
+    FakeRead* read = fakePending(reader);
+    if (read == nullptr) {
+        return false;
+    }
+    read->landed = true;
+    read->ok = ok;
+    return true;
+}
+
+mdk::AsyncRead lend(FakeReader* reader) {
+    mdk::AsyncRead read;
+    read.requestRange = fakeRequestRange;
+    read.poll = fakePoll;
+    read.cancel = fakeCancel;
+    read.user = reader;
+    return read;
+}
+
+void testTheLentReaderTakesTheReads(const MdkData& data) {
+    g_realSystem = mdk::formats::fileSystem();
+    mdk::formats::FileSystem failing = *g_realSystem;
+    failing.readRange = countedReadRange;
+    const MdkData flaky(&failing, data.dir());
+    g_rangeReadsLeft = -1;
+
+    SoundBank whole;
+    check(wholeBank(&whole, data, 3), "the reference bank loads");
+    SoundBank::Entry want;
+    check(whole.get("H1", &want), "H1 is a sound");
+    const int32_t h1 = lengthOf(data, "TRAVERSE/LEVEL3/LEVEL3O.SNI", "H1");
+
+    // --- a prefetch with a lent reader: no read on this thread at all ---
+    {
+        FakeReader reader;
+        SoundBank bank;
+        check(SoundBank::forLevel(&bank, flaky, 3), "the bank loads");
+        bank.setReader(lend(&reader));
+        g_rangeReadsLeft = 0;   // from here, any read on this thread FAILS
+        check(bank.prefetch("H1"), "the prefetch begins");
+        int32_t calls = 0;
+        bool more = true;
+        bool heldOnce = false;
+        while (more && calls < 1000) {
+            more = bank.prefetchStep();
+            calls++;
+            if (fakePending(&reader) != nullptr) {
+                // A held read holds the prefetch: steps go by and nothing moves.
+                const int32_t stepsBefore = bank.stats().prefetchSteps;
+                check(bank.prefetchStep(), "a held read is still in flight");
+                calls++;
+                heldOnce = heldOnce || bank.stats().prefetchSteps == stepsBefore;
+                expect("nothing is decoded while it reads", bank.soundsDecoded(), 0);
+                fakeLand(&reader, true);
+            }
+        }
+        g_rangeReadsLeft = -1;
+        check(heldOnce, "the reads were held and the prefetch waited for them");
+        expect("every step went to the reader", bank.stats().prefetchReads, stepsFor(h1));
+        expect("by the original's rule", (long long)reader.reads.size(), stepsFor(h1));
+        expect("and was counted as a step", bank.stats().prefetchSteps, stepsFor(h1));
+        expect("no read failed (none was made here)", bank.stats().readFailures, 0);
+        // The ranges: back to back, each the rule's length, the last the tail.
+        uint32_t next = reader.reads.empty() ? 0 : reader.reads[0].offset;
+        bool contiguous = true;
+        uint32_t total = 0;
+        for (size_t i = 0; i < reader.reads.size(); i++) {
+            contiguous = contiguous && reader.reads[i].offset == next &&
+                         reader.reads[i].length <= (uint32_t)SoundBank::kPrefetchTailBytes;
+            next += reader.reads[i].length;
+            total += reader.reads[i].length;
+        }
+        check(contiguous, "the ranges are back to back and each one step long");
+        expect("and are exactly the entry", (long long)total, h1);
+        check(bank.stats().decodeSteps > 4, "the decode took slices");
+        SoundBank::Entry got;
+        check(bank.get("H1", &got) && sameEntry(got, want), "the sound is the whole file's");
+        expect("playing it read nothing more", bank.stats().demandReads, 0);
+        expect("and waited for nothing", bank.stats().prefetchStalls, 0);
+    }
+
+    // --- a refused request is asked again; a failed read ends the prefetch ---
+    {
+        FakeReader reader;
+        SoundBank bank;
+        check(SoundBank::forLevel(&bank, data, 3), "the bank loads");
+        bank.setReader(lend(&reader));
+        reader.refuse = true;
+        check(bank.prefetch("H3") && bank.prefetchStep() && bank.prefetchStep(),
+              "refused requests keep the prefetch in flight");
+        expect("asked each time", reader.refusals, 2);
+        reader.refuse = false;
+        check(bank.prefetchStep() && fakePending(&reader) != nullptr, "then it is asked for");
+        fakeLand(&reader, false);
+        check(!bank.prefetchStep(), "a read that fails ends the prefetch");
+        check(bank.prefetching().empty(), "the staging is dropped");
+        expect("one read failure", bank.stats().readFailures, 1);
+        SoundBank::Entry got;
+        SoundBank::Entry wantH3;
+        check(bank.get("H3", &got) && whole.get("H3", &wantH3) && sameEntry(got, wantH3),
+              "the track still plays, read when it is played");
+        expect("as a demand read (the last resort, counted)", bank.stats().demandReads, 1);
+    }
+
+    // --- a new prefetch, an early get() and the bank's end cancel the read ---
+    {
+        FakeReader reader;
+        {
+            SoundBank bank;
+            check(SoundBank::forLevel(&bank, data, 3), "the bank loads");
+            bank.setReader(lend(&reader));
+            check(bank.prefetch("H1") && bank.prefetchStep(), "H1 is asked for");
+            check(bank.prefetch("H3"), "H3 takes the staging");
+            expect("H1's read was cancelled", reader.cancels, 1);
+            check(bank.prefetchStep() && fakePending(&reader) != nullptr &&
+                      fakePending(&reader)->tag != reader.reads[0].tag,
+                  "H3's read is asked under a tag of its own");
+            fakeLand(&reader, true);
+            check(bank.prefetchStep(), "its first step lands");
+            check(bank.prefetchStep() && fakePending(&reader) != nullptr, "the second is asked");
+            SoundBank::Entry got;
+            SoundBank::Entry wantH3;
+            check(bank.get("H3", &got) && whole.get("H3", &wantH3) && sameEntry(got, wantH3),
+                  "H3 wanted early is the whole file's");
+            expect("a stall", bank.stats().prefetchStalls, 1);
+            expect("which cancelled the read in flight", reader.cancels, 2);
+            check(bank.prefetching().empty() && !bank.prefetchStep(), "nothing is left in flight");
+            check(bank.prefetch("H5") && bank.prefetchStep() && fakePending(&reader) != nullptr,
+                  "H5 is in flight when the level ends");
+        }
+        expect("the bank's end cancelled it", reader.cancels, 3);
+    }
+
+    // --- every track of every level: the sliced decode is the whole decode ---
+    long long tracks = 0;
+    for (int level = 3; level <= 8; level++) {
+        SoundBank lent;
+        SoundBank reference;
+        check(SoundBank::forLevel(&lent, data, level) && wholeBank(&reference, data, level),
+              "the banks load");
+        FakeReader reader;
+        lent.setReader(lend(&reader));
+        Sni music;
+        check(Sni::open(&music, data, archivePaths(level)[2]), "the music archive opens");
+        for (size_t e = 0; e < music.entries().size(); e++) {
+            if (!music.isSound(music.entries()[e])) {
+                continue;
+            }
+            const std::string name = music.entries()[e].nameString();
+            check(lent.prefetch(name), "the track prefetches", name);
+            int32_t calls = 0;
+            while (lent.prefetchStep() && calls < 1000) {
+                fakeLand(&reader, true);
+                calls++;
+            }
+            SoundBank::Entry got;
+            SoundBank::Entry ref;
+            check(lent.get(name, &got) && reference.get(name, &ref) && sameEntry(got, ref),
+                  "a track decoded in slices is the track decoded whole", name);
+            tracks++;
+        }
+        expect("nothing was read on demand", lent.stats().demandReads, 0);
+        expect("nor stalled", lent.stats().prefetchStalls, 0);
+    }
+    check(tracks > 30, "every level's music was compared");
 }
 
 // ---------------------------------------------------------------------------
@@ -1096,6 +1371,7 @@ int runAudioStreamTests(const formats::MdkData& data) {
         }
     }
     testReadsThatFail(data);
+    testTheLentReaderTakesTheReads(data);
     testADeadMixerHoldsNoPins(data);
     testTheMusicFollowsKurtsArena(data);
     testTheFadeStopsBelowZeroNotAtIt(data);

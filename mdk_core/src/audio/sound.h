@@ -200,5 +200,15 @@ static_assert(sizeof(Sound::Samples::value_type) == 2,
 void soundFromPcm(const uint8_t* data, int32_t byteCount, int32_t channels, int32_t sampleRate,
                   int32_t bitsPerSample, bool looping, Sound* out);
 
+// The samples soundFromPcm makes of a `byteCount`-byte data chunk.
+int32_t pcmSampleCount(int32_t byteCount, int32_t bitsPerSample);
+
+// soundFromPcm's conversion of samples [first, first + count) of a data chunk
+// into `out[0..count)` -- the same int16 values, a slice at a time: the music
+// prefetch decodes a track over several frames with it (audio/sound_bank.h).
+// The caller keeps first + count <= pcmSampleCount().
+void pcmToSamples(const uint8_t* data, int32_t bitsPerSample, int32_t first, int32_t count,
+                  int16_t* out);
+
 } // namespace audio
 } // namespace mdk

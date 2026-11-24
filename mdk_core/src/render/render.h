@@ -267,6 +267,20 @@ bool mdk_render_poll_file_read(MdkRenderer r, int32_t tag, uint8_t** bytes, uint
                                bool* ok);
 void mdk_render_cancel_file_read(MdkRenderer r, int32_t tag);
 
+// THE SAME READER, lent for the MUSIC PREFETCH's byte ranges (audio/
+// sound_bank.h's setReader, through game/async_read.h): one step of a track per
+// read, on a channel of its own (platform/async_file_reader.h's kChannelMusic),
+// ONE read in flight, taken back BY TAG. read: asks for `size` bytes at `offset`
+// of `path` (resolved) under `tag`; false when it cannot be queued now (the
+// music's read is still in flight, or no reader: ask again next frame). poll and
+// cancel as the file reads above. The desktop lends none (false): its bank reads
+// on the frame.
+bool mdk_render_read_music_async(MdkRenderer r, int32_t tag, const char* path, uint32_t offset,
+                                 uint32_t size);
+bool mdk_render_poll_music_read(MdkRenderer r, int32_t tag, uint8_t** bytes, uint32_t* size,
+                                bool* ok);
+void mdk_render_cancel_music_read(MdkRenderer r, int32_t tag);
+
 // Create a 256x1 RGBA palette.
 MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba256);
 

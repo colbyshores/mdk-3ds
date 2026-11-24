@@ -24,6 +24,11 @@
 // state (a read in progress is freed by the worker when it ends), so a screen
 // that closes with a read outstanding leaves nothing behind.
 //
+// A BYTE RANGE instead of a whole file: the music prefetch (audio/sound_bank.h's
+// setReader) asks for one step of a track at a time with requestRange, on the
+// 3DS's music channel (render.h's mdk_render_read_music_async), and takes it back
+// with poll and cancel exactly as a whole file. A user sets the requests it uses.
+//
 // No virtuals, no std::function (AGENTS.md §10): function pointers and a user.
 // ============================================================================
 
@@ -38,6 +43,11 @@ struct AsyncRead {
     // (null: none) run on it on the reader's thread. False when it cannot be
     // queued now (try again on a later frame).
     bool (*request)(void* user, int32_t tag, const char* path, AsyncWork work) = nullptr;
+    // Asks for `length` bytes at `offset` of `path` (a resolved path) under
+    // `tag`: all of them, or ok=false (a short read is a failure, never a partial
+    // buffer). False when it cannot be queued now.
+    bool (*requestRange)(void* user, int32_t tag, const char* path, uint32_t offset,
+                         uint32_t length) = nullptr;
     // The read under `tag`, once finished: its bytes (malloc'd; the caller
     // free()s them) and size, or ok=false with null bytes (the file could not
     // be read). False while it is not finished.
@@ -47,6 +57,9 @@ struct AsyncRead {
     void* user = nullptr;
 
     bool active() const { return request != nullptr && poll != nullptr; }
+    bool rangeActive() const {
+        return requestRange != nullptr && poll != nullptr && cancel != nullptr;
+    }
 };
 
 } // namespace mdk

@@ -1318,7 +1318,9 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     for (; next < renderer->hdQueue.size(); next++) {
         // One slot stays free for Kurt's read and the menus' (kStreamSlots); the
         // orig pack's reads, handed out first this boundary, count against it.
-        if (renderer->hdReader.busyAll() >= mdk::AsyncFileReader::kStreamSlots) {
+        if (renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd) +
+                renderer->hdReader.busy(mdk::AsyncFileReader::kChannelOrig) >=
+            mdk::AsyncFileReader::kStreamSlots) {
             break;
         }
         const size_t reading =
@@ -1514,7 +1516,9 @@ static void pumpPackOriginals(RendererC3D* renderer, uint32_t previousFrameStart
     // (1) Hand out reads.
     while (!queue.empty() && renderer->hdReader.running() &&
            renderer->hdReader.busy(mdk::AsyncFileReader::kChannelOrig) < kPackReadsInFlight &&
-           renderer->hdReader.busyAll() < mdk::AsyncFileReader::kStreamSlots) {
+           renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd) +
+                   renderer->hdReader.busy(mdk::AsyncFileReader::kChannelOrig) <
+               mdk::AsyncFileReader::kStreamSlots) {
         size_t pick = 0;
         bool demanded = false;
         int32_t pickTexels = 0;

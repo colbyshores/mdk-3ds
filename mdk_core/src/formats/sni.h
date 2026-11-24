@@ -100,6 +100,9 @@ public:
 
     // Whether this archive was open()ed (its bytes are in the file, not here).
     bool streamed() const { return streamed_; }
+    // An open()ed archive's file, resolved (empty for a parsed one): the music
+    // prefetch hands it to a file thread with an entry's range.
+    const std::string& path() const { return path_; }
 
     // Read exactly `length` bytes of an entry starting `at` bytes into it (the
     // bank's stepped prefetch). False past the entry or on a short read.

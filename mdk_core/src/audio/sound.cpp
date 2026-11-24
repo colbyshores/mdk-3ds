@@ -42,6 +42,37 @@ const int32_t kByteScale = 256;
 
 } // namespace
 
+int32_t pcmSampleCount(int32_t byteCount, int32_t bitsPerSample) {
+    if (byteCount <= 0) {
+        return 0;
+    }
+    // 8-bit: one byte per sample; otherwise the even part of the chunk, one
+    // short per two bytes.
+    return bitsPerSample == 8 ? byteCount : (byteCount & ~1) / 2;
+}
+
+void pcmToSamples(const uint8_t* data, int32_t bitsPerSample, int32_t first, int32_t count,
+                  int16_t* out) {
+    if (bitsPerSample == 8) {
+        for (int32_t i = 0; i < count; i++) {
+            // (data[i] - 128) * 256: the byte is unsigned, so the bias is an int
+            // subtract and the result spans [-32768, 32512] — inside int16 for
+            // every byte, which is what lets the read share one scale with the
+            // 16-bit path. No float appears in this loop, and the scale is a
+            // multiply for the reason at its definition above.
+            out[i] = (int16_t)(((int32_t)data[(size_t)(first + i)] - kByteMiddle) * kByteScale);
+        }
+        return;
+    }
+    for (int32_t i = 0; i < count; i++) {
+        const int32_t at = (first + i) * 2;
+        const int32_t raw = (int32_t)data[(size_t)at] | ((int32_t)data[(size_t)at + 1] << 8);
+        // Sign-extend the 16-bit word the way a signed short would, and store it
+        // as that short. The C#'s `shorts[i] * ShortScale` happens at the read.
+        out[i] = (int16_t)(raw & 0xFFFF);
+    }
+}
+
 void soundFromPcm(const uint8_t* data, int32_t byteCount, int32_t channels, int32_t sampleRate,
                   int32_t bitsPerSample, bool looping, Sound* out) {
     if (!out) {
@@ -54,32 +85,9 @@ void soundFromPcm(const uint8_t* data, int32_t byteCount, int32_t channels, int3
     if (!data || byteCount <= 0) {
         return;
     }
-
-    if (bitsPerSample == 8) {
-        out->samples.resize((size_t)byteCount);
-        for (int32_t i = 0; i < byteCount; i++) {
-            // (data[i] - 128) * 256: the byte is unsigned, so the bias is an int
-            // subtract and the result spans [-32768, 32512] — inside int16 for
-            // every byte, which is what lets the read share one scale with the
-            // 16-bit path. No float appears in this loop, and the scale is a
-            // multiply for the reason at its definition above.
-            out->samples[(size_t)i] =
-                (int16_t)(((int32_t)data[(size_t)i] - kByteMiddle) * kByteScale);
-        }
-        return;
-    }
-
-    // 16-bit: the even part of the chunk, one short per two bytes.
-    const int32_t usable = byteCount & ~1;
-    const int32_t count = usable / 2;
+    const int32_t count = pcmSampleCount(byteCount, bitsPerSample);
     out->samples.resize((size_t)count);
-    for (int32_t i = 0; i < count; i++) {
-        const int32_t at = i * 2;
-        const int32_t raw = (int32_t)data[(size_t)at] | ((int32_t)data[(size_t)at + 1] << 8);
-        // Sign-extend the 16-bit word the way a signed short would, and store it
-        // as that short. The C#'s `shorts[i] * ShortScale` happens at the read.
-        out->samples[(size_t)i] = (int16_t)(raw & 0xFFFF);
-    }
+    pcmToSamples(data, bitsPerSample, 0, count, out->samples.data());
 }
 
 } // namespace audio

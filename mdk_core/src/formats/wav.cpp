@@ -22,7 +22,18 @@ const int32_t FORMAT_SIZE = 16;
 } // namespace
 
 bool Wav::parse(const uint8_t* wav, int32_t byteCount, Wav* outWav) {
-    if (!outWav) {
+    int32_t dataAt = 0;
+    int32_t dataSize = 0;
+    if (!locate(wav, byteCount, outWav, &dataAt, &dataSize)) {
+        return false;
+    }
+    outWav->data_.assign(wav + dataAt, wav + dataAt + dataSize);
+    return true;
+}
+
+bool Wav::locate(const uint8_t* wav, int32_t byteCount, Wav* outWav, int32_t* outDataAt,
+                 int32_t* outDataSize) {
+    if (!outWav || !outDataAt || !outDataSize) {
         return false;
     }
 
@@ -70,9 +81,10 @@ bool Wav::parse(const uint8_t* wav, int32_t byteCount, Wav* outWav) {
     result.channels_ = (int32_t)binU16(format, 2);
     result.sampleRate_ = (int32_t)binU32(format, 4);
     result.bitsPerSample_ = (int32_t)binU16(format, 14);
-    result.data_.assign(data, data + dataSize);
 
     *outWav = result;
+    *outDataAt = (int32_t)(data - wav);
+    *outDataSize = dataSize;
     return true;
 }
 

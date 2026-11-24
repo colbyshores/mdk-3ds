@@ -110,7 +110,9 @@ struct HarnessArenaFrame {
     int32_t packLanded = 0;      // ... draws that took the reader's finished read
     int32_t hdReads = 0;         // successful file reads, before import
     int32_t musicDemandReads = 0;    // SoundBank::Stats (cumulative)
-    int32_t musicPrefetchStalls = 0;
+    int32_t musicPrefetchStalls = 0; // ... a prefetch finished on the frame (read + whole decode)
+    int32_t musicReaderSteps = 0;    // ... prefetch steps landed from the reader thread
+    int32_t musicDecodeSteps = 0;    // ... prefetch decode slices (on the frame, bounded)
     int32_t hdImported = 0;      // render_c3d_stats.h (cumulative)
     int32_t kurtReads = 0;       // KurtSprite::StreamStats::reads (cumulative)
     int32_t kurtHolds = 0;       // KurtSprite::StreamStats holds + holdMisses (cumulative): draws whose wanted frame was still being read

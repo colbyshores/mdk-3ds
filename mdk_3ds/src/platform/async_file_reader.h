@@ -42,16 +42,27 @@
 // (04_textures.inc, pumpPackOriginals); a draw that cannot wait takes its read
 // by tag (pollTag) or drops it (discard) and reads the file itself.
 //
+// A FIFTH CHANNEL, kChannelMusic: the level's music prefetch (audio/sound_bank.h,
+// through render.h's mdk_render_read_music_async), a byte RANGE of LEVELnO.SNI per
+// request -- one step of the original's (0xf768 bytes, ~11-17 ms of SD on the Old
+// 3DS), never the whole track, so the worker is never held by music for longer
+// than one ordinary read. One read in flight, taken by tag.
+//
 // WHICH READ GOES NEXT. The worker takes the Requested slot whose channel ranks
-// first -- Kurt's pack (0), the menus' files (1), the orig pack (2), the HD
-// stream (3) -- and within a rank the oldest request (`order`, stamped by
-// queue()). Kurt's animation and a menu's picture are what a player is waiting
-// on; an orig texture is a surface about to be drawn; an HD copy only replaces a
-// surface that already draws. And the STREAMS (HD, orig) only ask while fewer
-// than kStreamSlots slots are busy, so the streams never fill the reader: one
-// slot is always left that only Kurt's read or a menu's can take. It is ONE slot
-// for the two of them -- shared, first come -- not one each: a menu's read in it
-// makes Kurt's wait for the next free slot like any other request.
+// first -- Kurt's pack (0), the menus' files (1), the orig pack (2), the music
+// (3), the HD stream (4) -- and within a rank the oldest request (`order`,
+// stamped by queue()). Kurt's animation and a menu's picture are what a player
+// is waiting on; an orig texture is a surface about to be drawn (and a draw that
+// cannot wait reads it on the main thread); a track is wanted at the door,
+// frames later; an HD copy only replaces a surface that already draws. And the
+// STREAMS (HD, orig) only ask while their OWN slots (HD + orig) number fewer
+// than kStreamSlots -- counting every channel's let Kurt's and the music's
+// reads shrink the orig stream to one read during a crossing -- so
+// the streams never fill the reader: two slots are always left, one that only
+// Kurt's read or a menu's can take (shared between them, first come -- a menu's
+// read in it makes Kurt's wait for the next free slot like any other request)
+// and one for the music's single read, so neither the streams nor Kurt can
+// starve the track, and the track cannot take Kurt's slot.
 // ============================================================================
 
 #include <3ds.h>
@@ -62,17 +73,18 @@ namespace mdk {
 
 class AsyncFileReader {
 public:
-    static constexpr int32_t kSlots = 4;
+    static constexpr int32_t kSlots = 5;
     static constexpr size_t kPathMax = 192;
     static constexpr size_t kStackBytes = 16 * 1024;
     static constexpr int32_t kChannelHd = 0;
     static constexpr int32_t kChannelPack = 1;
     static constexpr int32_t kChannelFile = 2;
     static constexpr int32_t kChannelOrig = 3;
+    static constexpr int32_t kChannelMusic = 4;
     // The slots the streams (kChannelHd, kChannelOrig) may hold between them:
-    // one fewer than all, so one slot is left for Kurt's read and the menus'
-    // (shared between them, not one each).
-    static constexpr int32_t kStreamSlots = kSlots - 1;
+    // two fewer than all, so one slot is left for Kurt's read and the menus'
+    // (shared between them, not one each) and one for the music's.
+    static constexpr int32_t kStreamSlots = kSlots - 2;
     // The largest range read: more than any animation's frames (K_CHUTEC's 12
     // are 163,536 bytes); a corrupt index cannot size a bigger allocation.
     static constexpr uint32_t kMaxRangeBytes = 1u << 20;

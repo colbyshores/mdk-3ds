@@ -955,3 +955,28 @@ and main_3ds_flow unchanged from HEAD (pre-existing).
 
 **Still open.** 50-68 ms `begin` frames 18-29 (three 16384-texel steps a
 frame; the mip steps cost more per texel than the row steps) -- tunable.
+
+### MUSIC PREFETCH OFF THE FRAME (2026-11-24): reader-thread reads, sliced decode
+
+**What.** SoundBank's prefetch reads go through the AsyncFileReader (new
+kChannelMusic, one original-sized step per request; kSlots 5, the streams
+test only their own HD+orig slots against kStreamSlots); the decode is sliced
+on the main thread (kDecodeStepSamples 32768/frame) straight from the read
+bytes (Wav::locate, pcmToSamples). A track wanted before it lands still falls
+back to a counted read+decode. The 60-frame release/re-prefetch runs in every
+build (it was under log3dsPeriodic()) and keeps the bubble's track.
+
+**Why.** Each prefetch step read on the main thread (11-17 ms a frame through
+the corridor crossing) and the last step decoded the whole track (74.9 ms at
+frame 799).
+
+**Evidence.** Old 3DS L7 walk (.git/hw-logs/2026-11-24-music1.log, music2.log):
+the crossing's music span 11-17 ms + 74.9 ms -> 0.1 ms, worst main-thread step
+1.7 ms; TRACK9/TRACK11 arrive in 8 reader reads + 16 slices; p99 52.9 ->
+49.9 ms. Host: audio_stream tests (every level 3-8 track sliced == whole;
+reader path non-vacuous). Independent Opus review COMPLETE; M1 (stream slot
+math), M2 (bubble track kept), L1 (no heapProbe on track-in) fixed.
+
+**Still open.** Crossing frames 59-77 ms: the sliced door build (`sync`
+15-20 ms) and the effects warm (17-19 ms); frames 783 (end span 80 ms) and
+796 (116 ms, spans small) are not yet attributed.
