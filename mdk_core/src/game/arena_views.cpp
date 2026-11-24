@@ -113,13 +113,13 @@ bool ArenaViews::connected(const std::string& a, const std::string& b) const {
 bool ArenaViews::waiting(const std::string& name) const {
     for (size_t i = 0; i < failed_.size(); i++) {
         if (failed_[i].name == name) {
-            return syncs_ < failed_[i].retryAt;
+            return failed_[i].permanent || syncs_ < failed_[i].retryAt;
         }
     }
     return false;
 }
 
-void ArenaViews::noteFailed(const std::string& name) {
+void ArenaViews::noteFailed(const std::string& name, LevelViewBuildFailure failure) {
     Failed* entry = nullptr;
     for (size_t i = 0; i < failed_.size(); i++) {
         if (failed_[i].name == name) {
@@ -132,7 +132,9 @@ void ArenaViews::noteFailed(const std::string& name) {
         entry->name = name;
     }
     entry->attempts++;
-    entry->retryAt = syncs_ + (entry->attempts <= kQuickRetries ? 1 : kRetrySyncs);
+    entry->permanent = failure == LevelViewBuildFailure::PermanentData;
+    entry->retryAt = entry->permanent ? INT32_MAX
+                                      : syncs_ + (entry->attempts <= kQuickRetries ? 1 : kRetrySyncs);
 }
 
 void ArenaViews::forgetFailed(const std::string& name) {
@@ -157,11 +159,14 @@ bool ArenaViews::refresh(const std::string& arena) {
     // C# LevelView.Rebuild (LevelView.cs:251), the Changed subscriber: a built view is
     // rebuilt from the group materials now in the arena. An arena with no view has
     // nothing to rebuild -- its view is built from the same materials when it loads.
+    // A group change is also a new scene version for a failed build, so it
+    // clears that build's failure history and the next sync can try again.
     for (size_t i = 0; i < views_.size(); i++) {
         if (views_[i].name == arena) {
             return views_[i].view->refresh();
         }
     }
+    forgetFailed(arena);
     return true;
 }
 
@@ -193,13 +198,13 @@ bool ArenaViews::build(const std::string& name) {
     if (!view->loadBegin(renderer_, level_, arena, surfaces_)) {
         // An arena with no geometry, or no GPU memory for its mesh right now:
         // tried again later (see the header), not in every frame and not never.
+        const LevelViewBuildFailure failure = view->buildFailure();
         view->unload();
         delete view;
-        noteFailed(name);
+        noteFailed(name, failure);
         stats_.failed++;
         return false;
     }
-    forgetFailed(name);
     Entry entry;
     entry.name = name;
     entry.view = view;
@@ -263,6 +268,13 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
         return 0;
     }
     syncs_++;
+    // A failure belongs to the residency that produced it: leaving the kept
+    // set resets it, so a later approach starts from a clean history.
+    for (size_t i = failed_.size(); i > 0; i--) {
+        if (!keeps(failed_[i - 1].name, current, second, drawn, hints)) {
+            failed_.erase(failed_.begin() + (std::ptrdiff_t)(i - 1));
+        }
+    }
     // Free first. (On the 3DS a release settles at the next frame's start, not
     // here, which is one reason a build can fail and is retried.)
     for (size_t i = views_.size(); i > 0; i--) {
@@ -361,13 +373,21 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
         stats_.buildSteps++;
         if (view->buildFailed() || view->notBuilding()) {
             const std::string name = views_[i].name;
+            const LevelViewBuildFailure failure = view->buildFailure();
             release(i);
-            noteFailed(name);
+            noteFailed(name, failure);
             stats_.failed++;
             i--;   // the next view shifted into this slot; step it next sync
             continue;
         }
         break;   // one build step a sync (the cap above)
+    }
+    // Publication is the only success that clears failure history: a start
+    // that later failed at the mesh must not reset its backoff.
+    for (size_t i = 0; i < views_.size(); i++) {
+        if (views_[i].view->ready()) {
+            forgetFailed(views_[i].name);
+        }
     }
     // Every kOrphanSweepSyncs, counted forward (no remainder: the ARM11 has no
     // integer divide, AGENTS.md R11).

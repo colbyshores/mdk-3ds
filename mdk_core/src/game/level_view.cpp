@@ -55,6 +55,7 @@ bool LevelView::loadBegin(MdkRenderer renderer, LevelData* level, const formats:
     if (!renderer || !level || !arena || !surfaces) {
         delete buildResolver_;
         buildResolver_ = nullptr;
+        buildFailure_ = LevelViewBuildFailure::PermanentData;
         buildState_ = BuildState::Failed;
         return false;
     }
@@ -73,12 +74,14 @@ bool LevelView::loadBegin(MdkRenderer renderer, LevelData* level, const formats:
 
     palette_ = &level->paletteOf(arena);
     const std::vector<const formats::TextureArchive*> archives = level->archivesOf(arena);
+    buildFailure_ = LevelViewBuildFailure::None;
 
     delete buildResolver_;
     buildResolver_ = new MaterialResolver(&level->dti(), shading_);
     if (!builder_.begin(arena, buildResolver_, palette_, archives)) {
         delete buildResolver_;
         buildResolver_ = nullptr;
+        buildFailure_ = LevelViewBuildFailure::PermanentData;
         buildState_ = BuildState::Failed;
         return false;
     }
@@ -100,6 +103,7 @@ bool LevelView::buildStep() {
             } else if (builder_.failed()) {
                 delete buildResolver_;
                 buildResolver_ = nullptr;
+                buildFailure_ = LevelViewBuildFailure::PermanentData;
                 buildState_ = BuildState::Failed;
                 return false;
             }
@@ -111,6 +115,7 @@ bool LevelView::buildStep() {
             if (mesh_ < 0) {
                 delete buildResolver_;
                 buildResolver_ = nullptr;
+                buildFailure_ = LevelViewBuildFailure::TransientAllocation;
                 buildState_ = BuildState::Failed;
                 return false;
             }
@@ -125,6 +130,7 @@ bool LevelView::buildStep() {
             // makes them as surfaces resolve too.
             delete buildResolver_;
             buildResolver_ = nullptr;
+            buildFailure_ = LevelViewBuildFailure::None;
             buildState_ = BuildState::Ready;
             if (pendingRefresh_) {
                 pendingRefresh_ = false;
@@ -147,6 +153,7 @@ void LevelView::unload() {
     buildResolver_ = nullptr;
     builder_.reset();
     buildState_ = BuildState::Empty;
+    buildFailure_ = LevelViewBuildFailure::None;
     pendingRefresh_ = false;
     scene_ = ArenaScene();
     arena_ = nullptr;

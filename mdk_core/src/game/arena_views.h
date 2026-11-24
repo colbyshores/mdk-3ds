@@ -160,6 +160,7 @@ private:
         std::string name;
         int32_t attempts = 0;
         int32_t retryAt = 0;   // the sync() count at which to try again
+        bool permanent = false;
     };
 
     bool keeps(const std::string& name, const std::string& current, const std::string& second,
@@ -172,7 +173,7 @@ private:
     void release(size_t index);
     // Whether a failed build of `name` is still waiting for its retry.
     bool waiting(const std::string& name) const;
-    void noteFailed(const std::string& name);
+    void noteFailed(const std::string& name, LevelViewBuildFailure failure);
     void forgetFailed(const std::string& name);
     void sweepOrphans(const std::string& current, const std::string& second,
                       const std::vector<std::string>& drawn);

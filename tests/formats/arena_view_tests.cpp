@@ -10,6 +10,7 @@
 
 #include "formats/case_insensitive_path.h"
 #include "formats/mdk_data.h"
+#include "game/arena_views.h"
 #include "game/level_data.h"
 #include "game/level_view.h"
 #include "render/surface_cache.h"
@@ -87,5 +88,100 @@ MDK_TEST(LevelViewRefreshFailureKeepsOldMesh) {
         }
         MDK_CHECK(exercised);
     }
+    mdk_test_failMeshCreates = 0;
+}
+
+namespace {
+
+bool loadLevel3(mdk::LevelData* level) {
+    mdk::formats::MdkData game = locateData();
+    return game.found() && mdk::LevelData::load(level, &game, 3);
+}
+
+const mdk::formats::Arena* firstDrawableArena(mdk::LevelData* level, mdk::SurfaceCache* surfaces,
+                                                MdkRenderer renderer) {
+    for (size_t i = 0; i < level->arenas().size(); i++) {
+        const mdk::formats::Arena* arena = level->arenas()[i];
+        mdk::LevelView view;
+        if (!view.load(renderer, level, arena, surfaces)) {
+            continue;
+        }
+        const int drawsBefore = mdk_test_meshDraws;
+        view.draw();
+        view.unload();
+        if (mdk_test_meshDraws > drawsBefore) {
+            return arena;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+MDK_TEST(ArenaViewsTransientFailureBacksOffAcrossBuildStarts) {
+    mdk::LevelData level;
+    MDK_CHECK(loadLevel3(&level));
+    if (level.arenas().empty()) {
+        return;
+    }
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    const mdk::formats::Arena* arena = firstDrawableArena(&level, &surfaces, renderer);
+    MDK_CHECK(arena != nullptr);
+    if (arena == nullptr) {
+        return;
+    }
+
+    mdk::ArenaViews views;
+    views.start(renderer, &level, &surfaces, mdk::Shading::Original);
+    const std::vector<std::string> drawn(1, arena->name());
+    mdk_test_failMeshCreates = 100;
+    for (int i = 0; i < 5; i++) {
+        views.sync(arena->name(), std::string(), drawn);
+    }
+    // Four attempts earn the long backoff; the fifth sync must wait, not
+    // discover that the successful sliced starts erased the history.
+    MDK_CHECK_EQ(views.stats().failed, 4);
+    views.sync(arena->name(), std::string(), drawn);
+    MDK_CHECK_EQ(views.stats().failed, 4);
+    mdk_test_failMeshCreates = 0;
+    views.clear();
+}
+
+MDK_TEST(ArenaViewsPermanentSceneFailureIsNotRetriedWhileKept) {
+    mdk::LevelData level;
+    MDK_CHECK(loadLevel3(&level));
+    if (level.arenas().empty()) {
+        return;
+    }
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    const mdk::formats::Arena* arena = firstDrawableArena(&level, &surfaces, renderer);
+    MDK_CHECK(arena != nullptr);
+    if (arena == nullptr) {
+        return;
+    }
+
+    mdk::formats::Arena* mutableArena = level.arenaNamedMutable(arena->name());
+    MDK_CHECK(mutableArena != nullptr);
+    if (mutableArena == nullptr) {
+        return;
+    }
+    const std::vector<uint32_t> oldFlags = mutableArena->mutableTriangleFlags();
+    std::vector<uint32_t>& flags = mutableArena->mutableTriangleFlags();
+    for (size_t i = 0; i < flags.size(); i++) {
+        flags[i] = 0xffffffffu;
+    }
+
+    mdk::ArenaViews views;
+    views.start(renderer, &level, &surfaces, mdk::Shading::Original);
+    const std::vector<std::string> drawn(1, arena->name());
+    for (int i = 0; i < 10; i++) {
+        views.sync(arena->name(), std::string(), drawn);
+    }
+    MDK_CHECK_EQ(views.stats().failed, 1);
+
+    views.clear();
+    mutableArena->mutableTriangleFlags() = oldFlags;
     mdk_test_failMeshCreates = 0;
 }

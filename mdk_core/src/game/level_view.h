@@ -44,6 +44,12 @@
 namespace mdk {
 
 // An arena on the GPU.
+enum class LevelViewBuildFailure : uint8_t {
+    None,
+    TransientAllocation,
+    PermanentData,
+};
+
 class LevelView {
 public:
     LevelView() = default;
@@ -77,6 +83,7 @@ public:
     bool buildStep();
     bool ready() const { return buildState_ == BuildState::Ready; }
     bool buildFailed() const { return buildState_ == BuildState::Failed; }
+    LevelViewBuildFailure buildFailure() const { return buildFailure_; }
     // No build in flight (never begun, or unloaded): the sync pump treats
     // it as failed rather than stepping it forever.
     bool notBuilding() const { return buildState_ == BuildState::Empty; }
@@ -178,6 +185,7 @@ private:
     // for the build's duration), and which stage comes next.
     enum class BuildState : uint8_t { Empty, Scene, Mesh, Large, Ready, Failed };
     BuildState buildState_ = BuildState::Empty;
+    LevelViewBuildFailure buildFailure_ = LevelViewBuildFailure::None;
     ArenaSceneBuilder builder_;
     MaterialResolver* buildResolver_ = nullptr;
     // A refresh() asked for while building: applied at the Ready step.
