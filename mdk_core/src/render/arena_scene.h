@@ -162,12 +162,14 @@ private:
 // gave up (no geometry), which buildArenaScene reports as false.
 class ArenaSceneBuilder {
 public:
+    enum class Failure : uint8_t { None, InvalidData, EmptyScene };
     // Not copyable (its depth builder points into this builder's own
     // depthLayers_): reset in place instead of assigning a fresh one.
     ArenaSceneBuilder() = default;
     ArenaSceneBuilder(const ArenaSceneBuilder&) = delete;
     ArenaSceneBuilder& operator=(const ArenaSceneBuilder&) = delete;
     void reset() {
+        failure_ = Failure::None;
         depth_.reset();
         scene_.clear();
         depthLayers_.clear();
@@ -190,6 +192,7 @@ public:
     bool step(int32_t maxTriangles);
     bool done() const { return phase_ == Phase::Done; }
     bool failed() const { return phase_ == Phase::Failed; }
+    Failure failure() const { return failure_; }
     ArenaScene& scene() { return scene_; }
 
 private:
@@ -202,6 +205,7 @@ private:
     std::vector<const formats::TextureArchive*> archives_;
     ArenaScene scene_;
     Phase phase_ = Phase::Idle;
+    Failure failure_ = Failure::None;
     DepthLayersBuilder depth_;
     std::vector<int32_t> depthLayers_;
     std::vector<int32_t> order_;

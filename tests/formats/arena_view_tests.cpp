@@ -19,6 +19,7 @@
 #include <stdlib.h>
 
 extern int mdk_test_meshDraws;
+extern int mdk_test_meshes;
 extern int mdk_test_failMeshCreates;
 
 namespace {
@@ -184,4 +185,73 @@ MDK_TEST(ArenaViewsPermanentSceneFailureIsNotRetriedWhileKept) {
     views.clear();
     mutableArena->mutableTriangleFlags() = oldFlags;
     mdk_test_failMeshCreates = 0;
+}
+
+MDK_TEST(LevelViewPendingRefreshRetriesAfterMeshFailure) {
+    mdk::LevelData level;
+    MDK_CHECK(loadLevel3(&level));
+    if (level.arenas().empty()) {
+        return;
+    }
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    const mdk::formats::Arena* arena = firstDrawableArena(&level, &surfaces, renderer);
+    MDK_CHECK(arena != nullptr);
+    if (arena == nullptr) {
+        return;
+    }
+
+    mdk::LevelView view;
+    MDK_CHECK(view.loadBegin(renderer, &level, arena, &surfaces));
+    MDK_CHECK(!view.refresh());
+    MDK_CHECK(view.pendingRefresh());
+
+    const int createsBeforeBuild = mdk_test_meshes;
+    while (!view.ready() && !view.buildFailed() && mdk_test_meshes == createsBeforeBuild) {
+        view.buildStep();
+    }
+    MDK_CHECK(!view.ready());
+    MDK_CHECK(!view.buildFailed());
+    mdk_test_failMeshCreates = 1;
+    MDK_CHECK(view.buildStep());
+    MDK_CHECK(view.ready());
+    MDK_CHECK(view.pendingRefresh());
+    MDK_CHECK_EQ(mdk_test_failMeshCreates, 0);
+
+    mdk_test_failMeshCreates = 0;
+    MDK_CHECK(view.retryPendingRefresh());
+    MDK_CHECK(!view.pendingRefresh());
+    const int drawsBefore = mdk_test_meshDraws;
+    view.draw();
+    MDK_CHECK(mdk_test_meshDraws > drawsBefore);
+    view.unload();
+}
+
+MDK_TEST(ArenaViewsRetriesFailedRefreshAtSync) {
+    mdk::LevelData level;
+    MDK_CHECK(loadLevel3(&level));
+    if (level.arenas().empty()) {
+        return;
+    }
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    const mdk::formats::Arena* arena = firstDrawableArena(&level, &surfaces, renderer);
+    MDK_CHECK(arena != nullptr);
+    if (arena == nullptr) {
+        return;
+    }
+
+    mdk::ArenaViews views;
+    views.start(renderer, &level, &surfaces, mdk::Shading::Original);
+    const std::vector<std::string> drawn(1, arena->name());
+    views.sync(arena->name(), std::string(), drawn);
+    MDK_CHECK(views.find(arena->name()) != nullptr && views.find(arena->name())->ready());
+
+    mdk_test_failMeshCreates = 1;
+    MDK_CHECK(!views.refresh(arena->name()));
+    const int createsAfterFailure = mdk_test_meshes;
+    mdk_test_failMeshCreates = 0;
+    views.sync(arena->name(), std::string(), drawn);
+    MDK_CHECK(mdk_test_meshes > createsAfterFailure);
+    views.clear();
 }

@@ -81,7 +81,9 @@ bool LevelView::loadBegin(MdkRenderer renderer, LevelData* level, const formats:
     if (!builder_.begin(arena, buildResolver_, palette_, archives)) {
         delete buildResolver_;
         buildResolver_ = nullptr;
-        buildFailure_ = LevelViewBuildFailure::PermanentData;
+        buildFailure_ = builder_.failure() == ArenaSceneBuilder::Failure::EmptyScene
+                            ? LevelViewBuildFailure::SceneEmpty
+                            : LevelViewBuildFailure::PermanentData;
         buildState_ = BuildState::Failed;
         return false;
     }
@@ -103,7 +105,9 @@ bool LevelView::buildStep() {
             } else if (builder_.failed()) {
                 delete buildResolver_;
                 buildResolver_ = nullptr;
-                buildFailure_ = LevelViewBuildFailure::PermanentData;
+                buildFailure_ = builder_.failure() == ArenaSceneBuilder::Failure::EmptyScene
+                                    ? LevelViewBuildFailure::SceneEmpty
+                                    : LevelViewBuildFailure::PermanentData;
                 buildState_ = BuildState::Failed;
                 return false;
             }
@@ -132,9 +136,8 @@ bool LevelView::buildStep() {
             buildResolver_ = nullptr;
             buildFailure_ = LevelViewBuildFailure::None;
             buildState_ = BuildState::Ready;
-            if (pendingRefresh_) {
+            if (pendingRefresh_ && refresh()) {
                 pendingRefresh_ = false;
-                refresh();
             }
             return true;
         case BuildState::Ready:
@@ -351,6 +354,17 @@ void LevelView::draw() {
 }
 
 
+bool LevelView::retryPendingRefresh() {
+    if (!pendingRefresh_) {
+        return true;
+    }
+    if (!ready() || !refresh()) {
+        return false;
+    }
+    pendingRefresh_ = false;
+    return true;
+}
+
 bool LevelView::refresh() {
     if (!renderer_ || !level_ || !arena_ || surfaces_ == nullptr) {
         return false;
@@ -377,6 +391,7 @@ bool LevelView::refresh() {
     const std::vector<const formats::TextureArchive*> archives = level_->archivesOf(arena_);
     ArenaScene rebuilt;
     if (!buildArenaScene(arena_, resolver, *palette_, archives, &rebuilt)) {
+        pendingRefresh_ = true;
         return false;
     }
 
@@ -389,6 +404,7 @@ bool LevelView::refresh() {
         candidate = mdk_render_create_mesh(renderer_, rebuilt.vertices.data(),
                                            (int32_t)rebuilt.vertices.size());
         if (candidate < 0) {
+            pendingRefresh_ = true;
             return false;
         }
     }
@@ -407,6 +423,7 @@ bool LevelView::refresh() {
         mdk_render_release_mesh(renderer_, mesh_);
     }
     mesh_ = candidate;
+    pendingRefresh_ = false;
     return true;
 }
 

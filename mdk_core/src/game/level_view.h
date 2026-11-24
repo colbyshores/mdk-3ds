@@ -48,6 +48,7 @@ enum class LevelViewBuildFailure : uint8_t {
     None,
     TransientAllocation,
     PermanentData,
+    SceneEmpty,
 };
 
 class LevelView {
@@ -84,6 +85,10 @@ public:
     bool ready() const { return buildState_ == BuildState::Ready; }
     bool buildFailed() const { return buildState_ == BuildState::Failed; }
     LevelViewBuildFailure buildFailure() const { return buildFailure_; }
+    bool pendingRefresh() const { return pendingRefresh_; }
+    // Re-apply a refresh recorded while building after its mesh creation
+    // failed at publication. True when no refresh is pending or it applied.
+    bool retryPendingRefresh();
     // No build in flight (never begun, or unloaded): the sync pump treats
     // it as failed rather than stepping it forever.
     bool notBuilding() const { return buildState_ == BuildState::Empty; }

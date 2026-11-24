@@ -55,12 +55,12 @@ MdkTextureId SurfaceCache::textureId(const formats::Texture* texture,
     const int32_t texels = texture->width() * texture->height() * texture->frameCount();
     const bool pixelsWereAway = texture->pixelsAway();
     const uint8_t* indices = texture->indices();
+    if (indices == nullptr || texels <= 0 || texture->indexCount() < texels) {
+        return -1;
+    }
     if (pixelsWereAway) {
         sourceStats_.mtoDemandReads++;
         sourceStats_.mtoDemandBytes += texels;
-    }
-    if (indices == nullptr || texels <= 0 || texture->indexCount() < texels) {
-        return -1;
     }
     // The texture's height already includes the animation frames: the
     // original stacks them vertically.
@@ -78,12 +78,12 @@ int32_t SurfaceCache::refresh(const formats::Texture* texture) {
     const int32_t texels = texture->width() * texture->height() * texture->frameCount();
     const bool pixelsWereAway = texture->pixelsAway();
     const uint8_t* indices = texture->indices();
+    if (indices == nullptr || texels <= 0 || texture->indexCount() < texels) {
+        return 0;
+    }
     if (pixelsWereAway) {
         sourceStats_.mtoDemandReads++;
         sourceStats_.mtoDemandBytes += texels;
-    }
-    if (indices == nullptr || texels <= 0 || texture->indexCount() < texels) {
-        return 0;
     }
     int32_t updated = 0;
     typedef std::map<std::pair<const formats::Texture*, const formats::Palette*>, MdkTextureId>

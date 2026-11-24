@@ -405,6 +405,7 @@ bool arenaSceneTriangleFirsts(const formats::Arena* arena, std::vector<int32_t>*
 bool ArenaSceneBuilder::begin(const formats::Arena* arena, const MaterialResolver* resolver,
                               const formats::Palette* palette,
                               const std::vector<const formats::TextureArchive*>& archives) {
+    failure_ = Failure::None;
     scene_.clear();
     surfaces_.clear();
     drawn_.clear();
@@ -415,12 +416,14 @@ bool ArenaSceneBuilder::begin(const formats::Arena* arena, const MaterialResolve
     oi_ = 0;
     haveRun_ = false;
     if (!arena || !resolver || !palette) {
+        failure_ = Failure::InvalidData;
         phase_ = Phase::Failed;
         return false;
     }
     const std::vector<int32_t>& indices = arena->triangleIndices();
     const int32_t triangleCount = arena->triangleCount();
     if (triangleCount <= 0 || (int32_t)indices.size() < triangleCount * 3) {
+        failure_ = Failure::InvalidData;
         phase_ = Phase::Failed;
         return false;
     }
@@ -433,6 +436,7 @@ bool ArenaSceneBuilder::begin(const formats::Arena* arena, const MaterialResolve
     // phase fills it -- the step that gets there reserves it then, so a
     // build still in its depth phase holds no vertex buffer at all.
     if (!depth_.begin(&arena->vertices(), &arena->triangleIndices(), &depthLayers_)) {
+        failure_ = Failure::InvalidData;
         phase_ = Phase::Failed;
         return false;
     }
@@ -462,6 +466,7 @@ bool ArenaSceneBuilder::step(int32_t maxTriangles) {
         const int32_t kDepthWorkPerStep = 600;
         if (!depth_.step(kDepthWorkPerStep)) {
             if (depth_.failed()) {
+                failure_ = Failure::InvalidData;
                 phase_ = Phase::Failed;
             }
             return false;
@@ -619,6 +624,7 @@ void ArenaSceneBuilder::finish() {
     }
     scene_.batches.swap(kept);
 
+    failure_ = scene_.batches.empty() ? Failure::EmptyScene : Failure::None;
     phase_ = scene_.batches.empty() ? Phase::Failed : Phase::Done;
 }
 

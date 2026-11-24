@@ -113,7 +113,9 @@ bool ArenaViews::connected(const std::string& a, const std::string& b) const {
 bool ArenaViews::waiting(const std::string& name) const {
     for (size_t i = 0; i < failed_.size(); i++) {
         if (failed_[i].name == name) {
-            return failed_[i].permanent || syncs_ < failed_[i].retryAt;
+            return failed_[i].kind == LevelViewBuildFailure::PermanentData ||
+                   failed_[i].kind == LevelViewBuildFailure::SceneEmpty ||
+                   syncs_ < failed_[i].retryAt;
         }
     }
     return false;
@@ -132,9 +134,11 @@ void ArenaViews::noteFailed(const std::string& name, LevelViewBuildFailure failu
         entry->name = name;
     }
     entry->attempts++;
-    entry->permanent = failure == LevelViewBuildFailure::PermanentData;
-    entry->retryAt = entry->permanent ? INT32_MAX
-                                      : syncs_ + (entry->attempts <= kQuickRetries ? 1 : kRetrySyncs);
+    entry->kind = failure;
+    const bool parked = failure == LevelViewBuildFailure::PermanentData ||
+                        failure == LevelViewBuildFailure::SceneEmpty;
+    entry->retryAt = parked ? INT32_MAX
+                            : syncs_ + (entry->attempts <= kQuickRetries ? 1 : kRetrySyncs);
 }
 
 void ArenaViews::forgetFailed(const std::string& name) {
@@ -159,14 +163,25 @@ bool ArenaViews::refresh(const std::string& arena) {
     // C# LevelView.Rebuild (LevelView.cs:251), the Changed subscriber: a built view is
     // rebuilt from the group materials now in the arena. An arena with no view has
     // nothing to rebuild -- its view is built from the same materials when it loads.
-    // A group change is also a new scene version for a failed build, so it
-    // clears that build's failure history and the next sync can try again.
+    // A group change is a new scene version: it clears a scene-empty or
+    // transient failure, but not invalid permanent data.
     for (size_t i = 0; i < views_.size(); i++) {
         if (views_[i].name == arena) {
-            return views_[i].view->refresh();
+            const bool applied = views_[i].view->refresh();
+            if (applied) {
+                forgetFailed(arena);
+            } else {
+                noteFailed(arena, LevelViewBuildFailure::TransientAllocation);
+            }
+            return applied;
         }
     }
-    forgetFailed(arena);
+    for (size_t i = 0; i < failed_.size(); i++) {
+        if (failed_[i].name == arena && failed_[i].kind != LevelViewBuildFailure::PermanentData) {
+            forgetFailed(arena);
+            break;
+        }
+    }
     return true;
 }
 
@@ -381,6 +396,19 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
             continue;
         }
         break;   // one build step a sync (the cap above)
+    }
+    // A refresh recorded while a view was building, or one whose mesh
+    // creation failed, is retried here under the same transient backoff.
+    for (size_t i = 0; i < views_.size(); i++) {
+        LevelView* view = views_[i].view;
+        if (!view->ready() || !view->pendingRefresh() || waiting(views_[i].name)) {
+            continue;
+        }
+        if (view->retryPendingRefresh()) {
+            forgetFailed(views_[i].name);
+        } else {
+            noteFailed(views_[i].name, LevelViewBuildFailure::TransientAllocation);
+        }
     }
     // Publication is the only success that clears failure history: a start
     // that later failed at the mesh must not reset its backoff.

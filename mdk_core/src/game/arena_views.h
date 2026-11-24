@@ -160,7 +160,7 @@ private:
         std::string name;
         int32_t attempts = 0;
         int32_t retryAt = 0;   // the sync() count at which to try again
-        bool permanent = false;
+        LevelViewBuildFailure kind = LevelViewBuildFailure::TransientAllocation;
     };
 
     bool keeps(const std::string& name, const std::string& current, const std::string& second,
