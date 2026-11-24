@@ -372,6 +372,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     open(screen);
 
     double last = front->now();
+    uint32_t frontFrames = 0;
     bool slidesLoading = false;
     // Every button counts as held on the first frame: the press that left the
     // last screen (A on the START menu's MAIN MENU) must not choose here too.
@@ -391,6 +392,10 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         }
         double delta = now - last;
         last = now;
+        // The raw period, before the clamp, into the harness's front-screen
+        // histogram (a no-op outside PROFILE builds). The first frame carries
+        // the screen's open time, so it is skipped, as the level loop skips it.
+        if (frontFrames++ > 0) harnessProfileFrontFrame(delta);
         if (delta < 0.0) delta = 0.0;
         if (delta > 0.25) delta = 0.25;
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_FIXED)

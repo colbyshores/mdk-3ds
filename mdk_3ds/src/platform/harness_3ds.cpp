@@ -163,6 +163,18 @@ uint64_t g_subLight = 0, g_subRig = 0, g_subSky = 0, g_subArena = 0, g_subLay = 
 uint32_t g_lastSteps = 0;
 uint32_t g_over17 = 0;   // > 16.667 ms: missed a 60 Hz vblank
 uint32_t g_over34 = 0;   // > 33.333 ms: missed a 30 Hz vblank
+// THE FRONT SCREENS' OWN HISTOGRAM (review §79's gap: the menu loop never fed
+// harnessProfileFrame, so the owner's menu hitch had no numbers). Same buckets,
+// kept separate on purpose: front-screen frames carry authored cadences (the
+// 33.3 ms FLC clips, the 60 Hz menu), and folding them into the gameplay
+// histogram would contaminate the level profile that every verdict reads.
+uint32_t g_frontHist[kBuckets + 1];
+uint32_t g_frontCount = 0;
+uint64_t g_frontSumUs = 0;
+uint32_t g_frontMaxUs = 0;
+uint32_t g_frontMaxAt = 0;
+uint32_t g_frontOver34 = 0;
+uint32_t g_frontSpikesLogged = 0;
 bool g_stereoSeen = false;
 uint64_t g_simT = 0, g_beginT = 0, g_drawT = 0, g_endT = 0, g_audioT = 0;
 uint64_t g_simSteps = 0;
@@ -283,6 +295,18 @@ uint32_t percentileUs(uint32_t pct) {
         }
     }
     return g_maxUs;
+}
+
+uint32_t frontPercentileUs(uint32_t pct) {
+    const uint32_t want = (uint32_t)(((uint64_t)g_frontCount * pct + 99) / 100);
+    uint32_t seen = 0;
+    for (uint32_t b = 0; b <= kBuckets; b++) {
+        seen += g_frontHist[b];
+        if (seen >= want && want > 0) {
+            return b == kBuckets ? g_frontMaxUs : (b + 1) * kBucketUs;
+        }
+    }
+    return g_frontMaxUs;
 }
 } // namespace
 #endif
@@ -714,6 +738,39 @@ void arenaReport(uint32_t steadyUs) {
 } // namespace
 #endif
 
+void harnessProfileFrontFrame(double periodSeconds) {
+#ifdef MDK_HW_PROFILE
+    // One front-screen frame (menu, briefing, stream, end movie), called from
+    // the front-screen loop with the raw period before its clamp. Same cost
+    // shape as harnessProfileFrame: one compare, one conversion, one bucket --
+    // cold code, once per frame, no hot-path restrictions apply.
+    if (periodSeconds < 0.0) periodSeconds = 0.0;
+    if (periodSeconds > 4000.0) periodSeconds = 4000.0;
+    const uint32_t us = (uint32_t)(periodSeconds * 1000000.0);
+    const uint32_t b = us / 100u;
+    static_assert(kBucketUs == 100u, "the bucket divisor above is kBucketUs");
+    g_frontHist[b < kBuckets ? b : kBuckets]++;
+    g_frontCount++;
+    g_frontSumUs += us;
+    if (us > g_frontMaxUs) {
+        g_frontMaxUs = us;
+        g_frontMaxAt = g_frontCount;
+    }
+    if (us > 33333) g_frontOver34++;
+    // Named when it happens, like the gameplay spike: the owner's menu hitch is
+    // one of these frames, and a summary cannot say which. No span breakdown --
+    // the front screens do not report spans.
+    if (us > kSpikeUs && g_frontSpikesLogged < kSpikeLogs) {
+        g_frontSpikesLogged++;
+        mdk::log3dsPrintf("profile: front spike %lu.%01lu ms at front frame %lu",
+                          (unsigned long)(us / 1000u), (unsigned long)(us % 1000u / 100u),
+                          (unsigned long)g_frontCount);
+    }
+#else
+    (void)periodSeconds;
+#endif
+}
+
 void harnessProfileReport() {
 #ifdef MDK_HW_PROFILE
     if (g_spanFrames > 0) {
@@ -773,6 +830,25 @@ void harnessProfileReport() {
                       (unsigned long)(steadyUs / 1000), (unsigned long)(steadyUs % 1000),
                       (unsigned long)g_vblanks[1], (unsigned long)g_vblanks[2],
                       (unsigned long)g_vblanks[3], (unsigned long)g_vblanks[4]);
+    if (g_frontCount) {
+        // The front screens' own line (review §79): the menu/briefing/stream
+        // frames the gameplay histogram never saw. Printed only when the run
+        // actually sat on a front screen, so level-only runs stay unchanged.
+        const uint32_t fMeanUs = (uint32_t)((double)g_frontSumUs / (double)g_frontCount);
+        mdk::log3dsPrintf("profile: front-screen frames=%lu mean=%lu.%03lums p50<=%lu.%01lums "
+                          "p95<=%lu.%01lums p99<=%lu.%01lums max=%lu.%03lums (front frame %lu) "
+                          "over33.3ms=%lu",
+                          (unsigned long)g_frontCount,
+                          (unsigned long)(fMeanUs / 1000), (unsigned long)(fMeanUs % 1000),
+                          (unsigned long)(frontPercentileUs(50) / 1000),
+                          (unsigned long)(frontPercentileUs(50) % 1000 / 100),
+                          (unsigned long)(frontPercentileUs(95) / 1000),
+                          (unsigned long)(frontPercentileUs(95) % 1000 / 100),
+                          (unsigned long)(frontPercentileUs(99) / 1000),
+                          (unsigned long)(frontPercentileUs(99) % 1000 / 100),
+                          (unsigned long)(g_frontMaxUs / 1000), (unsigned long)(g_frontMaxUs % 1000),
+                          (unsigned long)g_frontMaxAt, (unsigned long)g_frontOver34);
+    }
     mdk::log3dsPrintf("profile: console model=%u family=%s clock=%s l2=%s stereo=%s "
                       "(frame period = wall clock between frames, first frame excluded; "
                       "percentiles are 0.1 ms bucket upper edges)",
@@ -868,6 +944,8 @@ void harnessProfileDrawSub(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
                            uint64_t, uint64_t, uint64_t, uint64_t) {}
 
 void harnessProfileFrame(double) {}
+
+void harnessProfileFrontFrame(double) {}
 
 void harnessProfileReport() {}
 

@@ -46,6 +46,13 @@ const char* harnessCapturePath(uint32_t frame);
 // percentiles. No-ops in every other build. This is a frame-period capture,
 // not a function-level profile: it cannot populate the hot-path corpus.
 void harnessProfileFrame(double periodSeconds);
+// THE FRONT SCREENS (menu, briefing, stream, end movie) get their own frame-period
+// histogram and summary line (review §79: the front-screen loop never fed
+// harnessProfileFrame, so the owner's menu hitch had no numbers). Kept separate
+// from the gameplay histogram on purpose: front screens carry authored cadences
+// (33.3 ms FLC clips) that would contaminate the level profile. No-ops outside
+// PROFILE builds.
+void harnessProfileFrontFrame(double periodSeconds);
 // Where the frame went (PROFILE builds; no-ops otherwise). Raw svcGetSystemTick
 // spans: the fixed-step simulation loop and how many steps it ran, the
 // render begin (C3D_FrameBegin's vblank wait lives here -- an elastic idle,
