@@ -58,6 +58,17 @@ void ArenaViews::start(MdkRenderer renderer, LevelData* level, SurfaceCache* sur
 }
 
 bool ArenaViews::keeps(const std::string& name, const std::string& current,
+                       const std::string& second, const std::vector<std::string>& drawn,
+                       const std::vector<std::string>& hints) const {
+    for (size_t i = 0; i < hints.size(); i++) {
+        if (hints[i] == name) {
+            return true;
+        }
+    }
+    return keeps(name, current, second, drawn);
+}
+
+bool ArenaViews::keeps(const std::string& name, const std::string& current,
                        const std::string& second, const std::vector<std::string>& drawn) const {
     // The loaded PAIR and whatever the frame draws (the original's residency,
     // 0x419ac0). Full-level residency was tried 2026-11-22 and the Old 3DS
@@ -163,6 +174,15 @@ const LevelView* ArenaViews::find(const std::string& name) const {
     return nullptr;
 }
 
+LevelView* ArenaViews::find(const std::string& name) {
+    for (size_t i = 0; i < views_.size(); i++) {
+        if (views_[i].name == name) {
+            return views_[i].view;
+        }
+    }
+    return nullptr;
+}
+
 bool ArenaViews::build(const std::string& name) {
     const formats::Arena* arena = level_->arenaNamed(name);
     if (!arena) {
@@ -232,6 +252,13 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second) 
 
 int32_t ArenaViews::sync(const std::string& current, const std::string& second,
                          const std::vector<std::string>& drawn) {
+    const std::vector<std::string> noHints;
+    return sync(current, second, drawn, noHints);
+}
+
+int32_t ArenaViews::sync(const std::string& current, const std::string& second,
+                         const std::vector<std::string>& drawn,
+                         const std::vector<std::string>& hints) {
     if (!renderer_ || !level_ || !surfaces_) {
         return 0;
     }
@@ -239,15 +266,28 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
     // Free first. (On the 3DS a release settles at the next frame's start, not
     // here, which is one reason a build can fail and is retried.)
     for (size_t i = views_.size(); i > 0; i--) {
-        if (!keeps(views_[i - 1].name, current, second, drawn)) {
+        if (!keeps(views_[i - 1].name, current, second, drawn, hints)) {
             release(i - 1);
         }
     }
     int32_t built = 0;
-    // The pair, then whatever else is drawn.
-    for (size_t w = 0; w < 2 + drawn.size(); w++) {
-        const std::string& name = w == 0 ? current : (w == 1 ? second : drawn[w - 2]);
-        if (name.empty() || find(name) || waiting(name)) {
+    // The pair, then whatever else is drawn, then the bubble's hints.
+    // Hints are KEPT (their views survive). Only the first hinted name
+    // is built ahead in any one sync; as the nearest door changes, a
+    // later hint can become first and build too, so up to the hint cap
+    // (three, in main) hinted views can be built over time -- each is a
+    // mesh of a few hundred KiB against a measured 7.2 MB of linear
+    // headroom, and their textures ride the shared cache budget.
+    for (size_t w = 0; w < 2 + drawn.size() + hints.size(); w++) {
+        const bool isHint = w >= 2 + drawn.size();
+        const std::string& name =
+            w == 0 ? current
+                   : (w == 1 ? second
+                             : (w < 2 + drawn.size() ? drawn[w - 2] : hints[w - 2 - drawn.size()]));
+        // Only the FIRST hinted name is built ahead, ever (the rest are
+        // kept, not built, until the scripts make them the pair).
+        if (name.empty() || find(name) || waiting(name) ||
+            (isHint && w != 2 + drawn.size())) {
             continue;
         }
         if (build(name)) {
@@ -256,6 +296,52 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
             // starts next frame, so two arenas' builds (and their depth
             // phases) never stack into one frame or one memory peak.
             break;
+        }
+    }
+    // THE GUARANTEE: a view the frame DRAWS is finished here, in the view
+    // phase (outside the frame, where GPU resources may be made), never
+    // left half-built for draw() to skip. The bubble exists to make this
+    // rare; when it fires, the cost is the old synchronous build, once.
+    // A drawn arena with no view at all is built here too, subject to
+    // the same retry schedule as the build loop (a persistently failing
+    // arena backs off like any other; the pump retries it): the
+    // guarantee's force is finishing a build in flight, not retrying a
+    // failed one every frame.
+    int32_t guaranteeStepsLeft = 8192;   // aggregate across all drawn views
+    for (size_t d = 0; d < drawn.size(); d++) {
+        if (drawn[d].empty()) {
+            continue;
+        }
+        LevelView* view = find(drawn[d]);
+        if (view == nullptr && !waiting(drawn[d])) {
+            if (build(drawn[d])) {
+                built++;
+                view = find(drawn[d]);
+            }
+        }
+        if (view != nullptr && !view->ready() && !view->buildFailed() && !view->notBuilding()) {
+            // Driven on state, not buildStep's return (the header states
+            // it: true exactly at Ready), and capped far past any real
+            // build (the largest arena is ~50 slices: depth units, 1200-
+            // triangle loop steps, Mesh, Large): every buildStep call
+            // advances a cursor or changes state by construction, so the
+            // cap is a belt against a future no-progress step, and the
+            // pump keeps stepping past it on later syncs regardless.
+            // The full finish in one sync is the point (the old
+            // synchronous build, once, on a bubble miss); counted only
+            // when the view actually reaches Ready.
+            const int32_t kGuaranteeMaxSteps = 4096;
+            int32_t steps = 0;
+            while (!view->ready() && !view->buildFailed() && !view->notBuilding() &&
+                   steps < kGuaranteeMaxSteps && guaranteeStepsLeft > 0) {
+                view->buildStep();
+                steps++;
+                guaranteeStepsLeft--;
+            }
+            stats_.buildSteps += steps;
+            if (view->ready()) {
+                stats_.syncFinishes++;
+            }
         }
     }
     // One build step a sync, for ONE view still building (the door pump:
@@ -272,6 +358,7 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
             continue;
         }
         view->buildStep();
+        stats_.buildSteps++;
         if (view->buildFailed() || view->notBuilding()) {
             const std::string name = views_[i].name;
             release(i);
@@ -343,17 +430,11 @@ void ArenaViews::draw(const std::vector<std::string>& drawn) {
     for (size_t d = 0; d < drawn.size(); d++) {
         for (size_t i = 0; i < views_.size(); i++) {
             if (views_[i].name == drawn[d]) {
-                LevelView* view = views_[i].view;
-                if (!view->ready() && !view->buildFailed() && !view->notBuilding()) {
-                    // Drawn before its sliced build finished (a rushed
-                    // door): finish the CPU scene build here, but do NOT
-                    // create the mesh inside the frame (GPU resources are
-                    // made in the view phase, AGENTS.md P2) -- the mesh
-                    // and the large-surface starts happen at the next
-                    // sync, one frame later, and the view draws then.
-                    view->finishSceneOnly();
-                }
-                view->draw();
+                // Normally ready (sync's guarantee finished it, or the
+                // bubble built it during the approach); a view that is
+                // still building -- or failed and is waiting out its
+                // retry -- draws nothing this frame.
+                views_[i].view->draw();
                 break;
             }
         }

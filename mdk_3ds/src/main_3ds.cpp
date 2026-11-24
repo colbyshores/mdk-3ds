@@ -1777,9 +1777,15 @@ int main(int argc, char** argv) {
     std::unique_ptr<mdk::audio::LevelMusic> music;
     // The arena whose track the bank was last asked to prefetch (below).
     std::string musicPrefetchedFor;
+    // The bubble arena whose track was last prefetched ahead.
+    std::string musicBubbleFor;
     // The second arenas whose first effects-warm step was already
     // deferred once (per name; see the frame's warm).
     std::vector<std::string> warmDeferred;
+    // The door bubble's hints for this frame (rebuilt every frame).
+    std::vector<std::string> bubbleHints;
+    // Hinted arenas still inside the wider hysteresis radius.
+    std::vector<std::string> bubbleSticky;
     // THE BANK'S BLOCKING READS, ALL OF THEM SAID (spec Phase 3: "log every
     // stall"). A streamed sound that is asked for while it is not in memory is
     // read whole, wherever the asker is -- the music's enter(), a script's play
@@ -1894,6 +1900,7 @@ int main(int argc, char** argv) {
         mdk::audioDspDetach();
         music.reset();   // its voices are the runtime's mixer's
         musicPrefetchedFor.clear();
+        musicBubbleFor.clear();
         warmDeferred.clear();
         // A fresh camera with the fresh level (its clip view's context is the runtime
         // going now). It is reset HERE, before the runtime below binds its clip view, its
@@ -2157,6 +2164,7 @@ int main(int argc, char** argv) {
     // The arena stream's log state (see the frame's stream step).
     int32_t lastViewsReleased = 0;
     int32_t lastViewsFailed = 0;
+    int32_t lastSyncFinishes = 0;
     std::vector<std::string> startDrawn;
     const std::vector<std::string>* frameDrawn = nullptr;   // this frame's drawn list
     int32_t objectPeakCorners = 0;
@@ -2989,8 +2997,78 @@ int main(int argc, char** argv) {
                 startDrawn.assign(1, startArenaName);
             }
             frameDrawn = scriptsDrew ? &runtime->drawnArenas() : &startDrawn;
+            // THE DOOR BUBBLE: the arenas through doorways within this
+            // radius of the camera join the build list NOW, so their
+            // views, effect textures and (below) music are ready long
+            // before the scripts make them the second arena. At Kurt's
+            // turbo speed (~0.66 units a frame) 120 units is ~180 frames
+            // of lead. Residency: the pair plus at most three hinted
+            // names kept, the nearest built ahead first (up to the
+            // three kept can build over time as the nearest changes) --
+            // never the level.
+            const float kDoorBubbleRadius = 120.0f;
+            // Hysteresis: a hinted arena stays hinted until it is 40
+            // units past the radius, so idling at the bubble's edge does
+            // not release and rebuild its view repeatedly. At most two
+            // hinted arenas (nearest first, per the query's order):
+            // residency is the current room plus the approached one(s),
+            // never the level.
+            bubbleHints.clear();
+            if (runtime) {
+                std::vector<std::string> fresh;
+                runtime->doorBubbleArenas(runtime->eye, kDoorBubbleRadius, &fresh);
+                std::vector<std::string> wide;
+                runtime->doorBubbleArenas(runtime->eye, kDoorBubbleRadius + 40.0f, &wide);
+                // Fresh names first, nearest first (the query's order):
+                // sync builds only the first hinted name ahead, so that
+                // is the build priority. Sticky names follow for KEEP
+                // only (hysteresis: released at the wider radius, never
+                // outranking the nearest door for the build slot).
+                // Already-resident names (the pair, the drawn list)
+                // never consume a slot. Residency bound: the pair, the
+                // drawn corridors, and at most three hinted names kept
+                // (one of them built ahead; the rest kept unbuilt until
+                // the scripts make them the pair).
+                for (size_t i = 0; i < fresh.size(); i++) {
+                    bubbleHints.push_back(fresh[i]);
+                }
+                for (size_t i = 0; i < bubbleSticky.size(); i++) {
+                    bool stillNear = false;
+                    for (size_t k = 0; k < wide.size(); k++) {
+                        if (wide[k] == bubbleSticky[i]) {
+                            stillNear = true;
+                            break;
+                        }
+                    }
+                    bool seen = false;
+                    for (size_t k = 0; k < bubbleHints.size(); k++) {
+                        if (bubbleHints[k] == bubbleSticky[i]) {
+                            seen = true;
+                            break;
+                        }
+                    }
+                    if (stillNear && !seen) {
+                        bubbleHints.push_back(bubbleSticky[i]);
+                    }
+                }
+                for (size_t i = bubbleHints.size(); i > 0; i--) {
+                    const std::string& name = bubbleHints[i - 1];
+                    bool resident = name == streamCurrent || name == streamSecond;
+                    for (size_t k = 0; !resident && k < frameDrawn->size(); k++) {
+                        resident = (*frameDrawn)[k] == name;
+                    }
+                    if (resident) {
+                        bubbleHints.erase(bubbleHints.begin() + (int32_t)(i - 1));
+                    }
+                }
+                if (bubbleHints.size() > 3) {
+                    bubbleHints.resize(3);
+                }
+                bubbleSticky = bubbleHints;
+            }
             const double stream1 = nowSeconds();
-            const int32_t builtViews = arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);
+            const int32_t builtViews =
+                arenaViews.sync(streamCurrent, streamSecond, *frameDrawn, bubbleHints);
             const double stream2 = nowSeconds();
             // Spread the texture makes over the frames before anyone sees them
             // (arena_views.h): from the resident MTO, so a make is decode and
@@ -3015,6 +3093,14 @@ int main(int argc, char** argv) {
             const double warm0 = nowSeconds();
 #endif
             effectsView.warmStep(streamCurrent, startEffectSurface, &surfaces);
+            // The bubble's arenas warm too: they are approached, not yet
+            // resident, and their lead is the whole point (no deferral --
+            // the bubble IS the early start).
+            for (size_t i = 0; i < bubbleHints.size(); i++) {
+                if (bubbleHints[i] != streamCurrent && bubbleHints[i] != streamSecond) {
+                    effectsView.warmStep(bubbleHints[i], startEffectSurface, &surfaces);
+                }
+            }
             if (!streamSecond.empty() && streamSecond != streamCurrent) {
                 // Not the change frame either (see the music step below):
                 // each name's first warm step is deferred exactly once
@@ -3045,6 +3131,15 @@ int main(int argc, char** argv) {
                 mdk::log3dsPrintf("views: build FAILED (%d so far); it is tried again",
                                   (int)arenaViews.stats().failed);
                 lastViewsFailed = arenaViews.stats().failed;
+            }
+            if (arenaViews.stats().syncFinishes != lastSyncFinishes) {
+                // The bubble's report card: how often a drawn view still
+                // needed the synchronous finish (the guarantee firing).
+                mdk::log3dsPrintf("views: %d drawn view(s) finished synchronously at sync "
+                                  "(%d sliced steps so far)",
+                                  (int)arenaViews.stats().syncFinishes,
+                                  (int)arenaViews.stats().buildSteps);
+                lastSyncFinishes = arenaViews.stats().syncFinishes;
             }
             if (builtViews > 0 || arenaViews.stats().released != lastViewsReleased) {
                 mdk::log3dsPrintf("views: %d built (last %s, %.1f ms), %d released, %d kept",
@@ -3080,12 +3175,34 @@ int main(int argc, char** argv) {
 #endif
             bool musicStartedHere = false;
             if (music) {
+                // The bubble's nearest arena's track too, when no
+                // prefetch is in flight: it reads a step a frame like
+                // the second's, so the doorway's music is resident with
+                // its view. The second arena's own start below drops a
+                // bubble staging it no longer needs (prefetch replaces
+                // the staging), so there is no double read.
+                if (!bubbleHints.empty() && bank.prefetching().empty() &&
+                    bubbleHints[0] != streamSecond && bubbleHints[0] != musicBubbleFor) {
+                    const std::string track = music->trackOf(bubbleHints[0]);
+                    if (bank.prefetch(track)) {
+                        musicBubbleFor = bubbleHints[0];
+                        musicStartedHere = true;
+                        mdk::log3dsPrintf("music: prefetch %s for %s (bubble)", track.c_str(),
+                                          bubbleHints[0].c_str());
+                    }
+                }
                 if (streamSecond != musicPrefetchedFor) {
                     musicPrefetchedFor = streamSecond;
                     if (!streamSecond.empty()) {
                         const std::string track = music->trackOf(streamSecond);
                         if (bank.prefetch(track)) {
                             musicStartedHere = true;
+                            // The second's prefetch replaces the staging:
+                            // a bubble prefetch it superseded may be
+                            // issued again while its arena stays nearest.
+                            if (musicBubbleFor != streamSecond) {
+                                musicBubbleFor.clear();
+                            }
                             mdk::log3dsPrintf("music: prefetch %s for %s", track.c_str(),
                                               streamSecond.c_str());
                         }

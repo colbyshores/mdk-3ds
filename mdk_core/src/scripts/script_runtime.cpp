@@ -552,6 +552,67 @@ bool crossesDoorway(const formats::Dti::Record& record, const Vec3& from, const 
 
 }  // namespace
 
+void ScriptRuntime::doorBubbleArenas(const Vec3& position, float radius,
+                                     std::vector<std::string>* out) const {
+    if (!out || radius <= 0.0f || currentArena_.empty()) {
+        return;
+    }
+    // arenaRecords is non-const (it builds the arena's record list on
+    // first ask): the const_cast reaches that builder, which the tick
+    // itself runs for the current arena -- the query changes no script
+    // state beyond that lazy build.
+    const std::vector<formats::Dti::Record>* records =
+        const_cast<ScriptRuntime*>(this)->arenaRecords(currentArena_);
+    if (records == nullptr) {
+        return;
+    }
+    const float radius2 = radius * radius;
+    std::vector<std::pair<float, std::string>> byDistance;
+    for (size_t i = 0; i < records->size(); i++) {
+        const formats::Dti::Record& record = (*records)[i];
+        if (record.type != kRecordConnection) {
+            continue;
+        }
+        std::map<std::pair<std::string, int32_t>, std::string>::const_iterator other =
+            connections_.find(std::make_pair(currentArena_, record.id));
+        if (other == connections_.end() || other->second.empty() ||
+            other->second == currentArena_) {
+            continue;
+        }
+        // Distance from the position to the doorway box (clamped per
+        // axis): inside the box is zero, which any radius admits.
+        float d2 = 0.0f;
+        const float p[3] = {position.x, position.y, position.z};
+        for (int j = 0; j < 3; j++) {
+            const float lo = record.position[j] < record.boxEnd[j] ? record.position[j]
+                                                                   : record.boxEnd[j];
+            const float hi = record.position[j] < record.boxEnd[j] ? record.boxEnd[j]
+                                                                   : record.position[j];
+            const float d = p[j] < lo ? lo - p[j] : (p[j] > hi ? p[j] - hi : 0.0f);
+            d2 += d * d;
+        }
+        if (d2 > radius2) {
+            continue;
+        }
+        byDistance.push_back(std::make_pair(d2, other->second));
+    }
+    // Nearest first, so a caller bounding the hint count keeps the
+    // doorways Kurt reaches soonest.
+    std::sort(byDistance.begin(), byDistance.end());
+    for (size_t i = 0; i < byDistance.size(); i++) {
+        bool seen = false;
+        for (size_t k = 0; k < out->size(); k++) {
+            if ((*out)[k] == byDistance[i].second) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) {
+            out->push_back(byDistance[i].second);
+        }
+    }
+}
+
 std::string ScriptRuntime::crossedArena(const std::string& arena, const Vec3& from,
                                         const Vec3& to) {
     // C# ScriptRuntime.CrossedArena (:791-803): the FIRST connection record of this

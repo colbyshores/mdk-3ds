@@ -70,6 +70,8 @@ public:
         int32_t released = 0;
         int32_t failed = 0;          // build attempts that failed
         int32_t orphansReleased = 0; // palettes the sweep gave back
+        int32_t syncFinishes = 0;    // drawn views finished synchronously at sync (the guarantee)
+        int32_t buildSteps = 0;      // sliced build steps the sync pump ran
     };
 
     // The sweep's period, and a failed build's retry period after its first
@@ -95,6 +97,16 @@ public:
     // built.
     int32_t sync(const std::string& current, const std::string& second,
                  const std::vector<std::string>& drawn);
+    // With door-bubble hints (the frontend's doorBubbleArenas): hinted
+    // arenas are kept and built like the pair, so their views are ready
+    // long before the scripts make them the second. A DRAWN view still
+    // building at sync is finished here, synchronously (the guarantee:
+    // a drawn arena is never left half-built; the bubble makes it rare).
+    // A drawn arena whose build FAILED waits out the normal retry
+    // schedule like any other -- the guarantee finishes builds in
+    // flight, it does not retry failures every frame.
+    int32_t sync(const std::string& current, const std::string& second,
+                 const std::vector<std::string>& drawn, const std::vector<std::string>& hints);
     // The same with the drawn list the pair implies (tools and tests).
     int32_t sync(const std::string& current, const std::string& second);
 
@@ -124,6 +136,7 @@ public:
 
     // An arena's view, or null.
     const LevelView* find(const std::string& name) const;
+    LevelView* find(const std::string& name);
 
     // Release every view (and its palette's GPU textures).
     void clear();
@@ -151,6 +164,8 @@ private:
 
     bool keeps(const std::string& name, const std::string& current, const std::string& second,
                const std::vector<std::string>& drawn) const;
+    bool keeps(const std::string& name, const std::string& current, const std::string& second,
+               const std::vector<std::string>& drawn, const std::vector<std::string>& hints) const;
     // Whether a DTI connection (a type-6 record pair) joins the two.
     bool connected(const std::string& a, const std::string& b) const;
     bool build(const std::string& name);

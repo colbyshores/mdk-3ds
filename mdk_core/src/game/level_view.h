@@ -66,18 +66,15 @@ public:
 
     // The sliced build (the door pump): loadBegin starts the arena's scene
     // build; buildStep advances it (the scene in triangle slices, then the
-    // mesh, then the large surfaces' starts) and returns true when the
-    // view is ready to draw. ready() says the same at any time. load() is
+    // mesh, then the large surfaces' starts) and returns true exactly
+    // when the view reaches Ready (false while building or failed).
+    // ready() says the same at any time. load() is
     // loadBegin plus buildStep until ready -- every other caller keeps the
     // synchronous behaviour. A view that is not ready draws nothing (its
     // mesh is made only after its scene completes).
     bool loadBegin(MdkRenderer renderer, LevelData* level, const formats::Arena* arena,
                    SurfaceCache* surfaces);
     bool buildStep();
-    // Advance only the CPU scene build (no GPU object is made): the draw
-    // path's drain, which must not create the mesh inside a frame
-    // (AGENTS.md P2 -- GPU resources are made in the view phase).
-    void finishSceneOnly();
     bool ready() const { return buildState_ == BuildState::Ready; }
     bool buildFailed() const { return buildState_ == BuildState::Failed; }
     // No build in flight (never begun, or unloaded): the sync pump treats

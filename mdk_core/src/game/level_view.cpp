@@ -86,18 +86,6 @@ bool LevelView::loadBegin(MdkRenderer renderer, LevelData* level, const formats:
     return true;
 }
 
-void LevelView::finishSceneOnly() {
-    // Bounded like every other slice (four steps): a drawn-but-unready
-    // view's scene finishes over a few draw frames, never in one call.
-    // The mesh follows at the next sync, and the view draws then.
-    const int32_t kDrawDrainSteps = 4;
-    int32_t steps = 0;
-    while (buildState_ == BuildState::Scene && steps < kDrawDrainSteps) {
-        buildStep();
-        steps++;
-    }
-}
-
 bool LevelView::buildStep() {
     // Triangles a step: at the measured cost of the corridor arenas this
     // keeps a step near a millisecond, and a view is ready a few frames
