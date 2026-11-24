@@ -221,20 +221,33 @@ EffectsView::SpriteEntry& EffectsView::sprite(const std::string& arena,
     return placed;
 }
 
+namespace {
+// The script effects' textures (scripts/effects.cpp: the wound, the two
+// drops, the bubble and its pop, the trail).
+const char* const kWarmTextures[] = {"TRAIL", "SL_BIG", "SL_MED", "SL_SMA", "BUBB", "BUBB_POP"};
+const size_t kWarmTextureCount = sizeof(kWarmTextures) / sizeof(kWarmTextures[0]);
+}  // namespace
+
 void EffectsView::warm(const std::string& arena, SurfaceStartFn start, void* user) {
-    if (start == nullptr || arena.empty()) {
-        return;
+    warmAt_[arena] = 0;   // the full pass, as before warmStep existed
+    while (!warmStep(arena, start, user)) {
     }
-    // The script effects' textures (scripts/effects.cpp: the wound, the two
-    // drops, the bubble and its pop, the trail). Resolved through sprite(),
-    // so the entry the first effect draws is the entry warmed here.
-    static const char* const kEffectTextures[] = {"SL_BIG", "SL_MED", "SL_SMA",
-                                                  "TRAIL",  "BUBB",   "BUBB_POP"};
-    for (size_t i = 0; i < sizeof(kEffectTextures) / sizeof(kEffectTextures[0]); i++) {
-        SpriteEntry& entry = sprite(arena, kEffectTextures[i]);
-        if (!entry.present || entry.palette == nullptr || entry.surface.texture == nullptr) {
-            continue;
-        }
+}
+
+bool EffectsView::warmStep(const std::string& arena, SurfaceStartFn start, void* user) {
+    if (start == nullptr || arena.empty()) {
+        return true;
+    }
+    size_t& at = warmAt_[arena];
+    if (at >= kWarmTextureCount) {
+        return true;
+    }
+    // Resolved through sprite(), so the entry the first effect draws is
+    // the entry warmed here.
+    SpriteEntry& entry = sprite(arena, kWarmTextures[at]);
+    at++;
+    const bool done = at >= kWarmTextureCount;
+    if (entry.present && entry.palette != nullptr && entry.surface.texture != nullptr) {
         // Only the large ones: a small texture's make at its spawn is a few
         // ms, and making six of them synchronously here would be the stall
         // this avoids. The large ones are what a sliced make spreads (the
@@ -246,6 +259,9 @@ void EffectsView::warm(const std::string& arena, SurfaceStartFn start, void* use
             start(user, entry.surface, entry.palette);
         }
     }
+    // Computed before the callback: `at` references the map, and the
+    // callback must not be able to invalidate the return value.
+    return done;
 }
 
 bool EffectsView::resolveCached(int32_t material, const std::vector<std::string>& names,

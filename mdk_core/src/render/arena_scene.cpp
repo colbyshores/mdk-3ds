@@ -191,75 +191,145 @@ float overlap(const std::vector<formats::Vec3f>& vertices,
 
 } // namespace
 
-bool computeArenaDepthLayers(const std::vector<formats::Vec3f>& vertices,
-                             const std::vector<int32_t>& triangleIndices,
-                             std::vector<int32_t>* layers) {
-    if (!layers || triangleIndices.size() % (size_t)kTriangleCorners != 0) {
+bool DepthLayersBuilder::begin(const std::vector<formats::Vec3f>* vertices,
+                               const std::vector<int32_t>* triangleIndices,
+                               std::vector<int32_t>* layers) {
+    planes_.clear();
+    assignValid_ = false;
+    nextTriangle_ = 0;
+    planeSorted_ = false;
+    assignI_ = 1;
+    assignJ_ = 0;
+    if (!vertices || !triangleIndices || !layers ||
+        triangleIndices->size() % (size_t)kTriangleCorners != 0) {
+        phase_ = Phase::Failed;
         return false;
     }
-
-    const int32_t triangleCount = (int32_t)(triangleIndices.size() / (size_t)kTriangleCorners);
+    const int32_t triangleCount = (int32_t)(triangleIndices->size() / (size_t)kTriangleCorners);
     layers->assign((size_t)triangleCount, 0);
-    for (int32_t index : triangleIndices) {
-        if (index < 0 || index >= (int32_t)vertices.size()) {
+    for (int32_t index : *triangleIndices) {
+        if (index < 0 || index >= (int32_t)vertices->size()) {
             layers->clear();
+            phase_ = Phase::Failed;
             return false;
         }
     }
+    vertices_ = vertices;
+    triangleIndices_ = triangleIndices;
+    layers_ = layers;
+    phase_ = Phase::Collect;
+    return true;
+}
 
-    // The triangles of each plane, keyed by a rounded normal and plane
-    // distance. The key puts nearly coplanar triangles together.
-    typedef std::tuple<int32_t, int32_t, int32_t, int32_t> PlaneKey;
-    std::map<PlaneKey, std::vector<PlaneEntry>> planes;
-    for (int32_t triangle = 0; triangle < triangleCount; triangle++) {
-        const formats::Vec3f a = corner(vertices, triangleIndices, triangle, 0);
-        const formats::Vec3f b = corner(vertices, triangleIndices, triangle, 1);
-        const formats::Vec3f c = corner(vertices, triangleIndices, triangle, 2);
-        const formats::Vec3f crossed = cross(subtract(c, a), subtract(b, a));
-        const float area = length(crossed);
-        // The C# drops a zero area. This also drops a NaN one, which only a
-        // corrupt arena produces, and dropping it is not a fidelity choice:
-        // a NaN would make the sort below compare inconsistently, and an
-        // inconsistent comparator is undefined behaviour in C++ where the
-        // C#'s merge sort merely orders it arbitrarily.
-        if (!(area > 0.0f)) {
-            continue;
-        }
-
-        PlaneEntry entry;
-        entry.triangle = triangle;
-        entry.area = area;
-        entry.normal = divide(crossed, area);
-        const PlaneKey key(planeStep(entry.normal.x), planeStep(entry.normal.y),
-                           planeStep(entry.normal.z), planeStep(dot(entry.normal, a)));
-        planes[key].push_back(entry);
+bool DepthLayersBuilder::step(int32_t budget) {
+    if (phase_ == Phase::Done) {
+        return true;
     }
-
-    for (std::map<PlaneKey, std::vector<PlaneEntry>>::iterator it = planes.begin();
-         it != planes.end(); ++it) {
-        std::vector<PlaneEntry>& plane = it->second;
-        std::sort(plane.begin(), plane.end(), [](const PlaneEntry& a, const PlaneEntry& b) {
-            if (a.area != b.area) {
-                return a.area > b.area;
+    if (phase_ != Phase::Collect && phase_ != Phase::Assign) {
+        return false;
+    }
+    const int32_t triangleCount =
+        (int32_t)(triangleIndices_->size() / (size_t)kTriangleCorners);
+    int32_t spent = 0;
+    if (phase_ == Phase::Collect) {
+        // The triangles of each plane, keyed by a rounded normal and plane
+        // distance. The key puts nearly coplanar triangles together.
+        while (nextTriangle_ < triangleCount && spent < budget) {
+            const int32_t triangle = nextTriangle_++;
+            spent++;
+            const formats::Vec3f a = corner(*vertices_, *triangleIndices_, triangle, 0);
+            const formats::Vec3f b = corner(*vertices_, *triangleIndices_, triangle, 1);
+            const formats::Vec3f c = corner(*vertices_, *triangleIndices_, triangle, 2);
+            const formats::Vec3f crossed = cross(subtract(c, a), subtract(b, a));
+            const float area = length(crossed);
+            // The C# drops a zero area. This also drops a NaN one, which only a
+            // corrupt arena produces, and dropping it is not a fidelity choice:
+            // a NaN would make the sort below compare inconsistently, and an
+            // inconsistent comparator is undefined behaviour in C++ where the
+            // C#'s merge sort merely orders it arbitrarily.
+            if (!(area > 0.0f)) {
+                continue;
             }
-            return a.triangle < b.triangle;
-        });
-
+            Entry entry;
+            entry.triangle = triangle;
+            entry.area = area;
+            entry.normal = divide(crossed, area);
+            const PlaneKey key(planeStep(entry.normal.x), planeStep(entry.normal.y),
+                               planeStep(entry.normal.z), planeStep(dot(entry.normal, a)));
+            planes_[key].push_back(entry);
+        }
+        if (nextTriangle_ < triangleCount) {
+            return false;
+        }
+        assignValid_ = !planes_.empty();
+        if (assignValid_) {
+            assignKey_ = planes_.begin()->first;
+        }
+        phase_ = Phase::Assign;
+    }
+    while (assignValid_ && spent < budget) {
+        std::vector<Entry>& plane = planes_.find(assignKey_)->second;
+        if (!planeSorted_) {
+            std::sort(plane.begin(), plane.end(), [](const Entry& a, const Entry& b) {
+                if (a.area != b.area) {
+                    return a.area > b.area;
+                }
+                return a.triangle < b.triangle;
+            });
+            planeSorted_ = true;
+            assignI_ = 1;
+            assignJ_ = 0;
+        }
         // Each smaller triangle goes one layer above the highest bigger one
         // it overlaps (the C# Layers.Stack).
-        for (size_t i = 1; i < plane.size(); i++) {
-            const int32_t triangle = plane[i].triangle;
-            for (size_t j = 0; j < i; j++) {
-                const int32_t under = plane[j].triangle;
-                if ((*layers)[(size_t)under] >= (*layers)[(size_t)triangle] &&
-                    overlap(vertices, triangleIndices, triangle, under, plane[i].normal) > kMinOverlap) {
-                    (*layers)[(size_t)triangle] =
-                        std::min((*layers)[(size_t)under] + 1, kHighestLayer);
+        while (assignI_ < plane.size() && spent < budget) {
+            const int32_t triangle = plane[assignI_].triangle;
+            while (assignJ_ < assignI_ && spent < budget) {
+                const int32_t under = plane[assignJ_].triangle;
+                spent++;
+                if ((*layers_)[(size_t)under] >= (*layers_)[(size_t)triangle] &&
+                    overlap(*vertices_, *triangleIndices_, triangle, under,
+                            plane[assignI_].normal) > kMinOverlap) {
+                    (*layers_)[(size_t)triangle] =
+                        std::min((*layers_)[(size_t)under] + 1, kHighestLayer);
                 }
+                assignJ_++;
+            }
+            if (assignJ_ >= assignI_) {
+                assignI_++;
+                assignJ_ = 0;
             }
         }
+        if (assignI_ >= plane.size()) {
+            std::map<PlaneKey, std::vector<Entry>>::iterator next = planes_.find(assignKey_);
+            ++next;
+            assignValid_ = next != planes_.end();
+            if (assignValid_) {
+                assignKey_ = next->first;
+            }
+            planeSorted_ = false;
+        }
     }
-    return true;
+    if (!assignValid_) {
+        phase_ = Phase::Done;
+        return true;
+    }
+    return false;
+}
+
+bool computeArenaDepthLayers(const std::vector<formats::Vec3f>& vertices,
+                             const std::vector<int32_t>& triangleIndices,
+                             std::vector<int32_t>* layers) {
+    DepthLayersBuilder builder;
+    if (!builder.begin(&vertices, &triangleIndices, layers)) {
+        return false;
+    }
+    while (!builder.step(1 << 30)) {
+        if (builder.failed()) {
+            break;
+        }
+    }
+    return !builder.failed();
 }
 
 bool arenaSceneSkips(const formats::Arena* arena, int32_t triangle) {
@@ -338,77 +408,86 @@ bool arenaSceneTriangleFirsts(const formats::Arena* arena, std::vector<int32_t>*
     return true;
 }
 
-bool buildArenaScene(const formats::Arena* arena,
-                     const MaterialResolver& resolver,
-                     const formats::Palette& palette,
-                     const std::vector<const formats::TextureArchive*>& archives,
-                     ArenaScene* out) {
-    if (!out) {
+bool ArenaSceneBuilder::begin(const formats::Arena* arena, const MaterialResolver* resolver,
+                              const formats::Palette* palette,
+                              const std::vector<const formats::TextureArchive*>& archives) {
+    scene_.clear();
+    surfaces_.clear();
+    drawn_.clear();
+    scaleX_.clear();
+    scaleY_.clear();
+    depthLayers_.clear();
+    order_.clear();
+    oi_ = 0;
+    haveRun_ = false;
+    if (!arena || !resolver || !palette) {
+        phase_ = Phase::Failed;
         return false;
     }
-    out->clear();
-    if (!arena) {
-        return false;
-    }
-
     const std::vector<int32_t>& indices = arena->triangleIndices();
-    const std::vector<int32_t>& materials = arena->triangleMaterials();
-    const std::vector<uint32_t>& flags = arena->triangleFlags();
-    const std::vector<formats::Vec2f>& uvs = arena->triangleUvs();
-    const std::vector<formats::Vec3f>& positions = arena->vertices();
-
     const int32_t triangleCount = arena->triangleCount();
     if (triangleCount <= 0 || (int32_t)indices.size() < triangleCount * 3) {
+        phase_ = Phase::Failed;
         return false;
     }
-
-    out->vertices.reserve((size_t)triangleCount * 3);
-
-    // The triangles' depth layers: the C# Levels.Of, computed once per arena
-    // (the C# keeps them in the ArenaView). A detail lying in the plane of a
-    // bigger surface is a layer above it, and the renderer pulls it towards
-    // the eye so the two do not fight for the same depth.
-    std::vector<int32_t> depthLayers;
-    if (!computeArenaDepthLayers(positions, indices, &depthLayers)) {
+    arena_ = arena;
+    resolver_ = resolver;
+    palette_ = palette;
+    archives_ = archives;
+    // The vertex reserve is NOT taken here: two builds can be started in
+    // one sync (the pair), and the buffer is only needed when the Loop
+    // phase fills it -- the step that gets there reserves it then, so a
+    // build still in its depth phase holds no vertex buffer at all.
+    if (!depth_.begin(&arena->vertices(), &arena->triangleIndices(), &depthLayers_)) {
+        phase_ = Phase::Failed;
         return false;
     }
+    phase_ = Phase::Setup;
+    return true;
+}
 
-    // The run of triangles currently being batched: its material value and its
-    // group. A new material value OR a new group starts a new run, so a batch
-    // never spans two groups and the drawing can skip a hidden group per batch.
-    int32_t runMaterial = 0;
-    int32_t runGroup = 0;
-    int32_t runDepthLayer = 0;
-    bool haveRun = false;
-    // The open run's bounding box, written into its batch when the run closes.
-    float runMin[3] = {0.0f, 0.0f, 0.0f};
-    float runMax[3] = {0.0f, 0.0f, 0.0f};
-
-    // The surfaces, by material value. A material value's surface is
-    // resolved ONCE, because the resolution searches the archives and the
-    // UV SCALE depends on the texture it found.
-    //
-    // THE UV SCALE MATTERS, and it is easy to miss: the arena's texture
-    // coordinates are in TEXELS, and the C# normalises them by the
-    // texture's size -- `new Vertex(position, triangleUvs[...] * new
-    // Vector2(1f / texture.Width, 1f / texture.Height))`. Without the
-    // normalisation the texture coordinates run over the whole texture
-    // range instead of one frame of it, and the surfaces are covered in
-    // garbage.
-    std::map<int32_t, Surface> surfaces;
-    std::map<int32_t, bool> drawn;
-    std::map<int32_t, float> scaleX;
-    std::map<int32_t, float> scaleY;
-
-    // Emitted in the sorted order (see sortedTriangleOrder): same-state
-    // triangles are contiguous, so the runs below are the merged batches.
-    const std::vector<int32_t> order = sortedTriangleOrder(arena, depthLayers);
-    for (size_t oi = 0; oi < order.size(); oi++) {
-        const int32_t t = order[oi];
+bool ArenaSceneBuilder::step(int32_t maxTriangles) {
+    if (phase_ == Phase::Done) {
+        return true;
+    }
+    if (phase_ == Phase::Failed || phase_ == Phase::Idle) {
+        return false;
+    }
+    const std::vector<int32_t>& indices = arena_->triangleIndices();
+    const std::vector<int32_t>& materials = arena_->triangleMaterials();
+    const std::vector<uint32_t>& flags = arena_->triangleFlags();
+    const std::vector<formats::Vec2f>& uvs = arena_->triangleUvs();
+    const std::vector<formats::Vec3f>& positions = arena_->vertices();
+    if (phase_ == Phase::Setup) {
+        // The triangles' depth layers: the C# Levels.Of, computed once per arena
+        // (the C# keeps them in the ArenaView). A detail lying in the plane of a
+        // bigger surface is a layer above it, and the renderer pulls it towards
+        // the eye so the two do not fight for the same depth. Sliced like the
+        // loop below: the per-plane stacking is quadratic in a plane's size
+        // and was the first sync's whole cost when it ran unsliced.
+        const int32_t kDepthWorkPerStep = 600;
+        if (!depth_.step(kDepthWorkPerStep)) {
+            if (depth_.failed()) {
+                phase_ = Phase::Failed;
+            }
+            return false;
+        }
+        // Emitted in the sorted order (see sortedTriangleOrder): same-state
+        // triangles are contiguous, so the runs below are the merged batches.
+        order_ = sortedTriangleOrder(arena_, depthLayers_);
+        scene_.vertices.reserve((size_t)arena_->triangleCount() * 3);
+        phase_ = Phase::Loop;
+        return false;
+    }
+    int32_t spent = 0;
+    while (oi_ < order_.size() && spent < maxTriangles) {
+        const int32_t t = order_[oi_];
+        spent++;
+        oi_++;
         // The C# LevelView.Build skips a triangle the arena's clip flag marks
         // (the 1996 demo's not-drawn triangles) or the Disabled flag marks
         // (the retail arena activation's, LevelView.cs:294).
-        if (arenaSceneSkips(arena, t)) {
+        if (arenaSceneSkips(arena_, t)) {
             continue;
         }
         const int32_t triangleGroup = (int32_t)(flags[(size_t)t] >> 24);
@@ -421,33 +500,33 @@ bool buildArenaScene(const formats::Arena* arena,
         // absence is a presence test, not a sentinel, because a negative material
         // is a valid flat palette colour.
         int32_t groupMaterial = 0;
-        const int32_t material = arena->groupMaterial(triangleGroup, &groupMaterial)
+        const int32_t material = arena_->groupMaterial(triangleGroup, &groupMaterial)
                                      ? groupMaterial
                                      : materials[(size_t)t];
 
-        if (surfaces.find(material) == surfaces.end()) {
+        if (surfaces_.find(material) == surfaces_.end()) {
             Surface surface;
-            const bool isDrawn = resolver.resolve(material, arena->materials(), palette, archives, &surface);
-            surfaces[material] = surface;
-            drawn[material] = isDrawn;
+            const bool isDrawn = resolver_->resolve(material, arena_->materials(), *palette_, archives_, &surface);
+            surfaces_[material] = surface;
+            drawn_[material] = isDrawn;
             float sx = 0.0f;
             float sy = 0.0f;
             if (isDrawn && surface.texture) {
                 sx = 1.0f / (float)surface.texture->width();
                 sy = 1.0f / (float)surface.texture->height();
             }
-            scaleX[material] = sx;
-            scaleY[material] = sy;
+            scaleX_[material] = sx;
+            scaleY_[material] = sy;
         }
-        const Surface& surface = surfaces[material];
-        const float sx = scaleX[material];
-        const float sy = scaleY[material];
-        const int32_t depthLayer = (size_t)t < depthLayers.size() ? depthLayers[(size_t)t] : 0;
+        const Surface& surface = surfaces_[material];
+        const float sx = scaleX_[material];
+        const float sy = scaleY_[material];
+        const int32_t depthLayer = (size_t)t < depthLayers_.size() ? depthLayers_[(size_t)t] : 0;
 
         // The vertices. The colour is white: the original's Gouraud-blended
         // stream is this vertex's colour, and the world's surfaces are
         // unlit (the palette decides).
-        const int32_t first = (int32_t)out->vertices.size();
+        const int32_t first = (int32_t)scene_.vertices.size();
         for (int32_t k = 0; k < 3; k++) {
             const int32_t index = indices[(size_t)t * 3 + (size_t)k];
             Vertex vertex;
@@ -461,14 +540,14 @@ bool buildArenaScene(const formats::Arena* arena,
                 vertex.uv = Vec2{uvs[uvAt].x * sx, uvs[uvAt].y * sy};
             }
             vertex.colour = kVertexWhite;
-            out->vertices.push_back(vertex);
+            scene_.vertices.push_back(vertex);
         }
 
         // This triangle's box, from the three vertices just appended. The run's
         // box accumulates these; the backend culls per batch against it.
         float tmin[3], tmax[3];
         for (int k = 0; k < 3; k++) {
-            const Vec3& p = out->vertices[(size_t)first + (size_t)k].pos;
+            const Vec3& p = scene_.vertices[(size_t)first + (size_t)k].pos;
             const float c[3] = {p.x, p.y, p.z};
             for (int j = 0; j < 3; j++) {
                 if (k == 0) {
@@ -481,21 +560,21 @@ bool buildArenaScene(const formats::Arena* arena,
             }
         }
 
-        if (!haveRun || material != runMaterial || triangleGroup != runGroup ||
-            depthLayer != runDepthLayer) {
+        if (!haveRun_ || material != runMaterial_ || triangleGroup != runGroup_ ||
+            depthLayer != runDepthLayer_) {
             // A new run. The previous one ends where this one starts.
-            if (haveRun && !out->batches.empty()) {
-                out->batches.back().count = first - out->batches.back().first;
+            if (haveRun_ && !scene_.batches.empty()) {
+                scene_.batches.back().count = first - scene_.batches.back().first;
                 for (int j = 0; j < 3; j++) {
-                    out->batches.back().boundsMin[j] = runMin[j];
-                    out->batches.back().boundsMax[j] = runMax[j];
+                    scene_.batches.back().boundsMin[j] = runMin_[j];
+                    scene_.batches.back().boundsMax[j] = runMax_[j];
                 }
             }
-            if (!drawn[material]) {
+            if (!drawn_[material]) {
                 // Not drawn: NONE, PEN_ENV, RIPPLE, or a material name that
                 // no archive has. The run is left empty, and the next
                 // triangle starts a new one.
-                haveRun = false;
+                haveRun_ = false;
                 continue;
             }
             ArenaBatch batch;
@@ -504,42 +583,76 @@ bool buildArenaScene(const formats::Arena* arena,
             batch.surface = surface;
             batch.group = triangleGroup;
             batch.depthLayer = depthLayer;
-            out->batches.push_back(batch);
+            scene_.batches.push_back(batch);
             for (int j = 0; j < 3; j++) {
-                runMin[j] = tmin[j];
-                runMax[j] = tmax[j];
+                runMin_[j] = tmin[j];
+                runMax_[j] = tmax[j];
             }
-            runMaterial = material;
-            runGroup = triangleGroup;
-            runDepthLayer = depthLayer;
-            haveRun = true;
+            runMaterial_ = material;
+            runGroup_ = triangleGroup;
+            runDepthLayer_ = depthLayer;
+            haveRun_ = true;
         } else {
             for (int j = 0; j < 3; j++) {
-                if (tmin[j] < runMin[j]) runMin[j] = tmin[j];
-                if (tmax[j] > runMax[j]) runMax[j] = tmax[j];
+                if (tmin[j] < runMin_[j]) runMin_[j] = tmin[j];
+                if (tmax[j] > runMax_[j]) runMax_[j] = tmax[j];
             }
         }
     }
+    if (oi_ >= order_.size()) {
+        finish();
+        return phase_ == Phase::Done;
+    }
+    return false;
+}
 
-    if (haveRun && !out->batches.empty()) {
-        out->batches.back().count = (int32_t)out->vertices.size() - out->batches.back().first;
+void ArenaSceneBuilder::finish() {
+    if (haveRun_ && !scene_.batches.empty()) {
+        scene_.batches.back().count = (int32_t)scene_.vertices.size() - scene_.batches.back().first;
         for (int j = 0; j < 3; j++) {
-            out->batches.back().boundsMin[j] = runMin[j];
-            out->batches.back().boundsMax[j] = runMax[j];
+            scene_.batches.back().boundsMin[j] = runMin_[j];
+            scene_.batches.back().boundsMax[j] = runMax_[j];
         }
     }
 
     // A batch with no triangles is a surface that is not drawn; drop it.
     std::vector<ArenaBatch> kept;
-    kept.reserve(out->batches.size());
-    for (size_t i = 0; i < out->batches.size(); i++) {
-        if (out->batches[i].count > 0) {
-            kept.push_back(out->batches[i]);
+    kept.reserve(scene_.batches.size());
+    for (size_t i = 0; i < scene_.batches.size(); i++) {
+        if (scene_.batches[i].count > 0) {
+            kept.push_back(scene_.batches[i]);
         }
     }
-    out->batches.swap(kept);
+    scene_.batches.swap(kept);
 
-    return !out->batches.empty();
+    phase_ = scene_.batches.empty() ? Phase::Failed : Phase::Done;
+}
+
+bool buildArenaScene(const formats::Arena* arena,
+                     const MaterialResolver& resolver,
+                     const formats::Palette& palette,
+                     const std::vector<const formats::TextureArchive*>& archives,
+                     ArenaScene* out) {
+    if (!out) {
+        return false;
+    }
+    out->clear();
+    ArenaSceneBuilder builder;
+    if (!builder.begin(arena, &resolver, &palette, archives)) {
+        return false;
+    }
+    while (!builder.step(1 << 30)) {
+        if (builder.failed()) {
+            break;
+        }
+    }
+    if (builder.failed()) {
+        out->clear();
+        return false;
+    }
+    out->vertices.swap(builder.scene().vertices);
+    out->batches.swap(builder.scene().batches);
+    return true;
 }
 
 bool arenaBatchVisible(const formats::Arena* arena, const ArenaBatch& batch) {

@@ -153,12 +153,19 @@ public:
     using SurfaceStartFn = void (*)(void* user, const Surface& surface,
                                     const formats::Palette* palette);
     void warm(const std::string& arena, SurfaceStartFn start, void* user);
+    // One texture of warm() per call (the door pump: resolving and
+    // glow-measuring all six in the arena-change frame was most of that
+    // frame's stall). Returns true when the arena's list is done. The
+    // frontend calls it every frame for the resident pair; a finished
+    // arena costs one map lookup.
+    bool warmStep(const std::string& arena, SurfaceStartFn start, void* user);
 
     // Drops the cached looks and sprite surfaces (a level change).
     void clear() {
         looks_.clear();
         spriteCache_.clear();
         resolveMemo_.clear();
+        warmAt_.clear();
         lastSpriteEntry_ = nullptr;
     }
 
@@ -199,6 +206,7 @@ private:
     Shading sprites_;
 
     std::map<std::string, ObjectLook> looks_;
+    std::map<std::string, size_t> warmAt_;
     std::map<std::pair<std::string, std::string>, SpriteEntry> spriteCache_;
     // sprite()'s last answer: a frame's effects are mostly one arena's
     // one texture (a slime's trail), so the map's string-key find is

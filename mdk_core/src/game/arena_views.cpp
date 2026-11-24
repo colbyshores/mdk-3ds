@@ -170,7 +170,7 @@ bool ArenaViews::build(const std::string& name) {
     }
     LevelView* view = new LevelView();
     view->setShading(shading_);
-    if (!view->load(renderer_, level_, arena, surfaces_)) {
+    if (!view->loadBegin(renderer_, level_, arena, surfaces_)) {
         // An arena with no geometry, or no GPU memory for its mesh right now:
         // tried again later (see the header), not in every frame and not never.
         view->unload();
@@ -252,7 +252,35 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
         }
         if (build(name)) {
             built++;
+            // One NEW build started per sync: the second pair member
+            // starts next frame, so two arenas' builds (and their depth
+            // phases) never stack into one frame or one memory peak.
+            break;
         }
+    }
+    // One build step a sync, for ONE view still building (the door pump:
+    // an incoming arena's view is made over the approach frames, not in
+    // one sync -- and one build in flight at a time, so two arenas'
+    // intermediate vertex buffers never peak together). A build that
+    // fails here takes the same retry path as a load that failed outright.
+    // Oldest first: the arena the player is standing in finishes before
+    // the one being walked to (a reverse sweep would starve it behind
+    // every newer build).
+    for (size_t i = 0; i < views_.size(); i++) {
+        LevelView* view = views_[i].view;
+        if (view->ready()) {
+            continue;
+        }
+        view->buildStep();
+        if (view->buildFailed() || view->notBuilding()) {
+            const std::string name = views_[i].name;
+            release(i);
+            noteFailed(name);
+            stats_.failed++;
+            i--;   // the next view shifted into this slot; step it next sync
+            continue;
+        }
+        break;   // one build step a sync (the cap above)
     }
     // Every kOrphanSweepSyncs, counted forward (no remainder: the ARM11 has no
     // integer divide, AGENTS.md R11).
@@ -315,7 +343,17 @@ void ArenaViews::draw(const std::vector<std::string>& drawn) {
     for (size_t d = 0; d < drawn.size(); d++) {
         for (size_t i = 0; i < views_.size(); i++) {
             if (views_[i].name == drawn[d]) {
-                views_[i].view->draw();
+                LevelView* view = views_[i].view;
+                if (!view->ready() && !view->buildFailed() && !view->notBuilding()) {
+                    // Drawn before its sliced build finished (a rushed
+                    // door): finish the CPU scene build here, but do NOT
+                    // create the mesh inside the frame (GPU resources are
+                    // made in the view phase, AGENTS.md P2) -- the mesh
+                    // and the large-surface starts happen at the next
+                    // sync, one frame later, and the view draws then.
+                    view->finishSceneOnly();
+                }
+                view->draw();
                 break;
             }
         }

@@ -1777,8 +1777,9 @@ int main(int argc, char** argv) {
     std::unique_ptr<mdk::audio::LevelMusic> music;
     // The arena whose track the bank was last asked to prefetch (below).
     std::string musicPrefetchedFor;
-    std::string effectsWarmedCurrent;
-    std::string effectsWarmedSecond;
+    // The second arenas whose first effects-warm step was already
+    // deferred once (per name; see the frame's warm).
+    std::vector<std::string> warmDeferred;
     // THE BANK'S BLOCKING READS, ALL OF THEM SAID (spec Phase 3: "log every
     // stall"). A streamed sound that is asked for while it is not in memory is
     // read whole, wherever the asker is -- the music's enter(), a script's play
@@ -1893,8 +1894,7 @@ int main(int argc, char** argv) {
         mdk::audioDspDetach();
         music.reset();   // its voices are the runtime's mixer's
         musicPrefetchedFor.clear();
-        effectsWarmedCurrent.clear();
-        effectsWarmedSecond.clear();
+        warmDeferred.clear();
         // A fresh camera with the fresh level (its clip view's context is the runtime
         // going now). It is reset HERE, before the runtime below binds its clip view, its
         // shake and its seed to it: reset after them, as it was until package #15, it
@@ -2969,6 +2969,10 @@ int main(int argc, char** argv) {
         // This frame's view work, for the arena-entry table (harness_3ds.h).
         float hwViewsMs = 0.0f;
         int32_t hwViewsBuilt = 0;
+        double hwFlow0 = 0.0;
+        float hwWarmMs = 0.0f;
+        float hwPumpMs = 0.0f;
+        float hwMusicMs = 0.0f;
 #endif
         if (arena) {
             const std::string& streamCurrent =
@@ -2992,23 +2996,50 @@ int main(int argc, char** argv) {
             // (arena_views.h): from the resident MTO, so a make is decode and
             // upload with no SD read. Two a frame; the entry stall was 442 ms
             // for nine at once.
+#ifdef MDK_HW_PROFILE
+            const double pump0 = nowSeconds();
+#endif
             arenaViews.pumpSurfaces(2);
-            // The script effects' textures for the resident arenas, started
-            // on the change (as the music prefetch below): an effect's first
-            // frame is its spawn frame, so without this its texture is made
-            // in its first draw (measured: TRAIL, 64x704 stacked, 77 ms at
-            // the DANT_1 -> CDANT_1 crossing).
-            if (streamCurrent != effectsWarmedCurrent || streamSecond != effectsWarmedSecond) {
-                effectsWarmedCurrent = streamCurrent;
-                effectsWarmedSecond = streamSecond;
-                effectsView.warm(streamCurrent, startEffectSurface, &surfaces);
-                if (!streamSecond.empty() && streamSecond != streamCurrent) {
-                    effectsView.warm(streamSecond, startEffectSurface, &surfaces);
+#ifdef MDK_HW_PROFILE
+            hwPumpMs = (float)((nowSeconds() - pump0) * 1000.0);
+#endif
+            // The script effects' textures for the resident arenas, one
+            // texture a frame per arena (EffectsView::warmStep): an
+            // effect's first frame is its spawn frame, so without this its
+            // texture is made in its first draw (measured: TRAIL, 64x704
+            // stacked, 77 ms at the DANT_1 -> CDANT_1 crossing) -- and
+            // resolving all six in the arena-change frame was most of that
+            // frame's remaining stall, so the warm is spread like the
+            // builds above it.
+#ifdef MDK_HW_PROFILE
+            const double warm0 = nowSeconds();
+#endif
+            effectsView.warmStep(streamCurrent, startEffectSurface, &surfaces);
+            if (!streamSecond.empty() && streamSecond != streamCurrent) {
+                // Not the change frame either (see the music step below):
+                // each name's first warm step is deferred exactly once
+                // (recorded per name), then it progresses every frame --
+                // alternating names each pay one frame, never all of them.
+                bool deferred = false;
+                for (size_t i = 0; i < warmDeferred.size(); i++) {
+                    if (warmDeferred[i] == streamSecond) {
+                        deferred = true;
+                        break;
+                    }
+                }
+                if (!deferred) {
+                    warmDeferred.push_back(streamSecond);
+                } else {
+                    effectsView.warmStep(streamSecond, startEffectSurface, &surfaces);
                 }
             }
 #ifdef MDK_HW_PROFILE
+            hwWarmMs = (float)((nowSeconds() - warm0) * 1000.0);
+#endif
+#ifdef MDK_HW_PROFILE
             hwViewsMs = (float)((stream2 - stream1) * 1000.0);
             hwViewsBuilt = builtViews;
+            hwFlow0 = stream1;
 #endif
             if (arenaViews.stats().failed != lastViewsFailed) {
                 mdk::log3dsPrintf("views: build FAILED (%d so far); it is tried again",
@@ -3044,18 +3075,28 @@ int main(int argc, char** argv) {
             // in. Here the arena that is loading is the pair's OTHER one: the
             // second arena, which is where a door or a corridor leads. Asked once
             // per change of that arena; the bank reads one step per frame.
+#ifdef MDK_HW_PROFILE
+            const double music0 = nowSeconds();
+#endif
+            bool musicStartedHere = false;
             if (music) {
                 if (streamSecond != musicPrefetchedFor) {
                     musicPrefetchedFor = streamSecond;
                     if (!streamSecond.empty()) {
                         const std::string track = music->trackOf(streamSecond);
                         if (bank.prefetch(track)) {
+                            musicStartedHere = true;
                             mdk::log3dsPrintf("music: prefetch %s for %s", track.c_str(),
                                               streamSecond.c_str());
                         }
                     }
                 }
-                if (!bank.prefetching().empty()) {
+                // Not the change frame's own step: the first read is the
+                // cold one (measured 36 ms in the arena-activation frame,
+                // stacked on the view build and the warm), and the track
+                // is wanted at the door, frames later -- registering here
+                // and reading from the next frame loses nothing.
+                if (!bank.prefetching().empty() && !musicStartedHere) {
                     const std::string reading = bank.prefetching();
                     const int32_t failuresBefore = bank.stats().readFailures;
                     // Every step is timed: a step is an fopen, a seek and a read
@@ -3128,6 +3169,9 @@ int main(int argc, char** argv) {
                 audioDemandSaid = audio.demandReads;
                 audioDemandBytesSaid = audio.demandBytes;
             }
+#ifdef MDK_HW_PROFILE
+            hwMusicMs = (float)((nowSeconds() - music0) * 1000.0);
+#endif
         }
 
         MdkFrameParams params;
@@ -3163,6 +3207,17 @@ int main(int argc, char** argv) {
         // P2: the camera is handed to the renderer every frame, whether or not a
         // step ran, and every GPU state the frame needs is set inside
         // begin/end_frame by the backend.
+#ifdef MDK_HW_PROFILE
+        if (hwFlow0 > 0.0) {
+            const double flowMs = (nowSeconds() - hwFlow0) * 1000.0;
+            if (flowMs > 30.0) {
+                mdk::log3dsPrintf("flow: frame %lu flow %.1f ms (sync %.1f, warm %.1f, "
+                                  "pump %.1f, music %.1f)",
+                                  (unsigned long)frame, flowMs, (double)hwViewsMs,
+                                  (double)hwWarmMs, (double)hwPumpMs, (double)hwMusicMs);
+            }
+        }
+#endif
         const uint64_t spanBegin0 = mdk::harnessProfileTick();
         mdk_render_begin_frame(renderer, &params);
         const uint64_t spanDraw0 = mdk::harnessProfileTick();

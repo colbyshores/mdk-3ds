@@ -31,6 +31,9 @@
 
 #include <stdint.h>
 
+#include <map>
+#include <tuple>
+
 #include <vector>
 
 #include "formats/arena.h"
@@ -92,6 +95,128 @@ bool buildArenaScene(const formats::Arena* arena,
                      const formats::Palette& palette,
                      const std::vector<const formats::TextureArchive*>& archives,
                      ArenaScene* out);
+
+// The depth-layer computation in resumable steps: computeArenaDepthLayers
+// is this builder run to completion, with the same output. step() spends
+// at most `budget` work units (a triangle collected, or one overlap check
+// in the per-plane stacking) and returns true when the layers are done.
+class DepthLayersBuilder {
+public:
+    // Not copyable: the layers pointer names the caller's vector (and the
+    // owning builder's own member), so a copy would write into another
+    // object's storage. Reset in place instead of assigning a fresh one.
+    DepthLayersBuilder() = default;
+    DepthLayersBuilder(const DepthLayersBuilder&) = delete;
+    DepthLayersBuilder& operator=(const DepthLayersBuilder&) = delete;
+    void reset() {
+        planes_.clear();
+        assignValid_ = false;
+        nextTriangle_ = 0;
+        planeSorted_ = false;
+        assignI_ = 1;
+        assignJ_ = 0;
+        vertices_ = nullptr;
+        triangleIndices_ = nullptr;
+        layers_ = nullptr;
+        phase_ = Phase::Idle;
+    }
+    bool begin(const std::vector<formats::Vec3f>* vertices,
+               const std::vector<int32_t>* triangleIndices, std::vector<int32_t>* layers);
+    bool step(int32_t budget);
+    bool done() const { return phase_ == Phase::Done; }
+    bool failed() const { return phase_ == Phase::Failed; }
+
+private:
+    struct Entry {
+        int32_t triangle = 0;
+        float area = 0.0f;
+        formats::Vec3f normal;
+    };
+    typedef std::tuple<int32_t, int32_t, int32_t, int32_t> PlaneKey;
+    enum class Phase : uint8_t { Idle, Collect, Assign, Done, Failed };
+
+    const std::vector<formats::Vec3f>* vertices_ = nullptr;
+    const std::vector<int32_t>* triangleIndices_ = nullptr;
+    std::vector<int32_t>* layers_ = nullptr;
+    std::map<PlaneKey, std::vector<Entry>> planes_;
+    Phase phase_ = Phase::Idle;
+    int32_t nextTriangle_ = 0;
+    // The Assign cursor is a KEY, re-found in planes_ at every step --
+    // never an iterator into the builder's own map, so copying or
+    // assigning a builder cannot leave a cursor aliasing another
+    // builder's storage.
+    PlaneKey assignKey_;
+    bool assignValid_ = false;
+    bool planeSorted_ = false;
+    size_t assignI_ = 1;
+    size_t assignJ_ = 0;
+};
+
+// The scene build in resumable steps (the door pump): buildArenaScene is
+// this builder run to completion, so a stepped build produces the same
+// scene, triangle for triangle. The caller keeps the arena, the resolver,
+// the palette and the archives alive until the build finishes or is
+// dropped. step() advances at most maxTriangles of the main loop (the
+// setup -- depth layers and the sorted order -- is its own first step)
+// and returns true when the scene is complete; failed() says the build
+// gave up (no geometry), which buildArenaScene reports as false.
+class ArenaSceneBuilder {
+public:
+    // Not copyable (its depth builder points into this builder's own
+    // depthLayers_): reset in place instead of assigning a fresh one.
+    ArenaSceneBuilder() = default;
+    ArenaSceneBuilder(const ArenaSceneBuilder&) = delete;
+    ArenaSceneBuilder& operator=(const ArenaSceneBuilder&) = delete;
+    void reset() {
+        depth_.reset();
+        scene_.clear();
+        depthLayers_.clear();
+        order_.clear();
+        oi_ = 0;
+        surfaces_.clear();
+        drawn_.clear();
+        scaleX_.clear();
+        scaleY_.clear();
+        haveRun_ = false;
+        arena_ = nullptr;
+        resolver_ = nullptr;
+        palette_ = nullptr;
+        archives_.clear();
+        phase_ = Phase::Idle;
+    }
+    bool begin(const formats::Arena* arena, const MaterialResolver* resolver,
+               const formats::Palette* palette,
+               const std::vector<const formats::TextureArchive*>& archives);
+    bool step(int32_t maxTriangles);
+    bool done() const { return phase_ == Phase::Done; }
+    bool failed() const { return phase_ == Phase::Failed; }
+    ArenaScene& scene() { return scene_; }
+
+private:
+    enum class Phase : uint8_t { Idle, Setup, Loop, Done, Failed };
+    void finish();
+
+    const formats::Arena* arena_ = nullptr;
+    const MaterialResolver* resolver_ = nullptr;
+    const formats::Palette* palette_ = nullptr;
+    std::vector<const formats::TextureArchive*> archives_;
+    ArenaScene scene_;
+    Phase phase_ = Phase::Idle;
+    DepthLayersBuilder depth_;
+    std::vector<int32_t> depthLayers_;
+    std::vector<int32_t> order_;
+    size_t oi_ = 0;
+    std::map<int32_t, Surface> surfaces_;
+    std::map<int32_t, bool> drawn_;
+    std::map<int32_t, float> scaleX_;
+    std::map<int32_t, float> scaleY_;
+    int32_t runMaterial_ = 0;
+    int32_t runGroup_ = 0;
+    int32_t runDepthLayer_ = 0;
+    bool haveRun_ = false;
+    float runMin_[3] = {0.0f, 0.0f, 0.0f};
+    float runMax_[3] = {0.0f, 0.0f, 0.0f};
+};
 
 // Whether buildArenaScene leaves a triangle out (the C# LevelView.Build's skip,
 // LevelView.cs:294: the clip flag's or the Disabled flag's triangles). The one rule

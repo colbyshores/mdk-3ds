@@ -47,6 +47,11 @@ namespace mdk {
 class LevelView {
 public:
     LevelView() = default;
+    // The build's resolver is heap-owned for the sliced build's duration:
+    // freed here so a view destroyed mid-build (without unload) cannot
+    // leak it. The mesh is NOT released here: its owner unloads first
+    // (ArenaViews::release), as before this class had a build state.
+    ~LevelView() { delete buildResolver_; }
 
     // Build the view for an arena. Returns false when the arena has no
     // geometry, or when its GPU objects could not be made.
@@ -58,6 +63,26 @@ public:
     // 3DS and not a tidiness one). It must outlive this view.
     bool load(MdkRenderer renderer, LevelData* level, const formats::Arena* arena,
               SurfaceCache* surfaces);
+
+    // The sliced build (the door pump): loadBegin starts the arena's scene
+    // build; buildStep advances it (the scene in triangle slices, then the
+    // mesh, then the large surfaces' starts) and returns true when the
+    // view is ready to draw. ready() says the same at any time. load() is
+    // loadBegin plus buildStep until ready -- every other caller keeps the
+    // synchronous behaviour. A view that is not ready draws nothing (its
+    // mesh is made only after its scene completes).
+    bool loadBegin(MdkRenderer renderer, LevelData* level, const formats::Arena* arena,
+                   SurfaceCache* surfaces);
+    bool buildStep();
+    // Advance only the CPU scene build (no GPU object is made): the draw
+    // path's drain, which must not create the mesh inside a frame
+    // (AGENTS.md P2 -- GPU resources are made in the view phase).
+    void finishSceneOnly();
+    bool ready() const { return buildState_ == BuildState::Ready; }
+    bool buildFailed() const { return buildState_ == BuildState::Failed; }
+    // No build in flight (never begun, or unloaded): the sync pump treats
+    // it as failed rather than stepping it forever.
+    bool notBuilding() const { return buildState_ == BuildState::Empty; }
 
     // The look the arena's surfaces are shaded with (the C#'s
     // EnhancedLook.Surfaces for the settings' graphics): Lit under the
@@ -151,6 +176,15 @@ private:
     // the same palette, and the cache keys on this pointer so the two share one
     // GPU palette and one set of expanded textures.
     const formats::Palette* palette_ = nullptr;
+
+    // The sliced build's state: the scene builder and its resolver (owned
+    // for the build's duration), and which stage comes next.
+    enum class BuildState : uint8_t { Empty, Scene, Mesh, Large, Ready, Failed };
+    BuildState buildState_ = BuildState::Empty;
+    ArenaSceneBuilder builder_;
+    MaterialResolver* buildResolver_ = nullptr;
+    // A refresh() asked for while building: applied at the Ready step.
+    bool pendingRefresh_ = false;
 };
 
 } // namespace mdk

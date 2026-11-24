@@ -39,13 +39,30 @@ static void startLargeSurfaces(const ArenaScene& scene, SurfaceCache* surfaces,
 
 bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Arena* arena,
                      SurfaceCache* surfaces) {
+    if (!loadBegin(renderer, level, arena, surfaces)) {
+        return false;
+    }
+    while (!buildStep()) {
+        if (buildState_ == BuildState::Failed) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool LevelView::loadBegin(MdkRenderer renderer, LevelData* level, const formats::Arena* arena,
+                          SurfaceCache* surfaces) {
     if (!renderer || !level || !arena || !surfaces) {
+        delete buildResolver_;
+        buildResolver_ = nullptr;
+        buildState_ = BuildState::Failed;
         return false;
     }
     renderer_ = renderer;
     level_ = level;
     arena_ = arena;
     surfaces_ = surfaces;
+    pendingRefresh_ = false;
     // A fresh scene is whole: an end of a level in progress tears it again from the
     // first torn triangle on the next tear() (the C#'s view is never rebuilt mid-end).
     tornShown_ = 0;
@@ -57,24 +74,80 @@ bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Aren
     palette_ = &level->paletteOf(arena);
     const std::vector<const formats::TextureArchive*> archives = level->archivesOf(arena);
 
-    MaterialResolver resolver(&level->dti(), shading_);
-    if (!buildArenaScene(arena, resolver, *palette_, archives, &scene_)) {
+    delete buildResolver_;
+    buildResolver_ = new MaterialResolver(&level->dti(), shading_);
+    if (!builder_.begin(arena, buildResolver_, palette_, archives)) {
+        delete buildResolver_;
+        buildResolver_ = nullptr;
+        buildState_ = BuildState::Failed;
         return false;
     }
-
-    // The mesh. The vertices are copied into the backend's buffer.
-    mesh_ = mdk_render_create_mesh(renderer, scene_.vertices.data(),
-                                   (int32_t)scene_.vertices.size());
-    if (mesh_ < 0) {
-        return false;
-    }
-    startLargeSurfaces(scene_, surfaces_, palette_);
-    pumpLargeAt_ = scene_.batches.size();   // the load already did the scan
-
-    // The palette and the textures are made by the shared cache when they are
-    // first drawn, not here: an arena that is loaded and never drawn costs
-    // nothing, and the C#'s resolver makes them as surfaces resolve too.
+    buildState_ = BuildState::Scene;
     return true;
+}
+
+void LevelView::finishSceneOnly() {
+    // Bounded like every other slice (four steps): a drawn-but-unready
+    // view's scene finishes over a few draw frames, never in one call.
+    // The mesh follows at the next sync, and the view draws then.
+    const int32_t kDrawDrainSteps = 4;
+    int32_t steps = 0;
+    while (buildState_ == BuildState::Scene && steps < kDrawDrainSteps) {
+        buildStep();
+        steps++;
+    }
+}
+
+bool LevelView::buildStep() {
+    // Triangles a step: at the measured cost of the corridor arenas this
+    // keeps a step near a millisecond, and a view is ready a few frames
+    // after it starts -- inside the pair window the door gives it.
+    const int32_t kBuildTrianglesPerStep = 1200;
+    switch (buildState_) {
+        case BuildState::Scene:
+            if (builder_.step(kBuildTrianglesPerStep)) {
+                scene_.vertices.swap(builder_.scene().vertices);
+                scene_.batches.swap(builder_.scene().batches);
+                buildState_ = BuildState::Mesh;
+            } else if (builder_.failed()) {
+                delete buildResolver_;
+                buildResolver_ = nullptr;
+                buildState_ = BuildState::Failed;
+                return false;
+            }
+            return false;
+        case BuildState::Mesh:
+            // The mesh. The vertices are copied into the backend's buffer.
+            mesh_ = mdk_render_create_mesh(renderer_, scene_.vertices.data(),
+                                           (int32_t)scene_.vertices.size());
+            if (mesh_ < 0) {
+                delete buildResolver_;
+                buildResolver_ = nullptr;
+                buildState_ = BuildState::Failed;
+                return false;
+            }
+            buildState_ = BuildState::Large;
+            return false;
+        case BuildState::Large:
+            startLargeSurfaces(scene_, surfaces_, palette_);
+            pumpLargeAt_ = scene_.batches.size();   // the build already did the scan
+            // The palette and the textures are made by the shared cache when
+            // they are first drawn, not here: an arena that is loaded and
+            // never drawn costs nothing past this, and the C#'s resolver
+            // makes them as surfaces resolve too.
+            delete buildResolver_;
+            buildResolver_ = nullptr;
+            buildState_ = BuildState::Ready;
+            if (pendingRefresh_) {
+                pendingRefresh_ = false;
+                refresh();
+            }
+            return true;
+        case BuildState::Ready:
+            return true;
+        default:
+            return false;
+    }
 }
 
 void LevelView::unload() {
@@ -82,6 +155,11 @@ void LevelView::unload() {
         mdk_render_release_mesh(renderer_, mesh_);
     }
     mesh_ = -1;
+    delete buildResolver_;
+    buildResolver_ = nullptr;
+    builder_.reset();
+    buildState_ = BuildState::Empty;
+    pendingRefresh_ = false;
     scene_ = ArenaScene();
     arena_ = nullptr;
     palette_ = nullptr;
@@ -93,7 +171,7 @@ void LevelView::unload() {
 }
 
 int32_t LevelView::pumpSurfaces(int32_t budget) {
-    if (!renderer_ || surfaces_ == nullptr || !arena_) {
+    if (!renderer_ || surfaces_ == nullptr || !arena_ || !ready()) {
         return 0;
     }
     int32_t pumped = 0;
@@ -220,7 +298,7 @@ bool LevelView::bounds(Vec3* outMin, Vec3* outMax) const {
 }
 
 void LevelView::draw() {
-    if (!renderer_ || mesh_ < 0 || surfaces_ == nullptr) {
+    if (!renderer_ || mesh_ < 0 || surfaces_ == nullptr || !ready()) {
         return;
     }
     // A torn arena (tear) draws from its dynamic mesh, which is written in every frame
@@ -280,6 +358,19 @@ void LevelView::draw() {
 
 bool LevelView::refresh() {
     if (!renderer_ || !level_ || !arena_ || surfaces_ == nullptr) {
+        return false;
+    }
+    if (!ready()) {
+        // Asked for mid-build: the rebuild it wants is of a scene that
+        // does not exist yet. Record it (it is applied at the Ready step,
+        // and the build in flight also reads the current group materials
+        // as it goes) but report NOT applied, as the synchronous build's
+        // caller expects the rebuild to have happened: if the build then
+        // fails, the view is released and the refresh is moot, not lost.
+        if (buildState_ == BuildState::Scene || buildState_ == BuildState::Mesh ||
+            buildState_ == BuildState::Large) {
+            pendingRefresh_ = true;
+        }
         return false;
     }
     // The C# LevelView.Rebuild (LevelView.cs:251): a group_set_texture changes a
