@@ -980,3 +980,21 @@ math), M2 (bubble track kept), L1 (no heapProbe on track-in) fixed.
 **Still open.** Crossing frames 59-77 ms: the sliced door build (`sync`
 15-20 ms) and the effects warm (17-19 ms); frames 783 (end span 80 ms) and
 796 (116 ms, spans small) are not yet attributed.
+
+### MEASURED AND REVERTED (2026-11-24): chunk threshold 32768 -> 4096
+
+Frame 650 of the L7 walk (129 ms, fx 82 ms) is the first explosion's effect
+sprites made whole in the effects draw: `texmake 32x960 expand 42.7 ms`, `16x480
+expand 11.0 ms` -- the 32x960 strip (30720 texels) is under both the backend's
+kChunkMinTexels and the effects warm's 32768 cut. Lowering both to 4096 removed
+frame 650's spike but made the corridor crossing worse (frames 793-799 59-77 ->
+85-114 ms; >33.3 ms 161 -> 182; p99 49.9 -> 52.2; texture-make total 990 ->
+1415 ms): far more textures went through the sliced pump. Reverted
+(.git/hw-logs/2026-11-24-fx1.log). Also measured: skipping the content hash for
+>1024 textures did not move frame 650 (the hash was not its cost) -- reverted.
+Next candidates: effect sprites in the orig pack (the lookup is Lit-only today),
+or a warm-only path for mid-size sprites.
+
+Also attributed: the 80-121 ms `end` spans at frames 764/784/804/814 and the
+86-93 ms frames at 299/599 are the PROFILE build's census and 300-frame
+loggers (they sit on `census`/`drawcounts`/`meshupd` lines), not the game.
