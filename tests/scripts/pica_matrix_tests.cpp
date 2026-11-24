@@ -46,6 +46,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <algorithm>
 #include <vector>
 
 #include "render/pica_matrix.h"
@@ -1169,6 +1170,223 @@ void testTheMipChain() {
     PICA_CHECK(memcmp(padded + offset2, want2, sizeof(want2)) == 0);
     PICA_CHECK(offset2 + sizeof(want2) ==
                mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, 32, 32, levels));
+}
+
+// THE SLICED FILTER AND CHAIN (04_textures.inc, THE CHUNKED EXPANSION). The
+// expansion runs prepareForFiltering and buildMipChain in rows of tiles across
+// frame boundaries; a slice boundary must change no byte. Two claims, both over
+// every byte of every level:
+//
+//   * the whole-image entry points equal an INDEPENDENT per-texel oracle written
+//     here (the bleed as a plain 8-neighbour mean with a real divide, the clamp,
+//     the 2x2 downsample) -- so this is not the code under test compared with
+//     itself; it also pins the reciprocal-multiply mean against the divide;
+//   * the sliced walk (prepareForFilteringStep, then buildMipChainStep, the way
+//     the expansion's stages 1 and 2 drive them) equals the whole-image result
+//     at every budget, from one texel (a row of tiles a step) to the expansion's
+//     own, and takes more than one step where a slice is smaller than the work.
+//
+// The sizes are the real ones the hitch was measured on, each in its POT
+// padding: the 1024x360 and 780x360 skies, the font atlases, the menu
+// background, the 64x704 corridor strip, plus small and odd shapes.
+
+// The oracle's neighbour read: inside the PADDED image, as the tile ring reads
+// it (padding is read from the buffer, never bounds-checked to the real size: a
+// mip level's padding next to the real region carries the level above's clamp,
+// and the bleed sees it).
+const uint8_t* oracleTexel(const uint8_t* tiled, int32_t x, int32_t y, int32_t pw, int32_t ph) {
+    if (x < 0 || y < 0 || x >= pw || y >= ph) {
+        return nullptr;
+    }
+    return tiled + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)pw) * 4u;
+}
+
+void oraclePrepare(uint8_t* tiled, int32_t w, int32_t h, int32_t pw, int32_t ph,
+                   bool transparent) {
+    if (w <= 0 || h <= 0 || w > pw || h > ph) {
+        return;
+    }
+    if (transparent) {
+        // Order-free: only alpha-0 texels are written, only alpha-nonzero read.
+        for (int32_t y = 0; y < h; y++) {
+            for (int32_t x = 0; x < w; x++) {
+                uint8_t* t = tiled + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y,
+                                                                  (uint32_t)pw) * 4u;
+                if (t[0] != 0) {
+                    continue;
+                }
+                uint32_t sum[3] = {0, 0, 0};
+                uint32_t n = 0;
+                for (int32_t dy = -1; dy <= 1; dy++) {
+                    for (int32_t dx = -1; dx <= 1; dx++) {
+                        const uint8_t* s = oracleTexel(tiled, x + dx, y + dy, pw, ph);
+                        if ((dx == 0 && dy == 0) || !s || s[0] == 0) {
+                            continue;
+                        }
+                        sum[0] += s[1];
+                        sum[1] += s[2];
+                        sum[2] += s[3];
+                        n++;
+                    }
+                }
+                if (n > 0) {
+                    t[1] = (uint8_t)(sum[0] / n);
+                    t[2] = (uint8_t)(sum[1] / n);
+                    t[3] = (uint8_t)(sum[2] / n);
+                }
+            }
+        }
+    }
+    const uint32_t upw = (uint32_t)pw;
+    if (w < pw) {
+        for (int32_t y = 0; y < h; y++) {
+            memcpy(tiled + mdk::pica::textureTexelIndex((uint32_t)w, (uint32_t)y, upw) * 4u,
+                   tiled + mdk::pica::textureTexelIndex((uint32_t)(w - 1), (uint32_t)y, upw) * 4u,
+                   4);
+        }
+    }
+    if (h < ph) {
+        const int32_t columns = w < pw ? w + 1 : w;
+        for (int32_t x = 0; x < columns; x++) {
+            memcpy(tiled + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)h, upw) * 4u,
+                   tiled + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)(h - 1), upw) * 4u,
+                   4);
+        }
+    }
+}
+
+void oracleChain(uint8_t* chain, int32_t pw, int32_t ph, int32_t rw, int32_t rh,
+                 int32_t levels) {
+    uint8_t* above = chain;
+    int32_t w = pw;
+    int32_t h = ph;
+    for (int32_t level = 1; level <= levels && w >= 16 && h >= 16; level++) {
+        uint8_t* below = above + (size_t)w * (size_t)h * 4u;
+        for (int32_t y = 0; y < (h >> 1); y++) {
+            for (int32_t x = 0; x < (w >> 1); x++) {
+                uint8_t* o = below + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y,
+                                                                  (uint32_t)(w >> 1)) * 4u;
+                for (int32_t k = 0; k < 4; k++) {
+                    uint32_t sum = 2;
+                    for (int32_t dy = 0; dy < 2; dy++) {
+                        for (int32_t dx = 0; dx < 2; dx++) {
+                            sum += oracleTexel(above, 2 * x + dx, 2 * y + dy, w, h)[k];
+                        }
+                    }
+                    o[k] = (uint8_t)(sum >> 2);
+                }
+            }
+        }
+        w >>= 1;
+        h >>= 1;
+        rw = (rw + 1) >> 1;
+        rh = (rh + 1) >> 1;
+        oraclePrepare(below, rw, rh, w, h, true);
+        above = below;
+    }
+}
+
+int32_t potAtLeast8(int32_t v) {
+    int32_t p = 8;
+    while (p < v) {
+        p <<= 1;
+    }
+    return p;
+}
+
+void testTheSlicedFilterAndChain() {
+    struct Size {
+        int32_t w;
+        int32_t h;
+    };
+    const Size sizes[] = {{1024, 360}, {780, 360}, {1024, 256}, {1024, 128}, {600, 360},
+                          {353, 243},  {256, 256}, {64, 704},   {20, 20},    {5, 5},
+                          {17, 100},   {100, 17},  {8, 8}};
+    // 0: opaque; 1: scattered holes; 2: holes plus fully transparent 8x8
+    // blocks and a transparent band (means of n = 0, tiles with no source).
+    const int32_t patterns = 3;
+    const size_t budgets[] = {1, 300, 16384, 100000};
+    bool allMatchOracle = true;
+    bool allSlicedMatch = true;
+    bool sawManySteps = false;
+    int32_t cases = 0;
+    for (const Size& size : sizes) {
+        const int32_t pw = potAtLeast8(size.w);
+        const int32_t ph = potAtLeast8(size.h);
+        const int32_t levels = mdk::pica::mipLevelsFor(pw, ph);
+        const size_t bytes = mdk::pica::mipChainTexels(pw, ph, levels) * 4u;
+        std::vector<uint8_t> level0(bytes, 0);
+        for (int32_t pattern = 0; pattern < patterns; pattern++) {
+            std::fill(level0.begin(), level0.end(), 0);
+            bool sawTransparent = false;
+            for (int32_t y = 0; y < size.h; y++) {
+                for (int32_t x = 0; x < size.w; x++) {
+                    const uint32_t hash = ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u) ^
+                                          ((uint32_t)pattern * 83492791u);
+                    bool hole = pattern >= 1 && (hash % 5u) == 0;
+                    if (pattern == 2 && ((((x >> 3) + (y >> 3)) % 3) == 0 ||
+                                         (y >= size.h / 3 && y < size.h / 3 + 5))) {
+                        hole = true;
+                    }
+                    sawTransparent = sawTransparent || hole;
+                    mdk::pica::texelBytes(
+                        level0.data() +
+                            mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)pw) *
+                                4u,
+                        hash & 0xFFu, (hash >> 8) & 0xFFu, (hash >> 16) & 0xFFu,
+                        hole ? 0u : 255u);
+                }
+            }
+            // The expansion passes what it saw (stage 0's flag); the opaque
+            // pattern also runs with the flag set, the full bleed's no-op.
+            for (int32_t flag = 0; flag < 2; flag++) {
+                const bool transparent = flag == 0 ? sawTransparent : true;
+                if (flag == 1 && sawTransparent) {
+                    continue;
+                }
+                std::vector<uint8_t> oracle(level0);
+                oraclePrepare(oracle.data(), size.w, size.h, pw, ph, transparent);
+                oracleChain(oracle.data(), pw, ph, size.w, size.h, levels);
+                std::vector<uint8_t> whole(level0);
+                mdk::pica::prepareForFiltering(whole.data(), size.w, size.h, pw, ph,
+                                               transparent);
+                mdk::pica::buildMipChain(whole.data(), pw, ph, size.w, size.h, levels);
+                if (whole != oracle) {
+                    allMatchOracle = false;
+                    printf("  sliced filter: %dx%d pattern %d whole != oracle\n", (int)size.w,
+                           (int)size.h, (int)pattern);
+                }
+                for (size_t budget : budgets) {
+                    std::vector<uint8_t> sliced(level0);
+                    mdk::pica::FilterCursor at;
+                    int32_t steps = 0;
+                    while (!mdk::pica::prepareForFilteringStep(sliced.data(), size.w, size.h, pw,
+                                                               ph, transparent, at, budget)) {
+                        steps++;
+                    }
+                    at = mdk::pica::FilterCursor();
+                    while (!mdk::pica::buildMipChainStep(sliced.data(), pw, ph, size.w, size.h,
+                                                         levels, at, budget)) {
+                        steps++;
+                    }
+                    if (sliced != whole) {
+                        allSlicedMatch = false;
+                        printf("  sliced filter: %dx%d pattern %d budget %d != whole\n",
+                               (int)size.w, (int)size.h, (int)pattern, (int)budget);
+                    }
+                    if (budget == 16384 && size.w == 1024 && size.h == 360 && steps > 20) {
+                        sawManySteps = true;
+                    }
+                    cases++;
+                }
+            }
+        }
+    }
+    PICA_CHECK(cases >= 13 * 3 * 4 + 13 * 4);   // every pattern, the opaque one twice
+    PICA_CHECK(allMatchOracle);
+    PICA_CHECK(allSlicedMatch);
+    // Non-vacuous: at the expansion's budget the sky really is many steps.
+    PICA_CHECK(sawManySteps);
 }
 
 // The PICA's widening of an n-bit channel back to 8 bits (bit replication), the
@@ -2298,6 +2516,7 @@ int runPicaMatrixTests() {
     testTheHazeIsThePcCurveOnTheRightDraws();
     testTheFilteredEdge();
     testTheMipChain();
+    testTheSlicedFilterAndChain();
     testThe16BitStore();
     testTheCompressedKurtFrame();
     testTheStreamedPicture();

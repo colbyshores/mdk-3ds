@@ -295,10 +295,10 @@ struct C3dTexture {
     // texture is expanded in slices across frame boundaries instead of in
     // one ~40-80 ms make. `expandPixels` is the private RGBA8 chain buffer
     // (malloc, freed by dropExpansion or the finishing upload); the stage
-    // walks rows -> filter -> mips -> format+pack slices -> upload. While
-    // pending the texture is not valid and must never be bound; a draw that
-    // needs it finishes the expansion synchronously (makeTexture), so the
-    // picture is never wrong, only early.
+    // walks row slices -> filter slices -> mip slices -> format+pack slices
+    // -> upload. While pending the texture is not valid and must never be
+    // bound; a draw that needs it finishes the expansion synchronously
+    // (makeTexture), so the picture is never wrong, only early.
     bool expandPending = false;
     bool expandWanted = false;   // chunked start deferred by the pending cap
     // A stale re-make expanding in slices while the OLD copy still draws
@@ -307,6 +307,7 @@ struct C3dTexture {
     uint8_t* expandPixels = nullptr;
     int32_t expandRow = 0;
     int32_t expandStage = 0;
+    mdk::pica::FilterCursor expandFilter;   // stage 1's, then stage 2's, slices
     bool expandSawTransparent = false;
     int32_t expandLevels = 0;
     size_t expandPackAt = 0;

@@ -933,3 +933,25 @@ review, three rounds, final COMPLETE.
 them on the load screen); music reads in the simulation (up to 75 ms);
 menu background/font atlases' whole-image expansion steps; with an HD pack
 installed the object warm answers nothing (name index is skipped).
+
+### EXPANSION FILTER + MIP CHAIN SLICED (2026-11-24): no whole-image step
+
+**What.** The chunked expansion's stage 1 (pica::prepareForFiltering) and
+stage 2 (pica::buildMipChain) advance a row of tiles at a time across pump
+steps (FilterCursor, kChunkFilterTexels = 16384); the whole-image functions
+are the step functions with an unlimited budget (one implementation).
+
+**Why.** Non-packed large textures (sky 1024x360/780x360, font atlases,
+menu background, the 64x704 corridor strip) ran each stage over the whole
+padded image in one step: 74-211 ms frames after level start and in the menu.
+
+**Evidence.** Bit-identical: a new PicaMatrix test compares the sliced walk
+at budgets 1/300/16384/100000 against the whole-image result and an
+independent per-texel oracle over 13 sizes x 3 patterns (non-vacuous: three
+deliberate breaks each turned it red); HEAD vs new over 33 cases hash-equal.
+Old 3DS L7 walk (.git/hw-logs/2026-11-24-slice1.log): frame 17 211 -> <50 ms,
+worst of frames 2-30 211 -> 68 ms; p99 52.9. Gates green; c3d_frame 148/157
+and main_3ds_flow unchanged from HEAD (pre-existing).
+
+**Still open.** 50-68 ms `begin` frames 18-29 (three 16384-texel steps a
+frame; the mip steps cost more per texel than the row steps) -- tunable.

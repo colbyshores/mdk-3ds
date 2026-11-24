@@ -371,172 +371,173 @@ static const uint8_t kMortonInvY[64] = {
     0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3, 0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3,
     4, 4, 5, 5, 4, 4, 5, 5, 6, 6, 7, 7, 6, 6, 7, 7, 4, 4, 5, 5, 4, 4, 5, 5, 6, 6, 7, 7, 6, 6, 7, 7};
 
-void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
-                         int32_t paddedHeight, bool realHasTransparent) {
-    if (!tiled || width <= 0 || height <= 0 || width > paddedWidth || height > paddedHeight) {
-        return;
-    }
+// The bleed's mean without a divide: the ARM11 has no integer divide, and this
+// can run mid-frame when an evicted texture is made again (06_draw.inc).
+// ceil(65536 / n) is exact here: a sum is at most 8 * 255, so the product's
+// error stays below 0.03 and no mean's fraction (at most 6/7) is pushed over an
+// integer.
+static const uint32_t kBleedReciprocal[9] = {0, 65536, 32768, 21846, 16384,
+                                             13108, 10923, 9363, 8192};
+
+// Step (1) of prepareForFiltering over ONE ROW OF 8x8 TILES (real rows ty to
+// ty + 7): the colour under each transparent real texel. Only OPAQUE neighbours
+// are read and only alpha-0 texels are written (their alpha untouched), so the
+// pass is order-independent: no written texel is ever read as a source -- and a
+// row of tiles is a place the walk can stop between pump steps and pick up again
+// with every byte the same (04_textures.inc, THE CHUNKED EXPANSION).
+//
+// TILE-STAGED. The per-texel form scattered up to nine Morton lookups and a
+// cache miss apiece over the whole buffer; measured 2026-11-22 on
+// old3ds-lan167 (L2 off): 348 ms for a 1024x256 sky. Staging each 8x8
+// tile's 10x10 neighbourhood turns a fully transparent tile's 576 lookups
+// into 100 and makes every neighbour read local. The stage is filled before
+// the tile's writes, and writes never change an alpha -- so a texel written
+// by an earlier tile still reads as alpha-0 here exactly as it did reading
+// `tiled` live. Same sources, same means, same slots.
+static void bleedTileRow(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
+                         int32_t paddedHeight, int32_t ty) {
     // [A, B, G, R] per texel (texelBytes).
     const uint32_t pw = (uint32_t)paddedWidth;
-    // (1) the colour under each transparent real texel. Only OPAQUE neighbours are
-    // read and only alpha-0 texels are written (their alpha untouched), so the
-    // pass is order-independent: no written texel is ever read as a source.
-    // Skipped when the caller knows the real region has no alpha-0 texel: with
-    // none to write, this is a no-op, and it is the nine-Morton-lookups-a-texel
-    // cost (see the header). Step 2 still runs -- padding is always transparent.
-    //
-    // TILE-STAGED. The per-texel form scattered up to nine Morton lookups and a
-    // cache miss apiece over the whole buffer; measured 2026-11-22 on
-    // old3ds-lan167 (L2 off): 348 ms for a 1024x256 sky. Staging each 8x8
-    // tile's 10x10 neighbourhood turns a fully transparent tile's 576 lookups
-    // into 100 and makes every neighbour read local. The stage is filled before
-    // the tile's writes, and writes never change an alpha -- so a texel written
-    // by an earlier tile still reads as alpha-0 here exactly as it did reading
-    // `tiled` live. Same sources, same means, same slots.
-    if (realHasTransparent) {
-        // The mean without a divide: the ARM11 has no integer divide, and this
-        // can run mid-frame when an evicted texture is made again (06_draw.inc).
-        // ceil(65536 / n) is exact here: a sum is at most 8 * 255, so the
-        // product's error stays below 0.03 and no mean's fraction (at most
-        // 6/7) is pushed over an integer.
-        static const uint32_t kReciprocal[9] = {0, 65536, 32768, 21846, 16384,
-                                                13108, 10923, 9363, 8192};
-        for (int32_t ty = 0; ty < height; ty += 8) {
-            for (int32_t tx = 0; tx < width; tx += 8) {
-                uint8_t stage[10][10][4];
-                // The interior is the tile itself: one sequential 256-byte
-                // walk, placed by the inverse Morton table. The ring around it
-                // is 36 texels of the eight neighbouring tiles -- read where
-                // they live rather than 100 scattered lookups a tile (the
-                // 10x10 scatter was itself the miss storm after the first
-                // staging pass: 182 ms a 1024x256 sky, measured 2026-11-22).
-                // Texels past the real region sit in padding, which step 1
-                // always finds alpha 0 (the expansion zeroed it and step 2 has
-                // not run), so they read as non-sources exactly as the bounds
-                // check made them before.
-                const uint32_t tilesPerRow = pw >> 3;
-                const uint32_t txi = (uint32_t)tx >> 3;
-                const uint32_t tyi = (uint32_t)ty >> 3;
-                uint8_t* tile = tiled + ((size_t)tyi * tilesPerRow + txi) * 256u;
-                for (uint32_t m = 0; m < 64u; m++) {
-                    memcpy(stage[kMortonInvY[m] + 1][kMortonInvX[m] + 1], tile + m * 4u, 4);
-                }
-                const uint32_t paddedTilesW = (uint32_t)paddedWidth >> 3;
-                const uint32_t paddedTilesH = (uint32_t)paddedHeight >> 3;
-                // top and bottom rows of the ring (gy = ty-1 / ty+8).
-                for (int32_t sx = 1; sx <= 8; sx++) {
-                    if (tyi > 0) {
-                        memcpy(stage[0][sx],
-                               tiled + ((size_t)(tyi - 1) * tilesPerRow + txi) * 256u +
-                                   morton8InTile((uint32_t)(sx - 1), 7u) * 4u, 4);
-                    } else {
-                        memset(stage[0][sx], 0, 4);
-                    }
-                    if (tyi + 1 < paddedTilesH) {
-                        memcpy(stage[9][sx],
-                               tiled + ((size_t)(tyi + 1) * tilesPerRow + txi) * 256u +
-                                   morton8InTile((uint32_t)(sx - 1), 0u) * 4u, 4);
-                    } else {
-                        memset(stage[9][sx], 0, 4);
-                    }
-                }
-                // left and right columns (gx = tx-1 / tx+8) and the corners.
-                for (int32_t sy = 1; sy <= 8; sy++) {
-                    if (txi > 0) {
-                        memcpy(stage[sy][0],
-                               tiled + ((size_t)tyi * tilesPerRow + txi - 1) * 256u +
-                                   morton8InTile(7u, (uint32_t)(sy - 1)) * 4u, 4);
-                        if (tyi > 0) {
-                            memcpy(stage[0][0],
-                                   tiled + ((size_t)(tyi - 1) * tilesPerRow + txi - 1) * 256u +
-                                       morton8InTile(7u, 7u) * 4u, 4);
-                        } else {
-                            memset(stage[0][0], 0, 4);
-                        }
-                        if (tyi + 1 < paddedTilesH) {
-                            memcpy(stage[9][0],
-                                   tiled + ((size_t)(tyi + 1) * tilesPerRow + txi - 1) * 256u +
-                                       morton8InTile(7u, 0u) * 4u, 4);
-                        } else {
-                            memset(stage[9][0], 0, 4);
-                        }
-                    } else {
-                        memset(stage[sy][0], 0, 4);
-                        memset(stage[0][0], 0, 4);
-                        memset(stage[9][0], 0, 4);
-                    }
-                    if (txi + 1 < paddedTilesW) {
-                        memcpy(stage[sy][9],
-                               tiled + ((size_t)tyi * tilesPerRow + txi + 1) * 256u +
-                                   morton8InTile(0u, (uint32_t)(sy - 1)) * 4u, 4);
-                        if (tyi > 0) {
-                            memcpy(stage[0][9],
-                                   tiled + ((size_t)(tyi - 1) * tilesPerRow + txi + 1) * 256u +
-                                       morton8InTile(0u, 7u) * 4u, 4);
-                        } else {
-                            memset(stage[0][9], 0, 4);
-                        }
-                        if (tyi + 1 < paddedTilesH) {
-                            memcpy(stage[9][9],
-                                   tiled + ((size_t)(tyi + 1) * tilesPerRow + txi + 1) * 256u +
-                                       morton8InTile(0u, 0u) * 4u, 4);
-                        } else {
-                            memset(stage[9][9], 0, 4);
-                        }
-                    } else {
-                        memset(stage[sy][9], 0, 4);
-                        memset(stage[0][9], 0, 4);
-                        memset(stage[9][9], 0, 4);
-                    }
-                }
-                // Walk in SLOT order, not row order: the write then lands at
-                // `tile + m*4`, sequential within the tile. The scattered
-                // write-per-transparent-texel was the blur's remaining cost
-                // once the fill was sequential (182 ms a 1024x256 sky,
-                // measured 2026-11-22). Same texels, same stage reads.
-                for (uint32_t m = 0; m < 64u; m++) {
-                    const int32_t lx = kMortonInvX[m];
-                    const int32_t ly = kMortonInvY[m];
-                    const int32_t gx = tx + lx;
-                    const int32_t gy = ty + ly;
-                    if (gx >= width || gy >= height) {
-                        continue;
-                    }
-                    const uint8_t* self = stage[ly + 1][lx + 1];
-                    if (self[0] != 0) {
-                        continue;
-                    }
-                    uint32_t sum[3] = {0, 0, 0};
-                    uint32_t n = 0;
-                    for (int32_t dy = -1; dy <= 1; dy++) {
-                        for (int32_t dx = -1; dx <= 1; dx++) {
-                            if (dx == 0 && dy == 0) {
-                                continue;
-                            }
-                            const uint8_t* s = stage[ly + 1 + dy][lx + 1 + dx];
-                            if (s[0] == 0) {
-                                continue;
-                            }
-                            sum[0] += s[1];
-                            sum[1] += s[2];
-                            sum[2] += s[3];
-                            n++;
-                        }
-                    }
-                    if (n == 0) {
-                        continue;
-                    }
-                    const uint32_t k = kReciprocal[n];
-                    uint8_t* t = tile + m * 4u;
-                    t[1] = (uint8_t)((sum[0] * k) >> 16);
-                    t[2] = (uint8_t)((sum[1] * k) >> 16);
-                    t[3] = (uint8_t)((sum[2] * k) >> 16);
-                }
+    for (int32_t tx = 0; tx < width; tx += 8) {
+        uint8_t stage[10][10][4];
+        // The interior is the tile itself: one sequential 256-byte
+        // walk, placed by the inverse Morton table. The ring around it
+        // is 36 texels of the eight neighbouring tiles -- read where
+        // they live rather than 100 scattered lookups a tile (the
+        // 10x10 scatter was itself the miss storm after the first
+        // staging pass: 182 ms a 1024x256 sky, measured 2026-11-22).
+        // Texels past the real region sit in padding, which step 1
+        // always finds alpha 0 (the expansion zeroed it and step 2 has
+        // not run), so they read as non-sources exactly as the bounds
+        // check made them before.
+        const uint32_t tilesPerRow = pw >> 3;
+        const uint32_t txi = (uint32_t)tx >> 3;
+        const uint32_t tyi = (uint32_t)ty >> 3;
+        uint8_t* tile = tiled + ((size_t)tyi * tilesPerRow + txi) * 256u;
+        for (uint32_t m = 0; m < 64u; m++) {
+            memcpy(stage[kMortonInvY[m] + 1][kMortonInvX[m] + 1], tile + m * 4u, 4);
+        }
+        const uint32_t paddedTilesW = (uint32_t)paddedWidth >> 3;
+        const uint32_t paddedTilesH = (uint32_t)paddedHeight >> 3;
+        // top and bottom rows of the ring (gy = ty-1 / ty+8).
+        for (int32_t sx = 1; sx <= 8; sx++) {
+            if (tyi > 0) {
+                memcpy(stage[0][sx],
+                       tiled + ((size_t)(tyi - 1) * tilesPerRow + txi) * 256u +
+                           morton8InTile((uint32_t)(sx - 1), 7u) * 4u, 4);
+            } else {
+                memset(stage[0][sx], 0, 4);
+            }
+            if (tyi + 1 < paddedTilesH) {
+                memcpy(stage[9][sx],
+                       tiled + ((size_t)(tyi + 1) * tilesPerRow + txi) * 256u +
+                           morton8InTile((uint32_t)(sx - 1), 0u) * 4u, 4);
+            } else {
+                memset(stage[9][sx], 0, 4);
             }
         }
+        // left and right columns (gx = tx-1 / tx+8) and the corners.
+        for (int32_t sy = 1; sy <= 8; sy++) {
+            if (txi > 0) {
+                memcpy(stage[sy][0],
+                       tiled + ((size_t)tyi * tilesPerRow + txi - 1) * 256u +
+                           morton8InTile(7u, (uint32_t)(sy - 1)) * 4u, 4);
+                if (tyi > 0) {
+                    memcpy(stage[0][0],
+                           tiled + ((size_t)(tyi - 1) * tilesPerRow + txi - 1) * 256u +
+                               morton8InTile(7u, 7u) * 4u, 4);
+                } else {
+                    memset(stage[0][0], 0, 4);
+                }
+                if (tyi + 1 < paddedTilesH) {
+                    memcpy(stage[9][0],
+                           tiled + ((size_t)(tyi + 1) * tilesPerRow + txi - 1) * 256u +
+                               morton8InTile(7u, 0u) * 4u, 4);
+                } else {
+                    memset(stage[9][0], 0, 4);
+                }
+            } else {
+                memset(stage[sy][0], 0, 4);
+                memset(stage[0][0], 0, 4);
+                memset(stage[9][0], 0, 4);
+            }
+            if (txi + 1 < paddedTilesW) {
+                memcpy(stage[sy][9],
+                       tiled + ((size_t)tyi * tilesPerRow + txi + 1) * 256u +
+                           morton8InTile(0u, (uint32_t)(sy - 1)) * 4u, 4);
+                if (tyi > 0) {
+                    memcpy(stage[0][9],
+                           tiled + ((size_t)(tyi - 1) * tilesPerRow + txi + 1) * 256u +
+                               morton8InTile(0u, 7u) * 4u, 4);
+                } else {
+                    memset(stage[0][9], 0, 4);
+                }
+                if (tyi + 1 < paddedTilesH) {
+                    memcpy(stage[9][9],
+                           tiled + ((size_t)(tyi + 1) * tilesPerRow + txi + 1) * 256u +
+                               morton8InTile(0u, 0u) * 4u, 4);
+                } else {
+                    memset(stage[9][9], 0, 4);
+                }
+            } else {
+                memset(stage[sy][9], 0, 4);
+                memset(stage[0][9], 0, 4);
+                memset(stage[9][9], 0, 4);
+            }
+        }
+        // Walk in SLOT order, not row order: the write then lands at
+        // `tile + m*4`, sequential within the tile. The scattered
+        // write-per-transparent-texel was the blur's remaining cost
+        // once the fill was sequential (182 ms a 1024x256 sky,
+        // measured 2026-11-22). Same texels, same stage reads.
+        for (uint32_t m = 0; m < 64u; m++) {
+            const int32_t lx = kMortonInvX[m];
+            const int32_t ly = kMortonInvY[m];
+            const int32_t gx = tx + lx;
+            const int32_t gy = ty + ly;
+            if (gx >= width || gy >= height) {
+                continue;
+            }
+            const uint8_t* self = stage[ly + 1][lx + 1];
+            if (self[0] != 0) {
+                continue;
+            }
+            uint32_t sum[3] = {0, 0, 0};
+            uint32_t n = 0;
+            for (int32_t dy = -1; dy <= 1; dy++) {
+                for (int32_t dx = -1; dx <= 1; dx++) {
+                    if (dx == 0 && dy == 0) {
+                        continue;
+                    }
+                    const uint8_t* s = stage[ly + 1 + dy][lx + 1 + dx];
+                    if (s[0] == 0) {
+                        continue;
+                    }
+                    sum[0] += s[1];
+                    sum[1] += s[2];
+                    sum[2] += s[3];
+                    n++;
+                }
+            }
+            if (n == 0) {
+                continue;
+            }
+            const uint32_t k = kBleedReciprocal[n];
+            uint8_t* t = tile + m * 4u;
+            t[1] = (uint8_t)((sum[0] * k) >> 16);
+            t[2] = (uint8_t)((sum[1] * k) >> 16);
+            t[3] = (uint8_t)((sum[2] * k) >> 16);
+        }
     }
-    // (2) the clamp, one texel into the padding on each padded axis: the column
-    // first, then the row (which also fills the corner from the copied column).
+}
+
+// Step (2) of prepareForFiltering: the clamp, one texel into the padding on each
+// padded axis -- the column first, then the row (which also fills the corner
+// from the copied column). At most a padded width plus a padded height of
+// copies, so it is never sliced.
+static void clampPaddedEdge(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
+                            int32_t paddedHeight) {
+    const uint32_t pw = (uint32_t)paddedWidth;
     if (width < paddedWidth) {
         for (int32_t y = 0; y < height; y++) {
             memcpy(tiled + textureTexelIndex((uint32_t)width, (uint32_t)y, pw) * 4u,
@@ -552,6 +553,70 @@ void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t 
     }
 }
 
+// FilterCursor::pass. A mip level is downsampled from the one above, then
+// bled, then clamped; level 0 starts at the bleed.
+static const int32_t kPassDownsample = 0;
+static const int32_t kPassBleed = 1;
+static const int32_t kPassClamp = 2;
+static const int32_t kPassDone = 3;
+
+// One level's preparation (the bleed, then the clamp) from wherever `at` stands,
+// until it is done or `budgetTexels` of work is spent; returns the work spent. A
+// bleed row of tiles costs its real width (rounded up to a tile) times 8, the
+// clamp its width plus its height. The order of the work is the whole-image
+// order exactly: a slice boundary is only a pause in it.
+static size_t prepareLevelSlice(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
+                                int32_t paddedHeight, bool realHasTransparent, FilterCursor& at,
+                                size_t budgetTexels) {
+    if (!tiled || width <= 0 || height <= 0 || width > paddedWidth || height > paddedHeight) {
+        at.pass = kPassDone;
+        return 0;
+    }
+    size_t spent = 0;
+    while (at.pass != kPassDone && spent < budgetTexels) {
+        if (at.pass == kPassBleed) {
+            // Skipped when the caller knows the real region has no alpha-0
+            // texel: with none to write, the bleed is a no-op, and it is the
+            // nine-Morton-lookups-a-texel cost (see the header). The clamp still
+            // runs -- padding is always transparent.
+            const int32_t ty = at.tileRow << 3;
+            if (!realHasTransparent || ty >= height) {
+                at.pass = kPassClamp;
+                at.tileRow = 0;
+                continue;
+            }
+            bleedTileRow(tiled, width, height, paddedWidth, paddedHeight, ty);
+            at.tileRow++;
+            spent += (size_t)(((uint32_t)width + 7u) & ~7u) << 3;
+        } else {
+            clampPaddedEdge(tiled, width, height, paddedWidth, paddedHeight);
+            at.pass = kPassDone;
+            spent += (size_t)width + (size_t)height;
+        }
+    }
+    return spent;
+}
+
+bool prepareForFilteringStep(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
+                             int32_t paddedHeight, bool realHasTransparent, FilterCursor& at,
+                             size_t budgetTexels) {
+    // Level 0 has no level above it to be downsampled from.
+    if (at.pass == kPassDownsample) {
+        at.pass = kPassBleed;
+    }
+    prepareLevelSlice(tiled, width, height, paddedWidth, paddedHeight, realHasTransparent, at,
+                      budgetTexels);
+    return at.pass == kPassDone;
+}
+
+void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
+                         int32_t paddedHeight, bool realHasTransparent) {
+    // The whole image is the sliced walk with no budget: one implementation.
+    FilterCursor at;
+    prepareForFilteringStep(tiled, width, height, paddedWidth, paddedHeight, realHasTransparent,
+                            at, SIZE_MAX);
+}
+
 int32_t mipLevelsFor(int32_t paddedWidth, int32_t paddedHeight) {
     int32_t levels = 0;
     int32_t w = paddedWidth;
@@ -564,13 +629,19 @@ int32_t mipLevelsFor(int32_t paddedWidth, int32_t paddedHeight) {
     return levels;
 }
 
-void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t* dst) {
-    if (!src || !dst || width < 16 || height < 16) {
-        return;
-    }
+// downsampleTiled over the output's rows of 8x8 tiles [firstTileRow,
+// endTileRow) only: the mip chain is made in slices across pump steps. Each
+// output tile reads only the level above, so any boundary gives the same bytes.
+static void downsampleTileRows(const uint8_t* src, int32_t width, int32_t height, uint8_t* dst,
+                               int32_t firstTileRow, int32_t endTileRow) {
     const uint32_t sw = (uint32_t)width;
     const uint32_t dw = sw >> 1;
     const uint32_t dh = (uint32_t)height >> 1;
+    const uint32_t first = (uint32_t)firstTileRow << 3;
+    uint32_t end = (uint32_t)endTileRow << 3;
+    if (end > dh) {
+        end = dh;
+    }
     // TILE-SEQUENTIAL, AND THAT IS THE WHOLE POINT. The 2x2 block an output
     // texel averages is four CONSECUTIVE slots of one source tile --
     // morton(2u,2v) = morton(u,v)<<2, and +1/+2/+3 are the odd partners -- so
@@ -582,7 +653,7 @@ void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t*
     // same slots -- a walk order, not a formula change.
     const uint32_t srcTilesPerRow = sw >> 3;
     const uint32_t dstTilesPerRow = dw >> 3;
-    for (uint32_t oty = 0; oty < dh; oty += 8u) {
+    for (uint32_t oty = first; oty < end; oty += 8u) {
         for (uint32_t otx = 0; otx < dw; otx += 8u) {
             uint8_t* out =
                 dst + ((size_t)((oty >> 3) * dstTilesPerRow + (otx >> 3))) * 256u;
@@ -606,6 +677,13 @@ void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t*
             }
         }
     }
+}
+
+void downsampleTiled(const uint8_t* src, int32_t width, int32_t height, uint8_t* dst) {
+    if (!src || !dst || width < 16 || height < 16) {
+        return;
+    }
+    downsampleTileRows(src, width, height, dst, 0, height >> 4);
 }
 
 size_t textureBytes(TexelFormat format, int32_t paddedWidth, int32_t paddedHeight,
@@ -756,26 +834,64 @@ size_t mipChainTexels(int32_t paddedWidth, int32_t paddedHeight, int32_t levels)
     return total;
 }
 
+bool buildMipChainStep(uint8_t* chain, int32_t paddedWidth, int32_t paddedHeight,
+                       int32_t realWidth, int32_t realHeight, int32_t levels, FilterCursor& at,
+                       size_t budgetTexels) {
+    if (!chain) {
+        return true;
+    }
+    size_t spent = 0;
+    for (;;) {
+        // The level above the one being made (`at.level` levels are finished):
+        // where it sits in the chain, its padded size, its scaled real size. At
+        // most seven halvings, once per row of tiles worked.
+        uint8_t* above = chain;
+        int32_t w = paddedWidth;
+        int32_t h = paddedHeight;
+        int32_t rw = realWidth;
+        int32_t rh = realHeight;
+        for (int32_t k = 0; k < at.level; k++) {
+            above += (size_t)w * (size_t)h * 4u;
+            w >>= 1;
+            h >>= 1;
+            rw = (rw + 1) >> 1;
+            rh = (rh + 1) >> 1;
+        }
+        if (at.level >= levels || w < 16 || h < 16) {
+            return true;
+        }
+        if (spent >= budgetTexels) {
+            return false;
+        }
+        uint8_t* below = above + (size_t)w * (size_t)h * 4u;
+        if (at.pass == kPassDownsample) {
+            // A row of output tiles costs the texels it writes.
+            if (at.tileRow < (h >> 4)) {
+                downsampleTileRows(above, w, h, below, at.tileRow, at.tileRow + 1);
+                at.tileRow++;
+                spent += (size_t)(w >> 1) << 3;
+                continue;
+            }
+            at.pass = kPassBleed;
+            at.tileRow = 0;
+        }
+        // Re-prepared at its own scaled real size, (real + 1) / 2 per level.
+        spent += prepareLevelSlice(below, (rw + 1) >> 1, (rh + 1) >> 1, w >> 1, h >> 1, true, at,
+                                   budgetTexels - spent);
+        if (at.pass == kPassDone) {
+            at.level++;
+            at.pass = kPassDownsample;
+            at.tileRow = 0;
+        }
+    }
+}
+
 void buildMipChain(uint8_t* chain, int32_t paddedWidth, int32_t paddedHeight, int32_t realWidth,
                    int32_t realHeight, int32_t levels) {
-    if (!chain) {
-        return;
-    }
-    uint8_t* above = chain;
-    int32_t w = paddedWidth;
-    int32_t h = paddedHeight;
-    int32_t rw = realWidth;
-    int32_t rh = realHeight;
-    for (int32_t level = 1; level <= levels && w >= 16 && h >= 16; level++) {
-        uint8_t* below = above + (size_t)w * (size_t)h * 4u;
-        downsampleTiled(above, w, h, below);
-        w >>= 1;
-        h >>= 1;
-        rw = (rw + 1) >> 1;
-        rh = (rh + 1) >> 1;
-        prepareForFiltering(below, rw, rh, w, h);
-        above = below;
-    }
+    // The whole chain is the sliced walk with no budget: one implementation.
+    FilterCursor at;
+    buildMipChainStep(chain, paddedWidth, paddedHeight, realWidth, realHeight, levels, at,
+                      SIZE_MAX);
 }
 
 int32_t hdEvictionVictim(const HdSlot* slots, int32_t count, uint32_t protectFrom,

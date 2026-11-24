@@ -829,6 +829,26 @@ uint32_t hazeColourWord(const Colour& colour);
 void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
                          int32_t paddedHeight, bool realHasTransparent = true);
 
+// Where a SLICED prepareForFiltering or buildMipChain stands. The chunked
+// expansion (04_textures.inc) keeps one on the texture between frame-boundary
+// pump steps; a default-constructed cursor is the start.
+struct FilterCursor {
+    int32_t level = 0;     // buildMipChain: levels below level 0 already made
+    int32_t pass = 0;      // downsample, bleed (step 1), clamp (step 2), done
+    int32_t tileRow = 0;   // the next row of 8x8 tiles in the pass
+};
+
+// prepareForFiltering from wherever `at` stands, until it is done or about
+// `budgetTexels` of work is spent (a row of tiles is the smallest slice, so a
+// slice can overrun the budget by less than one row); true once it is done.
+// The work is the whole-image work in the whole-image order -- the bleed a row
+// of tiles at a time, then the clamp -- so any budget gives the same bytes;
+// prepareForFiltering is this with no budget (SIZE_MAX). Nothing else may write
+// the image between steps. The host test pins the equivalence.
+bool prepareForFilteringStep(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
+                             int32_t paddedHeight, bool realHasTransparent, FilterCursor& at,
+                             size_t budgetTexels);
+
 // ---------------------------------------------------------------------------
 // THE MIP CHAIN (Enhanced Mode, SPEC.md 7.9 `enableMipmaps`)
 // ---------------------------------------------------------------------------
@@ -1027,6 +1047,14 @@ size_t mipChainTexels(int32_t paddedWidth, int32_t paddedHeight, int32_t levels)
 // so the colour bleed and the one-texel clamp hold all the way down.
 void buildMipChain(uint8_t* chain, int32_t paddedWidth, int32_t paddedHeight, int32_t realWidth,
                    int32_t realHeight, int32_t levels);
+
+// buildMipChain the same way (FilterCursor, above): level by level, each level's
+// downsample a row of output tiles at a time, then its bleed and clamp. The
+// first level of a 1024x512 chain is 512x256, too big for one step on the Old
+// 3DS. True once the chain is done; buildMipChain is this with no budget.
+bool buildMipChainStep(uint8_t* chain, int32_t paddedWidth, int32_t paddedHeight,
+                       int32_t realWidth, int32_t realHeight, int32_t levels, FilterCursor& at,
+                       size_t budgetTexels);
 
 // ---------------------------------------------------------------------------
 // THE HD RESIDENCY POLICY (docs/HD_TEXTURES_3DS_SPEC.md 4.2), pure so the host

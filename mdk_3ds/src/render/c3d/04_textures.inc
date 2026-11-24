@@ -470,9 +470,13 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
 // make measured 64x704: expand 41.9 ms + pack 18.4 ms + alloc/load ~5 ms in
 // one frame (frame 795's 77 ms texmake). The pump cannot reach that batch in
 // the pair window, so the make itself is sliced: rows in slices, then the
-// filter and mip passes as single steps, then the 16-bit pack in texel
-// slices, then the ordinary upload (makeTextureNow consuming the finished
-// buffer as a preset). The frame-boundary pump advances every pending
+// filter and mip passes in rows of tiles (pica::prepareForFilteringStep,
+// buildMipChainStep), then the 16-bit pack in texel slices, then the ordinary
+// upload (makeTextureNow consuming the finished buffer as a preset). The filter
+// and mip passes were single steps until 2026-11-24, and on the Old 3DS each was
+// a 100-220 ms frame by itself: level start (a level-7 run's `begin` span, which
+// holds this pump, up to 203 ms), every main-menu open, and the 64x704 corridor
+// strip made again mid-play. The frame-boundary pump advances every pending
 // expansion ONE step a frame; a draw that needs the texture first finishes
 // it synchronously, so no frame ever binds a half-made texture and the
 // picture is unchanged -- only its timing is.
@@ -480,6 +484,10 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
 static const size_t kChunkMinTexels = 32768u;   // below this a make is < ~20 ms: synchronous
 static const int32_t kChunkRowTexels = 16384;   // one row step's texel budget (64 wide: 256 rows)
 static const size_t kChunkPackTexels = 16384u;  // 64x1024 chain: 4 pack steps
+// One filter or mip step's work, in texels: the row step's budget. A bleed row
+// of tiles costs its real width times 8 (a 1024-wide sky: two rows a step), a
+// downsample row of tiles the texels it writes, the clamp its width plus height.
+static const size_t kChunkFilterTexels = 16384u;
 static const int32_t kPumpStepsPerFrame = 3;    // total steps the frame pump does, all textures
 
 static void dropExpansion(C3dTexture& texture) {
@@ -489,6 +497,7 @@ static void dropExpansion(C3dTexture& texture) {
     texture.expandWanted = false;
     texture.expandRow = 0;
     texture.expandStage = 0;
+    texture.expandFilter = mdk::pica::FilterCursor();
     texture.expandPackAt = 0;
     texture.expandSawTransparent = false;
     texture.expandLevels = 0;
@@ -544,6 +553,7 @@ static int32_t startExpansion(RendererC3D* renderer, C3dTexture& texture, bool f
     memset(texture.expandPixels, 0, texels * 4u);
     texture.expandRow = 0;
     texture.expandStage = 0;
+    texture.expandFilter = mdk::pica::FilterCursor();
     texture.expandSawTransparent = false;
     texture.expandPackAt = 0;
     texture.expandPending = true;
@@ -588,19 +598,28 @@ static bool advanceExpansionSteps(RendererC3D* renderer, C3dTexture& texture, bo
                 }
                 break;
             }
-            case 1:
-                mdk::pica::prepareForFiltering(texture.expandPixels, texture.realWidth,
-                                               texture.realHeight, texture.paddedWidth,
-                                               texture.paddedHeight,
-                                               texture.expandSawTransparent);
-                texture.expandStage = 2;
+            case 1: {
+                const size_t budget = finishAll ? SIZE_MAX : kChunkFilterTexels;
+                if (mdk::pica::prepareForFilteringStep(
+                        texture.expandPixels, texture.realWidth, texture.realHeight,
+                        texture.paddedWidth, texture.paddedHeight, texture.expandSawTransparent,
+                        texture.expandFilter, budget)) {
+                    texture.expandFilter = mdk::pica::FilterCursor();
+                    texture.expandStage = 2;
+                }
                 break;
-            case 2:
-                mdk::pica::buildMipChain(texture.expandPixels, texture.paddedWidth,
-                                         texture.paddedHeight, texture.realWidth,
-                                         texture.realHeight, texture.expandLevels);
-                texture.expandStage = 3;
+            }
+            case 2: {
+                const size_t budget = finishAll ? SIZE_MAX : kChunkFilterTexels;
+                if (mdk::pica::buildMipChainStep(texture.expandPixels, texture.paddedWidth,
+                                                 texture.paddedHeight, texture.realWidth,
+                                                 texture.realHeight, texture.expandLevels,
+                                                 texture.expandFilter, budget)) {
+                    texture.expandFilter = mdk::pica::FilterCursor();
+                    texture.expandStage = 3;
+                }
                 break;
+            }
             case 3: {
                 if (texture.expandPackAt == 0) {
                     texture.expandFormat = mdk::pica::expandedTexelFormat(
