@@ -8691,6 +8691,12 @@ int main(int argc, char** argv) {
     if (warmFailures == 0) {
         printf("PASS ObjectWarmKeys\n");
     }
+    // The effects warm asks the pack for every sprite, the small drops too.
+    const int effectsWarmFailures = mdk::test::runEffectsWarmTests(data);
+    failures += effectsWarmFailures;
+    if (effectsWarmFailures == 0) {
+        printf("PASS EffectsWarmAsksEverySprite\n");
+    }
 
     // The sprite cache's residency policy. The C# has no bound at all, so
     // there is no C# twin for this: it pins the port's own policy, which is

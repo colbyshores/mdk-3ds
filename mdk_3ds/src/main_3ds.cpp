@@ -539,15 +539,17 @@ bool loadKurtPack(const char* path, KurtPackLoad* out) {
     return true;
 }
 
-// The surface cache's lookup into the compressed packs: a Lit surface's .t3x
-// path. `pack` is the HD pack (the SD card's upscale), `orig` the orig pack
-// (the RomFS's original-resolution pre-encode); either may be absent.
+// The surface cache's lookup into the compressed packs: a Lit or Sprite
+// surface's .t3x path (a Sprite takes only an orig-pack answer: SurfaceCache
+// surfaceId), answered by the pair and its names, never by the shading. `pack`
+// is the HD pack (the SD card's upscale), `orig` the orig pack (the RomFS's
+// original-resolution pre-encode); either may be absent.
 struct HdPackSource {
     mdk::ModImages* pack = nullptr;
     mdk::ModImages* orig = nullptr;
     OrigByName* byname = nullptr;
     std::string path;
-    // Set by the object warm around its ask (requestObjectSurface): the ask is
+    // Set by the warms around their ask (requestPackedSurface): the ask is
     // a HINT, and a hint never brings a texture's pixels back (below).
     bool hint = false;
 };
@@ -590,6 +592,16 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // draw asks the full lookup, exactly as without the warm.
     if (source->hint) {
         return true;
+    }
+    // NOTHING OVER THE PICA'S 1024 IS IN THE ORIG PACK (arena_etc1_convert.py
+    // refuses such a strip by name: sl_big 64x1920, fire 64x2628, explode
+    // 128x3328), so with no HD pack the content hash below can never match one
+    // -- and hashing EXPLODE's 128x3328 strip costs ~100 ms on the Old 3DS. A
+    // Sprite-shaded object part drawing it asks here at its first draw (frame
+    // 650 of the L7 walk: obj 105.5 ms once Sprites asked the pack).
+    if (!source->pack && (surface.texture->width() > 1024 ||
+                          surface.texture->height() * surface.texture->frameCount() > 1024)) {
+        return false;
     }
     // THE HD PACK FIRST, THE ORIG PACK SECOND: where both hold the key the HD
     // copy (the upscale) wins, and the orig pack fills the rest -- an arena the
@@ -645,28 +657,30 @@ static mdk::Lighting cachedLighting(
     return cache.back().second;
 }
 
-// The effects warmer's start (EffectsView::warm): ask the shared cache for
-// one surface's texture, starting its make.
-static void startEffectSurface(void* user, const mdk::Surface& surface,
-                               const mdk::formats::Palette* palette) {
-    static_cast<mdk::SurfaceCache*>(user)->prepare(surface, palette);
-}
-
-// The object warm's ask (game/object_view.h warmObjectStep): a hint only, and
-// only for a surface the orig pack holds (SurfaceCache::requestPacked) -- any
-// other object texture is still made by its first draw, as before. The lookup
-// is told it is a hint (HdPackSource::hint: no pixel fetch for it).
-struct ObjectWarmAsk {
+// The warms' ask (game/object_view.h warmObjectStep, EffectsView::warmStep): a
+// hint only, and only for a surface the orig pack holds
+// (SurfaceCache::requestPacked) -- any other texture is still made by its first
+// draw, as before. The lookup is told it is a hint (HdPackSource::hint: no pixel
+// fetch for it).
+struct WarmAsk {
     mdk::SurfaceCache* surfaces = nullptr;
     HdPackSource* source = nullptr;
 };
 
-static void requestObjectSurface(void* user, const mdk::Surface& surface,
+static void requestPackedSurface(void* user, const mdk::Surface& surface,
                                  const mdk::formats::Palette* palette) {
-    ObjectWarmAsk* ask = static_cast<ObjectWarmAsk*>(user);
+    WarmAsk* ask = static_cast<WarmAsk*>(user);
     ask->source->hint = true;
     ask->surfaces->requestPacked(surface, palette);
     ask->source->hint = false;
+}
+
+// The effects warm's start for a large sprite (EffectsView::warmStep): ask the
+// shared cache for its texture, starting its make -- the pending id when the
+// pack holds it, else a sliced expansion.
+static void startEffectSurface(void* user, const mdk::Surface& surface,
+                               const mdk::formats::Palette* palette) {
+    static_cast<WarmAsk*>(user)->surfaces->prepare(surface, palette);
 }
 
 int main(int argc, char** argv) {
@@ -1855,9 +1869,9 @@ int main(int argc, char** argv) {
     // against it (see the frame's object warm).
     std::map<std::string, size_t> objectWarmAt;
     int32_t objectWarmReleases = 0;
-    ObjectWarmAsk objectWarmAsk;
-    objectWarmAsk.surfaces = &surfaces;
-    objectWarmAsk.source = &hdSource;
+    WarmAsk warmAsk;
+    warmAsk.surfaces = &surfaces;
+    warmAsk.source = &hdSource;
     // The door bubble's hints for this frame (rebuilt every frame).
     std::vector<std::string> bubbleHints;
     // Last frame's camera position, for the bubble's speed scaling.
@@ -3211,13 +3225,15 @@ int main(int argc, char** argv) {
 #ifdef MDK_HW_PROFILE
             const double warm0 = nowSeconds();
 #endif
-            effectsView.warmStep(streamCurrent, startEffectSurface, &surfaces);
+            effectsView.warmStep(streamCurrent, requestPackedSurface, startEffectSurface,
+                                 &warmAsk);
             // The bubble's arenas warm too: they are approached, not yet
             // resident, and their lead is the whole point (no deferral --
             // the bubble IS the early start).
             for (size_t i = 0; i < bubbleHints.size(); i++) {
                 if (bubbleHints[i] != streamCurrent && bubbleHints[i] != streamSecond) {
-                    effectsView.warmStep(bubbleHints[i], startEffectSurface, &surfaces);
+                    effectsView.warmStep(bubbleHints[i], requestPackedSurface,
+                                         startEffectSurface, &warmAsk);
                 }
             }
             if (!streamSecond.empty() && streamSecond != streamCurrent) {
@@ -3235,7 +3251,8 @@ int main(int argc, char** argv) {
                 if (!deferred) {
                     warmDeferred.push_back(streamSecond);
                 } else {
-                    effectsView.warmStep(streamSecond, startEffectSurface, &surfaces);
+                    effectsView.warmStep(streamSecond, requestPackedSurface,
+                                         startEffectSurface, &warmAsk);
                 }
             }
             // THE OBJECTS' TEXTURES for the pair (warmObjectStep): one model a
@@ -3279,7 +3296,7 @@ int main(int argc, char** argv) {
                     const double step0 = nowSeconds();
 #endif
                     mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr, objectLook(name),
-                                        objectResolver, requestObjectSurface, &objectWarmAsk,
+                                        objectResolver, requestPackedSurface, &warmAsk,
                                         &cursor);
 #ifdef MDK_HW_PROFILE
                     const double stepMs = (nowSeconds() - step0) * 1000.0;

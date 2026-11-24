@@ -69,6 +69,11 @@ struct ColourReplacement {
 // its file instead of expanded; the replacement then lands on the id the
 // surface ends up with (the file's, or the made expansion for the other
 // replacement kinds).
+//
+// A Sprite surface asks it too (SurfaceCache::surfaceId) and takes ONLY a
+// compressedOriginal answer. So the answer must be the pair's, never the
+// shading's: a Sprite's packed original is the texture a later Lit draw of the
+// same pair is handed, and it must be the one that Lit draw would have asked for.
 typedef bool (*ColourReplacementLookup)(void* user, const Surface& surface,
                                         const formats::Palette* palette,
                                         ColourReplacement* out);
@@ -112,6 +117,13 @@ public:
     // `palette`, or the flat colour's one-pixel texture. This is the whole
     // mapping from a resolved surface to what a Material needs; a second copy
     // of it in a second view is how the two trees drift.
+    //
+    // A Lit surface's replacement is asked for here (the lookup above). A
+    // SPRITE (an effect, an object's shine) takes the pair's packed original
+    // and nothing else -- requestPacked, then the index texture as before: an
+    // HD-pack upscale or a decoded image stays Lit-only (the C# replaces only
+    // Lit materials), and an answer it does not take is left for the pair's
+    // Lit draw to ask for again. An Original-shaded surface asks nothing.
     MdkTextureId surfaceId(const Surface& surface, const formats::Palette* palette);
 
     // surfaceId, plus asking the backend to have the copy ready before a
@@ -131,6 +143,12 @@ public:
     // to surfaceId: a miss is marked asked (surfaceId then makes the index
     // texture, as it would after its own miss); a hit of another kind is NOT
     // marked, so surfaceId asks again and attaches it to the texture it makes.
+    //
+    // ALSO A SPRITE'S WHOLE LOOKUP (surfaceId) and the effects warm's ask: a
+    // Sprite surface comes through here too, an Original-shaded one never. A
+    // Sprite's miss is NOT marked: the mark would stop the pair's Lit draw from
+    // asking, and that draw may be named differently (a lookup can answer by
+    // name) and find what the Sprite did not.
     // Returns the pair's id, or -1 when none was made.
     MdkTextureId requestPacked(const Surface& surface, const formats::Palette* palette);
 

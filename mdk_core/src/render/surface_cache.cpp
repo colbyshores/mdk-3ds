@@ -219,13 +219,16 @@ MdkTextureId SurfaceCache::requestPacked(const Surface& surface,
     if (found != textures_.end()) {
         return found->second;
     }
-    if (!replacementLookup_ || surface.shading != Shading::Lit ||
+    if (!replacementLookup_ || surface.shading == Shading::Original ||
         replacementLooked_.find(key) != replacementLooked_.end()) {
         return -1;
     }
     ColourReplacement replacement;
     if (!replacementLookup_(replacementUser_, surface, palette, &replacement)) {
-        replacementLooked_[key] = true;   // a miss is surfaceId's miss too
+        // A Lit miss is surfaceId's miss too; a Sprite's is its own (the header).
+        if (surface.shading == Shading::Lit) {
+            replacementLooked_[key] = true;
+        }
         return -1;
     }
     return createPacked(key, surface, palette, replacement);
@@ -245,6 +248,18 @@ void SurfaceCache::prepareCached(const Surface& surface, const formats::Palette*
 MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Palette* palette) {
     if (surface.texture == nullptr) {
         return flatColourId(surface.colour);
+    }
+    // A SPRITE TAKES A PACKED ORIGINAL AND NOTHING ELSE (surface_cache.h). The
+    // effects draw their sprites Sprite-shaded, so before this an explosion's
+    // drops were palette-expanded whole in their first draw though the orig pack
+    // holds them (measured on the Old 3DS level-7 walk, frame 650: SL_MED 32x960
+    // 42.7 ms and SL_SMA 16x480 11.0 ms in one effects draw). requestPacked makes
+    // and caches the pending id only for a compressedOriginal answer; anything
+    // else leaves the pair to textureId, which also hands a pack file the backend
+    // could not make its index pixels.
+    if (surface.shading == Shading::Sprite) {
+        requestPacked(surface, palette);
+        return textureId(surface.texture, palette);
     }
     // THE LOOKUP COMES FIRST, THE TEXTURE SECOND (the arena orig pack's whole
     // point). A Lit surface the pack holds as a .t3x of the ORIGINAL look is

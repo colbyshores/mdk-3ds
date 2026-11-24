@@ -998,3 +998,25 @@ or a warm-only path for mid-size sprites.
 Also attributed: the 80-121 ms `end` spans at frames 764/784/804/814 and the
 86-93 ms frames at 299/599 are the PROFILE build's census and 300-frame
 loggers (they sit on `census`/`drawcounts`/`meshupd` lines), not the game.
+
+### FIRST EXPLOSION (2026-11-24): effect sprites take their packed originals
+
+**What.** A Sprite surface asks the same replacement lookup a Lit draw would
+and keeps only a packed-original answer (HD/decoded replacements stay
+Lit-only, as the C# MaterialResolver.Replace rule; a Sprite miss marks
+nothing). The effects warm asks the pack for every warmed sprite as a hint
+(shared requestPackedSurface with the object warm). With no HD pack, the
+lookup skips the content hash for a texture over 1024 on either axis -- the
+orig pack never holds one, and hashing EXPLODE's 128x3328 strip is ~100 ms.
+
+**Why.** Frame 650 of the L7 walk (the first explosion): `texmake 32x960
+expand 42.7 ms` + `16x480 expand 11.0 ms` (SL_MED/SL_SMA, both in the pack)
+in the effects draw. Letting Sprites ask the pack first moved the cost into
+the objects draw (obj 105.5 ms: the hash of EXPLODE's strip), which the
+>1024 rule removes.
+
+**Evidence.** Old 3DS L7 walk (.git/hw-logs/2026-11-24-sprite1.log,
+sprite2.log): frame 650 129.3 ms -> no longer a spike; p99 49.9 -> 46.6 ms;
+>33.3 ms 161 -> 136; steady 18.43 -> 18.33 ms; texture-make total 990 ->
+814 ms. Host: two surface-cache tests and EffectsWarmAsksEverySprite (five
+mutations each turned a test red). Gates green; pinned frames unchanged.

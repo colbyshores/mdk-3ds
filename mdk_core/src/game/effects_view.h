@@ -148,17 +148,21 @@ public:
     // draw is made in that draw; warming at arena residency gives a
     // backend that makes textures in slices the frames in between.
     // Idempotent (the cache answers), and a name the arena lacks resolves
-    // to nothing. The start is a plain callback (the frame-count pattern
-    // scripts/effects.h uses), so this file names no cache.
+    // to nothing. The callbacks are plain ones (the frame-count pattern
+    // scripts/effects.h uses), so this file names no cache: `ask` is handed
+    // EVERY sprite (the frontend asks the pack for its packed original, a
+    // hint: no expansion whatever the size), `start` only the large ones (a
+    // make started, which for a small texture would be a whole expansion).
     using SurfaceStartFn = void (*)(void* user, const Surface& surface,
                                     const formats::Palette* palette);
-    void warm(const std::string& arena, SurfaceStartFn start, void* user);
+    void warm(const std::string& arena, SurfaceStartFn ask, SurfaceStartFn start, void* user);
     // One texture of warm() per call (the door pump: resolving and
     // glow-measuring all six in the arena-change frame was most of that
     // frame's stall). Returns true when the arena's list is done. The
     // frontend calls it every frame for the resident pair; a finished
     // arena costs one map lookup.
-    bool warmStep(const std::string& arena, SurfaceStartFn start, void* user);
+    bool warmStep(const std::string& arena, SurfaceStartFn ask, SurfaceStartFn start,
+                  void* user);
 
     // Drops the cached looks and sprite surfaces (a level change).
     void clear() {

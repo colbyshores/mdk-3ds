@@ -623,6 +623,142 @@ MDK_TEST(surfaceCacheReplacesLitSurfacesOncePerPair) {
 
 namespace {
 
+mdk::Surface spriteOf(const mdk::Surface& surface) {
+    mdk::Surface sprite = surface;
+    sprite.shading = mdk::Shading::Sprite;
+    return sprite;
+}
+
+// An HD answer (compressedLookup's) for the name WALL only, counted: a lookup
+// that answers by name, as ModImages::resolve's name fallback does.
+int g_namedLookups = 0;
+bool namedHdLookup(void* user, const mdk::Surface& surface, const mdk::formats::Palette* palette,
+                   mdk::ColourReplacement* out) {
+    g_namedLookups++;
+    return compressedLookup(user, surface, palette, out);
+}
+
+} // namespace
+
+// A SPRITE TAKES A PACKED ORIGINAL (the effects' drops, frame 650 of the level-7
+// walk): the pending id, no expansion, once per pair -- from its first draw or
+// from the effects warm's ask -- and the pair's later Lit draw is handed the
+// same id without a second ask.
+MDK_TEST(surfaceCacheGivesASpriteItsPackedOriginal) {
+    mdk::formats::Texture texture = origTexture();
+    mdk::formats::Palette palette = keyPalette();
+    const mdk::Surface lit = origSurface(&texture);
+    const mdk::Surface sprite = spriteOf(lit);
+    {
+        resetPackedStubs();
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(origLookup, nullptr);
+        MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), kPendingId);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 0);   // the palette is never expanded
+        MDK_CHECK_EQ(mdk_test_compressedCalls, 0);
+        MDK_CHECK_EQ(cache.replacementFound(), 1);
+        MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), kPendingId);
+        MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);   // once per pair
+        MDK_CHECK_EQ(mdk_test_indexTextures, 0);
+        // A file the backend could not make: the Sprite's draw hands its index
+        // pixels over under the same id, as a Lit draw's does.
+        mdk_test_needsPixels = kPendingId;
+        MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), kPendingId);
+        MDK_CHECK_EQ(mdk_test_updateCalls, 1);
+        MDK_CHECK_EQ(mdk_test_updateTexture, kPendingId);
+        mdk_test_needsPixels = -1;
+    }
+    {
+        // The effects warm's ask (requestPacked for a Sprite) makes it; the
+        // draw reuses it.
+        resetPackedStubs();
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(origLookup, nullptr);
+        MDK_CHECK_EQ(cache.requestPacked(sprite, &palette), kPendingId);
+        MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), kPendingId);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 0);
+    }
+    {
+        // An Original-shaded surface still asks nothing: the expansion.
+        resetPackedStubs();
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(origLookup, nullptr);
+        mdk::Surface original = lit;
+        original.shading = mdk::Shading::Original;
+        MDK_CHECK_EQ(cache.requestPacked(original, &palette), -1);
+        MDK_CHECK_EQ(cache.surfaceId(original, &palette), 0);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 1);
+    }
+    mdk_test_compressedFileId = -1;
+}
+
+// AND NOTHING ELSE. An HD-pack upscale or a decoded image is not a Sprite's: the
+// Sprite gets the plain expansion with nothing attached, and the pair's Lit draw
+// still asks and attaches its replacement to that same texture -- as when a
+// Sprite drew the pair first before Sprites asked at all. A Sprite's MISS marks
+// nothing either: the Lit draw, named differently, still finds its answer.
+MDK_TEST(surfaceCacheKeepsHdAndDecodedReplacementsLitOnly) {
+    mdk::formats::Texture texture = keyTexture();
+    mdk::formats::Palette palette = keyPalette();
+    mdk::Surface lit;
+    lit.texture = &texture;
+    lit.name = "WALL";
+    lit.shading = mdk::Shading::Lit;
+    lit.frameCount = 1;
+    const mdk::Surface sprite = spriteOf(lit);
+    {
+        resetPackedStubs();
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(compressedLookup, nullptr);
+        MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), 0);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 1);
+        MDK_CHECK_EQ(mdk_test_compressedCalls, 0);   // no HD copy on the Sprite
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
+        MDK_CHECK_EQ(cache.replacementFound(), 0);
+        MDK_CHECK_EQ(cache.replacementLooked(), 0);  // not marked
+        MDK_CHECK_EQ(cache.surfaceId(lit, &palette), 0);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 1);     // one texture for the pair
+        MDK_CHECK_EQ(mdk_test_compressedCalls, 1);   // the Lit draw's HD copy
+        MDK_CHECK_EQ(mdk_test_compressedTexture, 0);
+        MDK_CHECK_EQ(cache.replacementFound(), 1);
+    }
+    {
+        mdk_test_replaceCalls = 0;
+        resetPackedStubs();
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(hookLookup, nullptr);
+        cache.surfaceId(sprite, &palette);
+        MDK_CHECK_EQ(mdk_test_replaceCalls, 0);   // no decoded image on the Sprite
+        cache.surfaceId(lit, &palette);
+        MDK_CHECK_EQ(mdk_test_replaceCalls, 1);
+        MDK_CHECK_EQ(mdk_test_replaceTexture, 0);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 1);
+    }
+    {
+        resetPackedStubs();
+        g_namedLookups = 0;
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(namedHdLookup, nullptr);
+        mdk::Surface named = sprite;
+        named.name = "SL_FX";
+        cache.surfaceId(named, &palette);
+        MDK_CHECK_EQ(g_namedLookups, 1);
+        cache.surfaceId(named, &palette);
+        MDK_CHECK_EQ(g_namedLookups, 1);   // made: asked no more
+        MDK_CHECK_EQ(cache.replacementLooked(), 0);
+        cache.surfaceId(lit, &palette);
+        MDK_CHECK_EQ(g_namedLookups, 2);
+        MDK_CHECK_EQ(mdk_test_compressedCalls, 1);
+        MDK_CHECK_EQ(mdk_test_indexTextures, 1);
+    }
+}
+
+namespace {
+
 // A model with one named part: a tetrahedron at the origin.
 mdk::formats::Model swapModel() {
     mdk::formats::Model model;

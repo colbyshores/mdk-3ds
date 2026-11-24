@@ -17,5 +17,10 @@ class MdkData;
 
 namespace test {
 int runObjectWarmTests(const formats::MdkData& data);
+// The effects warm (EffectsView::warmStep) on level 7's DANT_1: every script-
+// effect sprite is handed to `ask` (the frontend's packed-original hint) with
+// the draw's key -- the arena's palette, Sprite shading -- the small drops
+// (SL_MED 32x960, SL_SMA 16x480) included, and only the large ones to `start`.
+int runEffectsWarmTests(const formats::MdkData& data);
 } // namespace test
 } // namespace mdk

@@ -228,14 +228,16 @@ const char* const kWarmTextures[] = {"TRAIL", "SL_BIG", "SL_MED", "SL_SMA", "BUB
 const size_t kWarmTextureCount = sizeof(kWarmTextures) / sizeof(kWarmTextures[0]);
 }  // namespace
 
-void EffectsView::warm(const std::string& arena, SurfaceStartFn start, void* user) {
+void EffectsView::warm(const std::string& arena, SurfaceStartFn ask, SurfaceStartFn start,
+                       void* user) {
     warmAt_[arena] = 0;   // the full pass, as before warmStep existed
-    while (!warmStep(arena, start, user)) {
+    while (!warmStep(arena, ask, start, user)) {
     }
 }
 
-bool EffectsView::warmStep(const std::string& arena, SurfaceStartFn start, void* user) {
-    if (start == nullptr || arena.empty()) {
+bool EffectsView::warmStep(const std::string& arena, SurfaceStartFn ask, SurfaceStartFn start,
+                           void* user) {
+    if (ask == nullptr || start == nullptr || arena.empty()) {
         return true;
     }
     size_t& at = warmAt_[arena];
@@ -248,10 +250,16 @@ bool EffectsView::warmStep(const std::string& arena, SurfaceStartFn start, void*
     at++;
     const bool done = at >= kWarmTextureCount;
     if (entry.present && entry.palette != nullptr && entry.surface.texture != nullptr) {
-        // Only the large ones: a small texture's make at its spawn is a few
-        // ms, and making six of them synchronously here would be the stall
-        // this avoids. The large ones are what a sliced make spreads (the
-        // same 32768-texel rule as the arena pump's).
+        // EVERY ONE IS ASKED FOR ITS PACKED ORIGINAL, whatever its size: a
+        // pending id is no expansion, and the small ones were the hitch -- the
+        // first explosion's drops (SL_MED 32x960, SL_SMA 16x480) are under the
+        // cut below and were expanded whole in their first draw (Old 3DS
+        // level-7 walk, frame 650: 42.7 + 11.0 ms).
+        ask(user, entry.surface, entry.palette);
+        // A make started for the large ones only: a small texture's make here
+        // would be a whole expansion, and making six of them synchronously
+        // would be the stall this avoids. The large ones are what a sliced make
+        // spreads (the same 32768-texel rule as the arena pump's).
         const formats::Texture& texture = *entry.surface.texture;
         const int64_t texels = (int64_t)texture.width() * (int64_t)texture.height() *
                                (int64_t)texture.frameCount();
