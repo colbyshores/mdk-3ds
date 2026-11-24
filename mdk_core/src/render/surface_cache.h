@@ -140,12 +140,23 @@ public:
     int32_t replacementLooked() const { return (int32_t)replacementLooked_.size(); }
     int32_t replacementFound() const { return replacementFound_; }
 
+    // Synchronous resource sources, for a profile frontend to attribute a
+    // hitch instead of calling every first use a texture make. Counts are
+    // cumulative; the byte count is index bytes returned by an MTO read.
+    struct SourceStats {
+        int32_t mtoDemandReads = 0;
+        int64_t mtoDemandBytes = 0;
+        int32_t packedOriginalImports = 0;
+    };
+    const SourceStats& sourceStats() const { return sourceStats_; }
+
 private:
     MdkRenderer renderer_ = nullptr;
     ColourReplacementLookup replacementLookup_ = nullptr;
     void* replacementUser_ = nullptr;
     std::map<std::pair<const formats::Texture*, const formats::Palette*>, bool> replacementLooked_;
     int32_t replacementFound_ = 0;
+    SourceStats sourceStats_;
 
     // A map, not a vector: these are borrowed pointers into LevelData, and a
     // map's elements do not move when later entries are inserted.

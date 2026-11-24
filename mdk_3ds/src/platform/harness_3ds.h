@@ -94,6 +94,14 @@ struct HarnessArenaFrame {
     int32_t viewsBuilt = 0;      // this frame's arenaViews.sync
     float viewsMs = 0.0f;        // ... and its time
     int32_t texturesMade = 0;    // render_c3d_stats.h (cumulative)
+    int32_t texturesFirstMade = 0;
+    int32_t texturesRemade = 0;
+    int32_t mtoDemandReads = 0;  // SurfaceCache::SourceStats (cumulative)
+    int64_t mtoDemandBytes = 0;
+    int32_t packedOriginalImports = 0;
+    int32_t hdReads = 0;         // successful file reads, before import
+    int32_t musicDemandReads = 0;    // SoundBank::Stats (cumulative)
+    int32_t musicPrefetchStalls = 0;
     int32_t hdImported = 0;      // render_c3d_stats.h (cumulative)
     int32_t kurtReads = 0;       // KurtSprite::StreamStats::reads (cumulative)
     int32_t kurtHolds = 0;       // KurtSprite::StreamStats holds + holdMisses (cumulative): draws whose wanted frame was still being read

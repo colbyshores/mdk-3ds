@@ -283,6 +283,15 @@ static int32_t texelStoreIndex(mdk::pica::TexelFormat format) {
     }
 }
 
+static void classifyTextureMade(RendererC3D* renderer, C3dTexture& texture) {
+    if (texture.madeOnce) {
+        renderer->texturesRemade++;
+    } else {
+        renderer->texturesFirstMade++;
+        texture.madeOnce = true;
+    }
+}
+
 // THE COMPRESSED TEXTURE'S GPU COPY (EnhancedToggles::kurtCompressed): tex3ds'
 // import of the .t3x bytes kept in `source` -- an LZ decompress and a copy into
 // the linear heap, the ETC blocks already tiled by tex3ds on the host. Nothing is
@@ -358,6 +367,7 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture) {
                    texture.realHeight == texture.paddedHeight ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
     texture.valid = true;
     renderer->compressedMade++;
+    classifyTextureMade(renderer, texture);
     renderer->compressedBytesSaved +=
         mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,
                                 texture.paddedHeight, 0) -
@@ -401,6 +411,7 @@ static bool makeStreamed(RendererC3D* renderer, C3dTexture& texture) {
     texture.mipLevels = 0;
     texture.hasHoles = false;
     renderer->texturesMade[texelStoreIndex(texture.format)]++;
+    classifyTextureMade(renderer, texture);
     return true;
 }
 
@@ -985,6 +996,7 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     texture.valid = true;
     texture.format = format;
     renderer->texturesMade[texelStoreIndex(format)]++;
+    classifyTextureMade(renderer, texture);
     renderer->textureBytesSaved +=
         mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,
                                 texture.paddedHeight, levels) -
@@ -1149,6 +1161,8 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             hdFailed(renderer, copy, "cannot read");
             continue;
         }
+        renderer->hdReads++;
+        renderer->hdReadBytes += (int64_t)size;
         // The file is the chain plus a small header, so its size is the budget's
         // measure before the import; the exact bytes are booked after it.
         bool room = true;

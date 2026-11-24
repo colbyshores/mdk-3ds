@@ -302,6 +302,10 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     if (!cr) return;
     out->texturesMade = cr->texturesMade[0] + cr->texturesMade[1] + cr->texturesMade[2] +
                         cr->texturesMade[3] + cr->compressedMade;
+    out->texturesFirstMade = cr->texturesFirstMade;
+    out->texturesRemade = cr->texturesRemade;
+    out->hdReads = cr->hdReads;
+    out->hdReadBytes = cr->hdReadBytes;
     out->hdImported = cr->hdImported;
     out->hdEvicted = cr->hdEvicted;
     out->texturesEvicted = cr->texturesEvicted;

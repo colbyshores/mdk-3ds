@@ -53,7 +53,12 @@ MdkTextureId SurfaceCache::textureId(const formats::Texture* texture,
     // backend with a null pointer: the surface is skipped this frame and asked
     // for again, which costs nothing once the stream has given up on the arena.
     const int32_t texels = texture->width() * texture->height() * texture->frameCount();
+    const bool pixelsWereAway = texture->pixelsAway();
     const uint8_t* indices = texture->indices();
+    if (pixelsWereAway) {
+        sourceStats_.mtoDemandReads++;
+        sourceStats_.mtoDemandBytes += texels;
+    }
     if (indices == nullptr || texels <= 0 || texture->indexCount() < texels) {
         return -1;
     }
@@ -71,7 +76,12 @@ int32_t SurfaceCache::refresh(const formats::Texture* texture) {
         return 0;
     }
     const int32_t texels = texture->width() * texture->height() * texture->frameCount();
+    const bool pixelsWereAway = texture->pixelsAway();
     const uint8_t* indices = texture->indices();
+    if (pixelsWereAway) {
+        sourceStats_.mtoDemandReads++;
+        sourceStats_.mtoDemandBytes += texels;
+    }
     if (indices == nullptr || texels <= 0 || texture->indexCount() < texels) {
         return 0;
     }
@@ -193,6 +203,7 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
                 replacementLooked_[key] = true;
                 textures_[key] = made;
                 replacementFound_++;
+                sourceStats_.packedOriginalImports++;
                 return made;
             }
         }

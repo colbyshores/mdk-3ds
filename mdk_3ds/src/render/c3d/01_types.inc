@@ -147,6 +147,9 @@ static constexpr int32_t kHdUnlinkedFrames = 600;
 struct C3dTexture {
     C3D_Tex tex;
     bool valid = false;
+    // A GPU copy has been made for this slot at least once: the next make
+    // is a remake (profile classification, render_c3d_stats.h).
+    bool madeOnce = false;
 
     // The real size, and the size the texture was PADDED to. The
     // difference is what the UV transform has to undo.
@@ -929,6 +932,10 @@ struct RendererC3D {
     // makeTexture on its next draw), and the svcGetSystemTick spans spent making
     // textures and importing HD copies. Cumulative; the harness takes differences.
     int32_t texturesEvicted = 0;
+    int32_t texturesFirstMade = 0;
+    int32_t texturesRemade = 0;
+    int32_t hdReads = 0;
+    int64_t hdReadBytes = 0;
     uint64_t textureMakeTicks = 0;
     uint64_t hdImportTicks = 0;
 

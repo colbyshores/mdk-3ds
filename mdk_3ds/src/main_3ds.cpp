@@ -3810,6 +3810,14 @@ int main(int argc, char** argv) {
             MdkC3dFirstUse made;
             mdk_render_c3d_first_use(renderer, &made);
             sample.texturesMade = made.texturesMade;
+            sample.texturesFirstMade = made.texturesFirstMade;
+            sample.texturesRemade = made.texturesRemade;
+            sample.mtoDemandReads = surfaces.sourceStats().mtoDemandReads;
+            sample.mtoDemandBytes = surfaces.sourceStats().mtoDemandBytes;
+            sample.packedOriginalImports = surfaces.sourceStats().packedOriginalImports;
+            sample.hdReads = made.hdReads;
+            sample.musicDemandReads = bank.stats().demandReads;
+            sample.musicPrefetchStalls = bank.stats().prefetchStalls;
             sample.hdImported = made.hdImported;
             sample.texturesEvicted = made.texturesEvicted;
             sample.hdEvicted = made.hdEvicted;
