@@ -2137,8 +2137,9 @@ def adjudicate(who, text, quiet=False):
 
 
 # A backend file may be one translation unit assembled from *.inc sections
-# (renderer_vk.cpp since 2026-11-15): expand those includes so the checks
-# see the same text the compiler does, in the same order.
+# (renderer_vk.cpp since 2026-11-15, vk_context.cpp since 2026-11-25): expand
+# those includes so the checks see the same text the compiler does, in the
+# same order.
 def _expand(path):
     text = open(path, errors="replace").read()
 
@@ -2146,7 +2147,7 @@ def _expand(path):
         inc = os.path.join(os.path.dirname(path), match.group(1))
         return open(inc, errors="replace").read()
 
-    return re.sub(r'^#include "((?:c3d|vulkan)/[^"]+\.inc)"', _sub, text, flags=re.M)
+    return re.sub(r'^#include "((?:c3d|vulkan|vk_context)/[^"]+\.inc)"', _sub, text, flags=re.M)
 
 
 FILES = {}

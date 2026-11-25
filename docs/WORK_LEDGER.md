@@ -2138,3 +2138,17 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   c3d_frame_test.sh passes. renderer_c3d.cpp is still one translation unit, so
   nothing about inlining, static state or initialisation order can have moved.
 - **Commit:** this one.
+
+### mdk_linux vk_context.cpp (1826 lines) split into a .cpp and three fragments
+- **What:** `vk_context.cpp` (510: the helpers, instance, surface, device,
+  teardown, swapchain re-creation) and `vk_context/01_swapchain.inc` (607, pasted
+  inside the anonymous namespace as before), `02_eye_targets.inc` (221),
+  `03_frame.inc` (510: passes, beginFrame, endFrame, submitFrame).
+  tests/scripts/linux_refusal_report_test.sh now expands `vk_context/*.inc` the way
+  it already expanded `c3d/` and `vulkan/`, so it reads the same text as before.
+- **Evidence:** `vk_context.cpp.o` (CMake RelWithDebInfo flags) identical to
+  main's after stripping debug info; linux_refusal_report_test.sh PASS (23
+  checks, 78 arms red, 7 probes green). Negative control: with the old include
+  regex the test FAILS ("endFrame is not in the file", mutation arms inert), so
+  the regex change is what keeps its coverage, not a loosening.
+- **Commit:** this one.
