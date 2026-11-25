@@ -685,6 +685,10 @@ struct RendererC3D {
     // a sub-viewport) is NOT drawn on this target: the frontend does not ask for
     // one (sniper_view.h), and one that arrives is refused once in the log.
     bool insetOpen = false;
+    // THE SCENE WINDOW (mdk_render_set_scene_window), this frame's: the canvas
+    // rectangle the scene's draws are scissored to in replayQueue.
+    bool sceneWindowOn = false;
+    float sceneWindow[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     bool insetOver = false;
     float insetMatrix[16] = {0};
     std::vector<mdk::MeshDraw> insetOverDraws;

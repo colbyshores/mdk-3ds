@@ -2697,6 +2697,20 @@ int main(int argc, char** argv) {
                 // (paused frames too), then the HUD draws them last.
                 hud.messages().update(elapsed);
                 hud.draw(renderer, state);
+                // THE SCOPE CLIP (EnhancedToggles::scopeClip): the scope's frame,
+                // just queued, covers everything outside its 600 x 360 view, so the
+                // scene is drawn inside the view only (the same picture).
+                if (enhancedToggles.scopeClip && hud.sniper().visible()) {
+                    float scale = 0.0f;
+                    float left = 0.0f;
+                    mdk::SniperOverlay::placement(mdk_render_canvas_width(renderer), &scale,
+                                                  &left);
+                    const float window[4] = {left + mdk::SniperOverlay::kViewX * scale,
+                                             mdk::SniperOverlay::kViewY * scale,
+                                             mdk::SniperOverlay::kViewWidth * scale,
+                                             mdk::SniperOverlay::kViewHeight * scale};
+                    mdk_render_set_scene_window(renderer, window);
+                }
             }
             if (menu.open() && pauseOptions.open()) {
                 // The options pages over the dimmed game (C# PauseMenu.Update's

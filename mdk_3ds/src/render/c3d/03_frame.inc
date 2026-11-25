@@ -1428,6 +1428,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     r->queue.reset();
     r->insetOverDraws.clear();
     r->insetOpen = false;
+    r->sceneWindowOn = false;
     // C3D_FrameEnd is the ONLY present path. It triggers the auto display
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);

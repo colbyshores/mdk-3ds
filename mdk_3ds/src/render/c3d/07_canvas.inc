@@ -293,6 +293,17 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     if (written) *written = 0;
  }
 
+// The scene window (render.h): kept for this frame's replay (06_draw.inc
+// replayQueue); mdk_render_end_frame clears it.
+void mdk_render_set_scene_window(MdkRenderer rr, const float* rect) {
+    RendererC3D* r = asC3d(rr);
+    if (!r) return;
+    r->sceneWindowOn = rect != nullptr && rect[2] > 0.0f && rect[3] > 0.0f;
+    if (r->sceneWindowOn) {
+        memcpy(r->sceneWindow, rect, sizeof(r->sceneWindow));
+    }
+}
+
 // The level's resident HD set (render_c3d_hd_set.h). Copies, nothing else.
  void mdk_render_hd_set_state(MdkRenderer r, MdkHdSetState* out) {
     if (!out) return;

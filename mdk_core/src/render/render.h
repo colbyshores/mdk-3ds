@@ -508,6 +508,14 @@ void mdk_render_canvas_end(MdkRenderer r);
 // than a fixed 640x360 assumption.
 float mdk_render_canvas_width(MdkRenderer r);
 
+// THE SCENE WINDOW, this frame only: the canvas rectangle (x, y, w, h in
+// canvas units) outside which an opaque canvas picture will cover the scene
+// -- the sniper scope's frame around its 600 x 360 view. A backend MAY skip
+// the scene's pixels outside it (Citro3D: a scissor on the scene's draws, not
+// the canvas's); one that ignores it draws the same picture (Vulkan: a no-op).
+// Null, or no call, is no window. Cleared at every frame's begin.
+void mdk_render_set_scene_window(MdkRenderer r, const float* rect);
+
 // How many quads the canvas batch can hold before the backend must flush.
 // The shared code batches into as many draws as it needs, so a small value
 // is correct, not a failure.

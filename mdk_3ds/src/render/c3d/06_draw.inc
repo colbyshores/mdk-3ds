@@ -1541,11 +1541,57 @@ static void prepareQueue(RendererC3D* r) {
 
 // The per-eye replay of the prepared array: thin submit only (see
 // drawRecorded), with the glow still drawn per eye at its slot.
+// THE SCENE WINDOW's scissor (mdk_render_set_scene_window): the canvas
+// rectangle through the canvas's own matrix (pica::canvasMatrix, the panel's
+// quarter turn included) into the eye target's pixels, grown by two pixels
+// and rounded outward, so every pixel the window shows is inside it.
+static void sceneWindowScissor(RendererC3D* r, u32* left, u32* top, u32* right, u32* bottom) {
+    float m[16];
+    mdk::pica::canvasMatrix(m, mdk_render_canvas_width((MdkRenderer)r));
+    const float xs[2] = {r->sceneWindow[0], r->sceneWindow[0] + r->sceneWindow[2]};
+    const float ys[2] = {r->sceneWindow[1], r->sceneWindow[1] + r->sceneWindow[3]};
+    float lo[2] = {1e9f, 1e9f};
+    float hi[2] = {-1e9f, -1e9f};
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            const float clipX = xs[i] * m[0] + ys[j] * m[4] + m[12];
+            const float clipY = xs[i] * m[1] + ys[j] * m[5] + m[13];
+            const float px = (clipX + 1.0f) * 0.5f * (float)r->targetWidth;
+            const float py = (clipY + 1.0f) * 0.5f * (float)r->targetHeight;
+            lo[0] = px < lo[0] ? px : lo[0];
+            hi[0] = px > hi[0] ? px : hi[0];
+            lo[1] = py < lo[1] ? py : lo[1];
+            hi[1] = py > hi[1] ? py : hi[1];
+        }
+    }
+    const int32_t x0 = (int32_t)floorf(lo[0]) - 2;
+    const int32_t y0 = (int32_t)floorf(lo[1]) - 2;
+    const int32_t x1 = (int32_t)ceilf(hi[0]) + 2;
+    const int32_t y1 = (int32_t)ceilf(hi[1]) + 2;
+    *left = (u32)(x0 < 0 ? 0 : x0);
+    *top = (u32)(y0 < 0 ? 0 : y0);
+    *right = (u32)(x1 > (int32_t)r->targetWidth ? (int32_t)r->targetWidth : x1);
+    *bottom = (u32)(y1 > (int32_t)r->targetHeight ? (int32_t)r->targetHeight : y1);
+}
+
 static void replayQueue(RendererC3D* r) {
     if (!r || (r->prepared.empty() && r->preparedGlowAt < 0) || !r->inFrame) {
         return;
     }
+    // The scene's draws (and the halos) inside the window; the canvas's never
+    // (installEye left the scissor off, and it is off again at the end).
+    u32 left = 0, top = 0, right = 0, bottom = 0;
+    if (r->sceneWindowOn) {
+        sceneWindowScissor(r, &left, &top, &right, &bottom);
+    }
+    bool clipped = false;
     for (size_t i = 0; i < r->prepared.size(); i++) {
+        const bool clip = r->sceneWindowOn && !r->prepared[i].overlay;
+        if (clip != clipped) {
+            C3D_SetScissor(clip ? GPU_SCISSOR_NORMAL : GPU_SCISSOR_DISABLE, left, top, right,
+                           bottom);
+            clipped = clip;
+        }
         if ((int32_t)i == r->preparedGlowAt) {
             drawGlow(r);
         }
@@ -1553,6 +1599,9 @@ static void replayQueue(RendererC3D* r) {
     }
     if (r->preparedGlowAt == (int32_t)r->prepared.size()) {
         drawGlow(r);
+    }
+    if (clipped) {
+        C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, r->targetWidth, r->targetHeight);
     }
 }
 

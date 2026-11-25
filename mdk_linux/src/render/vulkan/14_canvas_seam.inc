@@ -185,6 +185,11 @@ void mdk_render_canvas_end(MdkRenderer r) { (void)r; }
 float mdk_render_canvas_width(MdkRenderer r) {
     return canvasWidth(asVk(r));
 }
+void mdk_render_set_scene_window(MdkRenderer r, const float* rect) {
+    // The picture is the same without the window (render.h): nothing to skip here.
+    (void)r;
+    (void)rect;
+}
 int32_t mdk_render_canvas_capacity(MdkRenderer r) {
     (void)r;
     return 4096;

@@ -363,6 +363,12 @@ struct EnhancedToggles {
     // draws and fill in the scope. Off by default, because it changes the
     // look (the scope loses its depth). The PC ignores it.
     bool scopeMono = false;
+
+    // 3DS: while the sniper scope's opaque frame is up, the scene is drawn
+    // only inside the frame's 600 x 360 window (a GPU scissor; the frame
+    // covers everything outside it), so the fill the frame hides is not
+    // paid. The picture is the same. On by default. The PC ignores it.
+    bool scopeClip = true;
 };
 
 // ---------------------------------------------------------------------------
