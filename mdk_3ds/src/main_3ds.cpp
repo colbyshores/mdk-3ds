@@ -1612,6 +1612,16 @@ int main(int argc, char** argv) {
                 mdk::log3dsPrintf("orig: byname index %d textures, %d with an HD copy",
                                   (int)origByName.paths.size(), (int)origByName.hdPaths.size());
             }
+            // NO NAME INDEX, NO HD (spec 3.1): without byname.txt an HD file could
+            // only be found by hashing every texture in play, which the HD rule
+            // forbids. Refused for the level, loudly; the textures take the orig
+            // pack (or their expansion) as with no HD pack at all.
+            if (hdSource.pack && !hdSource.byname) {
+                mdk::log3dsPrintf("hd: REFUSED for level %d: no name index (%s/byname.txt) "
+                                  "-- the HD pack is not used without it",
+                                  (int)flow.state().level, kOrigPackRoot);
+                hdSource.pack = nullptr;
+            }
             std::map<std::string, std::string>().swap(hdByKey);
             std::map<std::string, uint32_t>().swap(origDims);
             if (level.corridorReadFailures() != 0) {
