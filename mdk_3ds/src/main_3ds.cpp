@@ -4800,6 +4800,11 @@ int main(int argc, char** argv) {
                           (int)made.hdLateLanded, (int)made.hdLateFramesSum,
                           (int)made.hdLateFramesMax, (int)made.hdLateWorstFrame,
                           made.hdLateWorst[0] ? made.hdLateWorst : "-", rows[0] ? rows : "-");
+        mdk::log3dsPrintf("hdrule: set cap=%d pinned=%d resident=%d bytes=%u givenUp=%d "
+                          "stampsSkipped=%d",
+                          (int)made.hdTopCap, (int)made.hdPinned, (int)made.hdPinnedResident,
+                          (unsigned)made.hdPinnedBytes, (int)made.hdPinFailed,
+                          (int)made.hdStampsSkipped);
         mdk::log3dsPrintf("hdrule: margin firsts=%d min=%d frames (at frame %d, %s) under30=%d",
                           (int)made.hdSlackFirsts, (int)made.hdSlackMin, (int)made.hdSlackMinFrame,
                           made.hdSlackWorst[0] ? made.hdSlackWorst : "-",

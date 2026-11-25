@@ -78,6 +78,8 @@ struct MdkC3dFirstUse {
     uint32_t hdPinnedBytes = 0;
     int32_t hdPinFailed = 0;
     int32_t hdTopCap = 0;
+    // Stamps (bullet holes) skipped on HD-only surfaces (the HD rule).
+    int32_t hdStampsSkipped = 0;
 };
 
 void mdk_render_c3d_first_use(MdkRenderer r, MdkC3dFirstUse* out);

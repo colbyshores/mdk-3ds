@@ -1009,6 +1009,8 @@ struct RendererC3D {
     // is read on the loading screen with its levels over hdTopCap dropped
     // (hdUnpack; 0: none), and no copy of it is evicted in play.
     bool hdPinnedMode = false;
+    // Stamps (bullet holes) not drawn on an HD-only surface (05_resources.inc).
+    int32_t hdStampsSkipped = 0;
     int32_t hdTopCap = 0;
     int32_t hdPinFailed = 0;
     // The renderer's frame when the loading screen's wait ended

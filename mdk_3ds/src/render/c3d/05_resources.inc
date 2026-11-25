@@ -424,6 +424,17 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     if (w != texture.realWidth || h != texture.realHeight) {
         return;  // the contract is same-size updates only
     }
+    // A STAMP ON A SURFACE THE HD SET COVERS IS NOT DRAWN (the HD rule, spec 3.1:
+    // never the standard-definition texture for a covered surface while the set
+    // is on). The stamp would have to be expanded from the SD pixels -- the HD
+    // image does not have the hole -- so the hole is skipped instead and the HD
+    // copy stays: a VISIBLE CHANGE from the original (bullet holes do not show on
+    // HD-covered surfaces), counted (hdStampsSkipped) for the owner to revisit.
+    // With the set off, the stamp lands as before.
+    if (drawsHdOnly(renderer, texture)) {
+        renderer->hdStampsSkipped++;
+        return;
+    }
     // A COMPRESSED texture's source is a .t3x's bytes, not indices to replace,
     // and the caller hands the format's INDEX bytes (SurfaceCache::refresh):
     // the ordinary path below would size them as a store image (w*h*4 for a
