@@ -608,6 +608,13 @@ static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool c
         copy.state = HdCopy::None;
         copy.failures = 0;
     }
+    // ASKED FOR AT THE LINK, not at the first draw: a HUD picture made at level
+    // load is then read on the loading screen with the first view's copies
+    // (mdk_render_settle_streams) instead of drawing its original for the first
+    // frames (measured: SC_STAT two frames late).
+    if (renderer->toggles.enableHdTextures) {
+        requestHdCopy(renderer, index);
+    }
 }
 
 // KURT'S PACK STREAM through the HD reader's thread (render.h): its own channel,

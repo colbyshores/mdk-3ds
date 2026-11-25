@@ -1801,3 +1801,44 @@ static void pumpPackOriginals(RendererC3D* renderer, uint32_t previousFrameStart
         }
     }
 }
+
+// THE LOADING SCREEN'S WAIT (render.h mdk_render_settle_streams): the two
+// streams' pumps run between frames -- the GPU is idle at level load, and no
+// frame is being recorded -- with this thread asleep between them so the
+// reader thread, below it in priority, has the CPU: what would otherwise land
+// over the first seconds of play, one boundary at a time while the frames keep
+// the reader starved, lands on the loading screen. Everything waiting is a
+// HINT here (no draw has stamped it), so the pumps' own rules hold: a read is
+// handed out only while there is room for it, nothing is evicted, and a file
+// that does not fit stays queued for play. It stops when both streams are
+// idle, when nothing is being read and the last pass made nothing (the rest
+// does not fit), or at `maxMs`.
+int32_t mdk_render_settle_streams(MdkRenderer rr, int32_t maxMs) {
+    RendererC3D* renderer = asC3d(rr);
+    if (!renderer || !renderer->ready || renderer->inFrame || !renderer->hdReader.running() ||
+        maxMs <= 0) {
+        return 0;
+    }
+    const uint64_t start = svcGetSystemTick();
+    const uint64_t limit = (uint64_t)maxMs * (uint64_t)(SYSCLOCK_ARM11 / 1000);
+    const int32_t before = renderer->hdImported + renderer->packImported;
+    for (;;) {
+        const int32_t made = renderer->hdImported + renderer->packImported;
+        const uint32_t stamp = renderer->drawCounter + 1;
+        pumpPackOriginals(renderer, stamp);
+        pumpHdTextures(renderer, stamp);
+        const int32_t reading = renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd) +
+                                renderer->hdReader.busy(mdk::AsyncFileReader::kChannelOrig);
+        const bool waiting = !renderer->hdQueue.empty() || !renderer->packQueue.empty();
+        if (reading == 0 && (!waiting || renderer->hdImported + renderer->packImported == made)) {
+            break;
+        }
+        if (svcGetSystemTick() - start > limit) {
+            break;
+        }
+        svcSleepThread(1000000LL);
+    }
+    renderer->settledFrame = (int32_t)renderer->frame;
+    return renderer->hdImported + renderer->packImported - before;
+}
+

@@ -2584,6 +2584,38 @@ int main(int argc, char** argv) {
     float harnessTestTime = 0.0f;
 #endif
 
+    // THE FIRST VIEW, WHOLE, BEFORE THE LOADING SCREEN GOES (owner 2026-11-24: "I
+    // dont want surface pop in"; docs/HD_TEXTURES_3DS_SPEC.md 3.1). With the HD
+    // set on, a covered surface draws only from its HD copy, and the first frames
+    // of a level keep the reader thread starved: measured on the Old 3DS, 19 HD
+    // copies the first frame wanted landed 1-45 frames late. So before the first
+    // frame -- the loading screen still on the panels -- every surface the
+    // start arena can show is asked for (its view's batches, hidden ones too, and
+    // the textures of every model it or the scripts can put in it: the object
+    // warm run to its end), and the backend reads and imports what fits while
+    // this thread waits (mdk_render_settle_streams). Cold: once per level.
+    if (enhancedToggles.enableHdTextures && hdSource.pack && hdSource.byname &&
+        !startArenaName.empty()) {
+        const double settle0 = nowSeconds();
+        arenaViews.pumpSurfaces(1 << 20);
+        if (const mdk::formats::Arena* owner = level.arenaNamed(startArenaName)) {
+            size_t& cursor = objectWarmAt[startArenaName];
+            while (!mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr,
+                                        objectLook(startArenaName), objectResolver,
+                                        requestPackedSurface, &warmAsk, &cursor)) {
+            }
+        }
+        const double settle1 = nowSeconds();
+        const int32_t landed = mdk_render_settle_streams(renderer, 8000);
+        MdkC3dFirstUse made;
+        mdk_render_c3d_first_use(renderer, &made);
+        mdk::log3dsPrintf("start: the first view's files on the loading screen: %d made in "
+                          "%.0f ms (asked in %.0f ms); %d HD copies imported so far, peak "
+                          "%u bytes",
+                          (int)landed, (nowSeconds() - settle1) * 1000.0,
+                          (settle1 - settle0) * 1000.0, (int)made.hdImported,
+                          (unsigned)made.hdResidentPeak);
+    }
     heapProbe("loop");
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
     // The scripted walk (harness_3ds.h), parsed and logged before the first frame.

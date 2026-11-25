@@ -286,6 +286,10 @@ void mdk_render_replace_image(MdkRenderer r_, MdkTextureId texture, MdkPaletteId
 
 // Textures are resident from creation on this backend: nothing to prepare.
 void mdk_render_prepare_texture(MdkRenderer, MdkTextureId) {}
+// Textures are made at creation here: nothing is ever waiting (render.h).
+int32_t mdk_render_settle_streams(MdkRenderer, int32_t) {
+    return 0;
+}
 
 void mdk_render_release_texture(MdkRenderer r_, MdkTextureId t_) {
     RendererVk* r = asVk(r_);

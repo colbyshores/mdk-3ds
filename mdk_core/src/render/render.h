@@ -160,6 +160,16 @@ MdkTextureId mdk_render_create_streamed_texture(MdkRenderer r, int32_t width, in
 // Preparing an already-resident texture is a no-op.
 void mdk_render_prepare_texture(MdkRenderer r, MdkTextureId texture);
 
+// THE LOADING SCREEN'S WAIT (between frames, never inside one): the files the
+// textures already made have asked for -- the 3DS's HD copies and packed
+// originals -- read and imported now, the calling thread waiting on the
+// backend's reader, until none is left that fits in memory or `maxMs` passes.
+// The frontend calls it once per level, after asking for the first view's
+// textures and before the first frame, so the loading screen stays up until
+// that view can be drawn whole (docs/HD_TEXTURES_3DS_SPEC.md 3.1). Returns the
+// files made; 0 on a backend whose textures are made at creation.
+int32_t mdk_render_settle_streams(MdkRenderer r, int32_t maxMs);
+
 // Create an RGBA8 texture (the enhanced look's expanded colour textures, the
 // canvas's images, the panorama).
 //

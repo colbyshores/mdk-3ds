@@ -59,6 +59,10 @@ void mdk_render_prepare_texture(MdkRenderer, MdkTextureId) {
     mdk_test_prepareCalls++;
 }
 
+int32_t mdk_render_settle_streams(MdkRenderer, int32_t) {
+    return 0;
+}
+
 void mdk_render_release_texture(MdkRenderer, MdkTextureId) {
     mdk_test_texturesReleased++;
 }

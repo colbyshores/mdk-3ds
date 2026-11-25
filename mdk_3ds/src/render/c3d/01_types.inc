@@ -1001,6 +1001,9 @@ struct RendererC3D {
     int32_t hdLateWorstFrame = -1;
     char hdLateWorst[64] = {0};
     int32_t hdLateRows[8][2] = {};
+    // The renderer's frame when the loading screen's wait ended
+    // (mdk_render_settle_streams): the margin counts only copies landed after it.
+    int32_t settledFrame = -1;
     int32_t hdSlackMin = -1;
     int32_t hdSlackMinFrame = -1;
     int32_t hdSlackUnder30 = 0;

@@ -62,8 +62,8 @@ struct MdkC3dFirstUse {
     char hdLateWorst[64] = {0};
     int32_t hdLateRows[8][2] = {};
     // THE MARGIN, for the copies that were in time: at each texture's first draw
-    // that wanted its HD copy after the level's first frame, the frames since
-    // that copy landed. The smallest (with its file and frame) is how much
+    // that wanted its HD copy, for a copy that landed in play (after the
+    // loading screen's wait), the frames since that copy landed. The smallest (with its file and frame) is how much
     // slower the reads could have been before that surface popped in; under30
     // counts the first draws with less than 30 frames (half a second) to spare.
     int32_t hdSlackMin = -1;
