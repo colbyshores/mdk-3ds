@@ -71,6 +71,13 @@ struct MdkC3dFirstUse {
     int32_t hdSlackUnder30 = 0;
     int32_t hdSlackFirsts = 0;
     char hdSlackWorst[64] = {0};
+    // THE LEVEL'S RESIDENT SET (mdk_render_pin_hd_set): its copies, how many are
+    // resident and their bytes, and the ones given up (a failed read or import).
+    int32_t hdPinned = 0;
+    int32_t hdPinnedResident = 0;
+    uint32_t hdPinnedBytes = 0;
+    int32_t hdPinFailed = 0;
+    int32_t hdTopCap = 0;
 };
 
 void mdk_render_c3d_first_use(MdkRenderer r, MdkC3dFirstUse* out);

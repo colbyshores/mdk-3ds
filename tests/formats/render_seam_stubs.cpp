@@ -63,6 +63,14 @@ int32_t mdk_render_settle_streams(MdkRenderer, int32_t) {
     return 0;
 }
 
+int32_t mdk_render_pin_hd_set(MdkRenderer, const char* const*, int32_t, int32_t) {
+    return 0;
+}
+
+int32_t mdk_render_hd_set_pending(MdkRenderer) {
+    return 0;
+}
+
 void mdk_render_release_texture(MdkRenderer, MdkTextureId) {
     mdk_test_texturesReleased++;
 }

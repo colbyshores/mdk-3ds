@@ -802,6 +802,10 @@ static bool drawsHdOnly(const RendererC3D* renderer, const C3dTexture& texture) 
         return false;
     }
     const HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
+    // With the level's set resident (spec 3.2) only a copy of the set counts.
+    if (renderer->hdPinnedMode && !copy.pinned) {
+        return false;
+    }
     return !(copy.state == HdCopy::Failed && (copy.broken || copy.failures >= kHdMaxFailures));
 }
 
@@ -1250,10 +1254,21 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
 // decompress) is handed back as it was read: the import then fails or
 // decompresses exactly as before. Thread-safe: libctru's decompress and malloc
 // only, nothing of the renderer's.
-static uint8_t* hdUnpackWork(const uint8_t* bytes, uint32_t size, uint32_t* outSize) {
+//
+// AND IT CAN DROP THE TOP LEVELS (`cap`, the residency tier, main_3ds.cpp): a
+// texture wider or taller than `cap` loses its level 0 -- and the next, while
+// still over -- so the import is its own chain from level 1 down, exactly a
+// quarter of the bytes per level dropped, with no re-encode: tex3ds stores the
+// levels one after another from level 0 (C3D_TexCalcTotalSize's order), so the
+// file is rewritten with its size fields (log2(w) - 3, log2(h) - 3) and level
+// count one smaller, its subtextures' pixel sizes halved (their normalised
+// rectangle is unchanged) and the first level's blocks skipped. Only ETC1 (4
+// bits a texel) and ETC1A4 (8), the pack's formats; 8 texels is the floor.
+static uint8_t* hdUnpack(const uint8_t* bytes, uint32_t size, uint32_t* outSize, int32_t cap) {
     size_t head = 0;
+    uint32_t subtextures = 0;
     if (bytes && size >= 5) {
-        const uint32_t subtextures = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8);
+        subtextures = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8);
         head = subtextures >= 1 && subtextures <= 64 ? 5u + 12u * subtextures : 0u;
     }
     decompressType type = DECOMPRESS_DUMMY;
@@ -1262,30 +1277,91 @@ static uint8_t* hdUnpackWork(const uint8_t* bytes, uint32_t size, uint32_t* outS
         head > 0 && size > head + 4
             ? decompressHeader(&type, &raw, nullptr, (void*)(bytes + head), size - head)
             : -1;
-    if (consumed > 0 && type != DECOMPRESS_DUMMY && raw > 0 && raw <= 4u * 1024u * 1024u) {
-        uint8_t* out = (uint8_t*)malloc(head + 4 + raw);
+    uint8_t* out = nullptr;
+    if (consumed > 0 && raw > 0 && raw <= 4u * 1024u * 1024u) {
+        out = (uint8_t*)malloc(head + 4 + raw);
         if (out) {
             memcpy(out, bytes, head);
-            out[head] = 0x00;
-            out[head + 1] = (uint8_t)(raw & 0xFFu);
-            out[head + 2] = (uint8_t)((raw >> 8) & 0xFFu);
-            out[head + 3] = (uint8_t)((raw >> 16) & 0xFFu);
-            if (decompress(out + head + 4, raw, nullptr, (void*)(bytes + head), size - head)) {
-                *outSize = (uint32_t)(head + 4 + raw);
-                return out;
+            bool unpacked = false;
+            if (type == DECOMPRESS_DUMMY) {
+                // Already stored raw: copied as it is (the levels may still drop).
+                if (head + (size_t)consumed + raw <= size) {
+                    memcpy(out + head + 4, bytes + head + consumed, raw);
+                    unpacked = true;
+                }
+            } else {
+                unpacked = decompress(out + head + 4, raw, nullptr, (void*)(bytes + head),
+                                      size - head);
             }
-            free(out);
+            if (!unpacked) {
+                free(out);
+                out = nullptr;
+            }
         }
     }
-    uint8_t* copy = (uint8_t*)malloc(size > 0 ? size : 1);
-    if (!copy) {
-        return nullptr;
+    if (!out) {
+        uint8_t* copy = (uint8_t*)malloc(size > 0 ? size : 1);
+        if (!copy) {
+            return nullptr;
+        }
+        if (size > 0) {
+            memcpy(copy, bytes, size);
+        }
+        *outSize = size;
+        return copy;
     }
-    if (size > 0) {
-        memcpy(copy, bytes, size);
+    // The top levels over the cap.
+    const uint32_t bits =
+        out[3] == (uint8_t)GPU_ETC1 ? 4u : (out[3] == (uint8_t)GPU_ETC1A4 ? 8u : 0u);
+    size_t skip = 0;
+    while (bits > 0 && cap > 0 && out[4] >= 1 && (out[2] & 7) >= 1 && ((out[2] >> 3) & 7) >= 1) {
+        const uint32_t w = 8u << (out[2] & 7);
+        const uint32_t h = 8u << ((out[2] >> 3) & 7);
+        if ((int32_t)w <= cap && (int32_t)h <= cap) {
+            break;
+        }
+        const size_t level0 = (size_t)w * h * bits / 8u;
+        if (skip + level0 >= raw) {
+            break;
+        }
+        skip += level0;
+        out[2] = (uint8_t)((out[2] & ~0x3Fu) | (((out[2] & 7) - 1) & 7) |
+                           (((((out[2] >> 3) & 7) - 1) & 7) << 3));
+        out[4] = (uint8_t)(out[4] - 1);
+        for (uint32_t t = 0; t < subtextures; t++) {
+            uint8_t* sub = out + 5 + 12 * t;
+            const uint32_t sw = ((uint32_t)sub[0] | ((uint32_t)sub[1] << 8)) >> 1;
+            const uint32_t sh = ((uint32_t)sub[2] | ((uint32_t)sub[3] << 8)) >> 1;
+            sub[0] = (uint8_t)(sw & 0xFFu);
+            sub[1] = (uint8_t)(sw >> 8);
+            sub[2] = (uint8_t)(sh & 0xFFu);
+            sub[3] = (uint8_t)(sh >> 8);
+        }
     }
-    *outSize = size;
-    return copy;
+    if (skip > 0) {
+        memmove(out + head + 4, out + head + 4 + skip, raw - skip);
+        raw -= skip;
+    }
+    out[head] = 0x00;
+    out[head + 1] = (uint8_t)(raw & 0xFFu);
+    out[head + 2] = (uint8_t)((raw >> 8) & 0xFFu);
+    out[head + 3] = (uint8_t)((raw >> 16) & 0xFFu);
+    *outSize = (uint32_t)(head + 4 + raw);
+    return out;
+}
+
+static uint8_t* hdUnpackWork(const uint8_t* bytes, uint32_t size, uint32_t* outSize) {
+    return hdUnpack(bytes, size, outSize, 0);
+}
+
+// The residency tiers' unpacks (RendererC3D::hdTopCap): the chain from the
+// level at or under 256, or 128, texels on its longer side.
+static uint8_t* hdUnpackWork256(const uint8_t* bytes, uint32_t size, uint32_t* outSize) {
+    return hdUnpack(bytes, size, outSize, 256);
+}
+
+static uint8_t* hdUnpackWork128(const uint8_t* bytes, uint32_t size, uint32_t* outSize) {
+    return hdUnpack(bytes, size, outSize, 128);
 }
 
 // The HD budget NOW: kHdBudgetBytes, or less when the linear heap has less free
@@ -1318,7 +1394,9 @@ static void hdSlots(RendererC3D* renderer) {
     std::vector<mdk::pica::HdSlot>& slots = renderer->hdSlotScratch;
     slots.resize(renderer->hdCopies.size());
     for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
-        slots[i].resident = renderer->hdCopies[i].state == HdCopy::Resident;
+        // A pinned copy (the level's resident set) is never a victim.
+        slots[i].resident =
+            renderer->hdCopies[i].state == HdCopy::Resident && !renderer->hdCopies[i].pinned;
         slots[i].lastUsed = renderer->hdCopies[i].lastUsed;
         slots[i].linked = renderer->hdCopies[i].links > 0;
     }
@@ -1408,6 +1486,15 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         }
         return;
     }
+    // THE SET COMES BACK WITH THE TOGGLE: a pinned copy the toggle-off freed is
+    // asked for again (the frontend holds until it is resident).
+    if (renderer->hdPinnedMode) {
+        for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
+            if (renderer->hdCopies[i].pinned && renderer->hdCopies[i].state == HdCopy::None) {
+                requestHdCopy(renderer, (int32_t)i);
+            }
+        }
+    }
     // (0) NOBODY'S COPIES. A copy no texture links to any more (a level ended, a
     // sprite frame was trimmed) is cancelled if it was only asked for (a read in
     // flight is dropped when it lands) and freed once it has stayed unlinked for
@@ -1416,7 +1503,7 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     // first (evictHd's unlinked preference, makeTexture and the mesh allocator).
     for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
         HdCopy& copy = renderer->hdCopies[i];
-        if (copy.links > 0) {
+        if (copy.links > 0 || copy.pinned) {
             continue;
         }
         if (copy.state == HdCopy::Queued ||
@@ -1460,9 +1547,19 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             mdk::AsyncFileReader::kStreamSlots) {
             break;
         }
+        // THE LEVEL'S SET FIRST, and past the budget: its fit was proved by
+        // arithmetic when it was chosen (main_3ds.cpp), so it is never gated.
         size_t pick = 0;
         bool demanded = false;
+        bool pinned = false;
         for (size_t i = 0; i < renderer->hdQueue.size(); i++) {
+            if (renderer->hdCopies[(size_t)renderer->hdQueue[i]].pinned) {
+                pick = i;
+                pinned = true;
+                break;
+            }
+        }
+        for (size_t i = 0; !pinned && i < renderer->hdQueue.size(); i++) {
             if (renderer->hdCopies[(size_t)renderer->hdQueue[i]].lastUsed >= protectFrom) {
                 pick = i;
                 demanded = true;
@@ -1471,14 +1568,19 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         }
         const size_t reading =
             (size_t)renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd);
-        if (!mdk::pica::hdMayDispatch(renderer->hdResidentBytes, reading, kHdLargestBytes,
-                                      budget, demanded && evictable)) {
+        if (!pinned && !mdk::pica::hdMayDispatch(renderer->hdResidentBytes, reading,
+                                                 kHdLargestBytes, budget,
+                                                 demanded && evictable)) {
             break;
         }
         const int32_t id = renderer->hdQueue[pick];
         HdCopy& copy = renderer->hdCopies[(size_t)id];
+        const mdk::AsyncFileReader::Work work =
+            !copy.pinned || renderer->hdTopCap <= 0
+                ? hdUnpackWork
+                : (renderer->hdTopCap <= 128 ? hdUnpackWork128 : hdUnpackWork256);
         if (!renderer->hdReader.requestFile(mdk::AsyncFileReader::kChannelHd, id,
-                                            copy.path.c_str(), hdUnpackWork)) {
+                                            copy.path.c_str(), work)) {
             break;   // every slot is busy: this one waits in the queue
         }
         copy.state = HdCopy::Reading;
@@ -1500,7 +1602,8 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             continue;
         }
         HdCopy& copy = renderer->hdCopies[(size_t)id];
-        if (copy.state != HdCopy::Reading || copy.path != path || copy.links <= 0) {
+        if (copy.state != HdCopy::Reading || copy.path != path ||
+            (copy.links <= 0 && !copy.pinned)) {
             // Dropped (the toggle went off) or nobody's (unlinked) while it was
             // being read: not imported.
             if (copy.state == HdCopy::Reading) {
@@ -1510,6 +1613,10 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             continue;
         }
         if (!ok) {
+            if (copy.pinned) {
+                copy.failures = kHdMaxFailures;
+                renderer->hdPinFailed++;
+            }
             hdFailed(renderer, copy, "cannot read");
             continue;
         }
@@ -1522,9 +1629,12 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         // A HINT (no draw of the last frame wanted it) evicts nothing: with no
         // room it is dropped (None), and the next ask -- a draw's, or the pump's
         // re-ask -- asks for it again.
-        const bool demanded = copy.lastUsed >= protectFrom;
+        // A pinned copy (the level's set) is imported whatever the budget says:
+        // its room was proved when the set was chosen.
+        const bool demanded = copy.lastUsed >= protectFrom || copy.pinned;
         bool room = true;
-        while (renderer->hdResidentBytes + kHdLargestBytes > hdBudgetNow(renderer)) {
+        while (!copy.pinned &&
+               renderer->hdResidentBytes + kHdLargestBytes > hdBudgetNow(renderer)) {
             if (!demanded || !evictHd(renderer, protectFrom, false)) {
                 // Nothing of the stream's own to give: a demanded copy takes the
                 // room of the least recently used texture the last frame did not
@@ -1587,6 +1697,12 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             continue;
         }
         if (!t3x) {
+            if (copy.pinned) {
+                // The set's arithmetic was wrong for this heap: given up for the
+                // level, counted, and its surfaces take their packed originals.
+                copy.failures = kHdMaxFailures;
+                renderer->hdPinFailed++;
+            }
             hdFailed(renderer, copy, "import FAILED");
             continue;
         }
@@ -1840,5 +1956,72 @@ int32_t mdk_render_settle_streams(MdkRenderer rr, int32_t maxMs) {
     }
     renderer->settledFrame = (int32_t)renderer->frame;
     return renderer->hdImported + renderer->packImported - before;
+}
+
+// THE LEVEL'S RESIDENT HD SET (render.h mdk_render_pin_hd_set, spec 3.2): the
+// files the frontend chose for the level, by path, each a copy of the table
+// (made for a file not yet seen), pinned and asked for; the copies of the old
+// set are unpinned (nobody's copies are then freed by the pump as before). With
+// `count` 0 the set is dropped and the stream is per-surface again.
+int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, int32_t count,
+                              int32_t topCap) {
+    RendererC3D* renderer = asC3d(rr);
+    if (!renderer) {
+        return 0;
+    }
+    for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
+        renderer->hdCopies[i].pinned = false;
+    }
+    renderer->hdPinnedMode = false;
+    renderer->hdTopCap = topCap;
+    int32_t pinned = 0;
+    for (int32_t p = 0; paths && p < count; p++) {
+        if (!paths[p] || !paths[p][0] || strlen(paths[p]) >= mdk::AsyncFileReader::kPathMax) {
+            continue;
+        }
+        int32_t index = -1;
+        const std::map<std::string, int32_t>::const_iterator found =
+            renderer->hdByPath.find(paths[p]);
+        if (found != renderer->hdByPath.end()) {
+            index = found->second;
+        } else {
+            index = (int32_t)renderer->hdCopies.size();
+            HdCopy copy;
+            copy.path = paths[p];
+            renderer->hdCopies.push_back(copy);
+            renderer->hdByPath[paths[p]] = index;
+        }
+        HdCopy& copy = renderer->hdCopies[(size_t)index];
+        copy.pinned = true;
+        if (copy.state == HdCopy::Failed && !copy.broken) {
+            copy.state = HdCopy::None;
+            copy.failures = 0;
+        }
+        // A copy already resident from another cap is kept as it is.
+        if (renderer->toggles.enableHdTextures) {
+            requestHdCopy(renderer, index);
+        }
+        pinned++;
+    }
+    renderer->hdPinnedMode = pinned > 0;
+    return pinned;
+}
+
+// The set's copies not resident yet and still to come (render.h): 0 when the
+// set is in, the toggle is off, or there is no set.
+int32_t mdk_render_hd_set_pending(MdkRenderer rr) {
+    RendererC3D* renderer = asC3d(rr);
+    if (!renderer || !renderer->hdPinnedMode || !renderer->toggles.enableHdTextures) {
+        return 0;
+    }
+    int32_t pending = 0;
+    for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
+        const HdCopy& copy = renderer->hdCopies[i];
+        if (copy.pinned && copy.state != HdCopy::Resident &&
+            !(copy.state == HdCopy::Failed && (copy.broken || copy.failures >= kHdMaxFailures))) {
+            pending++;
+        }
+    }
+    return pending;
 }
 

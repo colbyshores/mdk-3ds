@@ -437,6 +437,9 @@ struct HdCopy {
     int32_t wantedFrame = -1;
     // The frame it was last imported (the margin, render_c3d_stats.h).
     int32_t landedFrame = -1;
+    // IN THE LEVEL'S RESIDENT SET (mdk_render_pin_hd_set): read on the loading
+    // screen, never evicted, never freed as nobody's, while the set stands.
+    bool pinned = false;
 };
 
 // One queue record resolved for the frame (STEREO-REPLAY analogue,
@@ -1001,6 +1004,13 @@ struct RendererC3D {
     int32_t hdLateWorstFrame = -1;
     char hdLateWorst[64] = {0};
     int32_t hdLateRows[8][2] = {};
+    // THE LEVEL'S RESIDENT HD SET (mdk_render_pin_hd_set, spec 3.2): while
+    // hdPinnedMode, an HD-only texture is drawn only from a pinned copy, the set
+    // is read on the loading screen with its levels over hdTopCap dropped
+    // (hdUnpack; 0: none), and no copy of it is evicted in play.
+    bool hdPinnedMode = false;
+    int32_t hdTopCap = 0;
+    int32_t hdPinFailed = 0;
     // The renderer's frame when the loading screen's wait ended
     // (mdk_render_settle_streams): the margin counts only copies landed after it.
     int32_t settledFrame = -1;

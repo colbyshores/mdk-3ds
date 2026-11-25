@@ -332,4 +332,16 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     out->hdSlackUnder30 = cr->hdSlackUnder30;
     out->hdSlackFirsts = cr->hdSlackFirsts;
     memcpy(out->hdSlackWorst, cr->hdSlackWorst, sizeof(out->hdSlackWorst));
+    for (size_t i = 0; i < cr->hdCopies.size(); i++) {
+        const HdCopy& copy = cr->hdCopies[i];
+        if (copy.pinned) {
+            out->hdPinned++;
+            if (copy.state == HdCopy::Resident) {
+                out->hdPinnedResident++;
+                out->hdPinnedBytes += copy.bytes;
+            }
+        }
+    }
+    out->hdPinFailed = cr->hdPinFailed;
+    out->hdTopCap = cr->hdTopCap;
  }

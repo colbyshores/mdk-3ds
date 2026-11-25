@@ -51,6 +51,7 @@
 #include <string.h>
 
 #include <map>
+#include <set>
 #include <memory>
 #include <new>
 #include <string>
@@ -299,7 +300,8 @@ void musicReadCancel(void* user, int32_t tag) {
 bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out,
                             int32_t* count, const char* tag, int32_t maxCap,
                             std::map<std::string, uint32_t>* dims = nullptr,
-                            std::vector<std::string>* filesOut = nullptr) {
+                            std::vector<std::string>* filesOut = nullptr,
+                            std::map<std::string, uint32_t>* shapes = nullptr) {
     const std::string manifest = std::string(root) + "/manifest.txt";
     FILE* file = fopen(manifest.c_str(), "r");
     if (!file) {
@@ -346,6 +348,22 @@ bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out
             continue;
         }
         *tab = '\0';
+        if (shapes) {
+            // key \t format \t src_w \t src_h \t w \t h ...: the .t3x's own size and
+            // format (an HD file's exact bytes, hdChainBytes), keyed by its path.
+            const char* format = tab + 1;
+            const char* c2 = strchr(format, '\t');
+            const char* c3 = c2 ? strchr(c2 + 1, '\t') : nullptr;
+            const char* c4 = c3 ? strchr(c3 + 1, '\t') : nullptr;
+            const char* c5 = c4 ? strchr(c4 + 1, '\t') : nullptr;
+            if (c4 && c5) {
+                const uint32_t w = (uint32_t)atoi(c4 + 1);
+                const uint32_t h = (uint32_t)atoi(c5 + 1);
+                const bool a4 = strncmp(format, "etc1a4", 6) == 0;
+                (*shapes)[std::string(root) + "/" + std::string(line) + ".t3x"] =
+                    (w << 16) | (h & 0xFFFFu) | (a4 ? 0x80000000u : 0u);
+            }
+        }
         if (dims) {
             // key \t format \t src_w \t src_h ...
             const char* format = tab + 1;
@@ -386,10 +404,12 @@ static std::string lowerName3ds(const std::string& s);
 // the pack has no other kind (hd_pack_convert.py writes the PC mod's tree, and
 // the C# port's --upscale-textures names every texture by its view).
 bool loadHdPack(int32_t level, mdk::ModImages* out,
-                std::map<std::string, std::string>* byKey) {
+                std::map<std::string, std::string>* byKey,
+                std::map<std::string, uint32_t>* shapes) {
     int32_t count = 0;
     std::vector<std::string> files;
-    if (!loadCompressedManifest(kHdPackRoot, level, out, &count, "hd", 512, nullptr, &files)) {
+    if (!loadCompressedManifest(kHdPackRoot, level, out, &count, "hd", 512, nullptr, &files,
+                                shapes)) {
         return false;
     }
     for (size_t i = 0; i < files.size(); i++) {
@@ -409,6 +429,30 @@ bool loadHdPack(int32_t level, mdk::ModImages* out,
     mdk::log3dsPrintf("hd: pack manifest %d textures, %d keyed (%s)", (int)count,
                       (int)byKey->size(), kHdPackRoot);
     return true;
+}
+
+// THE BYTES AN HD FILE HOLDS IMPORTED (hdShapes' w, h, ETC1A4 bit) with its
+// levels wider or taller than `cap` dropped (0: none) -- the backend's own drop
+// rule (04_textures.inc hdUnpack) and tex3ds' chain, levels down to 8 texels on
+// the shorter side: ETC1 4 bits a texel, ETC1A4 8.
+static uint32_t hdChainBytes(uint32_t shape, int32_t cap) {
+    uint32_t w = (shape >> 16) & 0x7FFFu;
+    uint32_t h = shape & 0xFFFFu;
+    const uint32_t bits = (shape & 0x80000000u) ? 8u : 4u;
+    while (cap > 0 && (w > (uint32_t)cap || h > (uint32_t)cap) && w >= 16 && h >= 16) {
+        w >>= 1;
+        h >>= 1;
+    }
+    uint32_t bytes = 0;
+    while (w >= 8 && h >= 8) {
+        bytes += w * h * bits / 8u;
+        if (w == 8 || h == 8) {
+            break;
+        }
+        w >>= 1;
+        h >>= 1;
+    }
+    return bytes;
 }
 
 // The orig pack, at the same level-load moment and through the same machinery
@@ -1481,7 +1525,13 @@ int main(int argc, char** argv) {
     // files by content key, the orig files' original sizes. Level-load only.
     std::map<std::string, std::string> hdByKey;
     std::map<std::string, uint32_t> origDims;
-    if (loadHdPack(flow.state().level, &hdPack, &hdByKey)) {
+    // Every HD file's .t3x size and format (the level's set is sized from it).
+    std::map<std::string, uint32_t> hdShapes;
+    // THE LEVEL'S RESIDENT HD SET (spec 3.2): its files, the cap their levels are
+    // read at, and whether one was chosen (holdHdSet, below).
+    std::vector<std::string> hdSetPaths;
+    int32_t hdSetCap = 0;
+    if (loadHdPack(flow.state().level, &hdPack, &hdByKey, &hdShapes)) {
         hdSource.pack = &hdPack;
     }
     if (loadOrigPack(flow.state().level, &origPack, &origDims)) {
@@ -2584,19 +2634,93 @@ int main(int argc, char** argv) {
     float harnessTestTime = 0.0f;
 #endif
 
-    // THE FIRST VIEW, WHOLE, BEFORE THE LOADING SCREEN GOES (owner 2026-11-24: "I
-    // dont want surface pop in"; docs/HD_TEXTURES_3DS_SPEC.md 3.1). With the HD
-    // set on, a covered surface draws only from its HD copy, and the first frames
-    // of a level keep the reader thread starved: measured on the Old 3DS, 19 HD
-    // copies the first frame wanted landed 1-45 frames late. So before the first
-    // frame -- the loading screen still on the panels -- every surface the
-    // start arena can show is asked for (its view's batches, hidden ones too, and
-    // the textures of every model it or the scripts can put in it: the object
-    // warm run to its end), and the backend reads and imports what fits while
-    // this thread waits (mdk_render_settle_streams). Cold: once per level.
+    // THE LEVEL'S HD SET, RESIDENT BEFORE THE LOADING SCREEN GOES (owner
+    // 2026-11-24: "I dont want surface pop in"; docs/HD_TEXTURES_3DS_SPEC.md 3.2).
+    // Streaming per surface cannot promise a copy before its surface is seen: the
+    // Old 3DS reads ~13 HD files a second in play. So the level's whole covered
+    // set -- every HD file the name index pairs with this level's rows -- is
+    // chosen here by arithmetic against the free linear heap, read on the loading
+    // screen, and kept for the level: no HD read in play, nothing evicted.
+    //   tier 512: the files as built, if they fit;
+    //   tier 256: else the same files with their levels over 256 texels dropped
+    //             at the read (a quarter of the bytes for each level dropped);
+    //   streamed: else per surface, as before the set (pop-in possible), said.
+    // kHdPlayReserve is what play still takes from the linear heap after this
+    // point (Kurt's animation stream, the uncovered textures, effects, meshes):
+    // measured on the Old 3DS level-7 walk, 6.27 MB between this line and the
+    // walk's lowest free (12.50 MB free here, 4.18 MB of set, 2.05 MB left at
+    // the low point), so 7 MiB.
+    std::vector<const char*> hdSetArgs;
+    auto holdHdSet = [&](const char* why) {
+        // The hold: the backend reads and imports while this thread waits; the
+        // applet loop is served throughout (HOME, sleep, power).
+        const double hold0 = nowSeconds();
+        int32_t made = 0;
+        int32_t pending = mdk_render_hd_set_pending(renderer);
+        while (pending > 0 && nowSeconds() - hold0 < 60.0) {
+            if (!aptMainLoop()) {
+                break;
+            }
+            made += mdk_render_settle_streams(renderer, 50);
+            pending = mdk_render_hd_set_pending(renderer);
+        }
+        made += mdk_render_settle_streams(renderer, 2000);   // the packed originals asked
+        MdkC3dFirstUse state;
+        mdk_render_c3d_first_use(renderer, &state);
+        mdk::log3dsPrintf("hd: set %s: %d of %d resident (%u bytes, cap %d), %d given up, "
+                          "%d files made in %.0f ms; linear free %u",
+                          why, (int)state.hdPinnedResident, (int)state.hdPinned,
+                          (unsigned)state.hdPinnedBytes, (int)state.hdTopCap,
+                          (int)state.hdPinFailed, (int)made, (nowSeconds() - hold0) * 1000.0,
+                          (unsigned)linearSpaceFree());
+    };
+    if (hdSource.pack && hdSource.byname) {
+        static const uint32_t kHdPlayReserve = 7u * 1024u * 1024u;
+        std::set<std::string> unique;
+        for (std::map<std::pair<const void*, std::string>, std::string>::const_iterator it =
+                 origByName.hdPaths.begin();
+             it != origByName.hdPaths.end(); ++it) {
+            unique.insert(it->second);
+        }
+        uint32_t bytes512 = 0;
+        uint32_t bytes256 = 0;
+        int32_t unsized = 0;
+        for (std::set<std::string>::const_iterator it = unique.begin(); it != unique.end(); ++it) {
+            const std::map<std::string, uint32_t>::const_iterator shape = hdShapes.find(*it);
+            if (shape == hdShapes.end()) {
+                unsized++;
+                continue;
+            }
+            bytes512 += hdChainBytes(shape->second, 0);
+            bytes256 += hdChainBytes(shape->second, 256);
+        }
+        const uint32_t freeNow = (uint32_t)linearSpaceFree();
+        const uint32_t room = freeNow > kHdPlayReserve ? freeNow - kHdPlayReserve : 0u;
+        hdSetCap = bytes512 <= room ? 512 : (bytes256 <= room ? 256 : 0);
+        mdk::log3dsPrintf("hd: level %d set %d files: %u bytes at 512, %u at 256 (%d unsized); "
+                          "linear free %u, room %u above the %u reserve: %s",
+                          (int)flow.state().level, (int)unique.size(), (unsigned)bytes512,
+                          (unsigned)bytes256, (int)unsized, (unsigned)freeNow, (unsigned)room,
+                          (unsigned)kHdPlayReserve,
+                          hdSetCap == 512   ? "tier 512, the whole set"
+                          : hdSetCap == 256 ? "tier 256, the whole set, levels over 256 dropped"
+                                            : "DOES NOT FIT: streamed per surface");
+        if (hdSetCap > 0 && unsized == 0) {
+            hdSetPaths.assign(unique.begin(), unique.end());
+            for (size_t p = 0; p < hdSetPaths.size(); p++) {
+                hdSetArgs.push_back(hdSetPaths[p].c_str());
+            }
+            mdk_render_pin_hd_set(renderer, hdSetArgs.data(), (int32_t)hdSetArgs.size(),
+                                  hdSetCap == 512 ? 0 : hdSetCap);
+        }
+    }
+    std::map<std::string, uint32_t>().swap(hdShapes);
+    // The first view's surfaces asked for now (its batches, hidden ones too, and
+    // the textures of every model the arena or its scripts can show), so their
+    // ids exist and their packed originals -- the uncovered surfaces' -- are read
+    // in the same hold.
     if (enhancedToggles.enableHdTextures && hdSource.pack && hdSource.byname &&
         !startArenaName.empty()) {
-        const double settle0 = nowSeconds();
         arenaViews.pumpSurfaces(1 << 20);
         if (const mdk::formats::Arena* owner = level.arenaNamed(startArenaName)) {
             size_t& cursor = objectWarmAt[startArenaName];
@@ -2605,16 +2729,7 @@ int main(int argc, char** argv) {
                                         requestPackedSurface, &warmAsk, &cursor)) {
             }
         }
-        const double settle1 = nowSeconds();
-        const int32_t landed = mdk_render_settle_streams(renderer, 8000);
-        MdkC3dFirstUse made;
-        mdk_render_c3d_first_use(renderer, &made);
-        mdk::log3dsPrintf("start: the first view's files on the loading screen: %d made in "
-                          "%.0f ms (asked in %.0f ms); %d HD copies imported so far, peak "
-                          "%u bytes",
-                          (int)landed, (nowSeconds() - settle1) * 1000.0,
-                          (settle1 - settle0) * 1000.0, (int)made.hdImported,
-                          (unsigned)made.hdResidentPeak);
+        holdHdSet("loading screen");
     }
     heapProbe("loop");
 #if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
@@ -2655,6 +2770,9 @@ int main(int argc, char** argv) {
                 if (frame == kHdFlips[i]) {
                     enhancedToggles.enableHdTextures = !enhancedToggles.enableHdTextures;
                     mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
+                    if (enhancedToggles.enableHdTextures && hdSetCap > 0) {
+                        holdHdSet("toggled on");
+                    }
                     mdk::log3dsPrintf("hdflip: frame %lu hd=%d lin=%u", (unsigned long)frame,
                                       (int)enhancedToggles.enableHdTextures,
                                       (unsigned)linearSpaceFree());
@@ -2864,9 +2982,16 @@ int main(int argc, char** argv) {
                 edges.right = (pressed & KEY_DRIGHT) != 0;
                 edges.confirm = (pressed & KEY_A) != 0;
                 edges.close = (pressed & (KEY_START | KEY_B | KEY_SELECT)) != 0;
+                const bool hdMenuWas = enhancedToggles.enableHdTextures;
                 const mdk::EnhancedMenu::Action action = menu.handle(edges, &enhancedToggles);
                 if (action == mdk::EnhancedMenu::Action::Changed) {
+                    const bool hdWas = hdMenuWas;
                     mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
+                    // THE HD SET BACK ON: held for, like the loading screen
+                    // (spec 3.2) -- the menu stays up while the set is read.
+                    if (!hdWas && enhancedToggles.enableHdTextures && hdSetCap > 0) {
+                        holdHdSet("toggled on");
+                    }
                     const bool saved = saveEnhancedConfig(enhancedToggles);
                     mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
                                       "glow=%d filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
@@ -4685,6 +4810,9 @@ int main(int argc, char** argv) {
         g_lookupSizeRefused = 0;
         g_lookupHdAnimated = 0;
     }
+    // The level's HD set goes with the level (its copies are nobody's from here
+    // and the pump frees them).
+    mdk_render_pin_hd_set(renderer, nullptr, 0, 0);
     runtime.reset();
     // 3. The pose caches key on the runtime's Model addresses, which the reset just
     //    freed (scripts/pose_cache.h; the C#'s next Viewer calls ForgetPoses).
