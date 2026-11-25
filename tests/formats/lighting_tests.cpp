@@ -442,9 +442,9 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(10), "EDGE SMOOTHING");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kQuitRow), "QUIT");
     // + OPTIONS and MAIN MENU, the C# PauseMenu's rows (package #20a).
-    // 20 settings (MOVIES HALF RATE, package #20c, then TINY DEBRIS), RESUME,
-    // CHEATS (gap package #21), OPTIONS, MAIN MENU, QUIT.
-    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 25);
+    // 21 settings (MOVIES HALF RATE, package #20c, then TINY DEBRIS and TINY
+    // ENEMIES), RESUME, CHEATS (gap package #21), OPTIONS, MAIN MENU, QUIT.
+    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 26);
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kCheatsRow), "CHEATS");
     // Left/right on RESUME flip nothing.
     mdk::EnhancedMenu::Input left;
@@ -585,8 +585,8 @@ std::string menuValue(int32_t row, const mdk::EnhancedToggles& toggles) {
 MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
     using Action = mdk::EnhancedMenu::Action;
     using Menu = mdk::EnhancedMenu;
-    MDK_CHECK_EQ(Menu::kItemCount, 20);   // + MOVIES HALF RATE (package #20c), row 19
-                                          // + TINY DEBRIS, row 20
+    MDK_CHECK_EQ(Menu::kItemCount, 21);   // + MOVIES HALF RATE (package #20c), row 19
+                                          // + TINY DEBRIS, row 20; TINY ENEMIES, row 21
     MDK_CHECK_EQ(Menu::kQuitRow, Menu::kRowCount - 1);
     // The rows after the ten toggles, in order.
     MDK_CHECK_EQ(menuRowOf("30 FPS CAP"), 11);
@@ -767,6 +767,25 @@ MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
         mdk::EnhancedToggles wide;
         MDK_CHECK(mdk::parseEnhancedConfig("tinyDebrisPixels=9\n", &wide));
         MDK_CHECK_EQ(wide.tinyDebrisPixels, 2);
+    }
+    // THE TINY-ENEMY CULL: the same choice on row 21, its own config line.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        MDK_CHECK_EQ(toggles.tinyEnemyPixels, 2);
+        menuSelect(&menu, &toggles, 21);
+        MDK_CHECK(menuValue(21, toggles) == "2 PX");
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.tinyEnemyPixels, 3);
+        MDK_CHECK_EQ(toggles.tinyDebrisPixels, 2);
+        const std::string text = mdk::writeEnhancedConfig(toggles);
+        MDK_CHECK(text.find("tinyEnemyPixels=3\n") != std::string::npos);
+        mdk::EnhancedToggles back;
+        MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
+        MDK_CHECK_EQ(back.tinyEnemyPixels, 3);
+        mdk::EnhancedToggles off;
+        MDK_CHECK(mdk::parseEnhancedConfig("tinyEnemyPixels=0\n", &off));
+        MDK_CHECK_EQ(off.tinyEnemyPixels, 0);
     }
 }
 

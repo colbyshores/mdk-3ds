@@ -87,9 +87,9 @@ public:
     };
 
     // The rows: RESUME, the settings (MOVIES HALF RATE, package #20c, then the
-    // 3DS draw culls: TINY DEBRIS),
+    // 3DS draw culls: TINY DEBRIS, TINY ENEMIES),
     // CHEATS (#21), OPTIONS, MAIN MENU, QUIT.
-    static const int32_t kItemCount = 20;
+    static const int32_t kItemCount = 21;
     static const int32_t kResumeRow = 0;
     static const int32_t kCheatsRow = kItemCount + 1;
     static const int32_t kOptionsRow = kItemCount + 2;

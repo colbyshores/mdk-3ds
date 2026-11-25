@@ -130,6 +130,14 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         }
         return;
     }
+    // ... and the tiny-enemy cull's, likewise.
+    if (keyIs(begin, keyEnd, "tinyEnemyPixels")) {
+        int32_t pixels = 0;
+        if (readNumber(equals + 1, end, &pixels)) {
+            toggles->tinyEnemyPixels = (pixels >= 0 && pixels <= 3) ? pixels : 2;
+        }
+        return;
+    }
     // The look dials (render_types.h), clamped into their range.
     for (int32_t i = 0; i < kLookDialCount; i++) {
         if (keyIs(begin, keyEnd, kLookDials[i].key)) {
@@ -238,6 +246,9 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "movieHalfRate", toggles.movieHalfRate);
     // 3DS: debris this many pixels or smaller is not drawn, 0 = off (render_types.h).
     snprintf(size, sizeof(size), "tinyDebrisPixels=%d\n", (int)toggles.tinyDebrisPixels);
+    out.append(size);
+    // 3DS: enemies this many pixels or smaller are not drawn, 0 = off (render_types.h).
+    snprintf(size, sizeof(size), "tinyEnemyPixels=%d\n", (int)toggles.tinyEnemyPixels);
     out.append(size);
     // The look dials, percent of the shipped value (render_types.h).
     for (int32_t i = 0; i < kLookDialCount; i++) {

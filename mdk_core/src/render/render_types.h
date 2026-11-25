@@ -346,6 +346,17 @@ struct EnhancedToggles {
     // or 3 pixels; anything else reads as 2. Drawing only: the pieces still
     // fly, bounce and expire as before. The PC ignores it.
     int32_t tinyDebrisPixels = 2;
+
+    // 3DS: an enemy (the original's GameStats.IsEnemy types, less its
+    // missiles and bombs, never the boss the health bar is showing) whose
+    // bounding sphere covers this many screen pixels or fewer across is not
+    // drawn, and drawn again once it covers more than 1.25 times as many (2 px:
+    // hidden at 2, shown above 2.5), so one at the edge does not flicker. Same
+    // measure as tinyDebrisPixels: the frame's camera and zoom, 400 x 240, one
+    // decision for both eyes. 0 = off; 1, 2 or 3; anything else reads as 2.
+    // Drawing only: its script, motion, aim and hits run as before. The PC
+    // ignores it.
+    int32_t tinyEnemyPixels = 2;
 };
 
 // ---------------------------------------------------------------------------

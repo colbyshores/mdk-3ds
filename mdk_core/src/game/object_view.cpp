@@ -344,6 +344,33 @@ bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
     return true;
 }
 
+void ObjectView::layoutSphere(const scripts::MdkObject& obj, const ObjectLayout& layout,
+                              const Mat4& transform, Vec3* center, float* radius) {
+    const formats::Box& bounds = obj.model->bounds;
+    const float local[3] = {(bounds.min.x + bounds.max.x) * 0.5f,
+                            (bounds.min.y + bounds.max.y) * 0.5f,
+                            (bounds.min.z + bounds.max.z) * 0.5f};
+    const float dx = bounds.max.x - bounds.min.x;
+    const float dy = bounds.max.y - bounds.min.y;
+    const float dz = bounds.max.z - bounds.min.z;
+    const float localRadius = sqrtf(dx * dx + dy * dy + dz * dz) * 0.5f;
+    const float* m = transform.m;
+    // The Frobenius norm of the linear part: an upper bound on the
+    // transform's largest scale for any composition, where the max
+    // row length is only exact for a uniform scale after rotation.
+    float frobenius = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            frobenius += m[i * 4 + j] * m[i * 4 + j];
+        }
+    }
+    const float scale = sqrtf(frobenius);
+    *center = Vec3{local[0] * m[0] + local[1] * m[4] + local[2] * m[8] + m[12],
+                   local[0] * m[1] + local[1] * m[5] + local[2] * m[9] + m[13],
+                   local[0] * m[2] + local[1] * m[6] + local[2] * m[10] + m[14]};
+    *radius = (localRadius + layout.partSweep) * scale;
+}
+
 ObjectLayout* ObjectView::layoutOf(const formats::Model* model, const ObjectLook& look) {
     if (model == nullptr || look.palette == nullptr) {
         return nullptr;
@@ -386,7 +413,7 @@ ObjectLayout* ObjectView::layoutOf(const formats::Model* model, const ObjectLook
 // transform, which is all the C#'s Draw call is given: nothing a backend needs
 // may be left in the caller.
 bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look,
-                           const Mat4& transform, ObjectStream* stream) {
+                           const Mat4& transform, ObjectStream* stream, uint8_t* tinyHidden) {
     if (obj.model == nullptr || obj.dead || stream == nullptr) {
         return false;
     }
@@ -400,34 +427,31 @@ bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look
     // per corner: six plane distances and a comparison each -- the same
     // test the backend's per-eye batch cull makes per draw, here at
     // object granularity so the corners are never streamed.
-    if (hasCullFrustum_ && layout->swap == nullptr) {
+    const bool tiny = tinyHidden != nullptr && tinyCamera_ != nullptr;
+    if ((hasCullFrustum_ || tiny) && layout->swap == nullptr) {
         // (A swapped model's drawn geometry is the swap's, whose bounds
         // the model's do not describe: never culled.)
-        const formats::Box& bounds = obj.model->bounds;
-        const float local[3] = {(bounds.min.x + bounds.max.x) * 0.5f,
-                                (bounds.min.y + bounds.max.y) * 0.5f,
-                                (bounds.min.z + bounds.max.z) * 0.5f};
-        const float dx = bounds.max.x - bounds.min.x;
-        const float dy = bounds.max.y - bounds.min.y;
-        const float dz = bounds.max.z - bounds.min.z;
-        const float localRadius = sqrtf(dx * dx + dy * dy + dz * dz) * 0.5f;
-        const float* m = transform.m;
-        // The Frobenius norm of the linear part: an upper bound on the
-        // transform's largest scale for any composition, where the max
-        // row length is only exact for a uniform scale after rotation.
-        float frobenius = 0.0f;
-        for (int i = 0; i < 3; i++) {
-            for (int j = 0; j < 3; j++) {
-                frobenius += m[i * 4 + j] * m[i * 4 + j];
-            }
-        }
-        const float scale = sqrtf(frobenius);
-        const Vec3 center{local[0] * m[0] + local[1] * m[4] + local[2] * m[8] + m[12],
-                          local[0] * m[1] + local[1] * m[5] + local[2] * m[9] + m[13],
-                          local[0] * m[2] + local[1] * m[6] + local[2] * m[10] + m[14]};
-        const float radius = (localRadius + layout->partSweep) * scale + cullMargin_;
-        if (frustumSphereOutside(cullFrustum_, center, radius)) {
+        Vec3 center;
+        float radius = 0.0f;
+        layoutSphere(obj, *layout, transform, &center, &radius);
+        if (hasCullFrustum_ && frustumSphereOutside(cullFrustum_, center, radius + cullMargin_)) {
             return true;
+        }
+        // The tiny cull (setTinyCull), on the same sphere, with its hysteresis.
+        if (tiny) {
+            const float px = projectedPixelSize(*tinyCamera_, 2.0f * radius,
+                                                sphereNearDepth(*tinyCamera_, center, radius),
+                                                tinyWidth_, tinyHeight_);
+            if (*tinyHidden != 0) {
+                if (px > tinyShow_) {
+                    *tinyHidden = 0;
+                }
+            } else if (px <= tinyHide_) {
+                *tinyHidden = 1;
+            }
+            if (*tinyHidden != 0) {
+                return true;
+            }
         }
     }
 

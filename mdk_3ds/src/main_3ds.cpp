@@ -95,6 +95,8 @@
 #include "game/sniper_view.h"
 #include "render/material_resolver.h"
 #include "render/render.h"
+#include "formats/ascii_case.h"
+#include "scripts/game_stats.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
@@ -139,6 +141,34 @@ constexpr int32_t kTopHeight = 240;
 
 // The sound bank's decoded store, bounded (see where it is set).
 const size_t kDecodedSoundBudgetBytes = (size_t)6 << 20;
+
+// THE TINY-ENEMY CULL (EnhancedToggles::tinyEnemyPixels), its per-object state:
+// one byte per slot of the runtime's object deque (slots never move: removed
+// objects keep theirs). Known: the type was looked at; Candidate: the type is
+// one the cull may hide; Hidden: hidden last frame (ObjectView's hysteresis
+// byte, kept apart so its pointer can be handed over).
+const uint8_t kTinyKnown = 1;
+const uint8_t kTinyCandidate = 2;
+
+// Whether an object's TYPE may be hidden when tiny: the original's enemy types
+// (GameStats.IsEnemy), but not its missiles and bombs -- projectiles stay drawn
+// -- and never a boss: the XB family (XB1 is the first level's DANT_10 boss,
+// max health 9000; XB, XB2, XB3, XBSHARK, XBSHIP and XBT are kept with it) and
+// XGUNTA (Gunter). The boss the health bar shows is excluded per frame by the
+// caller too. Asked once per object: it upper-cases a string.
+bool tinyEnemyType(const mdk::scripts::MdkObject& obj) {
+    if (!mdk::scripts::isEnemyType(obj.type_name)) {
+        return false;
+    }
+    const std::string upper = mdk::formats::toUpperAscii(obj.type_name);
+    if (upper == "XG_MISS" || upper == "XG_BOMB1") {
+        return false;
+    }
+    if (upper.compare(0, 2, "XB") == 0 || upper == "XGUNTA") {
+        return false;
+    }
+    return true;
+}
 
 } // namespace
 
@@ -871,6 +901,10 @@ int main(int argc, char** argv) {
     mdk::EffectsDraw effectsDraw;
     mdk::EffectsFrame effectsFrame;
     mdk::ObjectStream objectStream;
+    // The tiny-enemy cull's per-object state (kTinyKnown...) and hysteresis
+    // byte (ObjectView::addObject's tinyHidden), by deque slot.
+    std::vector<uint8_t> tinyEnemyState;
+    std::vector<uint8_t> tinyEnemyHidden;
     std::map<std::string, mdk::ObjectLook> objectLooks;
 
     // An arena's palette and textures for its objects (C# Viewer.ObjectLook):
@@ -1078,6 +1112,8 @@ int main(int argc, char** argv) {
         mdk::scripts::MdkObject::forget_poses();
         objectView.clear();
         effectsView.clear();
+        tinyEnemyState.clear();
+        tinyEnemyHidden.clear();
         if (scriptAssetsReady) {
             // The seed. The oracle seeds its RNG with `new Random()` when no seed is
             // passed (ScriptRuntime.cs:323), which is the clock: an oracle run is
@@ -2394,7 +2430,18 @@ int main(int argc, char** argv) {
                 objectView.setCullFrustum(nullptr, 0.0f);
             }
             objectStream.reset();
+            // THE TINY-ENEMY CULL (EnhancedToggles::tinyEnemyPixels): an enemy whose
+            // bounding sphere covers that many top-screen pixels or fewer across, at
+            // the scene camera (the scope's zoom included; one decision for both
+            // eyes), is not drawn until it covers more than 1.25 times as many --
+            // ObjectView tests it after the frustum cull, on the same sphere.
+            // Drawing only: the runtime has already run it this frame.
+            const float tinyHide = (float)enhancedToggles.tinyEnemyPixels;
+            objectView.setTinyCull(&sceneCamera, tinyHide, tinyHide * 1.25f, kTopWidth,
+                                   kTopHeight);
+            size_t slot = 0;
             for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
+                const size_t objectSlot = slot++;
                 if (strikeFrame) {
                     break;  // the strike's frame shows its model alone (below)
                 }
@@ -2404,8 +2451,24 @@ int main(int argc, char** argv) {
                 const bool carried = runtime->rides().bomber() && &obj == runtime->rides().ridden();
                 const float alpha =
                     &obj == runtime->rides().driven() || carried ? 1.0f : tickAlpha;
+                uint8_t* tinyHidden = nullptr;
+                if (tinyHide > 0.0f) {
+                    if (tinyEnemyState.size() <= objectSlot) {
+                        tinyEnemyState.resize(objectSlot + 1, 0);
+                        tinyEnemyHidden.resize(objectSlot + 1, 0);
+                    }
+                    uint8_t& state = tinyEnemyState[objectSlot];
+                    if ((state & kTinyKnown) == 0) {
+                        state = (uint8_t)(kTinyKnown | (tinyEnemyType(obj) ? kTinyCandidate : 0));
+                    }
+                    if ((state & kTinyCandidate) != 0 && &obj != runtime->barObject) {
+                        tinyHidden = &tinyEnemyHidden[objectSlot];
+                    } else {
+                        tinyEnemyHidden[objectSlot] = 0;
+                    }
+                }
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
-                                     &objectStream);
+                                     &objectStream, tinyHidden);
             }
             if (strikeFrame) {
                 // THE FULL-SCREEN STRIKE (package 14): the scene's model alone over the sky

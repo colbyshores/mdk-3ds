@@ -286,8 +286,29 @@ public:
     // copies and integer indices only: no float->int conversion (R2), no float
     // comparison (R3), no division (the UV scale was taken once at layout time),
     // no transcendental (R6), no double (R4).
+    //
+    // `tinyHidden`, when given and a tiny cull is set (setTinyCull), is this
+    // object's hysteresis byte (1 = hidden last frame): the object is not
+    // streamed while it is tiny on screen. Null (the default) never hides.
     bool addObject(const scripts::MdkObject& obj, const ObjectLook& look,
-                   const Mat4& transform, ObjectStream* stream);
+                   const Mat4& transform, ObjectStream* stream, uint8_t* tinyHidden = nullptr);
+
+    // THE TINY CULL (the 3DS's EnhancedToggles::tinyEnemyPixels): for an
+    // object addObject is handed a hysteresis byte for, its cull sphere's full
+    // diameter on a `width` x `height` picture through `camera`
+    // (projectedPixelSize; the camera's zoom counts) hides it at `hidePixels`
+    // or fewer and shows it again above `showPixels`. Tested after the frustum
+    // cull, on the same sphere, so an object off screen costs nothing more.
+    // Drawing only. A null camera (the default, and the Linux build) or
+    // hidePixels 0 culls nothing.
+    void setTinyCull(const Camera* camera, float hidePixels, float showPixels, int32_t width,
+                     int32_t height) {
+        tinyCamera_ = hidePixels > 0.0f ? camera : nullptr;
+        tinyHide_ = hidePixels;
+        tinyShow_ = showPixels;
+        tinyWidth_ = width;
+        tinyHeight_ = height;
+    }
 
     // The object cull: when set, addObject skips an object whose world
     // sphere (its model bounds through its transform) is wholly outside
@@ -320,11 +341,20 @@ public:
     void clear() { layouts_.clear(); }
 
 private:
+    static void layoutSphere(const scripts::MdkObject& obj, const ObjectLayout& layout,
+                             const Mat4& transform, Vec3* center, float* radius);
+
     const MaterialResolver* resolver_;
     ModModels* swaps_ = nullptr;
     Frustum cullFrustum_;
     bool hasCullFrustum_ = false;
     float cullMargin_ = 0.0f;
+    // setTinyCull's camera (null: off), sizes and picture.
+    const Camera* tinyCamera_ = nullptr;
+    float tinyHide_ = 0.0f;
+    float tinyShow_ = 0.0f;
+    int32_t tinyWidth_ = 0;
+    int32_t tinyHeight_ = 0;
     // A map, not a vector: layoutOf hands out a pointer into it, and a map's
     // elements do not move when later entries are inserted. The key carries the
     // look's first archive as well as its palette: a corridor shares its arena's

@@ -21,7 +21,8 @@ const int32_t kMapSizes[] = {0, 128, 256, 512};
 const char* const kMapSizeLabels[] = {"AUTO", "128", "256", "512"};
 const int32_t kMapRefreshes[] = {0, 1, 2, 3, 4};
 const char* const kMapRefreshLabels[] = {"AUTO", "1", "2", "3", "4"};
-// The tiny-debris cull's sizes in screen pixels (render_types.h), 0 = off.
+// The tiny-debris and tiny-enemy culls' sizes in screen pixels (render_types.h),
+// 0 = off.
 const int32_t kTinyPixels[] = {0, 1, 2, 3};
 const char* const kTinyPixelLabels[] = {"OFF", "1 PX", "2 PX", "3 PX"};
 
@@ -65,6 +66,8 @@ const Item kItems[EnhancedMenu::kItemCount] = {
      nullptr, 0},
     // The 3DS draw culls, after it so the rows above keep their numbers.
     {"TINY DEBRIS", Kind::Choice, nullptr, nullptr, &EnhancedToggles::tinyDebrisPixels,
+     kTinyPixels, kTinyPixelLabels, 4},
+    {"TINY ENEMIES", Kind::Choice, nullptr, nullptr, &EnhancedToggles::tinyEnemyPixels,
      kTinyPixels, kTinyPixelLabels, 4},
 };
 
