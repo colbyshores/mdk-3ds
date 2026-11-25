@@ -1647,3 +1647,27 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   samples ship twice in the .3dsx: about 23 MB. Not stripped.
 - **Evidence:** see the hardware entry of this branch.
 - **Commit:** this one.
+
+## 2026-11-25 -- no mip chain for textures only drawn Original-shaded (branch perf/3ds-memory)
+
+- **Owner's words:** "No mip chains for textures never drawn with mipmaps (sky
+  slices, canvas fonts/pictures): pixel-identical output required."
+- **Why it is pixel-identical:** 06_draw.inc lets the sampler descend a chain only
+  for a draw whose shading is not Original (`mipped`), and writes `maxLevel = 0`
+  otherwise; the sky's slices and every canvas draw (fonts, pictures, HUD) are
+  Original-shaded. Level 0 is the same bytes with or without a chain
+  (pica::buildMipChain writes below level 0 only; the 16-bit store is chosen from
+  level 0's alpha), so the sampled texels are the same.
+- **What:** `C3dTexture::noMips`; makeTexture and the chunked expansion build no
+  chain for it. Set by a new seam `mdk_render_mark_unmipped` (render.h; no-op on
+  Linux and in the test stubs), called for each sky slice in buildSky3ds; by
+  `mdk_render_mark_canvas` (font atlases, screen pictures: said at creation, so
+  their first make has none); and by the first canvas draw's RGBA8 pin (from the
+  texture's next make on; no extra re-make is forced for it). Compressed
+  (.t3x) and streamed pictures are untouched.
+- **Saving:** a third of each such texture's level-0 bytes (the sky's two
+  slices on level 3, the menu/HUD atlases and pictures); measured in the
+  hardware entry of this branch.
+- **Evidence:** c3d_frame 64 checks / 167 arms / 29 probes; hardware in the
+  branch's hardware entry.
+- **Commit:** this one.

@@ -210,6 +210,12 @@ struct C3dTexture {
     // enableMipmaps, decided when the GPU copy is made; pica::mipLevelsFor).
     // The draw path lets the sampler use them only while the toggle is on.
     int32_t mipLevels = 0;
+    // NEVER DRAWN WITH A CHAIN (mdk_render_mark_unmipped, mdk_render_mark_canvas,
+    // the first canvas draw): its draws are all Original-shaded -- the sky's
+    // slices, the canvas's pictures and font atlases -- and 06_draw.inc holds an
+    // Original draw at level 0 whatever the texture holds. So no chain is made
+    // for it: the same pixels, a quarter less memory than a texture with one.
+    bool noMips = false;
 
     // The STORE the GPU copy was made in (EnhancedToggles::texture16: RGBA8, or
     // RGB565 / RGBA5551 / RGBA4 by pica::expandedTexelFormat), decided when the

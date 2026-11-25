@@ -261,6 +261,7 @@ void mdk_render_update_paletted(MdkRenderer r_, MdkTextureId t_, MdkPaletteId p_
 void mdk_render_replace_compressed(MdkRenderer, MdkTextureId, const char*) {}
 void mdk_render_replace_image_compressed(MdkRenderer, MdkTextureId, const char*) {}
 void mdk_render_mark_canvas(MdkRenderer, MdkTextureId) {}
+void mdk_render_mark_unmipped(MdkRenderer, MdkTextureId) {}
 
 void mdk_render_replace_colour(MdkRenderer r_, MdkTextureId texture, MdkPaletteId palette,
                                int32_t frames, int32_t width, int32_t height,

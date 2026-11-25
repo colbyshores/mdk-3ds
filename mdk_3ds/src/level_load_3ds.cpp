@@ -50,6 +50,8 @@ int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, MdkMeshId* sk
             SkyRange& r = ranges[count++];
             r.texture = mdk_render_create_index_texture(
                 renderer, slice.storedWidth, dome.height, slice.indices.data(), pal);
+            // Drawn Original-shaded only (the PC's sky has no chain either).
+            mdk_render_mark_unmipped(renderer, r.texture);
             r.first = slice.first;
             r.count = slice.count;
         }

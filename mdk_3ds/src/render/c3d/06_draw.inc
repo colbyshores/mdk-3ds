@@ -235,6 +235,9 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
             if (draw->material.pass == mdk::Pass::Overlay && !resource.keepRgba8 &&
                 !resource.compressed && !resource.streamed) {
                 resource.keepRgba8 = true;
+                // Canvas draws are Original-shaded (level 0 only): its next
+                // make has no chain. Not re-made for that alone.
+                resource.noMips = true;
                 if (resource.valid && resource.format != mdk::pica::TexelFormat::Rgba8) {
                     resource.stale = true;
                 }

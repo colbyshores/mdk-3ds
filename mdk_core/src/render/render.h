@@ -363,6 +363,13 @@ void mdk_render_replace_image_compressed(MdkRenderer r, MdkTextureId texture, co
 // Nothing changes on a backend that keeps every texture full-colour.
 void mdk_render_mark_canvas(MdkRenderer r, MdkTextureId texture);
 
+// A texture that is only ever drawn with the original shading (the sky's
+// slices): a backend that would build it a mip chain (the 3DS's enableMipmaps)
+// builds none, since an Original-shaded draw samples level 0 only. The same
+// pixels. A canvas texture (mdk_render_mark_canvas) is one already. Nothing
+// changes on a backend that mips nothing it does not sample.
+void mdk_render_mark_unmipped(MdkRenderer r, MdkTextureId texture);
+
 // Give a canvas image (an index texture through a palette) a whole colour
 // image (a mod's replacement for a HUD/menu picture: the C# Renderer's
 // ReplaceImage). Drawn by the enhanced look's canvas in place of the

@@ -200,6 +200,7 @@ void mdk_render_replace_compressed(MdkRenderer, MdkTextureId texture, const char
 }
 
 void mdk_render_mark_canvas(MdkRenderer, MdkTextureId) {}
+void mdk_render_mark_unmipped(MdkRenderer, MdkTextureId) {}
 
 int mdk_test_compressedImageCalls = 0;
 std::string mdk_test_compressedImagePath;

@@ -90,6 +90,7 @@ MdkTextureId mdk_render_create_streamed_texture(MdkRenderer r, int32_t w, int32_
 
 // FontView says its atlas is a canvas texture (render.h); nothing to record.
 void mdk_render_mark_canvas(MdkRenderer, MdkTextureId) {}
+void mdk_render_mark_unmipped(MdkRenderer, MdkTextureId) {}
 
 void mdk_render_canvas_quad(MdkRenderer, const CanvasQuad* quad) {
     if (g_canvasQuads != nullptr) {

@@ -494,7 +494,7 @@ static int32_t startExpansion(RendererC3D* renderer, C3dTexture& texture, bool f
                           (int)texture.realHeight);
         return 0;
     }
-    texture.expandLevels = renderer->toggles.enableMipmaps
+    texture.expandLevels = renderer->toggles.enableMipmaps && !texture.noMips
                                ? mdk::pica::mipLevelsFor(texture.paddedWidth,
                                                          texture.paddedHeight)
                                : 0;
@@ -838,7 +838,7 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     // toggle is on at that moment, so turning it on costs its memory -- a third
     // more per texture -- from the next texture made (the next level load, or an
     // evicted texture coming back); the sampler's use of it is live (06_draw.inc).
-    int32_t levels = renderer->toggles.enableMipmaps
+    int32_t levels = renderer->toggles.enableMipmaps && !texture.noMips
                          ? mdk::pica::mipLevelsFor(texture.paddedWidth, texture.paddedHeight)
                          : 0;
     const size_t realBytes = (size_t)texture.realWidth * (size_t)texture.realHeight *

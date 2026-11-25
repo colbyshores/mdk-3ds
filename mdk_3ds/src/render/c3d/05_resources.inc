@@ -723,6 +723,26 @@ void mdk_render_mark_canvas(MdkRenderer r, MdkTextureId t) {
     if (texture.valid && texture.format != mdk::pica::TexelFormat::Rgba8) {
         texture.stale = true;
     }
+    // And no mip chain from its next make on (said at creation, that is its
+    // first): a canvas draw is Original-shaded, level 0 only.
+    texture.noMips = true;
+}
+
+// NO MIP CHAIN for a texture only ever drawn Original-shaded (render.h): a
+// copy already made with one is made again without it at the next frame boundary.
+void mdk_render_mark_unmipped(MdkRenderer r, MdkTextureId t) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || t < 0 || (size_t)t >= renderer->textures.size()) {
+        return;
+    }
+    C3dTexture& texture = renderer->textures[(size_t)t];
+    if (texture.noMips || texture.compressed || texture.streamed) {
+        return;
+    }
+    texture.noMips = true;
+    if (texture.valid && texture.mipLevels > 0) {
+        texture.stale = true;
+    }
 }
 
 void mdk_render_replace_image_compressed(MdkRenderer r, MdkTextureId t, const char* path) {
