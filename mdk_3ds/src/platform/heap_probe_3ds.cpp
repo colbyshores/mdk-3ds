@@ -49,7 +49,7 @@ void heapProbe(const char* tag) {
 // the heap dry. Without it an OOM is a silent exit with no last line.
 void onHeapExhausted() {
     heapProbe("OOM");
-    mdk::log3dsPrintf("FATAL: operator new failed -- the 24 MiB heap is exhausted");
+    mdk::log3dsPrintf("FATAL: operator new failed -- the main heap is exhausted");
     mdk::log3dsClose();
     abort();
 }

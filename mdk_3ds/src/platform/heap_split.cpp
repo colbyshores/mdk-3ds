@@ -14,8 +14,17 @@
 // 8-bit palette indices in system RAM and expanded on demand into RGBA8 under
 // an LRU (SPEC.md §"The chosen 3DS texture strategy"), so the linear heap holds
 // one arena's working set, the sky panorama and the animated strips, not a
-// level's worth of expanded colours. 24 MiB is far above that working set and
-// still leaves ~8 MiB of margin against the old 32.7 MiB.
+// level's worth of expanded colours. 24 MiB was far above that working set and
+// still left ~8 MiB of margin against the old 32.7 MiB.
+//
+// 28 MiB SINCE 2026-11-25 (heap_split_policy.h): the level's resident HD set
+// (docs/HD_TEXTURES_3DS_SPEC.md 3.2) is chosen against the free linear heap, and
+// level 8's at 256 texels did not fit in 24. On the Old 3DS (65,200,128 bytes
+// free after the image, `main: heap split` at boot) main is then 35,840,000
+// bytes; the highest main use measured in play, every level 3-8 walked through
+// door crossings, was 30.63 MB, and the bank no longer decodes music into main
+// (it is DSP-ADPCM streamed, audio_dsp_3ds.h). An exhausted main heap aborts
+// (heap_probe_3ds.cpp's handler names it), so that margin is the one to watch.
 //
 // HOW. libctru 2.7.0's __system_allocateHeaps is WEAK (symbol "W" in
 // allocateHeaps.o), and so are the two size globals ("V"). Until 2026-11-18

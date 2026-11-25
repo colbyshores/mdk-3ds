@@ -1671,3 +1671,24 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Evidence:** c3d_frame 64 checks / 167 arms / 29 probes; hardware in the
   branch's hardware entry.
 - **Commit:** this one.
+
+## 2026-11-25 -- the linear heap 24 -> 28 MiB (branch perf/3ds-memory)
+
+- **Owner's words:** "I dont want to drop from 256x256 for OG 3DS. We shouldnt have
+  to." Move freed main memory to the linear heap on the Old 3DS with an explicit
+  margin above the measured in-play peak; keep the New 3DS split correct.
+- **Measured first (base 4d9264f3 walk, hw-logs/base-walk-report.md):** main cap
+  40.02 MB; highest main use in play over levels 3-8 30.63 MB (level 8), at load
+  29.48 MB (level 4); level 8's HD set at 256 is 8,538,976 B against 5,178,112 B
+  of room above the 7 MiB play reserve (12,518,144 B free at the decision): short
+  3.36 MB, so 103 files went to 128.
+- **What:** `kLinearHeapBytes` 24 -> 28 MiB. Old 3DS (65,200,128 B after the
+  image): linear 29,360,128, main 35,840,000 -- 5.2 MB above the highest in-play
+  main use measured (and that figure still had music decoded in main, which the
+  DSP-ADPCM stream removed). New 3DS (124 MiB, dump 41's region): main 95.04 MiB
+  (inside the 96 MiB area; the cap no longer binds there), linear 28 MiB (was
+  27.04). Not more on the New 3DS: a larger linear heap puts levels 3/6/7 on the
+  512 tier (a visual and GPU-cost change needing an owner A/B). heap_split
+  tests updated (the Old 3DS boot-log figures, the boundaries at 28 MiB).
+- **Evidence:** see the branch's hardware entry.
+- **Commit:** this one.
