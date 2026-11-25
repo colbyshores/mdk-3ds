@@ -2162,3 +2162,15 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Evidence:** player.o byte-identical on the 3DS (md5 fab37454); debug-stripped
   objects identical for the Linux build and tests/scripts.
 - **Commit:** this one.
+
+### scripts/script_runtime.cpp (5858 lines) split into a .cpp and nine fragments
+- **What:** `script_runtime.cpp` (787: helpers, construction, update, doorway geometry)
+  plus `script_runtime_{tick,arenas,motion,world,ai,objects,events,squads,combat}.inc`
+  (359-889 lines each), listed in the .cpp's header and included at its bottom
+  in the original order. Every helper stays file-local; the 17 @vfp-exempt pins
+  moved with their code.
+- **Evidence:** script_runtime.o byte-identical on the 3DS (md5 15f70338);
+  debug-stripped objects identical for Linux and tests/scripts. Negative control:
+  swapping two of the includes gives a different object (9e59d7c4), so the
+  comparison does see a reorder.
+- **Commit:** this one.
