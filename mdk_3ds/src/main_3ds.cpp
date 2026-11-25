@@ -43,15 +43,12 @@
 // ============================================================================
 
 #include <3ds.h>
-#include <malloc.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include <algorithm>
 #include <map>
-#include <set>
 #include <memory>
 #include <new>
 #include <string>
@@ -62,12 +59,9 @@
 #include "audio/sound_bank.h"
 #include "audio/sound_mixer.h"
 #include "formats/bni.h"
-#include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/file_system.h"
-#include "formats/kurt_pack.h"
 #include "formats/mdk_data.h"
-#include "formats/font.h"
 #include "game/arena_space.h"
 #include "game/arena_views.h"
 #include "game/enhanced_config.h"
@@ -101,33 +95,22 @@
 #include "game/sniper_view.h"
 #include "render/material_resolver.h"
 #include "render/render.h"
-#include "render/render_c3d_hd_set.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
-#include "render/sky_dome.h"
 #include "game/sky_modes.h"
 #include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
+#include "config_3ds.h"
+#include "level_load_3ds.h"
 #include "menu_screens_3ds.h"
+#include "packs_3ds.h"
+#include "platform/clock_3ds.h"
+#include "platform/heap_probe_3ds.h"
 #include "stream_3ds.h"
 
 namespace {
-
-// The game's frame timer. MDK's simulation runs at a fixed 60 Hz step, and
-// the frontend accumulates real elapsed time into it.
-//
-// The 3DS's clock is read from the system tick counter, which is the
-// platform's monotonic timer.
-double nowSeconds() {
-    // svcGetSystemTick() is the ARM11's cycle counter and SYSCLOCK_ARM11 is
-    // its clock, so the quotient is seconds. osGetTime() is NOT used: it
-    // divides by a tick rate that is only valid once the OS layer has been
-    // initialised, and it returned 0 here -- a frame timer stuck at zero
-    // would silently freeze the game's fixed-step accumulator.
-    return (double)svcGetSystemTick() / (double)SYSCLOCK_ARM11;
-}
 
 // The deterministic frame budget for a test run: `--frames N` runs exactly N
 // frames and then exits, so a host-side harness gets a reproducible run
@@ -150,678 +133,10 @@ static volatile bool g_resumePending = false;
 // level sideways.
 constexpr float kAspect = 400.0f / 240.0f;
 
-// The Enhanced Mode toggles' persistence (SPEC.md 7.9): the whole
-// config.ini, rewritten whenever a toggle changes. The directory is
-// the log's (log_3ds.cpp makes sdmc:/3ds/mdk before this can run).
-// THE GAME'S SETTINGS (C# Flow/Settings.cs, package #20a): the volumes, the music
-// filter, the difficulty and gore, kept in the same config.ini after the toggles
-// (game/game_settings.h's formatConsole; each parser skips the other's keys).
-// File-scope because the menus' option changes save the file from the screens
-// (menu_screens_3ds.cpp) as well as from the level's START menu.
-static mdk::GameSettings g_gameSettings;
-// The toggles the file is written with (main's own), for saveConfigNow.
-static const mdk::EnhancedToggles* g_toggles = nullptr;
-
-bool saveEnhancedConfig(const mdk::EnhancedToggles& toggles) {
-    FILE* config = fopen("sdmc:/3ds/mdk/config.ini", "wb");
-    if (!config) {
-        return false;
-    }
-    const std::string text = mdk::writeEnhancedConfig(toggles) + g_gameSettings.formatConsole();
-    const bool written = fwrite(text.c_str(), 1, text.size(), config) == text.size();
-    fclose(config);
-    return written;
-}
-
-// config.ini with the current toggles and settings (the options' save, C#
-// Ui.ApplySettings).
-bool saveConfigNow() {
-    return g_toggles != nullptr && saveEnhancedConfig(*g_toggles);
-}
-
-// PHASE 0 HEAP PROBE (arena streaming). The number that matters is the
-// newlib heap's, not the application region's: libctru allocates the whole
-// application region at boot (heap_split.cpp explains the split), so
-// osGetMemRegionFree(APPLICATION) reads 0 at every point in the run. That is
-// a statement about the reservation, not about headroom. mallinfo() reports
-// the allocator itself:
-//   arena    bytes sbrk'd from the heap reservation so far
-//   used     bytes currently handed out (uordblks)
-//   free     free space inside that arena (fordblks)
-// `peak` is the run's high-water mark of `used`, which is what an arena
-// budget has to fit under. `lin` is the GPU heap's free bytes
-// (linearSpaceFree), the other half of the split: a texture allocation fails
-// with invisible geometry, not an abort, so it is logged beside the malloc
-// numbers on every probe. No probe on this path allocates (log3dsPrintf
-// writes through a static FILE buffer, not newlib's heap).
-static uint32_t g_heapPeak = 0;
-
-
-static void heapProbe(const char* tag) {
-    struct mallinfo mi = mallinfo();
-    const uint32_t used = (uint32_t)mi.uordblks;
-    if (used > g_heapPeak) {
-        g_heapPeak = used;
-    }
-    mdk::log3dsPrintf("mem[%s]: cap=%u arena=%u used=%u free=%u peak=%u lin=%u",
-                      tag, (unsigned)envGetHeapSize(), (unsigned)mi.arena, (unsigned)used,
-                      (unsigned)mi.fordblks, (unsigned)g_heapPeak, (unsigned)linearSpaceFree());
-}
-
-// THE HD PACK (docs/HD_TEXTURES_3DS_SPEC.md): built on the host by
-// mdk_3ds/tools/build_hd_pack.sh and copied to the SD card. Its manifest lists
-// every .t3x by key, so the pack is indexed by ModImages' own rule
-// (ModImages::fromList) without scanning the card. In play a surface's HD file is
-// found BY NAME through the orig pack's name index (loadOrigByName, spec 3.1:
-// no content hash on the console), and the pair is made from its two files
-// (mdk_render_create_compressed_file): the backend streams the HD copy under the
-// HD budget while the toggle is on and never reads the original for it.
-const char kHdPackRoot[] = "sdmc:/3ds/mdk/hd";
-
-// KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): his ORIGINAL
-// TRAVSPRT.BNI frames as ETC1A4, made on the host by
-// mdk_3ds/tools/kurt_etc1_convert.py, packed into ONE file by kurt_pack.py
-// (formats/kurt_pack.h) and staged into the RomFS by stage_romfs.sh (the set is
-// derived from the game data the RomFS already carries, so it ships in every
-// .3dsx and .cia and the hardware loop needs no separate SD copy).
-const char kKurtPackPath[] = "romfs:/kurt/kurt.pak";
-
-// THE ORIG PACK: the ORIGINAL-LOOK arena textures pre-encoded on the host --
-// the same manifest, the same hdKeyOf keys, the same .t3x import as the HD
-// pack -- staged into the RomFS by stage_romfs.sh, so it ships in every .3dsx
-// and .cia and the hardware loop needs no separate SD copy. Its point is the
-// level-load / arena-stream-in hitches: an arena index texture expanded on the
-// ARM11 (palette -> RGBA8 -> 16-bit pack -> mip chain) costs 600-1600 ms per
-// arena. A surface the pack holds is ASKED FOR from its .t3x at first use
-// (surface_cache.h's pre-creation consult -> mdk_render_create_compressed_file):
-// the renderer's reader thread reads the file off the frame, a frame boundary
-// imports it (a copy: the containers are uncompressed), and only a surface in
-// view that is still unread is read on the main thread. The expansion never
-// runs.
-// With no pack staged (the tool did not run) the manifest open fails silently
-// and the expansion is today's, exactly.
-const char kOrigPackRoot[] = "romfs:/orig";
-
 // The sound bank's decoded store, bounded (see where it is set).
 const size_t kDecodedSoundBudgetBytes = (size_t)6 << 20;
 
-// THE MUSIC PREFETCH'S READS, LENT (audio/sound_bank.h's setReader, game/
-// async_read.h): the renderer's file thread on its music channel (render.h's
-// mdk_render_read_music_async, platform/async_file_reader.h's kChannelMusic). On
-// the main thread a step of a track was an fopen, a seek and a read of up to 64
-// KiB -- 11-17 ms a frame for eight frames of level 7's corridor crossing on the
-// Old 3DS -- and the thread reads it while the main one waits for the frame end.
-bool musicReadRequest(void* user, int32_t tag, const char* path, uint32_t offset,
-                      uint32_t length) {
-    return mdk_render_read_music_async(static_cast<MdkRenderer>(user), tag, path, offset, length);
-}
-
-bool musicReadPoll(void* user, int32_t tag, uint8_t** bytes, uint32_t* size, bool* ok) {
-    return mdk_render_poll_music_read(static_cast<MdkRenderer>(user), tag, bytes, size, ok);
-}
-
-void musicReadCancel(void* user, int32_t tag) {
-    mdk_render_cancel_music_read(static_cast<MdkRenderer>(user), tag);
-}
-
-// A compressed pack's manifest, indexed for `level` by ModImages' own rule.
-// False when there is none. `tag` names the pack in its log lines ("hd",
-// "orig"); `maxCap` is the largest build cap the backend budgets for it (see
-// the column-8 gate below).
-//
-// `dims` (may be null) gets each file's SOURCE size, columns 3 and 4, keyed by
-// the file's key (column 1, no .t3x): for the orig pack that is the original
-// texture's width and stacked height (arena_etc1_convert.py), which the name
-// index checks a texture against (loadOrigByName). `files` (may be null) gets
-// the manifest's file list.
-bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out,
-                            int32_t* count, const char* tag, int32_t maxCap,
-                            std::map<std::string, uint32_t>* dims = nullptr,
-                            std::vector<std::string>* filesOut = nullptr,
-                            std::map<std::string, uint32_t>* shapes = nullptr) {
-    const std::string manifest = std::string(root) + "/manifest.txt";
-    FILE* file = fopen(manifest.c_str(), "r");
-    if (!file) {
-        return false;
-    }
-    std::vector<std::string> files;
-    char line[512];
-    bool tooBig = false;
-    while (fgets(line, sizeof(line), file)) {
-        const size_t length = strlen(line);
-        if (length > 0 && line[length - 1] != '\n' && !feof(file)) {
-            // Longer than the buffer: no pack line is, so skip the rest of it
-            // rather than parse its tail as a line of its own (review F10).
-            int c;
-            while ((c = fgetc(file)) != EOF && c != '\n') {
-            }
-            continue;
-        }
-        if (line[0] == '#' || line[0] == '\n') {
-            continue;
-        }
-        // Column 8 is the size cap the pack was built with
-        // (hd_pack_convert.py): the backend budgets the largest pack texture
-        // (kHdLargestBytes, sized for the worst file of the largest cap it
-        // accepts), so a pack built above `maxCap` is refused, not drawn over
-        // budget. The HD pack is capped at 512; the orig pack's arena textures
-        // pad up to 1024x512 and is capped at 1024 -- kHdLargestBytes covers
-        // that worst case (01_types.inc).
-        {
-            int column = 0;
-            const char* field = line;
-            for (const char* p = line; *p && column < 8; p++) {
-                if (*p == '\t') {
-                    column++;
-                    field = p + 1;
-                }
-            }
-            if (column == 8 && atoi(field) > maxCap) {
-                tooBig = true;
-            }
-        }
-        char* tab = strchr(line, '\t');
-        if (!tab) {
-            continue;
-        }
-        *tab = '\0';
-        if (shapes) {
-            // key \t format \t src_w \t src_h \t w \t h ...: the .t3x's own size and
-            // format (an HD file's exact bytes, hdChainBytes), keyed by its path.
-            const char* format = tab + 1;
-            const char* c2 = strchr(format, '\t');
-            const char* c3 = c2 ? strchr(c2 + 1, '\t') : nullptr;
-            const char* c4 = c3 ? strchr(c3 + 1, '\t') : nullptr;
-            const char* c5 = c4 ? strchr(c4 + 1, '\t') : nullptr;
-            if (c4 && c5) {
-                const uint32_t w = (uint32_t)atoi(c4 + 1);
-                const uint32_t h = (uint32_t)atoi(c5 + 1);
-                const bool a4 = strncmp(format, "etc1a4", 6) == 0;
-                (*shapes)[std::string(root) + "/" + std::string(line) + ".t3x"] =
-                    (w << 16) | (h & 0xFFFFu) | (a4 ? 0x80000000u : 0u);
-            }
-        }
-        if (dims) {
-            // key \t format \t src_w \t src_h ...
-            const char* format = tab + 1;
-            const char* srcW = strchr(format, '\t');
-            const char* srcH = srcW ? strchr(srcW + 1, '\t') : nullptr;
-            if (srcW && srcH) {
-                const uint32_t w = (uint32_t)atoi(srcW + 1);
-                const uint32_t h = (uint32_t)atoi(srcH + 1);
-                (*dims)[std::string(line)] = (w << 16) | (h & 0xFFFFu);
-            }
-        }
-        files.push_back(std::string(line) + ".t3x");
-    }
-    fclose(file);
-    if (tooBig) {
-        mdk::log3dsPrintf("%s: pack built above the %d cap the 3DS budgets for; not used", tag,
-                          (int)maxCap);
-        return false;
-    }
-    *out = mdk::ModImages::fromList(root, files, true, level);
-    *count = (int32_t)files.size();
-    if (filesOut) {
-        filesOut->swap(files);
-        return !filesOut->empty();
-    }
-    return !files.empty();
-}
-
-static std::string lowerName3ds(const std::string& s);
-
-// THE HD PACK BY CONTENT KEY, for the name index (loadOrigByName): every
-// texture file of the pack, keyed by the hdKeyOf in its name
-// (textures/LEVELn/NAME@<key>.t3x -- hd_pack_convert.py keeps the PC mod's
-// names). The key is the texture seen through a palette (game/hd_key.h), the
-// same key the orig pack's file names carry, so an orig file and an HD file with
-// one key are the same texture through the same palette -- matched here by
-// STRING, with no hash computed on the console. Only exact-view files (`@`):
-// the pack has no other kind (hd_pack_convert.py writes the PC mod's tree, and
-// the C# port's --upscale-textures names every texture by its view).
-bool loadHdPack(int32_t level, mdk::ModImages* out,
-                std::map<std::string, std::string>* byKey,
-                std::map<std::string, uint32_t>* shapes) {
-    int32_t count = 0;
-    std::vector<std::string> files;
-    if (!loadCompressedManifest(kHdPackRoot, level, out, &count, "hd", 512, nullptr, &files,
-                                shapes)) {
-        return false;
-    }
-    for (size_t i = 0; i < files.size(); i++) {
-        const std::string& file = files[i];
-        if (file.compare(0, 9, "textures/") != 0) {
-            continue;
-        }
-        const size_t slash = file.rfind('/');
-        const size_t mark = file.find('@', slash == std::string::npos ? 0 : slash);
-        const size_t dot = file.rfind('.');
-        if (mark == std::string::npos || dot == std::string::npos || dot <= mark + 1) {
-            continue;
-        }
-        (*byKey)[lowerName3ds(file.substr(mark + 1, dot - mark - 1))] =
-            std::string(kHdPackRoot) + "/" + file;
-    }
-    mdk::log3dsPrintf("hd: pack manifest %d textures, %d keyed (%s)", (int)count,
-                      (int)byKey->size(), kHdPackRoot);
-    return true;
-}
-
-// THE BYTES AN HD FILE HOLDS IMPORTED (hdShapes' w, h, ETC1A4 bit) with its
-// levels wider or taller than `cap` dropped (0: none) -- the backend's own drop
-// rule (04_textures.inc hdUnpack) and tex3ds' chain, levels down to 8 texels on
-// the shorter side: ETC1 4 bits a texel, ETC1A4 8.
-static uint32_t hdChainBytes(uint32_t shape, int32_t cap) {
-    uint32_t w = (shape >> 16) & 0x7FFFu;
-    uint32_t h = shape & 0xFFFFu;
-    const uint32_t bits = (shape & 0x80000000u) ? 8u : 4u;
-    while (cap > 0 && (w > (uint32_t)cap || h > (uint32_t)cap) && w >= 16 && h >= 16) {
-        w >>= 1;
-        h >>= 1;
-    }
-    uint32_t bytes = 0;
-    while (w >= 8 && h >= 8) {
-        bytes += w * h * bits / 8u;
-        if (w == 8 || h == 8) {
-            break;
-        }
-        w >>= 1;
-        h >>= 1;
-    }
-    return bytes;
-}
-
-// The orig pack, at the same level-load moment and through the same machinery
-// as the HD pack (loadCompressedManifest). Its textures are the ORIGINAL look
-// pre-encoded -- original resolution, a full gaussian mip chain the sampler
-// only descends under the Enhanced Mode filtering+mipmaps pair (06_draw.inc)
-// -- so with the pack staged the ARM11 expands nothing for the arenas that
-// have a key, and the original look is the ETC1 copy sampled NEAREST at level 0
-// rather than the palette expansion.
-bool loadOrigPack(int32_t level, mdk::ModImages* out, std::map<std::string, uint32_t>* dims) {
-    int32_t count = 0;
-    if (!loadCompressedManifest(kOrigPackRoot, level, out, &count, "orig", 1024, dims)) {
-        return false;
-    }
-    mdk::log3dsPrintf("orig: pack manifest %d textures (%s)", (int)count, kOrigPackRoot);
-    return true;
-}
-
-// THE NAME-KEYED ORIG INDEX (romfs:/orig/byname.txt). manifest.txt is keyed by
-// the CONTENT hash, so a ModImages lookup re-hashes the texture's whole index
-// array -- 60-150 ms per texture on the ARM11, measured, which is the entire
-// cost of the texture pumps. The build also knows every texture by name
-// (arena_etc1_convert.py writes byname.txt from the exporter's index.tsv), so
-// the pump and the draw can find the file by (arena, name) for free. A miss
-// falls through to the hash path: a stale or absent byname.txt costs time,
-// never correctness. Keyed by the arena's PALETTE because that is what the
-// lookup is handed -- and the palette is what the .t3x's pixels were encoded
-// through. A corridor shares its arena's palette OBJECT (LevelData::paletteOf),
-// so the two collide here on purpose: their rows name the same file (checked
-// for all 3156 corridor rows of the shipped pack, 2026-11-23), and a row that
-// ever disagrees is logged rather than silently kept.
-//
-// AND THE HD PACK BY NAME, from the same rows (docs/HD_TEXTURES_3DS_SPEC.md
-// 3.1): a row's file is named by its content key (textures/name@<key>), and the
-// HD pack's file of that key (loadHdPack's byKey) is the upscale of exactly that
-// texture through exactly that palette -- so the HD file is found by (palette,
-// name) too, and play never hashes a texture to find it. No pack has to be
-// rebuilt: the owner's SD pack is keyed this way already. `dims` is the original
-// texture's width and stacked height from the orig manifest: a texture asked for
-// under a row's name but of another size is not that row's (no file is answered,
-// and the texture keeps the path a miss takes).
-struct OrigByName {
-    std::map<std::pair<const void*, std::string>, std::string> paths;
-    std::map<std::pair<const void*, std::string>, std::string> hdPaths;
-    std::map<std::pair<const void*, std::string>, uint32_t> dims;
-};
-
-static std::string lowerName3ds(const std::string& s) {
-    std::string out = s;
-    for (size_t i = 0; i < out.size(); i++) {
-        if (out[i] >= 'A' && out[i] <= 'Z') {
-            out[i] = (char)(out[i] - 'A' + 'a');
-        }
-    }
-    return out;
-}
-
-bool loadOrigByName(int32_t level, mdk::LevelData& levelData,
-                    const std::map<std::string, std::string>& hdByKey,
-                    const std::map<std::string, uint32_t>& origDims, OrigByName* out) {
-    FILE* file = fopen((std::string(kOrigPackRoot) + "/byname.txt").c_str(), "r");
-    if (!file) {
-        return false;
-    }
-    char line[512];
-    while (fgets(line, sizeof(line), file)) {
-        const size_t length = strlen(line);
-        if (length > 0 && line[length - 1] != '\n' && !feof(file)) {
-            int c;
-            while ((c = fgetc(file)) != EOF && c != '\n') {
-            }
-            continue;
-        }
-        if (line[0] == '#' || line[0] == '\n') {
-            continue;
-        }
-        // level \t arena \t name \t rel   (arena_etc1_convert.py)
-        std::string fields[4];
-        size_t field = 0;
-        for (const char* p = line; *p && *p != '\n' && field < 4; p++) {
-            if (*p == '\t') {
-                field++;
-            } else {
-                fields[field] += *p;
-            }
-        }
-        if (field != 3 || atoi(fields[0].c_str()) != (int)level) {
-            continue;
-        }
-        const mdk::formats::Arena* arena = levelData.arenaNamed(fields[1]);
-        if (arena == nullptr) {
-            continue;
-        }
-        const mdk::formats::Palette& palette = levelData.paletteOf(arena);
-        const std::pair<const void*, std::string> key(
-            (const void*)&palette, lowerName3ds(fields[2]));
-        const std::string path = std::string(kOrigPackRoot) + "/" + fields[3] + ".t3x";
-        const std::map<std::pair<const void*, std::string>, std::string>::iterator known =
-            out->paths.find(key);
-        if (known != out->paths.end() && known->second != path) {
-            // Only reachable if the exporter ships a corridor and its arena
-            // different files for one name. The arena with colours of its own
-            // is the owner (a corridor borrows, so it has none): it wins.
-            const bool ownerRow = arena->paletteRgbBytes() != 0;
-            mdk::log3dsPrintf("orig: byname collision arena=%s name=%s keeping=%s ignoring=%s",
-                              fields[1].c_str(), fields[2].c_str(),
-                              ownerRow ? path.c_str() : known->second.c_str(),
-                              ownerRow ? known->second.c_str() : path.c_str());
-            if (!ownerRow) {
-                continue;
-            }
-        }
-        out->paths[key] = path;
-        const std::map<std::string, uint32_t>::const_iterator dims = origDims.find(fields[3]);
-        if (dims != origDims.end()) {
-            out->dims[key] = dims->second;
-        } else {
-            out->dims.erase(key);
-        }
-        const size_t mark = fields[3].find('@');
-        const std::map<std::string, std::string>::const_iterator hd =
-            mark == std::string::npos ? hdByKey.end()
-                                      : hdByKey.find(lowerName3ds(fields[3].substr(mark + 1)));
-        if (hd != hdByKey.end()) {
-            out->hdPaths[key] = hd->second;
-        } else {
-            out->hdPaths.erase(key);
-        }
-    }
-    fclose(file);
-    return !out->paths.empty();
-}
-
-// KURT'S PACK AT LEVEL LOAD (cold; AGENTS.md P5). ONE open of romfs:/kurt/kurt.pak,
-// the 32-byte header, then the index and the start set in ONE contiguous read
-// (kurt_pack.py lays the start set out right after the index), and the file is
-// closed: the other animations are read later, a range at a time, by the
-// backend's reader thread (KurtSprite's stream), never inside a frame. Every
-// read is checked: no file, a short read, a bad magic/version/layout or a file
-// shorter than its header says is logged ONCE here and Kurt's frames take the
-// 16-bit path for the level -- nothing is retried. A bad index ENTRY costs only
-// its own frame (KurtSprite::useCompressedPack) and is named here.
-struct KurtPackLoad {
-    mdk::formats::KurtPack pack;
-    // The pack's bytes [kHeaderBytes, startEnd): the index, then the start set.
-    // A staging buffer: freed as soon as the start set is imported.
-    std::vector<uint8_t> front;
-    int32_t opened = 0;
-    int32_t bytesRead = 0;
-};
-
-bool loadKurtPack(const char* path, KurtPackLoad* out) {
-    FILE* file = fopen(path, "rb");
-    if (!file) {
-        mdk::log3dsPrintf("sprites: no pack at %s; Kurt's frames are 16-bit", path);
-        return false;
-    }
-    out->opened = 1;
-    long length = -1;
-    if (fseek(file, 0, SEEK_END) == 0) {
-        length = ftell(file);
-    }
-    uint8_t header[mdk::formats::KurtPack::kHeaderBytes];
-    bool ok = length >= 0 && fseek(file, 0, SEEK_SET) == 0 &&
-              fread(header, 1, sizeof(header), file) == sizeof(header);
-    if (ok) {
-        out->bytesRead += (int32_t)sizeof(header);
-    }
-    mdk::formats::KurtPack::Header parsed;
-    const mdk::formats::KurtPack::Status status =
-        ok ? mdk::formats::KurtPack::parseHeader(header, sizeof(header),
-                                                 length > 0x7FFFFFFFL ? 0x7FFFFFFFu
-                                                                      : (uint32_t)length,
-                                                 &parsed)
-           : mdk::formats::KurtPack::Status::TooSmall;
-    if (status != mdk::formats::KurtPack::Status::Ok) {
-        fclose(file);
-        mdk::log3dsPrintf("sprites: pack %s refused (%s, %ld bytes); Kurt's frames are 16-bit",
-                          path, mdk::formats::KurtPack::statusName(status), length);
-        return false;
-    }
-    // The header's bounds (parseHeader) keep this under the file's size.
-    const uint32_t frontBytes = parsed.startEnd - mdk::formats::KurtPack::kHeaderBytes;
-    out->front.resize(frontBytes);
-    const size_t got = frontBytes > 0 ? fread(out->front.data(), 1, frontBytes, file) : 0;
-    fclose(file);
-    if (got != frontBytes) {
-        mdk::log3dsPrintf("sprites: pack %s: short read of the index and start set (%u of %u "
-                          "bytes); Kurt's frames are 16-bit",
-                          path, (unsigned)got, (unsigned)frontBytes);
-        std::vector<uint8_t>().swap(out->front);
-        return false;
-    }
-    out->bytesRead += (int32_t)frontBytes;
-    const uint32_t indexBytes = parsed.indexEnd() - mdk::formats::KurtPack::kHeaderBytes;
-    if (mdk::formats::KurtPack::parseIndex(parsed, out->front.data(), indexBytes, &out->pack) !=
-        mdk::formats::KurtPack::Status::Ok) {
-        mdk::log3dsPrintf("sprites: pack %s: index refused; Kurt's frames are 16-bit", path);
-        std::vector<uint8_t>().swap(out->front);
-        return false;
-    }
-    if (out->pack.badEntries() > 0) {
-        const int32_t first = out->pack.firstBadEntry();
-        mdk::log3dsPrintf("sprites: pack %s: %d bad index entries (first #%d %s: %s); those "
-                          "frames are 16-bit",
-                          path, (int)out->pack.badEntries(), (int)first,
-                          out->pack.entries()[(size_t)first].name.c_str(),
-                          out->pack.firstBadReason());
-    }
-    return true;
-}
-
-// The surface cache's lookup into the compressed packs: a Lit or Sprite
-// surface's .t3x path (a Sprite takes only an orig-pack answer: SurfaceCache
-// surfaceId), answered by the pair and its names, never by the shading. `pack`
-// is the HD pack (the SD card's upscale), `orig` the orig pack (the RomFS's
-// original-resolution pre-encode); either may be absent.
-
-struct HdPackSource {
-    mdk::ModImages* pack = nullptr;
-    mdk::ModImages* orig = nullptr;
-    OrigByName* byname = nullptr;
-    std::string path;
-    std::string hdPath;
-    // Set by the warms around their ask (requestPackedSurface): the ask is
-    // a HINT, and a hint never brings a texture's pixels back (below).
-    bool hint = false;
-};
-
-bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::Palette* palette,
-                  mdk::ColourReplacement* out) {
-    HdPackSource* source = static_cast<HdPackSource*>(user);
-    if (!source || (!source->pack && !source->orig) || !surface.texture || !palette) {
-        return false;
-    }
-    const std::string& name = surface.name.empty() ? surface.texture->name() : surface.name;
-    // THE NAME INDEX FIRST, with or without an HD pack: the build knows this
-    // texture by name, so the content hash is the fallback, not the rule. Both
-    // names it could be keyed by are tried -- the material's and the texture's
-    // own -- because an archive can hold a texture under a different name than
-    // its own. A row whose original size is not this texture's is not this
-    // texture's file: it is skipped (counted), never answered.
-    //
-    // THE HD RULE (docs/HD_TEXTURES_3DS_SPEC.md 3.1): a row with an HD file
-    // answers BOTH files -- the packed original (compressedPath) and the HD copy
-    // (hdPath) -- and the backend makes the texture from them alone
-    // (mdk_render_create_compressed_file): with enableHdTextures on only the HD
-    // file is read, with it off only the original, and the toggle stays live per
-    // draw. No standard-definition pixel is read, expanded or hashed for it. An
-    // ANIMATED texture (stacked frames) takes no HD copy: the pack's strip is
-    // resampled to a power of two (hd_pack_convert.py), which squeezes its
-    // frames -- EXPLODE's 26 frames of 128 rows become 19.7 rows each -- and the
-    // backend never draws an HD copy for a stacked texture (06_draw.inc).
-    if (source->byname && !source->byname->paths.empty()) {
-        std::string keys[2] = {lowerName3ds(name), lowerName3ds(surface.texture->name())};
-        const uint32_t size =
-            ((uint32_t)surface.texture->width() << 16) |
-            ((uint32_t)(surface.texture->height() * surface.texture->frameCount()) & 0xFFFFu);
-        for (int k = 0; k < 2; k++) {
-            const std::pair<const void*, std::string> key((const void*)palette, keys[k]);
-            std::map<std::pair<const void*, std::string>, std::string>::const_iterator hit =
-                source->byname->paths.find(key);
-            if (hit == source->byname->paths.end()) {
-                continue;
-            }
-            std::map<std::pair<const void*, std::string>, uint32_t>::const_iterator dims =
-                source->byname->dims.find(key);
-            if (dims != source->byname->dims.end() && dims->second != size) {
-                continue;
-            }
-            source->path = hit->second;
-            out->compressedPath = source->path.c_str();
-            out->compressedOriginal = true;
-            std::map<std::pair<const void*, std::string>, std::string>::const_iterator hd =
-                source->byname->hdPaths.find(key);
-            if (hd != source->byname->hdPaths.end()) {
-                if (surface.texture->frameCount() <= 1) {
-                    source->hdPath = hd->second;
-                    out->hdPath = source->hdPath.c_str();
-                }
-            }
-            return true;
-        }
-    }
-    // A HINT ANSWERS FROM THE NAME INDEX ONLY. The content hash below reads
-    // and hashes the texture's whole index array (and, for an arena texture
-    // whose pixels are away, first brings back its arena's whole texture block,
-    // LevelData::loadPixelsFromMto). Measured on the Old 3DS: the object warm's
-    // step for EXPLODE -- its 128x3328 strip is over the PICA's 1024, so the
-    // pack never holds it and the name index misses -- spent 104.0 ms of frame 1
-    // in that hash. A hint exists to take work OFF the frame, so it never pays
-    // for a hash: `true` with no path is SurfaceCache::requestPacked's "not a
-    // pack answer" -- nothing made, nothing marked -- and the texture's first
-    // draw asks the full lookup, exactly as without the warm.
-    if (source->hint) {
-        return true;
-    }
-    // WITH AN HD PACK, A NAME MISS IS NOT HASHED. The hash is what finds a
-    // texture in either pack by content, and it is the cost the HD rule forbids
-    // in play: 60-150 ms per texture on the Old 3DS, plus the MTO read-back of
-    // its pixels. A texture the name index does not know -- one over the PICA's
-    // 1024 (refused from both packs by the builds), a model's texture outside
-    // the arenas' archives -- is drawn the way it would be with no pack at all:
-    // expanded from its indices. (An HD pack is only kept for a level with a
-    // name index: main refuses it without one.)
-    if (source->pack) {
-        return false;
-    }
-    // NOTHING OVER THE PICA'S 1024 IS IN THE ORIG PACK (arena_etc1_convert.py
-    // refuses such a strip by name: sl_big 64x1920, fire 64x2628, explode
-    // 128x3328), so with no HD pack the content hash below can never match one
-    // -- and hashing EXPLODE's 128x3328 strip costs ~100 ms on the Old 3DS. A
-    // Sprite-shaded object part drawing it asks here at its first draw (frame
-    // 650 of the L7 walk: obj 105.5 ms once Sprites asked the pack).
-    if (surface.texture->width() > 1024 ||
-        surface.texture->height() * surface.texture->frameCount() > 1024) {
-        return false;
-    }
-    // THE ORIG PACK BY CONTENT, with no HD pack and a name the index does not
-    // know: the hdKeyOf key, so a stamped texture (05_resources.inc rekeys it)
-    // matches nothing and takes the index path.
-    if (source->orig && source->orig->resolve(mdk::ModImages::Kind::Textures, name,
-                                              *surface.texture, *palette, &source->path)) {
-        out->compressedPath = source->path.c_str();
-        // THE ORIG PACK'S HIT IS ASKED FOR UP FRONT, not attached after an
-        // expansion: surfaceId's pre-creation consult (surface_cache.h) turns
-        // this into mdk_render_create_compressed_file, so the ARM11 expands
-        // nothing for this texture -- the arena's 600-1600 ms of palette
-        // expansion, filter and mip chain becomes a RomFS read on the reader
-        // thread and an import at a frame boundary.
-        out->compressedOriginal = true;
-        return true;
-    }
-    return false;
-}
-
-// With -fno-exceptions libstdc++'s operator new calls this and then aborts,
-// so the handler is the only place that can name the allocation that ran
-// the heap dry. Without it an OOM is a silent exit with no last line.
-static void onHeapExhausted() {
-    heapProbe("OOM");
-    mdk::log3dsPrintf("FATAL: operator new failed -- the 24 MiB heap is exhausted");
-    mdk::log3dsClose();
-    abort();
-}
-
 } // namespace
-
-// The light rig for one arena, computed once and kept in `cache` (main's
-// lightCache). enhancedLighting scans the arena's faces -- ~113 ms per arena
-// on the Old 3DS -- and its answer depends on nothing but (dti, arena), both
-// fixed for the level's life. The frame's light code and the stream pump both
-// come through here, so the scan runs at most once per arena.
-static mdk::Lighting cachedLighting(
-    std::vector<std::pair<const mdk::formats::Arena*, mdk::Lighting>>& cache,
-    const mdk::LevelData& level, const mdk::formats::Arena* arena) {
-    for (const std::pair<const mdk::formats::Arena*, mdk::Lighting>& e : cache) {
-        if (e.first == arena) {
-            return e.second;
-        }
-    }
-    cache.push_back(std::make_pair(arena, mdk::enhancedLighting(level.dti(), *arena)));
-    return cache.back().second;
-}
-
-// The warms' ask (game/object_view.h warmObjectStep, EffectsView::warmStep): a
-// hint only, and only for a surface the orig pack holds
-// (SurfaceCache::requestPacked) -- any other texture is still made by its first
-// draw, as before. The lookup is told it is a hint (HdPackSource::hint: no pixel
-// fetch for it).
-struct WarmAsk {
-    mdk::SurfaceCache* surfaces = nullptr;
-    HdPackSource* source = nullptr;
-};
-
-
-
-static void requestPackedSurface(void* user, const mdk::Surface& surface,
-                                 const mdk::formats::Palette* palette) {
-    WarmAsk* ask = static_cast<WarmAsk*>(user);
-    ask->source->hint = true;
-    ask->surfaces->requestPacked(surface, palette);
-    ask->source->hint = false;
-}
-
-// The effects warm's start for a large sprite (EffectsView::warmStep): ask the
-// shared cache for its texture, starting its make -- the pending id when the
-// pack holds it, else a sliced expansion.
-static void startEffectSurface(void* user, const mdk::Surface& surface,
-                               const mdk::formats::Palette* palette) {
-    static_cast<WarmAsk*>(user)->surfaces->prepare(surface, palette);
-}
 
 int main(int argc, char** argv) {
     // P1 lifecycle (AGENTS.md 11): know when the console sleeps and
@@ -871,8 +186,8 @@ int main(int argc, char** argv) {
     mdk::mathLutInit();
 
     mdk::log3dsOpen();
-    std::set_new_handler(onHeapExhausted);
-    heapProbe("boot");
+    std::set_new_handler(mdk::onHeapExhausted);
+    mdk::heapProbe("boot");
     // P6 evidence: the split heap_split.cpp asks for, printed before any
     // level is loaded. `cap` is what the allocator granted main; `lin` is the
     // GPU heap's size before the renderer touches it.
@@ -905,79 +220,14 @@ int main(int argc, char** argv) {
     // the knobs are discoverable; a file that does not parse keeps the
     // defaults too, and says so in the boot log.
     mdk::EnhancedToggles enhancedToggles;
-    {
-        // Static, and 2 KB: the toggles' lines and the game's (package #20a).
-        static char configText[2048];
-        bool read = false;
-        if (FILE* config = fopen("sdmc:/3ds/mdk/config.ini", "rb")) {
-            const size_t got = fread(configText, 1, sizeof(configText) - 1, config);
-            configText[got] = '\0';
-            fclose(config);
-            read = true;
-        }
-        if (read) {
-            g_gameSettings.parseOver(configText);
-        }
-        if (read && mdk::parseEnhancedConfig(configText, &enhancedToggles)) {
-            mdk::log3dsPrintf("config: sdmc:/3ds/mdk/config.ini loaded (game: master=%d music=%d "
-                              "effects=%d filter=%d difficulty=%s gore=%d)",
-                              (int)g_gameSettings.masterVolume, (int)g_gameSettings.musicVolume,
-                              (int)g_gameSettings.effectsVolume, (int)g_gameSettings.musicFilter,
-                              mdk::GameSettings::difficultyName(g_gameSettings.difficulty),
-                              (int)g_gameSettings.gore);
-        } else {
-            if (read) {
-                mdk::log3dsPrintf("config: config.ini did not parse; defaults kept");
-            }
-            if (saveEnhancedConfig(enhancedToggles)) {
-                mdk::log3dsPrintf("config: wrote default sdmc:/3ds/mdk/config.ini");
-            } else {
-                mdk::log3dsPrintf("config: could not write sdmc:/3ds/mdk/config.ini");
-            }
-        }
-    }
+    mdk::loadConfig3ds(&enhancedToggles);
     // THE CONTROLS (owner, 2026-11-19): sdmc:/3ds/mdk/controls.ini, one line
     // per action (platform/controls_3ds.h has the format and the defaults).
     // Cold, once, here: a missing file is the defaults and is written out once
     // so the owner can edit it; a bad line keeps that action's default and an
     // unknown key is ignored, both logged; the resolved table is one line.
     static mdk::ControlBindings controls = mdk::defaultControlBindings();
-    {
-        static char controlsText[4096];
-        size_t got = 0;
-        bool read = false;
-        if (FILE* file = fopen("sdmc:/3ds/mdk/controls.ini", "rb")) {
-            got = fread(controlsText, 1, sizeof(controlsText) - 1, file);
-            controlsText[got] = '\0';
-            fclose(file);
-            read = true;
-        }
-        if (read) {
-            mdk::ControlsReport report;
-            mdk::parseControls(controlsText, got, &controls, &report);
-            mdk::log3dsPrintf("controls: sdmc:/3ds/mdk/controls.ini loaded: %d actions set, %d "
-                              "bad (default kept), %d unknown (ignored)%s%s",
-                              (int)report.applied, (int)report.bad, (int)report.unknown,
-                              report.firstProblem[0] ? "; first: " : "", report.firstProblem);
-        } else {
-            const std::string text = mdk::writeControls(controls);
-            bool written = false;
-            if (FILE* file = fopen("sdmc:/3ds/mdk/controls.ini", "wb")) {
-                written = fwrite(text.c_str(), 1, text.size(), file) == text.size();
-                written = fclose(file) == 0 && written;
-            }
-            mdk::log3dsPrintf(written ? "controls: wrote default sdmc:/3ds/mdk/controls.ini"
-                                      : "controls: could not write sdmc:/3ds/mdk/controls.ini; "
-                                        "defaults in use");
-        }
-        mdk::log3dsPrintf("controls: %s", mdk::describeControls(controls).c_str());
-        if (controls.buttons[mdk::kKeyZoomIn] == 0 || controls.buttons[mdk::kKeyZoomOut] == 0) {
-            mdk::log3dsPrintf("controls: the scope's zoom_in/zoom_out are unbound; sniper mode "
-                              "stays at its entry zoom");
-        }
-    }
-
-
+    mdk::loadControls3ds(&controls);
 
     MdkRenderDesc desc;
     desc.width = 240;
@@ -995,7 +245,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     mdk::log3dsPrintf("backend: %s", mdk_render_backend_name(renderer));
-    heapProbe("renderer");
+    mdk::heapProbe("renderer");
 
     // ---------------------------------------------------------------------
     // The flow, BEFORE the level: the flow is what decides which level plays
@@ -1005,7 +255,7 @@ int main(int argc, char** argv) {
     // ---------------------------------------------------------------------
     // THE ENTRY SCREEN (package #20a, the owner un-cut 2026-11-20): the main menu,
     // as the C#'s game starts (Start.Menu).
-    g_toggles = &enhancedToggles;
+    mdk::g_toggles = &enhancedToggles;
     mdk::flow::FlowOptions options;
     options.start = mdk::flow::Start::Menu;
     // THE INTRO1A SPLASH at boot (package #20c): the C#'s default (Program.cs:241,
@@ -1039,16 +289,16 @@ int main(int argc, char** argv) {
     uint32_t frame = 0;
     uint32_t steps = 0;
     const char* exitReason = "aptMainLoop returned false";
-    heapProbe("run-start");
+    mdk::heapProbe("run-start");
     // The menus' screens (menu_screens_3ds.h).
     mdk::FrontScreens3ds front;
     front.renderer = renderer;
     front.flow = &flow;
-    front.settings = &g_gameSettings;
-    front.save = saveConfigNow;
+    front.settings = &mdk::g_gameSettings;
+    front.save = mdk::saveConfigNow;
     front.controls = &controls;
     front.toggles = &enhancedToggles;
-    front.now = nowSeconds;
+    front.now = mdk::nowSeconds;
     front.resumePending = &g_resumePending;
     front.frame = &frame;
     front.frameBudget = g_frameBudget;
@@ -1114,15 +364,15 @@ int main(int argc, char** argv) {
             streamFrontend.frame = &frame;
             streamFrontend.frameBudget = g_frameBudget;
             streamFrontend.resumePending = &g_resumePending;
-            streamFrontend.heapProbe = heapProbe;
-            streamFrontend.difficulty = (mdk::Kurt::Difficulty)g_gameSettings.difficulty;
+            streamFrontend.heapProbe = mdk::heapProbe;
+            streamFrontend.difficulty = (mdk::Kurt::Difficulty)mdk::g_gameSettings.difficulty;
             streamEvent = mdk::runStream3ds(streamFrontend, streamData, streamLevel,
                                             flow.streamHealth(), flow.streamSeed(clockSeed),
                                             &streamEndHealth, &streamExit);
         }
         mdk_render_release(renderer, streamScope);
         mdk::streamBlankFrames3ds(renderer, frame, 2);
-        heapProbe("stream-teardown");
+        mdk::heapProbe("stream-teardown");
         if (streamEvent == mdk::flow::Event::Quit) {
             exitReason = streamExit;
             break;
@@ -1171,7 +421,7 @@ int main(int argc, char** argv) {
             exitReason = front.exitReason;
             break;
         }
-        heapProbe("menus-done");
+        mdk::heapProbe("menus-done");
     }
     // C# Play: the loading screen's one frame, then the level (package #20c).
     mdk::showLoadingScreen3ds(renderer, flow.state().level, frame);
@@ -1204,26 +454,25 @@ int main(int argc, char** argv) {
     // before the packs existed.
     mdk::ModImages hdPack;
     mdk::ModImages origPack;
-    OrigByName origByName;
-    HdPackSource hdSource;
+    mdk::OrigByName origByName;
+    mdk::HdPackSource hdSource;
     // The two packs' side tables for the name index (loadOrigByName): the HD
     // files by content key, the orig files' original sizes. Level-load only.
     std::map<std::string, std::string> hdByKey;
     std::map<std::string, uint32_t> origDims;
     // Every HD file's .t3x size and format (the level's set is sized from it).
     std::map<std::string, uint32_t> hdShapes;
-    // THE LEVEL'S RESIDENT HD SET (spec 3.2): its files, the cap their levels are
-    // read at, and whether one was chosen (holdHdSet, below).
-    std::vector<std::string> hdSetPaths;
+    // THE LEVEL'S RESIDENT HD SET (spec 3.2): the cap its levels are read at, 0
+    // when no set was chosen (pinHdSet3ds, below).
     int32_t hdSetCap = 0;
-    if (loadHdPack(flow.state().level, &hdPack, &hdByKey, &hdShapes)) {
+    if (mdk::loadHdPack(flow.state().level, &hdPack, &hdByKey, &hdShapes)) {
         hdSource.pack = &hdPack;
     }
-    if (loadOrigPack(flow.state().level, &origPack, &origDims)) {
+    if (mdk::loadOrigPack(flow.state().level, &origPack, &origDims)) {
         hdSource.orig = &origPack;
     }
     if (hdSource.pack || hdSource.orig) {
-        surfaces.setColourReplacementLookup(hdPackLookup, &hdSource);
+        surfaces.setColourReplacementLookup(mdk::hdPackLookup, &hdSource);
     }
     // The arenas on the GPU: a LevelView per arena the scripts have loaded,
     // following the arena stream (game/arena_views.h). Until 2026-11-18 this was
@@ -1236,13 +485,8 @@ int main(int argc, char** argv) {
     // than a PICA texture, so it is a sphere around the camera in slices.
     // Made once at level load; queued first every frame, DoubleSided, so solid
     // geometry (drawn in an earlier pass bucket) occludes it through depth.
-    struct SkyRange {
-        int32_t texture = -1;
-        int32_t first = 0;
-        int32_t count = 0;
-    };
     MdkMeshId skyMesh = -1;
-    SkyRange skyRanges[8];
+    mdk::SkyRange skyRanges[8];
     int32_t skyRangeCount = 0;
     // Kurt's sprites. TRAVERSE/TRAVSPRT.BNI is the same archive the HUD and the
     // scripts read (C# Viewer loads it once and passes it to all three), and the
@@ -1288,11 +532,11 @@ int main(int argc, char** argv) {
     if (data.found()) {
         mdk::log3dsPrintf("data: %s", data.dir().c_str());
         if (mdk::LevelData::load(&level, &data, flow.state().level)) {
-            heapProbe("level-data");
+            mdk::heapProbe("level-data");
             // The name-keyed orig index needs the loaded level (arena name ->
             // palette), so it is built here, not with the pack itself.
             if (hdSource.orig &&
-                loadOrigByName(flow.state().level, level, hdByKey, origDims, &origByName)) {
+                mdk::loadOrigByName(flow.state().level, level, hdByKey, origDims, &origByName)) {
                 hdSource.byname = &origByName;
                 mdk::log3dsPrintf("orig: byname index %d textures, %d with an HD copy",
                                   (int)origByName.paths.size(), (int)origByName.hdPaths.size());
@@ -1304,7 +548,7 @@ int main(int argc, char** argv) {
             if (hdSource.pack && !hdSource.byname) {
                 mdk::log3dsPrintf("hd: REFUSED for level %d: no name index (%s/byname.txt) "
                                   "-- the HD pack is not used without it",
-                                  (int)flow.state().level, kOrigPackRoot);
+                                  (int)flow.state().level, mdk::kOrigPackRoot);
                 hdSource.pack = nullptr;
             }
             std::map<std::string, std::string>().swap(hdByKey);
@@ -1329,7 +573,7 @@ int main(int argc, char** argv) {
             } else {
                 cmiReady = true;
                 mdk::log3dsPrintf("scripts: CMI loaded (%d bytes)", (int)cmiBytes.size());
-                heapProbe("cmi");
+                mdk::heapProbe("cmi");
             }
             const int32_t start = level.dti().startArena();
             if (start >= 0 && start < (int32_t)level.dti().arenas().size()) {
@@ -1369,7 +613,7 @@ int main(int argc, char** argv) {
                 // The light rigs too: the scan is ~113 ms an arena and no door
                 // frame must pay it.
                 for (const mdk::formats::Arena* a : level.arenas()) {
-                    cachedLighting(lightCache, level, a);
+                    mdk::cachedLighting(lightCache, level, a);
                 }
                 mdk::log3dsPrintf("start: %d views, %d light rigs precomputed",
                                   (int)viewsBuilt, (int)lightCache.size());
@@ -1377,52 +621,12 @@ int main(int argc, char** argv) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
                                       (int)startView->batchCount(), (int)startView->vertexCount(),
                                       (int)arena->triangleCount());
-                    {
-                        const mdk::formats::Dti& dti = level.dti();
-                        const uint8_t* pal = dti.palette().rgba();
-                        mdk::SkyDome dome;
-                        if (mdk::buildSkyDome(dti.sky(), pal, dti.skyWrapWidth(), dti.skyHorizonRow(),
-                                              dti.skyOffset(), dti.skyTopColor(),
-                                              dti.skyBottomColor(), &dome)) {
-                            skyMesh = mdk_render_create_mesh(renderer, dome.vertices.data(),
-                                                             (int32_t)dome.vertices.size());
-                            for (const mdk::SkySlice& slice : dome.slices) {
-                                if (skyRangeCount >= 6) break;
-                                SkyRange& r = skyRanges[skyRangeCount++];
-                                r.texture = mdk_render_create_index_texture(
-                                    renderer, slice.storedWidth, dome.height, slice.indices.data(), pal);
-                                r.first = slice.first;
-                                r.count = slice.count;
-                            }
-                            const uint8_t top[4] = {dome.topRgb[0], dome.topRgb[1], dome.topRgb[2], 255};
-                            const uint8_t bottom[4] = {dome.bottomRgb[0], dome.bottomRgb[1],
-                                                       dome.bottomRgb[2], 255};
-                            SkyRange& t = skyRanges[skyRangeCount++];
-                            t.texture = mdk_render_create_rgba_texture(renderer, 1, 1, top);
-                            t.first = dome.topFirst;
-                            t.count = dome.topCount;
-                            SkyRange& b = skyRanges[skyRangeCount++];
-                            b.texture = mdk_render_create_rgba_texture(renderer, 1, 1, bottom);
-                            b.first = dome.bottomFirst;
-                            b.count = dome.bottomCount;
-                            mdk::log3dsPrintf("sky: %dx%d wrap=%d horizon=%d offset=%d -> %d slices, "
-                                              "%d vertices, mesh=%d, index0 remapped %d texels to %d (d2=%d)",
-                                              (int)dti.sky().width(), (int)dti.sky().height(),
-                                              (int)dti.skyWrapWidth(), (int)dti.skyHorizonRow(),
-                                              (int)dti.skyOffset(), (int)dome.slices.size(),
-                                              (int)dome.vertices.size(), (int)skyMesh,
-                                              (int)dome.remappedTexels, (int)dome.remapTarget,
-                                              (int)dome.remapDistance);
-                        } else {
-                            mdk::log3dsPrintf("sky: none (the level's panorama cannot be built)");
-                        }
-                        // The dome's CPU copies die here: the renderer keeps its own.
-                    }
+                    skyRangeCount = mdk::buildSky3ds(renderer, level.dti(), &skyMesh, skyRanges);
                 } else {
                     mdk::log3dsPrintf("view: FAILED");
                     arena = nullptr;
                 }
-                heapProbe("arena-view");
+                mdk::heapProbe("arena-view");
             }
             // Kurt's frames are loaded whether the arena view worked or not: the
             // sprite is his, not the arena's, and a level with no arena geometry
@@ -1445,57 +649,8 @@ int main(int argc, char** argv) {
                         kurtSprite.setMods(&hdPack);
                     }
                     mdk::log3dsPrintf("sprites: Kurt's animations loaded");
-                    // KURT'S COMPRESSED FRAMES and the start set, at level load
-                    // (cold; AGENTS.md P5: no SD read inside a frame). One open of
-                    // the pack, its index and the start set in one read, the start
-                    // set imported, the read's buffer freed; the other animations
-                    // stream later (pumpStream, below). One line: files opened,
-                    // bytes read, ms, start-set frames imported, and the .t3x bytes
-                    // still held on the heap after it (0: the stream starts empty).
-                    // Off (kurtCompressed=0, the A/B): every frame is the
-                    // expansion, in the texture16 store (RGBA5551, or RGBA8 under
-                    // texture16=0).
-                    {
-                        const double started = nowSeconds();
-                        mdk::KurtSprite::CompressedReport report;
-                        KurtPackLoad packLoad;
-                        const bool have = enhancedToggles.kurtCompressed &&
-                                          loadKurtPack(kKurtPackPath, &packLoad);
-                        kurtSprite.useCompressedPack(have ? &packLoad.pack : nullptr,
-                                                     flow.state().level, kKurtPackPath, &report);
-                        const double read = nowSeconds();
-                        if (have) {
-                            const mdk::formats::KurtPack::Header& header =
-                                packLoad.pack.header();
-                            const uint32_t skip =
-                                header.dataOffset - mdk::formats::KurtPack::kHeaderBytes;
-                            kurtSprite.preloadStartSet(packLoad.front.data() + skip,
-                                                       header.dataOffset,
-                                                       header.startEnd - header.dataOffset,
-                                                       &report);
-                        }
-                        // The staging buffer goes now: the start set's GPU copies
-                        // are made (and the backend keeps each one's .t3x as its
-                        // re-make source, startFileBytes).
-                        std::vector<uint8_t>().swap(packLoad.front);
-                        const double done = nowSeconds();
-                        mdk::log3dsPrintf(
-                            "sprites: kurtCompressed=%d texture16=%d pack=%s: %d file opened, "
-                            "%d bytes read in %d ms; %d/%d frames ETC1A4 (%d bad), %d "
-                            "animations to stream; start set %d/%d frames imported, %d GPU "
-                            "bytes of %d, from %d bytes of .t3x, in %d ms; %u bytes of .t3x "
-                            "kept on the heap (stream bound %u)",
-                            (int)enhancedToggles.kurtCompressed, (int)enhancedToggles.texture16,
-                            have ? kKurtPackPath : "none", (int)packLoad.opened,
-                            (int)packLoad.bytesRead, (int)((read - started) * 1000.0),
-                            (int)report.compressed, (int)report.frames, (int)report.badFrames,
-                            (int)report.streamable, (int)report.preloaded,
-                            (int)report.startFrames, (int)report.preloadBytes,
-                            (int)report.preloadBudget, (int)report.startFileBytes,
-                            (int)((done - read) * 1000.0),
-                            (unsigned)kurtSprite.streamStats().staged,
-                            (unsigned)mdk::KurtSprite::kStagedCacheBytes);
-                    }
+                    // Kurt's compressed frames and the start set (packs_3ds.cpp).
+                    mdk::loadKurtFrames3ds(&kurtSprite, enhancedToggles, flow.state().level);
                 } else {
                     mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
                 }
@@ -1515,73 +670,15 @@ int main(int argc, char** argv) {
                 // FONTSML in its SYS_PAL colours, the oracle's Fonts
                 // pair (Ui.cs). A failure leaves menuReady false and
                 // the boot log says why; the game runs unchanged.
-                {
-                    std::vector<uint8_t> ftiBytes;
-                    mdk::formats::Fti menuFti;
-                    std::vector<uint8_t> bigBytes;
-                    std::vector<uint8_t> smallBytes;
-                    std::vector<uint8_t> sysPal;
-                    // Heap, not stack: each Font is ~11 KB (see the
-                    // menu objects above).
-                    std::unique_ptr<mdk::formats::Font> bigFont(new mdk::formats::Font());
-                    std::unique_ptr<mdk::formats::Font> smallFont(new mdk::formats::Font());
-                    if (!data.read("MISC/MDKFONT.FTI", &ftiBytes) ||
-                        !mdk::formats::Fti::parse(&menuFti, ftiBytes.data(),
-                                                  (int32_t)ftiBytes.size()) ||
-                        !menuFti.getBytes("FONTBIG", &bigBytes) ||
-                        !menuFti.getBytes("FONTSML", &smallBytes) ||
-                        !menuFti.getBytes("SYS_PAL", &sysPal) ||
-                        !mdk::formats::Font::parse(bigBytes.data(), (int32_t)bigBytes.size(),
-                                                   6 /* FONTBIG space, Font.cs */, bigFont.get()) ||
-                        !mdk::formats::Font::parse(smallBytes.data(), (int32_t)smallBytes.size(),
-                                                   4 /* FONTSML space, Font.cs */,
-                                                   smallFont.get())) {
-                        mdk::log3dsPrintf("menu: MDKFONT.FTI fonts did not load -- no menu");
-                    } else {
-                        const mdk::formats::Palette sysPalette = mdk::formats::Palette::fromRgb(
-                            sysPal.data(), (int32_t)sysPal.size());
-                        const int32_t palette =
-                            mdk_render_create_palette(renderer, sysPalette.rgba());
-                        if (palette >= 0 && menuBig.load(renderer, *bigFont, palette, sysPalette.rgba()) &&
-                            menuSmall.load(renderer, *smallFont, palette, sysPalette.rgba())) {
-                            menuReady = true;
-                            mdk::log3dsPrintf("menu: pause menu ready (START or SELECT)");
-                            // The HUD's messages draw in the same pair (the C#
-                            // HudView's fonts are these: FONTBIG, FONTSML, SYS_PAL),
-                            // so they share the menu's atlases rather than upload
-                            // a second copy; the texts are copied out of the FTI
-                            // (a few KB) and the 160 KB file goes with this block.
-                            hud.setFonts(&menuBig, &menuSmall);
-                            hud.messages().setTexts(menuFti);
-                        } else {
-                            mdk::log3dsPrintf("menu: font atlases did not upload -- no menu");
-                        }
-                    }
-                }
+                menuReady = mdk::loadMenuFonts3ds(renderer, data, &menuBig, &menuSmall, &hud);
             }
-            heapProbe("assets");
+            mdk::heapProbe("assets");
         } else {
             mdk::log3dsPrintf("level %d: FAILED to load", (int)flow.state().level);
         }
     } else {
         mdk::log3dsPrintf("data: NOT FOUND");
-        // The diagnostics, because "not found" has too many causes.
-        const mdk::formats::FileSystem* fs = mdk::formats::fileSystem();
-        mdk::log3dsPrintf("fs: %s", fs ? "installed" : "NULL");
-        if (fs) {
-            const std::string marker =
-                mdk::formats::caseInsensitiveResolve(fs, "romfs:/", "TRAVERSE/TRAVSPRT.BNI");
-            mdk::log3dsPrintf("marker: %s", marker.c_str());
-            std::vector<std::string> names;
-            const bool listed = fs->listDirectory(fs->user, "romfs:/", &names);
-            mdk::log3dsPrintf("list romfs:/ -> %d, %d entries", (int)listed, (int)names.size());
-            for (size_t i = 0; i < names.size() && i < 8; i++) {
-                mdk::log3dsPrintf("  %s", names[i].c_str());
-            }
-            std::vector<uint8_t> bytes;
-            const bool read = fs->readFile(fs->user, "romfs:/manifest.txt", &bytes);
-            mdk::log3dsPrintf("manifest: %d, %d bytes", (int)read, (int)bytes.size());
-        }
+        mdk::logDataNotFound3ds();
     }
 
     // ---------------------------------------------------------------------
@@ -1643,7 +740,7 @@ int main(int argc, char** argv) {
     mdk::log3dsPrintf("mem: app region size=%llu free=%llu bytes",
                       (unsigned long long)osGetMemRegionSize(MEMREGION_APPLICATION),
                       (unsigned long long)osGetMemRegionFree(MEMREGION_APPLICATION));
-    heapProbe("pre-audio");
+    mdk::heapProbe("pre-audio");
     mdk::log3dsPrintf("audio: loading SNI archives (level %d)", (int)flow.state().level);
     if (data.found() &&
         mdk::audio::SoundBank::forLevel(&bank, data, flow.state().level)) {
@@ -1665,9 +762,9 @@ int main(int argc, char** argv) {
         // start): the bank reads its steps on the frame, as before.
         if (mdk_render_has_file_reader(renderer)) {
             mdk::AsyncRead musicReader;
-            musicReader.requestRange = musicReadRequest;
-            musicReader.poll = musicReadPoll;
-            musicReader.cancel = musicReadCancel;
+            musicReader.requestRange = mdk::musicReadRequest;
+            musicReader.poll = mdk::musicReadPoll;
+            musicReader.cancel = mdk::musicReadCancel;
             musicReader.user = renderer;
             bank.setReader(musicReader);
         }
@@ -1678,7 +775,7 @@ int main(int argc, char** argv) {
     } else {
         mdk::log3dsPrintf("audio: the level's SNI archives did not load -- no sounds");
     }
-    heapProbe("post-audio");
+    mdk::heapProbe("post-audio");
     // KURT'S LEVEL ANIMATIONS: the level's SNI archives carry the wind tunnels' slide
     // (K_SLIP, K_SLIDE, K_FSLIDE, K_BSLIDE) and the snowboard's frames (C# Viewer:
     // KurtSprite.Add over SoundBank.Animation; the Linux frontend's same loop). Without
@@ -1698,7 +795,7 @@ int main(int argc, char** argv) {
         }
         mdk::log3dsPrintf("sprites: %d level animations (%d frames) from the SNI archives",
                           added, frames);
-        heapProbe("post-level-animations");
+        mdk::heapProbe("post-level-animations");
     }
     mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
     // THE OUTPUT (SPEC.md 8). The level mixes on the DSP (audio_dsp_3ds.h): every
@@ -1729,7 +826,7 @@ int main(int argc, char** argv) {
             space.add(a);
         }
     }
-    heapProbe("arena-space");
+    mdk::heapProbe("arena-space");
 
     // ---------------------------------------------------------------------
     // The object pass: the C#'s Viewer._objects, Viewer._looks and DrawObjects.
@@ -1837,7 +934,7 @@ int main(int argc, char** argv) {
     // against it (see the frame's object warm).
     std::map<std::string, size_t> objectWarmAt;
     int32_t objectWarmReleases = 0;
-    WarmAsk warmAsk;
+    mdk::WarmAsk warmAsk;
     warmAsk.surfaces = &surfaces;
     warmAsk.source = &hdSource;
     // The door bubble's hints for this frame (rebuilt every frame).
@@ -1891,7 +988,7 @@ int main(int argc, char** argv) {
     // address is stable because the mixer is a member of the object pointed at.
     mdk::audio::SoundMixer* mix = &mixer;
     // The volumes and the music filter (C# Settings.Apply onto its AudioDevice).
-    g_gameSettings.applyAudio(&mixer.device());
+    mdk::g_gameSettings.applyAudio(&mixer.device());
     // THE ONE HEALTH, taken once. The C#'s fresh Viewer seeds Kurt from the fall's
     // carry and CONSUMES it (Viewer.cs:246 -> CarryFromFall, :347-361, which does
     // `_kurt.SetHealth(carry.Health)` and then `state.Carry = null`), so the carry
@@ -1908,7 +1005,7 @@ int main(int argc, char** argv) {
         const float* start = level.dti().startPosition();
         player = mdk::Player();
         // The difficulty decides the town's timer: before the scripts (Viewer.cs:231).
-        player.combat().setDifficulty((mdk::Kurt::Difficulty)g_gameSettings.difficulty);
+        player.combat().setDifficulty((mdk::Kurt::Difficulty)mdk::g_gameSettings.difficulty);
         player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
         player.yaw = level.dti().startAngle();
         // The session's cheats hold in every level and every respawn (Viewer.cs:286-288).
@@ -1988,7 +1085,7 @@ int main(int argc, char** argv) {
                                                           &sprites));
             // The setting as it is now: the gore cheat flips it mid-level (not saved), and
             // a respawn is a fresh C# Viewer reading `ui.Settings.Gore` again.
-            runtime->option = g_gameSettings.gore ? 1 : 0;
+            runtime->option = mdk::g_gameSettings.gore ? 1 : 0;
             // The one air strike of the last two levels survives a death (Viewer.cs:236).
             runtime->airStrike().usedUp = flow.state().strikeUsed;
             // hud_message reaches the HUD (Viewer.cs:245, `_scripts.Messages`).
@@ -2006,13 +1103,13 @@ int main(int argc, char** argv) {
             follow.seedShake(seed);
             player.setMixer(&runtime->mixer());
             mix = &runtime->mixer();
-            g_gameSettings.applyAudio(&mix->device());
+            mdk::g_gameSettings.applyAudio(&mix->device());
             // The new mixer owns a new SoundDevice: its sample plane goes off too, or
             // it would mix samples nobody hears (the DSP plays the voices).
             mix->device().setSampleMix(false);
             mdk::log3dsPrintf("scripts: runtime ready (seed %d, option %d)", (int)seed,
                               (int)runtime->option);
-            heapProbe("runtime");
+            mdk::heapProbe("runtime");
         }
         if (kurtSpriteReady) {
             player.setFrameCounts(kurtSprite.frameCounts());
@@ -2043,11 +1140,11 @@ int main(int argc, char** argv) {
         if (runtime) {
             music.reset(new mdk::audio::LevelMusic(&runtime->mixer(), &cmi.arenaMusic(),
                                                    &cmi.arenaAmbience()));
-            const double music0 = nowSeconds();
+            const double music0 = mdk::nowSeconds();
             music->enter(startArenaName);
             mdk::log3dsPrintf("music: %s for %s (read and decoded in %.1f ms)",
                               music->playing().c_str(), startArenaName.c_str(),
-                              (nowSeconds() - music0) * 1000.0);
+                              (mdk::nowSeconds() - music0) * 1000.0);
             // That read is said (the line above): the frame's ledger starts here.
             audioStallsSaid = bank.stats().prefetchStalls;
             audioDemandSaid = bank.stats().demandReads;
@@ -2139,7 +1236,7 @@ int main(int argc, char** argv) {
     // catch-up (AGENTS P1: a long stall -- a sleep, a load -- must not be handed to
     // the simulation as one enormous step).
     // ---------------------------------------------------------------------
-    double last = nowSeconds();
+    double last = mdk::nowSeconds();
     const float step = mdk::flow::GameFlow::stepFor(false, false, 0.0f);
     const float maxPending = step * 10.0f;  // the C#'s ten-step ceiling
     float pending = 0.0f;
@@ -2210,7 +1307,7 @@ int main(int argc, char** argv) {
             notify("Can't save now");
             return;
         }
-        const double t0 = nowSeconds();
+        const double t0 = mdk::nowSeconds();
         const std::string json = runtime->capture();
         mdk::log3dsPrintf("snapshot hash %s, objects %d",
                           mdk::scripts::ScriptRuntime::snapshotHash(json).c_str(),
@@ -2223,7 +1320,7 @@ int main(int argc, char** argv) {
         mdk::flow::SavePrompt::Input enter;
         enter.accept = true;
         prompt.update(enter, 0.0f);
-        const double t1 = nowSeconds();
+        const double t1 = mdk::nowSeconds();
         if (prompt.saved()) {
             flow.state().quickSlot = prompt.name();
             mdk::log3dsPrintf("Saved game %s: level %d (%d bytes, %.1f ms)",
@@ -2264,127 +1361,11 @@ int main(int argc, char** argv) {
     // measured on the Old 3DS level-7 walk, 6.27 MB between this line and the
     // walk's lowest free (12.50 MB free here, 4.18 MB of set, 2.05 MB left at
     // the low point), so 7 MiB.
-    std::vector<const char*> hdSetArgs;
-    auto holdHdSet = [&](const char* why) {
-        // The hold: the backend reads and imports while this thread waits; the
-        // applet loop is served throughout (HOME, sleep, power).
-        const double hold0 = nowSeconds();
-        int32_t made = 0;
-        int32_t pending = mdk_render_hd_set_pending(renderer);
-        // A wait that makes nothing for a second (no file read or imported, the
-        // count unchanged: what is left cannot be read) ends the hold, as does a
-        // minute in all, or the applet loop saying stop.
-        int32_t idle = 0;
-        while (pending > 0 && idle < 20 && nowSeconds() - hold0 < 60.0) {
-            if (!aptMainLoop()) {
-                break;
-            }
-            const int32_t slice = mdk_render_settle_streams(renderer, 50);
-            const int32_t before = pending;
-            made += slice;
-            pending = mdk_render_hd_set_pending(renderer);
-            if (slice == 0 && pending == before) {
-                idle++;
-                svcSleepThread(50000000LL);
-            } else {
-                idle = 0;
-            }
-        }
-        made += mdk_render_settle_streams(renderer, 2000);   // the packed originals asked
-        MdkHdSetState state;
-        mdk_render_hd_set_state(renderer, &state);
-        mdk::log3dsPrintf("hd: set %s: %d of %d resident (%u bytes, cap %d), %d given up, "
-                          "%d files made in %.0f ms; linear free %u",
-                          why, (int)state.resident, (int)state.pinned,
-                          (unsigned)state.residentBytes, (int)state.topCap,
-                          (int)state.givenUp, (int)made, (nowSeconds() - hold0) * 1000.0,
-                          (unsigned)linearSpaceFree());
-    };
     // The last level's copies are given back first, so the heap read below is
     // this level's (mdk_render_pin_hd_set frees what nothing links any more).
     mdk_render_pin_hd_set(renderer, nullptr, nullptr, 0);
     if (hdSource.pack && hdSource.byname) {
-        static const uint32_t kHdPlayReserve = 7u * 1024u * 1024u;
-        std::set<std::string> unique;
-        for (std::map<std::pair<const void*, std::string>, std::string>::const_iterator it =
-                 origByName.hdPaths.begin();
-             it != origByName.hdPaths.end(); ++it) {
-            unique.insert(it->second);
-        }
-        // Each file's bytes at the three caps, in the set's (sorted) order.
-        hdSetPaths.assign(unique.begin(), unique.end());
-        std::vector<uint32_t> at512(hdSetPaths.size()), at256(hdSetPaths.size()),
-            at128(hdSetPaths.size());
-        uint32_t bytes512 = 0;
-        uint32_t bytes256 = 0;
-        uint32_t bytes128 = 0;
-        int32_t unsized = 0;
-        for (size_t f = 0; f < hdSetPaths.size(); f++) {
-            const std::map<std::string, uint32_t>::const_iterator shape =
-                hdShapes.find(hdSetPaths[f]);
-            if (shape == hdShapes.end()) {
-                unsized++;
-                continue;
-            }
-            at512[f] = hdChainBytes(shape->second, 0);
-            at256[f] = hdChainBytes(shape->second, 256);
-            at128[f] = hdChainBytes(shape->second, 128);
-            bytes512 += at512[f];
-            bytes256 += at256[f];
-            bytes128 += at128[f];
-        }
-        const uint32_t freeNow = (uint32_t)linearSpaceFree();
-        const uint32_t room = freeNow > kHdPlayReserve ? freeNow - kHdPlayReserve : 0u;
-        // The tier. 512 or 256 for the whole set when it fits; else the set at
-        // 256 with the files that save the most taken down to 128, one at a
-        // time, until it fits (the level's largest textures lose a level, the
-        // rest keep 256); else the stream per surface.
-        std::vector<int32_t> caps(hdSetPaths.size(), 0);
-        int32_t at128Count = 0;
-        uint32_t total = bytes512;
-        if (unsized == 0 && bytes512 <= room) {
-            hdSetCap = 512;
-        } else if (unsized == 0 && bytes256 <= room) {
-            hdSetCap = 256;
-            std::fill(caps.begin(), caps.end(), 256);
-            total = bytes256;
-        } else if (unsized == 0 && bytes128 <= room) {
-            hdSetCap = 128;
-            std::fill(caps.begin(), caps.end(), 256);
-            total = bytes256;
-            std::vector<std::pair<uint32_t, size_t> > savings;
-            for (size_t f = 0; f < hdSetPaths.size(); f++) {
-                savings.push_back(std::make_pair(at256[f] - at128[f], f));
-            }
-            std::sort(savings.begin(), savings.end());
-            for (size_t k = savings.size(); k > 0 && total > room; k--) {
-                const size_t f = savings[k - 1].second;
-                total -= savings[k - 1].first;
-                caps[f] = 128;
-                at128Count++;
-            }
-        } else {
-            hdSetCap = 0;
-            hdSetPaths.clear();
-        }
-        mdk::log3dsPrintf("hd: level %d set %d files: %u bytes at 512, %u at 256, %u at 128 "
-                          "(%d unsized); linear free %u, room %u above the %u reserve: %s, "
-                          "%u bytes, %d files at 128",
-                          (int)flow.state().level, (int)unique.size(), (unsigned)bytes512,
-                          (unsigned)bytes256, (unsigned)bytes128, (int)unsized,
-                          (unsigned)freeNow, (unsigned)room, (unsigned)kHdPlayReserve,
-                          hdSetCap == 512   ? "tier 512, the whole set"
-                          : hdSetCap == 256 ? "tier 256, the whole set, levels over 256 dropped"
-                          : hdSetCap == 128 ? "tier 256/128, the largest files down to 128"
-                                            : "DOES NOT FIT: streamed per surface",
-                          (unsigned)(hdSetCap > 0 ? total : 0u), (int)at128Count);
-        if (hdSetCap > 0) {
-            for (size_t p = 0; p < hdSetPaths.size(); p++) {
-                hdSetArgs.push_back(hdSetPaths[p].c_str());
-            }
-            mdk_render_pin_hd_set(renderer, hdSetArgs.data(), caps.data(),
-                                  (int32_t)hdSetArgs.size());
-        }
+        hdSetCap = mdk::pinHdSet3ds(renderer, flow.state().level, origByName, hdShapes);
     }
     std::map<std::string, uint32_t>().swap(hdShapes);
     // The first view's surfaces asked for now (its batches, hidden ones too, and
@@ -2398,12 +1379,12 @@ int main(int argc, char** argv) {
             size_t& cursor = objectWarmAt[startArenaName];
             while (!mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr,
                                         objectLook(startArenaName), objectResolver,
-                                        requestPackedSurface, &warmAsk, &cursor)) {
+                                        mdk::requestPackedSurface, &warmAsk, &cursor)) {
             }
         }
-        holdHdSet("loading screen");
+        mdk::holdHdSet3ds(renderer, "loading screen");
     }
-    heapProbe("loop");
+    mdk::heapProbe("loop");
     mdk::log3dsPrintf("loop: entering main loop");
     // THE PAUSE MENU'S FALLBACK. Without the menu's fonts there is no menu to
     // open, and so no Quit row: holding START and SELECT together is then the
@@ -2415,13 +1396,13 @@ int main(int argc, char** argv) {
     // The hint, for the first seconds of the level: the owner did not know the
     // effects menu existed. Drawn with the menu's own small font on the canvas,
     // only while the menu is ready and closed.
-    const double hintUntil = nowSeconds() + 5.0;
+    const double hintUntil = mdk::nowSeconds() + 5.0;
     while (aptMainLoop()) {
         // The frame's clock FIRST: the look integrates over the time since the
         // previous frame, so the input poll needs the same delta the simulation is
         // about to get. Clamp it here -- the platform's floor under the game's own
         // policy -- because a 40-second sleep is not 40 seconds of walking.
-        const double now = nowSeconds();
+        const double now = mdk::nowSeconds();
         if (g_resumePending) {
             // Woke from sleep/suspend: the interval is not gameplay.
             // Rebase explicitly (the clamp below stays as the backstop
@@ -2510,9 +1491,9 @@ int main(int argc, char** argv) {
                     // TOOSCARYFORME (Viewer.cs:872-876): the settings' gore, not saved, and
                     // the running level's script Option. God and noclip: the console's
                     // SetGod/SetNoclip on this level's Kurt (LevelCommands.cs:37-39).
-                    g_gameSettings.gore = cheatSwitches.gore;
+                    mdk::g_gameSettings.gore = cheatSwitches.gore;
                     if (runtime) {
-                        runtime->option = g_gameSettings.gore ? 1 : 0;
+                        runtime->option = mdk::g_gameSettings.gore ? 1 : 0;
                     }
                     player.setMortality(cheatSwitches.god ? mdk::Kurt::God : mdk::Kurt::Mortal);
                     player.setClipping(cheatSwitches.noclip ? mdk::Player::ClipOff
@@ -2553,9 +1534,9 @@ int main(int argc, char** argv) {
                     // THE HD SET BACK ON: held for, like the loading screen
                     // (spec 3.2) -- the menu stays up while the set is read.
                     if (!hdWas && enhancedToggles.enableHdTextures && hdSetCap > 0) {
-                        holdHdSet("toggled on");
+                        mdk::holdHdSet3ds(renderer, "toggled on");
                     }
-                    const bool saved = saveEnhancedConfig(enhancedToggles);
+                    const bool saved = mdk::saveEnhancedConfig(enhancedToggles);
                     mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
                                       "glow=%d filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
                                       "cap30=%d hazeDensity=%d glowStrength=%d shadowDarkness=%d "
@@ -2586,7 +1567,7 @@ int main(int argc, char** argv) {
                     menuMainMenu = true;
                     mdk::log3dsPrintf("menu: MAIN MENU chosen");
                 } else if (action == mdk::EnhancedMenu::Action::Cheats) {
-                    cheatSwitches.gore = g_gameSettings.gore;
+                    cheatSwitches.gore = mdk::g_gameSettings.gore;
                     cheatsPage.setOpen(true);
                     mdk::log3dsPrintf("menu: cheats opened");
                 } else if (action == mdk::EnhancedMenu::Action::Options) {
@@ -2600,25 +1581,25 @@ int main(int argc, char** argv) {
                             mdk::audio::SoundMixer* const* live =
                                 static_cast<mdk::audio::SoundMixer* const*>(user);
                             if (*live) {
-                                g_gameSettings.applyAudio(&(*live)->device());
+                                mdk::g_gameSettings.applyAudio(&(*live)->device());
                             }
-                            const bool saved = saveConfigNow();
+                            const bool saved = mdk::saveConfigNow();
                             mdk::log3dsPrintf("menu: options changed: master=%d music=%d "
                                               "effects=%d filter=%d difficulty=%s gore=%d "
                                               "(saved=%d)",
-                                              (int)g_gameSettings.masterVolume,
-                                              (int)g_gameSettings.musicVolume,
-                                              (int)g_gameSettings.effectsVolume,
-                                              (int)g_gameSettings.musicFilter,
+                                              (int)mdk::g_gameSettings.masterVolume,
+                                              (int)mdk::g_gameSettings.musicVolume,
+                                              (int)mdk::g_gameSettings.effectsVolume,
+                                              (int)mdk::g_gameSettings.musicFilter,
                                               mdk::GameSettings::difficultyName(
-                                                  g_gameSettings.difficulty),
-                                              (int)g_gameSettings.gore, (int)saved);
+                                                  mdk::g_gameSettings.difficulty),
+                                              (int)mdk::g_gameSettings.gore, (int)saved);
                         }
                         static void print(void*, const char* line) {
                             mdk::log3dsPrintf("%s", line);
                         }
                     };
-                    items.setSettings(&g_gameSettings, Applied::changed, &mix);
+                    items.setSettings(&mdk::g_gameSettings, Applied::changed, &mix);
                     items.setPrint(Applied::print, nullptr);
                     pauseOptions.openOptions();
                 }
@@ -2746,7 +1727,7 @@ int main(int argc, char** argv) {
                 // when it happens anyway it is said, with its time.
                 if (music) {
                     const mdk::audio::SoundBank::Stats audioBefore = bank.stats();
-                    const double music0 = nowSeconds();
+                    const double music0 = mdk::nowSeconds();
                     music->enter(runtime->currentArena());
                     const mdk::audio::SoundBank::Stats& audioAfter = bank.stats();
                     if (audioAfter.prefetchStalls != audioBefore.prefetchStalls) {
@@ -2756,13 +1737,13 @@ int main(int argc, char** argv) {
                                           music->playing().c_str(),
                                           (int)(audioAfter.prefetchStallBytes -
                                                 audioBefore.prefetchStallBytes),
-                                          (nowSeconds() - music0) * 1000.0);
+                                          (mdk::nowSeconds() - music0) * 1000.0);
                     } else if (audioAfter.demandReads != audioBefore.demandReads) {
                         mdk::log3dsPrintf("music: STALL %s was not prefetched: %d bytes in "
                                           "%.1f ms",
                                           music->playing().c_str(),
                                           (int)(audioAfter.demandBytes - audioBefore.demandBytes),
-                                          (nowSeconds() - music0) * 1000.0);
+                                          (mdk::nowSeconds() - music0) * 1000.0);
                     }
                     // Said here, with its time: the frame's own ledger (below)
                     // reports only the blocking reads nobody else timed.
@@ -2968,7 +1949,7 @@ int main(int argc, char** argv) {
             const float kBubbleHysteresis = 40.0f;
             float bubbleRadius = kBubbleBaseRadius;
             if (runtime && bubbleHavePrevEye) {
-                const double now = nowSeconds();
+                const double now = mdk::nowSeconds();
                 const float dt = (float)(now - bubblePrevTime);
                 if (dt > 0.001f) {
                     const float dx = runtime->eye.x - bubblePrevEye.x;
@@ -2985,7 +1966,7 @@ int main(int argc, char** argv) {
             }
             if (runtime) {
                 if (!bubbleHavePrevEye) {
-                    bubblePrevTime = nowSeconds();
+                    bubblePrevTime = mdk::nowSeconds();
                 }
                 bubblePrevEye = runtime->eye;
                 bubbleHavePrevEye = true;
@@ -3049,10 +2030,10 @@ int main(int argc, char** argv) {
                 }
                 bubbleSticky = bubbleHints;
             }
-            const double stream1 = nowSeconds();
+            const double stream1 = mdk::nowSeconds();
             const int32_t builtViews =
                 arenaViews.sync(streamCurrent, streamSecond, *frameDrawn, bubbleHints);
-            const double stream2 = nowSeconds();
+            const double stream2 = mdk::nowSeconds();
             // Spread the texture makes over the frames before anyone sees them
             // (arena_views.h): from the resident MTO, so a make is decode and
             // upload with no SD read. Two a frame; the entry stall was 442 ms
@@ -3066,15 +2047,15 @@ int main(int argc, char** argv) {
             // resolving all six in the arena-change frame was most of that
             // frame's remaining stall, so the warm is spread like the
             // builds above it.
-            effectsView.warmStep(streamCurrent, requestPackedSurface, startEffectSurface,
+            effectsView.warmStep(streamCurrent, mdk::requestPackedSurface, mdk::startEffectSurface,
                                  &warmAsk);
             // The bubble's arenas warm too: they are approached, not yet
             // resident, and their lead is the whole point (no deferral --
             // the bubble IS the early start).
             for (size_t i = 0; i < bubbleHints.size(); i++) {
                 if (bubbleHints[i] != streamCurrent && bubbleHints[i] != streamSecond) {
-                    effectsView.warmStep(bubbleHints[i], requestPackedSurface,
-                                         startEffectSurface, &warmAsk);
+                    effectsView.warmStep(bubbleHints[i], mdk::requestPackedSurface,
+                                         mdk::startEffectSurface, &warmAsk);
                 }
             }
             if (!streamSecond.empty() && streamSecond != streamCurrent) {
@@ -3092,8 +2073,8 @@ int main(int argc, char** argv) {
                 if (!deferred) {
                     warmDeferred.push_back(streamSecond);
                 } else {
-                    effectsView.warmStep(streamSecond, requestPackedSurface,
-                                         startEffectSurface, &warmAsk);
+                    effectsView.warmStep(streamSecond, mdk::requestPackedSurface,
+                                         mdk::startEffectSurface, &warmAsk);
                 }
             }
             // THE OBJECTS' TEXTURES for the pair (warmObjectStep): one model a
@@ -3130,7 +2111,7 @@ int main(int argc, char** argv) {
                 if (owner != nullptr) {
                     size_t& cursor = objectWarmAt[name];
                     mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr, objectLook(name),
-                                        objectResolver, requestPackedSurface, &warmAsk,
+                                        objectResolver, mdk::requestPackedSurface, &warmAsk,
                                         &cursor);
                 }
             }
@@ -3232,9 +2213,9 @@ int main(int argc, char** argv) {
                     // Every step is timed: a landed read's append (up to 64 KiB
                     // copied) or a decode slice (32768 samples) -- both bounded,
                     // and the line that ends the prefetch says the worst.
-                    const double step0 = nowSeconds();
+                    const double step0 = mdk::nowSeconds();
                     const bool more = bank.prefetchStep();
-                    const double stepMs = (nowSeconds() - step0) * 1000.0;
+                    const double stepMs = (mdk::nowSeconds() - step0) * 1000.0;
                     if (stepMs > prefetchWorstMs) {
                         prefetchWorstMs = stepMs;
                     }
@@ -3364,7 +2345,7 @@ int main(int argc, char** argv) {
             }
             if (lightArena && lightArena != litArena) {
                 litArena = lightArena;
-                const mdk::Lighting rig = cachedLighting(lightCache, level, lightArena);
+                const mdk::Lighting rig = mdk::cachedLighting(lightCache, level, lightArena);
                 mdk_render_set_lighting(renderer, &rig);
                 mdk::log3dsPrintf("light: arena %s haze rgb=(%.3f,%.3f,%.3f) density=%.5f",
                                   lightArena->name().c_str(), rig.haze_colour.r,
@@ -3376,7 +2357,7 @@ int main(int argc, char** argv) {
         // the scripts' sky mode shows it (C# `Backdrop == Backdrop.Sky`).
         if (skyMesh >= 0 && params.backdrop == mdk::Backdrop::Sky) {
             for (int32_t i = 0; i < skyRangeCount; i++) {
-                const SkyRange& range = skyRanges[i];
+                const mdk::SkyRange& range = skyRanges[i];
                 if (range.texture < 0 || range.count <= 0) {
                     continue;
                 }
@@ -3450,7 +2431,7 @@ int main(int argc, char** argv) {
             mdk::Frustum objectFrustum;
             if (mdk::buildFrustum(sceneCamera, &objectFrustum)) {
                 objectView.setCullFrustum(&objectFrustum,
-                                          g_gameSettings.stereoSeparation * 0.5f);
+                                          mdk::g_gameSettings.stereoSeparation * 0.5f);
             } else {
                 objectView.setCullFrustum(nullptr, 0.0f);
             }
@@ -3896,9 +2877,9 @@ int main(int argc, char** argv) {
     //    (the same generation) cannot take it for one of its own. Bounded: the
     //    reader thread finishes a read in milliseconds; two seconds is a hang.
     if (kurtSpriteReady) {
-        const double settleStart = nowSeconds();
+        const double settleStart = mdk::nowSeconds();
         while (!kurtSprite.settleStream()) {
-            if (nowSeconds() - settleStart > 2.0) {
+            if (mdk::nowSeconds() - settleStart > 2.0) {
                 mdk::log3dsPrintf("level: Kurt's pack read did not land in 2 s; left to the "
                                   "reader");
                 break;
@@ -3942,7 +2923,7 @@ int main(int argc, char** argv) {
         }
         // The heap and linear figures with no level loaded: a level-to-level run
         // returns to the same figures here (mem[run-start] is the first).
-        heapProbe("level-teardown");
+        mdk::heapProbe("level-teardown");
         continue;
     }
     break;
