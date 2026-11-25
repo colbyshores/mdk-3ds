@@ -1820,3 +1820,20 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   of that frame (never played: the buffer's sample count stops at the track's
   length); loop, seek and prime adoption keep the byte position.
 - **Commit:** this one.
+
+## 2026-11-25 -- eight seconds of music queued per stream (branch perf/3ds-memory)
+
+- **Owner's words:** "we shouldnt be so stingy with memory that we arent holding
+  an adequate buffer for the music and sounds."
+- **What:** 24 ADPCM wave buffers per music channel (8.06 s at 32 kHz, was 6 /
+  2.0 s): 294,912 bytes of linear memory for both streams (was 73,728; +221 KB).
+  A start still queues two seconds at once (6 primed buffers, or read on the
+  worker) and the worker tops the queue up six buffers a pass; the primes stay
+  two seconds (73,728 bytes of main memory for both).
+- **Why that size:** measured on the Old 3DS walks, the slowest music buffer read
+  148 ms, an unprimed start 105-145 ms; the longest stretch the game itself is not
+  drawing is the HD set's toggle-on hold, 12.1 s on level 8, during which the
+  worker kept reading. Eight seconds is fifty times the slowest read.
+- **The underrun the walk showed was not a buffer size**: it was the short last
+  frame (the commit before this one). The hardware entry gives the counts.
+- **Commit:** this one.

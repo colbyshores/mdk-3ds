@@ -70,11 +70,17 @@ struct EffectChannel {
 // a queue of ADPCM wave buffers per channel, each handed the predictor history
 // the previous one ended with (audio/dsp_adpcm.h).
 //
-// THE BUFFERING IS THE READ-AHEAD. Six buffers of 768 frames (10,752 samples,
-// 0.336 s at 32 kHz, 6,144 bytes) per channel: two seconds queued in the DSP,
-// so the worker can miss ~1.7 s of reads (an SD stall, an arena load holding the
-// card) before the channel runs dry. 2 x 6 x 6,144 = 72 KiB of linear memory in
-// all (the PCM16 queue it replaces was 128 KiB for 0.74 s).
+// THE BUFFERING IS THE READ-AHEAD, AND IT IS GENEROUS (owner, 2026-11-25: "we
+// shouldnt be so stingy with memory that we arent holding an adequate buffer for
+// the music"). 24 buffers of 768 frames (10,752 samples, 0.336 s at 32 kHz, 6,144
+// bytes) per channel: eight seconds queued in the DSP, so the worker can miss
+// ~7.7 s of reads before a channel runs dry. Measured on the Old 3DS walks: the
+// slowest single buffer read 148 ms, an unprimed start 105-145 ms, the HD set's
+// toggle-on hold 12 s (the menu is up and the reader thread is busy, but the music
+// worker reads its own files and kept up). 2 x 24 x 6,144 = 288 KiB of linear
+// memory (the PCM16 queue it replaces was 128 KiB for 0.74 s). A start queues
+// the first two seconds (kMusicPrimeBuffers: primed, or read at once); the worker
+// tops the queue up kMusicRefillPerPass buffers a pass from there.
 //
 // NO READ AT A TRACK'S START. A new track starts from its beginning the frame
 // LevelMusic asks for it, with no read on that frame: the arena that is loading
@@ -88,7 +94,9 @@ struct EffectChannel {
 // fills the wave buffers, and it reads OUTSIDE g_lock, so a slow card never
 // blocks the main thread's frame. The main thread posts requests under g_lock
 // (start, stop, the mix) and signals the worker, which applies them at once.
-constexpr int32_t kMusicBuffers = 6;
+constexpr int32_t kMusicBuffers = 24;
+constexpr int32_t kMusicPrimeBuffers = 6;
+constexpr int32_t kMusicRefillPerPass = 6;
 constexpr int32_t kMusicBufFrames = 768;
 constexpr int32_t kMusicBufSamples = kMusicBufFrames * audio::DspAdpcm::kFrameSamples;
 constexpr uint32_t kMusicBufBytes = (uint32_t)kMusicBufFrames * audio::DspAdpcm::kFrameBytes;
@@ -127,9 +135,9 @@ struct MusicPrime {
     // (the start opens its own file at that place): a track the door bubble
     // hinted stays primed for every return through that door.
     MusicFile stream;
-    uint8_t* data = nullptr;           // kMusicBuffers x kMusicBufBytes (main memory)
-    uint32_t bufferSamples[kMusicBuffers] = {0};
-    audio::DspAdpcmContext bufferHistory[kMusicBuffers];
+    uint8_t* data = nullptr;           // kMusicPrimeBuffers x kMusicBufBytes (main memory)
+    uint32_t bufferSamples[kMusicPrimeBuffers] = {0};
+    audio::DspAdpcmContext bufferHistory[kMusicPrimeBuffers];
     int32_t buffers = 0;
 };
 
@@ -607,7 +615,7 @@ void musicApplyStart(int32_t m, const MusicRequest& req) {
         filled = prime.buffers;
     } else if (musicOpen(slot.stream, req.name)) {
         musicSeek(slot.stream, req.startFrame);
-        for (int32_t i = 0; i < kMusicBuffers; i++) {
+        for (int32_t i = 0; i < kMusicPrimeBuffers; i++) {
             samples[i] = musicRead(slot.stream, req.looping, slot.buf + (size_t)i * kMusicBufBytes,
                                    &starts[i]);
             if (samples[i] == 0) {
@@ -682,7 +690,7 @@ void musicWork(int32_t m) {
         for (int32_t i = 0; i < kMusicBuffers; i++) {
             const u8 st = slot.wave[i].status;
             drained = drained && (st == NDSP_WBUF_DONE || st == NDSP_WBUF_FREE);
-            refill[i] = st == NDSP_WBUF_DONE;
+            refill[i] = st == NDSP_WBUF_DONE || st == NDSP_WBUF_FREE;
         }
         slot.silentTicks = ndspChnIsPlaying(ndsp) ? 0 : slot.silentTicks + 1;
         // THE DRAINED-CHANNEL TRAP (Forsaken music_3ds.cpp, vault finding A): ndsp
@@ -701,6 +709,16 @@ void musicWork(int32_t m) {
             for (int32_t i = 0; i < kMusicBuffers; i++) {
                 slot.wave[i].status = NDSP_WBUF_FREE;
                 refill[i] = true;
+            }
+        }
+        // A pass tops up at most kMusicRefillPerPass buffers (two seconds), so a
+        // pass never holds the worker for a long run of reads.
+        int32_t allowed = kMusicRefillPerPass;
+        for (int32_t i = 0; i < kMusicBuffers; i++) {
+            if (refill[i] && allowed > 0) {
+                allowed--;
+            } else {
+                refill[i] = false;
             }
         }
         looping = slot.looping;
@@ -774,7 +792,7 @@ void musicPrimeWork() {
             LightLock_Unlock(&g_lock);
             continue;
         }
-        for (int32_t i = 0; i < kMusicBuffers; i++) {
+        for (int32_t i = 0; i < kMusicPrimeBuffers; i++) {
             prime.bufferSamples[i] = musicRead(prime.stream, true,
                                                prime.data + (size_t)i * kMusicBufBytes,
                                                &prime.bufferHistory[i]);
@@ -972,7 +990,7 @@ bool audioDspOpen() {
     // wave buffers at a start).
     for (int32_t p = 0; p < kMusicPrimes; p++) {
         g_primes[p] = MusicPrime();
-        g_primes[p].data = (uint8_t*)malloc((size_t)kMusicBuffers * kMusicBufBytes);
+        g_primes[p].data = (uint8_t*)malloc((size_t)kMusicPrimeBuffers * kMusicBufBytes);
     }
     if (g_arena == nullptr || g_musicPool == nullptr) {
         log3dsPrintf("audio: linearAlloc(%u + %u) failed — running muted",
