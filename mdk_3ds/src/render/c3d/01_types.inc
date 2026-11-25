@@ -57,11 +57,7 @@ static constexpr int32_t kCanvasQuadCapacity = 4096;
 // A/B profile (`make AUTOQUIT=90 DRAWDEDUPE=0`), and the off build sends the
 // command stream the backend sent before the dedupe: every category written on
 // every draw.
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_DRAWDEDUPE_OFF)
-static constexpr bool kDrawDedupe = false;
-#else
 static constexpr bool kDrawDedupe = true;
-#endif
 enum DedupeCategory {
     kDedupeTexEnv0 = 0,   // combiner stage 0
     kDedupeBufInfo,       // the vertex buffer table
@@ -783,19 +779,6 @@ struct RendererC3D {
     // draws the replay actually emitted.
     int32_t canvasQuadsThisFrame = 0;
     int32_t canvasDrawsThisFrame = 0;
-#ifdef MDK_HW_PROFILE
-    // Submit-coalescing account (PROFILE only): folds actually
-    // performed by pushPrepared, of the records it was handed. (The
-    // pre-implementation census counted candidates on the unmerged
-    // prepared array with a separate loop; the two agreeing is the
-    // cross-check, not the same counter read twice.)
-    uint64_t coalescePairs = 0;
-    uint64_t coalesceTotal = 0;
-    // Per-eye replay ticks (PROFILE only; see mdk_render_end_frame).
-    uint64_t eyeTicks[2] = {0, 0};
-    uint64_t prepareTicks = 0;
-    uint64_t eyeFrames = 0;
-#endif
     int32_t canvasFrames = 0;
 
     int frame = 0;

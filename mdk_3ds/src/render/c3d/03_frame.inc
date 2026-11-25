@@ -1198,19 +1198,6 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // The one frame that gets censused (see `Census`). Everything else pays the
     // compare and nothing more.
     r->census.active = mdk::log3dsPeriodic() && r->frame == kCensusFrame;
-#if defined(MDK_HW_PROFILE)
-    // Corridor fill-vs-batch samples (HANDOFF_MUSE.md task 1): DANT_1-only
-    // (765), pair corridor (785/805/815), CDANT_1-only after the drop (845).
-    // Route-specific to the FIXED=1 level-7 walk (HANDOFF_MUSE.md sec.2); a
-    // different route must re-derive the frames. PROFILE builds silence the
-    // periodic census, so arm it explicitly here; the per-triangle loop
-    // perturbs these frames, so only their COUNTS are evidence, never their
-    // periods (timing comes from uncensused runs).
-    if (r->frame == 765 || r->frame == 785 || r->frame == 805 || r->frame == 815 ||
-        r->frame == 845) {
-        r->census.active = true;
-    }
-#endif
     r->census.triangles = 0;
     r->census.culled = 0;
     r->census.behind = 0;
@@ -1344,11 +1331,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // A harness build may force mono (`make AUTOQUIT=90 MONO=1`): the slider
     // reads as 0, so one pass, for the owner's stereo-cost A/B on a console
     // whose slider nobody is there to move.
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_MONO)
-    const float slider = 0.0f;
-#else
     const float slider = (float)osGet3DSliderState();
-#endif
     r->eyes = mdk::pica::eyePlan(slider, r->eyeSeparation);
 
     // Both eye buffers are cleared here, whether or not both get drawn: a buffer
@@ -1601,27 +1584,11 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // A frame that draws no eye resolves nothing (validator F4; eyePlan
     // only yields 1-2 today, so this is the guard, not a behaviour change).
     if (r->eyes.passes > 0) {
-#ifdef MDK_HW_PROFILE
-        const uint64_t prepT0 = svcGetSystemTick();
         prepareQueue(r);
-        r->prepareTicks += svcGetSystemTick() - prepT0;
-#else
-        prepareQueue(r);
-#endif
     }
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
-#ifdef MDK_HW_PROFILE
-        // Per-eye replay account (2026-11-22): sizes what a prepared-draw
-        // replay could save -- the second eye's share of replayQueue. Ticks
-        // only; the print rides the gputime cadence below FrameEnd.
-        const uint64_t eyeT0 = svcGetSystemTick();
-#endif
         replayQueue(r);
-#ifdef MDK_HW_PROFILE
-        r->eyeTicks[eye & 1] += svcGetSystemTick() - eyeT0;
-        if (eye == 0) r->eyeFrames++;
-#endif
         if (eye == 0 && r->shadowLive && mdk::log3dsPeriodic() &&
             (r->frame == 30 || (r->frame % 600) == 0)) {
             mdk::log3dsPrintf("shadows: frame %lu: %d caster draws into the map at its last cast (%d more left "
@@ -1740,45 +1707,6 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // C3D_FrameEnd is the ONLY present path. It triggers the auto display
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);
-#ifdef MDK_HW_PROFILE
-    // The GPU's own account of the frame just submitted (citro3d's PICA
-    // timestamps): the port has never measured GPU time -- every span in
-    // the profile table is CPU. Sampled, not logged, here; the harness
-    // window at frame 300 boundaries prints the mean.
-    {
-        static float gpuDrawSum = 0.0f;
-        static float gpuProcSum = 0.0f;
-        static int32_t gpuSamples = 0;
-        gpuDrawSum += C3D_GetDrawingTime();
-        gpuProcSum += C3D_GetProcessingTime();
-        gpuSamples++;
-        if ((r->frame % 300) == 0 && r->eyeFrames > 0) {
-            const double ticksPerMs = (double)SYSCLOCK_ARM11 / 1000.0;
-            mdk::log3dsPrintf("eyetime: frame %d mean prepare %.2f eye0 %.2f eye1 %.2f ms over %d frames",
-                              (int)r->frame,
-                              (double)r->prepareTicks / ticksPerMs / (double)r->eyeFrames,
-                              (double)r->eyeTicks[0] / ticksPerMs / (double)r->eyeFrames,
-                              (double)r->eyeTicks[1] / ticksPerMs / (double)r->eyeFrames,
-                              (int)r->eyeFrames);
-            r->eyeTicks[0] = r->eyeTicks[1] = 0;
-            r->prepareTicks = 0;
-            r->eyeFrames = 0;
-            mdk::log3dsPrintf("coalesce: frame %d merged %llu of %llu prepared draws",
-                              (int)r->frame, (unsigned long long)r->coalescePairs,
-                              (unsigned long long)r->coalesceTotal);
-            r->coalescePairs = 0;
-            r->coalesceTotal = 0;
-        }
-        if ((r->frame % 300) == 0 && gpuSamples > 0) {
-            mdk::log3dsPrintf("gputime: frame %d mean drawing %.2f processing %.2f ms over %d frames",
-                              (int)r->frame, (double)(gpuDrawSum / (float)gpuSamples),
-                              (double)(gpuProcSum / (float)gpuSamples), (int)gpuSamples);
-            gpuDrawSum = 0.0f;
-            gpuProcSum = 0.0f;
-            gpuSamples = 0;
-        }
-    }
-#endif
     r->inFrame = false;
     // THE NATIVE WRITES, SEEN ON THE REAL PASS, ONCE. testNativeShadowWrites
     // decides from 8x8 quads; the emulator's native writes pass that and land
@@ -1849,30 +1777,6 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
             }
             writeScreenshotBmp(r, r->targetRight, rightPath);
         }
-#ifdef MDK_AUTOQUIT
-        // THE SHADOW MAP AS THE GPU WROTE IT (harness builds only): its tiled
-        // bytes beside the capture (sdmc:/3ds/mdk/shadowmap.bin.log; the
-        // console's HTTP serves /3ds/**.log), so the map the console made can be
-        // compared byte for byte with the emulator's, read back through
-        // readBack (known finished, the drain behind it).
-        if (r->shadowMapReady && r->shadowLive && r->shadowMapSize > 0) {
-            const u32 side = (u32)r->shadowMapSize;
-            const size_t bytes = (size_t)side * side * 4;
-            u32* copy = (u32*)linearAlloc(bytes);
-            if (copy) {
-                const u32 rowDim = GX_BUFFER_DIM((side * 8u * 4u) >> 4, 0);
-                FILE* f = readBack(r, r->shadowTex.data, rowDim, copy, bytes, 0xFF)
-                              ? fopen("sdmc:/3ds/mdk/shadowmap.bin.log", "wb") : nullptr;
-                if (f) {
-                    const size_t wrote = fwrite(copy, 1, bytes, f);
-                    fclose(f);
-                    mdk::log3dsPrintf("shadows: map %ux%u dumped (%u bytes) to shadowmap.bin.log",
-                                      (unsigned)side, (unsigned)side, (unsigned)wrote);
-                }
-                linearFree(copy);
-            }
-        }
-#endif
         r->pendingScreenshot[0] = '\0';
     }
     // C3D_FrameEnd submits the queue; it does not wait for it. Until the
@@ -2249,15 +2153,8 @@ static void prepareShadows(RendererC3D* r) {
         {l.sky.r, l.sky.g, l.sky.b, 0.0f},
         {l.ground.r, l.ground.g, l.ground.b, 0.0f},
         {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2], 1.0f},
-#if defined(MDK_SHADOW_PROBE)
-        // The harness's probe (make SHADOWPROBE=8): every receiver pushed to the
-        // map's far end (all shadow, if the unit compares at all).
-        {l.exposure, mdk::pica::sunShadowNormalOffset(r->shadowMapSize),
-         MDK_SHADOW_PROBE == 8 ? -2.0f : mdk::pica::sunShadowDepthBias(r->shadowMapSize), 0.0f},
-#else
         {l.exposure, mdk::pica::sunShadowNormalOffset(r->shadowMapSize),
          mdk::pica::sunShadowDepthBias(r->shadowMapSize), 0.0f},
-#endif
     };
     memcpy(r->shadowUniforms, values, sizeof(values));
     // The lit draws take the shadow in their own pass (06_draw.inc drawRecorded).
@@ -2313,18 +2210,10 @@ static void castShadows(RendererC3D* r) {
     }
     leaveShadowLitStages(r);
     const u32 size = (u32)r->shadowMapSize;
-#if defined(MDK_SHADOW_PROBE)
-    // 10: the map cleared to the NEAREST depth and nothing cast (all shadow, if
-    // the unit reads what this pass clears).
-    const bool probeNoCasters = MDK_SHADOW_PROBE == 10;
-    C3D_FrameBufClear(&r->shadowTarget->frameBuf, C3D_CLEAR_ALL,
-                      probeNoCasters ? 0x000000FFu : 0xFFFFFFFFu, mdk::pica::kDepthClearValue);
-#else
     const bool probeNoCasters = false;
     // A native map's target has no depth buffer to clear.
     C3D_FrameBufClear(&r->shadowTarget->frameBuf, r->shadowNative ? C3D_CLEAR_COLOR : C3D_CLEAR_ALL,
                       0xFFFFFFFFu, mdk::pica::kDepthClearValue);
-#endif
     C3D_FrameDrawOn(r->shadowTarget);
     C3D_SetViewport(0, 0, size, size);
     C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, size, size);
@@ -2464,13 +2353,6 @@ static void castShadows(RendererC3D* r) {
         }
     }
 
-#ifdef MDK_HW_PROFILE
-    if (r->shadowCastersCulled > 0 && (r->frame % 120) == 0) {
-        mdk::log3dsPrintf("shadowcull: frame %lu culled %d of %d casters by the sun frustum",
-                          (unsigned long)r->frame, (int)r->shadowCastersCulled,
-                          (int)(r->shadowCasters + r->shadowCastersCulled));
-    }
-#endif
     if (r->shadowNative) {
         C3D_FragOpMode(GPU_FRAGOPMODE_GL);
     }

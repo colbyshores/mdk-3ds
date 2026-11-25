@@ -1046,16 +1046,6 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     // THE GEOMETRY-STAGE RULE (03_frame.inc bindProgram): once this command
     // list has used a geometry program, an unlit draw goes through the
     // pass-through one -- the same picture, and no split to leave geometry mode.
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_GSPASSALL)
-    // THE HARNESS'S GEOMETRY-STAGE PROBE (`make AUTOQUIT=.. GSPASSALL=1`): the
-    // list counts as in geometry mode from its first draw, so every whole-triangle
-    // unlit draw goes through the pass-through geometry shader and a profile with
-    // the light OFF still pays the geometry stage -- the light's cost split into
-    // the stage's own and the arithmetic's. A harness build only.
-    if (r->passReady && wholeTriangles) {
-        r->gsInList = true;
-    }
-#endif
     shaderProgram_s* const wanted =
         shadowLit ? &r->programShadow
         : lit     ? &r->programLit
@@ -1690,15 +1680,9 @@ static bool coalesciblePair(const PreparedDraw* a, const PreparedDraw* b) {
 // size equals it, back() is the last pre-glow record and folding the
 // newcomer across would move it before the glow (validator F4).
 static void pushPrepared(RendererC3D* r, const PreparedDraw* p) {
-#ifdef MDK_HW_PROFILE
-    r->coalesceTotal++;
-#endif
     if (!r->prepared.empty() && (int32_t)r->prepared.size() != r->preparedGlowAt &&
         coalesciblePair(&r->prepared.back(), p)) {
         r->prepared.back().vertCount += p->vertCount;
-#ifdef MDK_HW_PROFILE
-        r->coalescePairs++;
-#endif
         return;
     }
     r->prepared.push_back(*p);

@@ -100,18 +100,11 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
         last = now;
         if (delta < 0.0) delta = 0.0;
         if (delta > 0.25) delta = 0.25;
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_FIXED)
-        // The harness's deterministic clock (FIXED=1): one 1/60 s step a frame.
-        delta = 1.0 / 60.0;
-#endif
         const float elapsed = (float)delta;
 
         // ONE HID scan for the frame (input3dsPoll); the pad is read off the same scan.
         Input input;
         const u32 held = input3dsPoll(&input, elapsed, *f.controls);
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
-        harnessWalkApply(*frame, &input, 0.0f, 0.0f, 0.0f, 0.0f, "stream");
-#endif
         circlePosition pad;
         hidCircleRead(&pad);
         const u32 pressed = held & ~prevHeld;

@@ -1384,8 +1384,7 @@ def adjudicate(text, quiet=False):
     end_b2 = body(text, "mdk_render_end_frame") or ""
     prepq_at = end_b2.find("prepareQueue(r);")
     loop_at2 = end_b2.find("installEye(r, eye == 0")
-    # Two textual sites are the PROFILE timing ifdef/else pair; the contract
-    # is that every site sits before the eye loop and none inside it.
+    # The contract is that every site sits before the eye loop and none inside it.
     prepq_in_loop = "prepareQueue(r);" in end_b2[loop_at2:] if loop_at2 >= 0 else True
     # The stage-0 variants are built once (r->stage0Built), not per draw:
     # rebuilding them every frame would still draw the same picture.
@@ -1652,8 +1651,8 @@ def adjudicate(text, quiet=False):
     #     every texture make (makeTexture) and at every HD import;
     #   * installEye re-sends every vertex uniform (P2, and what makes the array
     #     the registers' value for the eye: the caster pass ran its own program);
-    #   * drawRecorded makes none of those writes raw, and the off switch
-    #     (DRAWDEDUPE=0) exists only in a harness build.
+    #   * drawRecorded makes none of those writes raw, and the dedupe is on in
+    #     every build (kDrawDedupe is a constant true).
     tex_bind = calls(text, r"C3D_TexBind\(")
     tb_body = body(text, "bindTexUnit") or ""
     tb_stray = [loc for ln, loc in tex_bind
@@ -1702,9 +1701,10 @@ def adjudicate(text, quiet=False):
                                       "setVsUniform(r, kDedupeUv, r->uvLocation,",
                                       "setVsMatrix(r, kDedupeMvp, r->mvpLocation, &gpuMtx);",
                                       "bindTexUnitIfChanged(r, p->texUnit, texture);"))
-    off_switch = re.search(r"#if defined\(MDK_AUTOQUIT\) && defined\(MDK_HW_DRAWDEDUPE_OFF\)\s*\n"
-                           r"static constexpr bool kDrawDedupe = false;\s*\n#else\s*\n"
-                           r"static constexpr bool kDrawDedupe = true;", text) is not None
+    # The dedupe is on in every build: the harness's DRAWDEDUPE=0 A/B switch left
+    # with the harness (branch harness/3ds-profiling), so the switch is a constant.
+    off_switch = (re.search(r"^static constexpr bool kDrawDedupe = true;", text, re.M) is not None
+                  and "kDrawDedupe = false" not in text)
     rep.check("per-draw-state-dedupe",
               len(tex_bind) == 1 and not tb_stray and tb_records and tbi_compares
               and all(forgets.values()) and live_env and live_buf and redirty and env_cmp
@@ -1714,7 +1714,7 @@ def adjudicate(text, quiet=False):
               "live stage 0 %s and buffer table %s and re-sends the vertex uniforms %s; "
               "compares read the context's stage 0 %s, its buffer table %s, citro3d's "
               "vertex uniform array %s; raw writes left in drawRecorded: %s; routed through "
-              "the dedupe %s; the off switch harness-only %s"
+              "the dedupe %s; the dedupe on in every build %s"
               % (len(tex_bind), "; ".join(tb_stray) or "none", "yes" if tb_records else "NO",
                  "yes" if tbi_compares else "NO",
                  ", ".join("%s %s" % (k, "yes" if v else "NO") for k, v in forgets.items()),
@@ -3602,11 +3602,7 @@ ARMS = [
                          "memcmp(&C3D_FVUnif[GPU_GEOMETRY_SHADER][location]", 1),
      "per-draw-state-dedupe"),
     ("prepare-moved-inside-the-eye-loop",
-     lambda s: s.replace("    if (r->eyes.passes > 0) {\n#ifdef MDK_HW_PROFILE\n"
-                         "        const uint64_t prepT0 = svcGetSystemTick();\n"
-                         "        prepareQueue(r);\n"
-                         "        r->prepareTicks += svcGetSystemTick() - prepT0;\n"
-                         "#else\n        prepareQueue(r);\n#endif\n    }\n",
+     lambda s: s.replace("    if (r->eyes.passes > 0) {\n        prepareQueue(r);\n    }\n",
                          "", 1)
                 .replace("        replayQueue(r);\n",
                          "        prepareQueue(r);\n        replayQueue(r);\n", 1),
@@ -3624,9 +3620,9 @@ ARMS = [
      lambda s: s.replace("        setTexEnv0(r, stage0Variant(r, p->stage0Index));",
                          "        C3D_SetTexEnv(0, C3D_GetTexEnv(0));", 1),
      "per-draw-state-dedupe"),
-    ("dedupe-off-switch-reaches-a-release-build",
-     lambda s: s.replace("#if defined(MDK_AUTOQUIT) && defined(MDK_HW_DRAWDEDUPE_OFF)",
-                         "#if defined(MDK_HW_DRAWDEDUPE_OFF)", 1),
+    ("dedupe-switched-off-in-the-release-build",
+     lambda s: s.replace("static constexpr bool kDrawDedupe = true;",
+                         "static constexpr bool kDrawDedupe = false;", 1),
      "per-draw-state-dedupe"),
     ("the-glow-runs-over-the-shadowed-layout",
      lambda s: s.replace("    leaveShadowLitStages(r);\n    frameSplit(r);\n", "    frameSplit(r);\n", 1),

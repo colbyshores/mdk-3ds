@@ -166,13 +166,6 @@ static mdk::GameSettings g_gameSettings;
 static const mdk::EnhancedToggles* g_toggles = nullptr;
 
 bool saveEnhancedConfig(const mdk::EnhancedToggles& toggles) {
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_TOGGLES)
-    // A TOGGLES harness build runs a config the card does not hold: writing it
-    // back would leave the override in sdmc:/3ds/mdk/config.ini for every later
-    // run (review, 2026-11-18). Nothing is saved; the caller logs saved=0.
-    (void)toggles;
-    return false;
-#endif
     FILE* config = fopen("sdmc:/3ds/mdk/config.ini", "wb");
     if (!config) {
         return false;
@@ -206,14 +199,6 @@ bool saveConfigNow() {
 // writes through a static FILE buffer, not newlib's heap).
 static uint32_t g_heapPeak = 0;
 
-#if defined(MDK_AUTOQUIT) && \
-    (defined(MDK_HW_GIVE) || defined(MDK_HW_RIDE) || defined(MDK_HW_AIM) || defined(MDK_HW_UNLOCK))
-#define MDK_HW_AIDS 1
-// The set pieces' test aids' lines (game/harness_aids.h: GIVE=, RIDE=, AIM=, UNLOCK=).
-static void printHarnessAid(const char* line) {
-    mdk::log3dsPrintf("%s", line);
-}
-#endif
 
 static void heapProbe(const char* tag) {
     struct mallinfo mi = mallinfo();
@@ -234,13 +219,7 @@ static void heapProbe(const char* tag) {
 // no content hash on the console), and the pair is made from its two files
 // (mdk_render_create_compressed_file): the backend streams the HD copy under the
 // HD budget while the toggle is on and never reads the original for it.
-#ifdef MDK_HW_HDROMFS
-// The harness's RomFS copy of one level's pack (`make HDROMFS=1`, stage_romfs.sh):
-// the appliance's SD card has no pack and the hardware loop only pushes a .3dsx.
-const char kHdPackRoot[] = "romfs:/hd";
-#else
 const char kHdPackRoot[] = "sdmc:/3ds/mdk/hd";
-#endif
 
 // KURT'S COMPRESSED FRAMES (EnhancedToggles::kurtCompressed): his ORIGINAL
 // TRAVSPRT.BNI frames as ETC1A4, made on the host by
@@ -867,71 +846,14 @@ struct WarmAsk {
     HdPackSource* source = nullptr;
 };
 
-#ifdef MDK_HW_PROFILE
-// THE FLOW'S SLOW FRAMES, said at exit rather than as they happen: the frames
-// this names are the corridor crossing's, and an SD line costs ~10 ms of the
-// frame it is written in. A row is kept for a frame whose view sync and warms
-// pass 8 ms (the first 64 such frames): the sync, the effects warm by role
-// (current, bubble hints, second), the object warm, and -- across all the
-// warms -- the time asking the pack and starting makes, with the last
-// surface a start was asked for.
-struct HwFlowRow {
-    unsigned long frame;
-    float sync, fxCurrent, fxHints, fxSecond, objects, ask, start;
-    char started[32];
-};
-static HwFlowRow g_hwFlowRows[64];
-static int32_t g_hwFlowRowCount = 0;
-static float g_hwAskMs = 0.0f;
-static float g_hwStartMs = 0.0f;
-static char g_hwStarted[32];
-#endif
 
-#ifdef MDK_HW_PROFILE
-// THE SCRIPTS' SLOW TICKS (ScriptRuntime's tick probe, script_runtime.h), said at
-// the level's teardown in frame order: the runtime keeps its slowest ticks in fixed
-// storage while the level plays, so no SD line lands in the frames it names.
-static void logScriptProbe(const mdk::scripts::ScriptRuntime& runtime) {
-    const double perMs = (double)SYSCLOCK_ARM11 / 1000.0;
-    bool done[mdk::scripts::ScriptRuntime::kProbeRows] = {};
-    for (int32_t n = 0; n < runtime.probeRowCount; n++) {
-        int32_t pick = -1;
-        for (int32_t i = 0; i < runtime.probeRowCount; i++) {
-            if (!done[i] && (pick < 0 || runtime.probeRows[i].frame < runtime.probeRows[pick].frame)) {
-                pick = i;
-            }
-        }
-        done[pick] = true;
-        const mdk::scripts::ScriptRuntime::ProbeRow& r = runtime.probeRows[pick];
-        mdk::log3dsPrintf("scripttick: frame %d tick %d %.2f ms: remember %.2f head %.2f "
-                          "triggers %.2f kurt %.2f systems %.2f objects %.2f (%d) "
-                          "controllers %.2f; slowest %s script %.2f motion %.2f ops %d "
-                          "opcode %d %.2f; spawns %d %.2f (slowest %s %.2f, model %.2f)",
-                          (int)r.frame, (int)r.tick, (double)r.total / perMs,
-                          (double)r.remember / perMs, (double)r.head / perMs,
-                          (double)r.triggers / perMs, (double)r.kurtSide / perMs,
-                          (double)r.systems / perMs, (double)r.objects / perMs,
-                          (int)r.objectsRun, (double)r.controllers / perMs, r.slowType,
-                          (double)r.slowVm / perMs, (double)r.slowMotion / perMs,
-                          (int)r.slowOps, (int)r.slowOpcode, (double)r.slowOpcodeTime / perMs,
-                          (int)r.spawns, (double)r.spawnTime / perMs, r.spawnType,
-                          (double)r.spawnSlow / perMs, (double)r.spawnModel / perMs);
-    }
-}
-#endif
 
 static void requestPackedSurface(void* user, const mdk::Surface& surface,
                                  const mdk::formats::Palette* palette) {
-#ifdef MDK_HW_PROFILE
-    const double t0 = nowSeconds();
-#endif
     WarmAsk* ask = static_cast<WarmAsk*>(user);
     ask->source->hint = true;
     ask->surfaces->requestPacked(surface, palette);
     ask->source->hint = false;
-#ifdef MDK_HW_PROFILE
-    g_hwAskMs += (float)((nowSeconds() - t0) * 1000.0);
-#endif
 }
 
 // The effects warm's start for a large sprite (EffectsView::warmStep): ask the
@@ -939,18 +861,7 @@ static void requestPackedSurface(void* user, const mdk::Surface& surface,
 // pack holds it, else a sliced expansion.
 static void startEffectSurface(void* user, const mdk::Surface& surface,
                                const mdk::formats::Palette* palette) {
-#ifdef MDK_HW_PROFILE
-    const double t0 = nowSeconds();
-#endif
     static_cast<WarmAsk*>(user)->surfaces->prepare(surface, palette);
-#ifdef MDK_HW_PROFILE
-    g_hwStartMs += (float)((nowSeconds() - t0) * 1000.0);
-    if (surface.texture != nullptr) {
-        snprintf(g_hwStarted, sizeof(g_hwStarted), "%s %dx%d", surface.texture->name().c_str(),
-                 (int)surface.texture->width(),
-                 (int)(surface.texture->height() * surface.texture->frameCount()));
-    }
-#endif
 }
 
 int main(int argc, char** argv) {
@@ -965,14 +876,6 @@ int main(int argc, char** argv) {
                 }
             },
             nullptr);
-#ifdef MDK_AUTOQUIT
-    // The autonomous hardware loop (harness_3ds.h): on exit, chain-load
-    // the netload stub so the next 3dslink push has somewhere to land.
-    // Registered first so every exit route -- including the R1 startup
-    // failure's immediate return -- hands off the same way. Harness
-    // builds only: a release build never sees this.
-    std::atexit(mdk::harnessChainloadStub);
-#endif
     // The command line. A 3DS title's arguments are short; --frames is the
     // one the test harness needs.
     for (int i = 1; i < argc; i++) {
@@ -1019,17 +922,6 @@ int main(int argc, char** argv) {
                       (unsigned)(envGetHeapSize() + envGetLinearHeapSize()));
     mdk::log3dsPrintf("main: FZ/DN ok (fpscr=0x%08lx)",
                       (unsigned long)mdk::vfpReadFpscr());
-#ifdef MDK_AUTOQUIT
-    // WHICH PAYLOAD THIS IS, in the log itself. A build without MDK_AUTOQUIT
-    // links harness_3ds.cpp's no-op answers: harnessAutoquitDue() is a
-    // constant false, so the run never ends and no `--- session end ---` can
-    // ever appear -- and the loop then reports a console that "ran 600 s
-    // without finishing" for a payload that cannot finish. That happened
-    // (measured 2026-11-17: the pushed .3dsx contained this file's other
-    // autoquit STRING but not netload_stub, i.e. the string without the
-    // macro). The line below is the proof that reads back from a pull.
-    mdk::log3dsPrintf("main: harness build, autoquit=%ds chainload=netload_stub", (int)(MDK_AUTOQUIT));
-#endif
 
     gfxInitDefault();
     // The top screen's parallax barrier. MDK's flat-display stereo modes do
@@ -1126,84 +1018,7 @@ int main(int argc, char** argv) {
         }
     }
 
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_TOGGLES)
-    // THE HARNESS'S CONFIG OVERRIDE (`make AUTOQUIT=.. TOGGLES='k=v;k=v'`), applied
-    // over whatever sdmc:/3ds/mdk/config.ini held and never written back (the
-    // menu's save is off in such a build: saveEnhancedConfig). The value must not
-    // hold ' # or , (make, the shell, the macro), nor a word that is a macro. The
-    // per-toggle cost runs need one console config each and the appliance's SD
-    // has no write path from the loop. A harness build only.
-    {
-#define MDK_HW_STR2(x) #x
-#define MDK_HW_STR(x) MDK_HW_STR2(x)
-        // Unknown keys are dropped by the parser, so the RESOLVED set is logged
-        // after it: a typo (`enableGlow=0`) shows as a run with the glow still on,
-        // and a stale -D (the Makefile does not track it) shows as the old set.
-        char overrides[512];
-        const int length = snprintf(overrides, sizeof(overrides), "%s", MDK_HW_STR(MDK_HW_TOGGLES));
-        if (length < 0 || length >= (int)sizeof(overrides)) {
-            mdk::log3dsPrintf("main: harness config override TOGGLES is too long (%d bytes); "
-                              "NOT applied", length);
-        } else {
-            for (char* c = overrides; *c != '\0'; c++) {
-                if (*c == ';') {
-                    *c = '\n';
-                }
-            }
-            mdk::parseEnhancedConfig(overrides, &enhancedToggles);
-            g_gameSettings.parseOver(overrides);
-            mdk::log3dsPrintf("main: harness config override TOGGLES=%s", MDK_HW_STR(MDK_HW_TOGGLES));
-            mdk::log3dsPrintf("main: resolved config shadows=%d lights=%d haze=%d mirrors=%d glow=%d "
-                              "filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
-                              "smoothing2x2=%d glowBloom=%d flip=%d shadowMapSize=%d shadowMapRefresh=%d "
-                              "texture16=%d kurtCompressed=%d",
-                              (int)enhancedToggles.enableSkyShadows,
-                              (int)enhancedToggles.enableFragmentLights,
-                              (int)enhancedToggles.enableHaze, (int)enhancedToggles.enableMirrors,
-                              (int)enhancedToggles.enableGlowBillboards,
-                              (int)enhancedToggles.enableFiltering,
-                              (int)enhancedToggles.enableMipmaps,
-                              (int)enhancedToggles.enableHdTextures,
-                              (int)enhancedToggles.enableLighting,
-                              (int)enhancedToggles.enableEdgeSmoothing,
-                              (int)enhancedToggles.edgeSmoothing2x2,
-                              (int)enhancedToggles.glowBloom,
-                              (int)enhancedToggles.shadowMapFlipBytes,
-                              (int)enhancedToggles.shadowMapSize,
-                              (int)enhancedToggles.shadowMapRefresh,
-                              (int)enhancedToggles.texture16,
-                              (int)enhancedToggles.kurtCompressed);
-            mdk::log3dsPrintf("main: resolved config cap30=%d hazeDensity=%d glowStrength=%d "
-                              "shadowDarkness=%d exposure=%d tintSaturation=%d",
-                              (int)enhancedToggles.cap30Fps, (int)enhancedToggles.hazeDensity,
-                              (int)enhancedToggles.glowStrength,
-                              (int)enhancedToggles.shadowDarkness,
-                              (int)enhancedToggles.exposure,
-                              (int)enhancedToggles.tintSaturation);
-        }
-#undef MDK_HW_STR
-#undef MDK_HW_STR2
-    }
-#endif
 
-#ifdef MDK_TOGGLE_WALK
-    // The toggle walk (a harness aid, `make TOGGLEWALK=1`, never a release):
-    // start in the ORIGINAL look and switch the configured enhancements on one
-    // at a time, logging each BEFORE the frame that first draws it, so a
-    // console that hangs names its culprit in the last line of mdk.log.
-    const mdk::EnhancedToggles walkTarget = enhancedToggles;
-    enhancedToggles.enableSkyShadows = false;
-    enhancedToggles.enableFragmentLights = false;
-    enhancedToggles.enableHaze = false;
-    enhancedToggles.enableMirrors = false;
-    enhancedToggles.enableGlowBillboards = false;
-    enhancedToggles.enableFiltering = false;
-    enhancedToggles.enableMipmaps = false;
-    enhancedToggles.enableHdTextures = false;
-    enhancedToggles.enableLighting = false;
-    enhancedToggles.enableEdgeSmoothing = false;
-    mdk::log3dsPrintf("walk: toggle walk build -- every enhancement off, then one at a time");
-#endif
 
     MdkRenderDesc desc;
     desc.width = 240;
@@ -1240,33 +1055,6 @@ int main(int argc, char** argv) {
     // no --menu). A harness build's `SPLASH=0` is the C#'s --menu: the menu alone,
     // so MENU= presses reach it at once.
     options.splash = true;
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_NOSPLASH)
-    options.splash = false;
-    mdk::log3dsPrintf("main: harness SPLASH=0 (the menu without the INTRO1A splash)");
-#endif
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_LEVEL)
-    options.start = mdk::flow::Start::Level;
-    // The hardware loop's level choice (`make AUTOQUIT=90 LEVEL=<n>`): the
-    // console has no command line, so the arena-streaming spec's Phase 0
-    // "baseline numbers for every level on hardware" needs the first level
-    // chosen at build time. Harness builds only; the flow validates it.
-    options.level = (int32_t)(MDK_HW_LEVEL);
-    mdk::log3dsPrintf("main: harness level override LEVEL=%d", (int)(MDK_HW_LEVEL));
-#endif
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_STREAM)
-    // The harness's direct stream (`make AUTOQUIT=60 STREAM=1 LEVEL=<n>`): the C#'s
-    // --stream=N, the stream after level N first, its tube the default seed's.
-    options.start = mdk::flow::Start::Stream;
-    mdk::log3dsPrintf("main: harness stream override STREAM=1 (the stream after level %d)",
-                      (int)options.level);
-#endif
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_FALL)
-    // `make AUTOQUIT=.. FALL=<n>`: the fall before level n, then the level (the C#'s
-    // --fall, Start.Fall; package #17b). Harness builds only.
-    options.start = mdk::flow::Start::Fall;
-    options.level = (int32_t)(MDK_HW_FALL);
-    mdk::log3dsPrintf("main: harness fall FALL=%d", (int)(MDK_HW_FALL));
-#endif
     mdk::flow::GameFlow flow(options);
     // THE SAVES (package #19): sdmc:/3ds/mdk/saves, an explicit path (AGENTS.md P5),
     // the C#'s `<user folder>/saves`. LASTGAME goes at start, as the C#'s Game
@@ -1330,49 +1118,6 @@ int main(int argc, char** argv) {
     // `make AUTOQUIT=.. GOD=1 NOCLIP=1`.
     static mdk::CheatsMenu cheatsPage;
     static mdk::CheatsMenu::Switches cheatSwitches;
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_GOD)
-    cheatSwitches.god = true;
-#endif
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_NOCLIP)
-    cheatSwitches.noclip = true;
-#endif
-#if defined(MDK_HW_AIDS)
-    // THE SET PIECES' AIDS (`make AUTOQUIT=.. GIVE=SW_BONES RIDE=XE AIM=yaw,pitch`,
-    // game/harness_aids.h): pickups at spawn, a ride mounted from 1 s, Kurt's and the
-    // scope's facing set exactly. The first level's only, as the C#'s test options.
-    // A refused value is logged and that aid dropped; the run goes on.
-    static mdk::HarnessAids harnessAids;
-    {
-        std::string why;
-#if defined(MDK_HW_GIVE)
-        if (!mdk::parseHarnessGive(MDK_HW_GIVE, &harnessAids.gives, &why)) {
-            mdk::log3dsPrintf("main: harness aids GIVE=%s REFUSED: %s", MDK_HW_GIVE, why.c_str());
-        }
-#endif
-#if defined(MDK_HW_RIDE)
-        if (!mdk::parseHarnessRide(MDK_HW_RIDE, &harnessAids.ride, &why)) {
-            mdk::log3dsPrintf("main: harness aids RIDE=%s REFUSED: %s", MDK_HW_RIDE, why.c_str());
-        }
-#endif
-#if defined(MDK_HW_AIM)
-        harnessAids.aim =
-            mdk::parseHarnessAim(MDK_HW_AIM, &harnessAids.aimYaw, &harnessAids.aimPitch, &why);
-        if (!harnessAids.aim) {
-            mdk::log3dsPrintf("main: harness aids AIM=%s REFUSED: %s", MDK_HW_AIM, why.c_str());
-        }
-#endif
-#if defined(MDK_HW_UNLOCK)
-        if (!mdk::parseHarnessUnlock(MDK_HW_UNLOCK, &harnessAids.unlocks, &why)) {
-            mdk::log3dsPrintf("main: harness aids UNLOCK=%s REFUSED: %s", MDK_HW_UNLOCK,
-                              why.c_str());
-        }
-#endif
-        mdk::log3dsPrintf("main: harness aids: %d pickups, ride %s, aim %s, %d unlock step(s)",
-                          (int)harnessAids.gives.size(),
-                          harnessAids.ride.empty() ? "-" : harnessAids.ride.c_str(),
-                          harnessAids.aim ? "yes" : "-", (int)harnessAids.unlocks.size());
-    }
-#endif
 
     // =====================================================================
     // THE LEVEL LOOP (package 2, the next-level transition). One pass per level:
@@ -1409,11 +1154,7 @@ int main(int argc, char** argv) {
         // C# ShowStream's seed: DefaultSeed for a direct stream, else
         // Environment.TickCount -- the console's tick counter, except in the
         // harness's FIXED=1 runs, whose every stream takes the default seed.
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_FIXED)
-        const uint32_t clockSeed = mdk::flow::kStreamDefaultSeed;
-#else
         const uint32_t clockSeed = (uint32_t)svcGetSystemTick();
-#endif
         const int32_t streamLevel = flow.state().level;
         int32_t streamEndHealth = flow.streamHealth();
         const char* streamExit = exitReason;
@@ -2253,20 +1994,6 @@ int main(int argc, char** argv) {
             pickupHook.pickedUp = mdk::Messages::pickedUp;
             player.combat().setPickupHook(pickupHook);
         }
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_AT)
-        // THE HARNESS'S START OVERRIDE (`make AUTOQUIT=.. AT=x,y,z,yaw`): Kurt's
-        // feet and yaw exactly as given, as the Linux build's --at sets them (no
-        // +3 lift: the override is the feet). A harness build only: the console
-        // has no command line, and a release must start where the level says.
-        // A test option, so the first level's alone (Game.cs:487).
-        if (firstLevel) {
-            const float at[4] = {MDK_HW_AT};
-            player.feet = mdk::Vec3{at[0], at[1], at[2]};
-            player.yaw = at[3];
-            mdk::log3dsPrintf("main: harness start override AT=%.1f,%.1f,%.1f yaw %.1f",
-                              at[0], at[1], at[2], at[3]);
-        }
-#endif
         if (firstSpawn) {
             mdk::fall::carryIntoLevel(entryCarry, &player.combat());
             if (!entryCarry.pickups.empty()) {
@@ -2323,14 +2050,7 @@ int main(int argc, char** argv) {
             // NOT reproducible here either, so a fixed seed would be the divergence,
             // not the fidelity. The console's clock is the ARM11 cycle counter, and
             // the value is logged at spawn so a run can be replayed by hand.
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
-            // A WALK harness build replays one scene: the same script, the same
-            // seed (the Linux build's --seed 1 for the same route), so two
-            // profiles of two builds measure the same enemies and effects.
-            const int32_t seed = 1;
-#else
             const int32_t seed = (int32_t)(uint32_t)svcGetSystemTick();
-#endif
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, seed, &bank, &player,
                                                           &sprites));
             // The setting as it is now: the gore cheat flips it mid-level (not saved), and
@@ -2412,32 +2132,6 @@ int main(int argc, char** argv) {
     if (arena) {
         spawnPlayer();
         playerReady = true;
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_AT) && defined(MDK_HW_ARENA)
-        // `ARENA=NAME` with AT (a harness aid): the arena is entered as a script's
-        // teleport enters it (TeleportKurt: EnterArena, CurrentArena, the second, the
-        // show), and Kurt's own space takes it too (the C#'s ONE ArenaSpace), so an
-        // arena only a teleport reaches is loaded and solid. The first level's only.
-        if (firstLevel && runtime) {
-            const mdk::formats::Arena* into = level.arenaNamed(MDK_HW_ARENA);
-            if (into == nullptr) {
-                mdk::log3dsPrintf("main: harness ARENA=%s: no such arena; AT alone", MDK_HW_ARENA);
-            } else {
-                runtime->teleportKurt(MDK_HW_ARENA, player.feet, player.yaw);
-                space.add(into);
-                space.setSolid({std::string(MDK_HW_ARENA)});
-                startArenaName = MDK_HW_ARENA;
-                mdk::log3dsPrintf("main: harness ARENA=%s: Kurt teleported in at "
-                                  "(%.1f,%.1f,%.1f)", MDK_HW_ARENA, player.feet.x,
-                                  player.feet.y, player.feet.z);
-            }
-        }
-#endif
-#if defined(MDK_HW_AIDS)
-        // GIVE= and AIM='s yaw (game/harness_aids.h), after AT= and ARENA=.
-        if (firstLevel && harnessAids.any()) {
-            mdk::harnessAidsAtSpawn(&harnessAids, &player, printHarnessAid);
-        }
-#endif
         // C# Viewer's constructor: RestoreSnapshot (a full save being loaded, F9's),
         // then ShowNotice ("Game loaded"). The save's arenas go into Kurt's space too
         // (the C#'s ONE ArenaSpace; ScriptRuntime::enteredArenas), and his arena is
@@ -2576,11 +2270,6 @@ int main(int argc, char** argv) {
     bool gameFinishedExit = false;
     bool endSeen = false;
     bool tearRefusedLogged = false;
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_EVENT)
-    // The EVENT's game time (C# Viewer._time against TestStart), the level's own: a
-    // chained run (EVENT_EVERY=1) fires it one second into each level.
-    float harnessEventTime = 0.0f;
-#endif
     // A death or a quick load leaves the level for the flow's next screen, as the
     // level's end does (C# Viewer._next = KurtDied / Play; package #19).
     bool leaveLevel = false;
@@ -2640,10 +2329,6 @@ int main(int argc, char** argv) {
         leaveLevel = true;
         leaveEvent = next;
     };
-#if defined(MDK_AUTOQUIT) && (defined(MDK_HW_DIE) || defined(MDK_HW_SAVETEST))
-    // DIE=1 / SAVETEST=1's game time on the first level (C# Viewer._time).
-    float harnessTestTime = 0.0f;
-#endif
 
     // THE LEVEL'S HD SET, RESIDENT BEFORE THE LOADING SCREEN GOES (owner
     // 2026-11-24: "I dont want surface pop in"; docs/HD_TEXTURES_3DS_SPEC.md 3.2).
@@ -2801,10 +2486,6 @@ int main(int argc, char** argv) {
         holdHdSet("loading screen");
     }
     heapProbe("loop");
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
-    // The scripted walk (harness_3ds.h), parsed and logged before the first frame.
-    const bool walkReady = mdk::harnessWalkInit();
-#endif
     mdk::log3dsPrintf("loop: entering main loop");
     // THE PAUSE MENU'S FALLBACK. Without the menu's fonts there is no menu to
     // open, and so no Quit row: holding START and SELECT together is then the
@@ -2829,74 +2510,6 @@ int main(int argc, char** argv) {
             exitReason = "harness autoquit (MDK_AUTOQUIT)";
             break;
         }
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_HDFLIP)
-        // THE HD SET FLIPPED ON A SCHEDULE (`make AUTOQUIT=90 HDFLIP=f,...`, a
-        // harness aid): enableHdTextures toggled at each listed frame and applied
-        // as the pause menu applies it. One line a flip, at the flip.
-        {
-            static const uint32_t kHdFlips[] = {MDK_HW_HDFLIP};
-            for (size_t i = 0; i < sizeof(kHdFlips) / sizeof(kHdFlips[0]); i++) {
-                if (frame == kHdFlips[i]) {
-                    enhancedToggles.enableHdTextures = !enhancedToggles.enableHdTextures;
-                    mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
-                    if (enhancedToggles.enableHdTextures && hdSetCap > 0) {
-                        holdHdSet("toggled on");
-                    }
-                    mdk::log3dsPrintf("hdflip: frame %lu hd=%d lin=%u", (unsigned long)frame,
-                                      (int)enhancedToggles.enableHdTextures,
-                                      (unsigned)linearSpaceFree());
-                }
-            }
-        }
-#endif
-#ifdef MDK_TOGGLE_WALK
-        // One step every kWalkFrames: the next toggle the config asked for.
-        {
-            const uint32_t kWalkFrames = 120;
-            static const char* const kWalkNames[] = {
-                "filtering", "mipmaps", "haze", "lighting", "fragmentLights",
-                "mirrors", "hdTextures", "edgeSmoothing", "glow", "skyShadows"};
-            const uint32_t kWalkSteps = sizeof(kWalkNames) / sizeof(kWalkNames[0]);
-            static uint32_t walkStep = 0;
-            static uint32_t walkNext = kWalkFrames;
-            if (walkStep > 0u && frame + kWalkFrames / 2u == walkNext) {
-                mdk::log3dsPrintf("walk: %s survived %u frames", kWalkNames[walkStep - 1u],
-                                  (unsigned)(kWalkFrames / 2u));
-            }
-            if (frame == walkNext && walkStep < kWalkSteps) {
-                if (walkStep == 0u) {
-                    mdk::log3dsPrintf("walk: the original look survived %u frames",
-                                      (unsigned)frame);
-                }
-                bool* slot = nullptr;
-                bool want = false;
-                switch (walkStep) {
-                case 0: slot = &enhancedToggles.enableFiltering; want = walkTarget.enableFiltering; break;
-                case 1: slot = &enhancedToggles.enableMipmaps; want = walkTarget.enableMipmaps; break;
-                case 2: slot = &enhancedToggles.enableHaze; want = walkTarget.enableHaze; break;
-                case 3: slot = &enhancedToggles.enableLighting; want = walkTarget.enableLighting; break;
-                case 4: slot = &enhancedToggles.enableFragmentLights; want = walkTarget.enableFragmentLights; break;
-                case 5: slot = &enhancedToggles.enableMirrors; want = walkTarget.enableMirrors; break;
-                case 6: slot = &enhancedToggles.enableHdTextures; want = walkTarget.enableHdTextures; break;
-                case 7: slot = &enhancedToggles.enableEdgeSmoothing; want = walkTarget.enableEdgeSmoothing; break;
-                case 8: slot = &enhancedToggles.enableGlowBillboards; want = walkTarget.enableGlowBillboards; break;
-                default: slot = &enhancedToggles.enableSkyShadows; want = walkTarget.enableSkyShadows; break;
-                }
-                mdk::log3dsPrintf("walk: step %u: %s %s at frame %u", (unsigned)(walkStep + 1u),
-                                  kWalkNames[walkStep], want ? "ON" : "(left off by config.ini)",
-                                  (unsigned)frame);
-                if (want) {
-                    *slot = true;
-                    mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
-                }
-                walkStep++;
-                walkNext += kWalkFrames;
-                if (walkStep == kWalkSteps) {
-                    mdk::log3dsPrintf("walk: every step taken; the config's full set is on");
-                }
-            }
-        }
-#endif
 
         // The frame's clock FIRST: the look integrates over the time since the
         // previous frame, so the input poll needs the same delta the simulation is
@@ -2921,15 +2534,6 @@ int main(int argc, char** argv) {
         }
         if (delta < 0.0) delta = 0.0;
         if (delta > 0.25) delta = 0.25;
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_FIXED)
-        // The harness's deterministic clock (`make AUTOQUIT=90 FIXED=1`): every
-        // frame advances exactly one 1/60 s step, as the Linux build's
-        // --fixed-step does, so `CAPTURE=<n>` writes the SAME simulation frame
-        // the Linux capture writes at --capture-frame=<n>, and the two can be
-        // pixel-diffed (mdk_3ds/tools/compare_linux.sh). Never in a play or
-        // profile build: it is not real time.
-        delta = 1.0 / 60.0;
-#endif
         const float elapsed = mdk::flow::GameFlow::elapsedFor(false, step, (float)delta);
 
         // The controls. ONE scan of HID for the whole frame, inside the poll:
@@ -2947,16 +2551,6 @@ int main(int argc, char** argv) {
         if (playerReady && player.sniping()) {
             mdk::input3dsScopeButtons(held, controls, &input);
         }
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_WALK)
-        // The scripted walk owns the actions, after the poll and before the game
-        // reads them (harness_3ds.h). A refused script stops the run at once.
-        if (!walkReady) {
-            exitReason = "harness walk refused (MDK_HW_WALK)";
-            break;
-        }
-        mdk::harnessWalkApply(frame, &input, player.feet.x, player.feet.y, player.feet.z,
-                              player.yaw, runtime ? runtime->currentArena().c_str() : "");
-#endif
 
         const u32 pressed = held & ~prevHeld;
         prevHeld = held;
@@ -3196,69 +2790,6 @@ int main(int argc, char** argv) {
             spanSim0 = mdk::harnessProfileTick();
             spanSteps0 = steps;
             while (pending >= step) {
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_EVENT)
-                // `make AUTOQUIT=.. EVENT=N` (a harness aid): the C#'s Viewer.RunTests
-                // (Viewer.cs:664-680), ahead of Kurt's step -- special_event N for the
-                // controller of Kurt's arena on the step whose game time first reaches
-                // TestStart (1 s). 50 and below end the level. The first level's only,
-                // as the C#'s test options are (Game.cs:487), unless EVENT_EVERY=1.
-                {
-                    const float kTestStart = 1.0f;
-                    harnessEventTime += step;
-#if defined(MDK_HW_EVENT_EVERY)
-                    const bool eventLevel = true;
-#else
-                    const bool eventLevel = firstLevel;
-#endif
-                    if (eventLevel && runtime &&
-                        !(harnessEventTime < kTestStart ||
-                          harnessEventTime - step >= kTestStart)) {
-                        mdk::log3dsPrintf("harness: special_event %d at frame %lu (EVENT)",
-                                          (int)(MDK_HW_EVENT), (unsigned long)frame);
-                        runtime->specialEvent(
-                            &runtime->getArenaState(runtime->currentArena()).controller,
-                            (int32_t)(MDK_HW_EVENT));
-                    }
-                }
-#endif
-#if defined(MDK_AUTOQUIT) && (defined(MDK_HW_DIE) || defined(MDK_HW_SAVETEST))
-                // `make AUTOQUIT=.. DIE=1` (the C#'s --die: Kurt hurt by FatalDamage
-                // 1000 at TestStart, 1 s) and `SAVETEST=1` (the pause menu's X at 5 s
-                // and Y at 8 s: a full save, then its load into a reloaded level). The
-                // first level's only, as the C#'s test options are.
-                if (firstLevel && !leaveLevel) {
-                    harnessTestTime += step;
-                    const auto crosses = [&](float at) {
-                        return !(harnessTestTime < at || harnessTestTime - step >= at);
-                    };
-#if defined(MDK_HW_DIE)
-                    if (crosses(1.0f)) {
-                        mdk::log3dsPrintf("harness: Kurt hurt by 1000 at frame %lu (DIE)",
-                                          (unsigned long)frame);
-                        player.combat().hurt(1000);
-                    }
-#endif
-#if defined(MDK_HW_SAVETEST)
-                    if (crosses(5.0f)) {
-                        mdk::log3dsPrintf("harness: quick save at frame %lu (SAVETEST)",
-                                          (unsigned long)frame);
-                        quickSave();
-                    }
-                    if (crosses(8.0f)) {
-                        mdk::log3dsPrintf("harness: quick load at frame %lu (SAVETEST)",
-                                          (unsigned long)frame);
-                        quickLoad();
-                    }
-#endif
-                }
-#endif
-#if defined(MDK_HW_AIDS)
-                // RIDE= and AIM='s scope (game/harness_aids.h), before Kurt's step.
-                if (firstLevel && harnessAids.any()) {
-                    mdk::harnessAidsStep(&harnessAids, &player, runtime.get(), step,
-                                         printHarnessAid);
-                }
-#endif
                 const uint64_t tp0 = mdk::harnessProfileTick();
                 player.update(input, step);
                 const uint64_t tp1 = mdk::harnessProfileTick();
@@ -3266,29 +2797,9 @@ int main(int argc, char** argv) {
                 // camera (Viewer.cs:505-535). ScriptRuntime keeps its own 1/30 s
                 // clock, so a 1/60 s call completes a script tick every second step
                 // while Kurt's physics stay at 60 Hz.
-#ifdef MDK_HW_PROFILE
-                // The scripts' tick probe (script_runtime.h): its clock, and the
-                // frame its rows are named by. Said at the level's teardown.
-                if (runtime) {
-                    runtime->probeClock = mdk::harnessProfileTick;
-                    runtime->probeFrame = (int32_t)frame;
-                }
-#endif
                 if (runtime) {
                     runtime->update(step);
                 }
-#ifdef MDK_HW_PROFILE
-                // The scripts' step and the stamps' refresh, split (the profile's
-                // simsub line sums them): only a slow one is named, after its timing.
-                const uint64_t tpStamps = mdk::harnessProfileTick();
-                if ((double)(tpStamps - tp1) * 1000.0 / (double)SYSCLOCK_ARM11 > 10.0) {
-                    mdk::log3dsPrintf("scriptstep frame %lu %.1f ms (arena %s)",
-                                      (unsigned long)frame,
-                                      (double)(tpStamps - tp1) * 1000.0 / (double)SYSCLOCK_ARM11,
-                                      runtime ? runtime->currentArena().c_str() : "-");
-                }
-                const size_t stampCount = runtime ? runtime->stampedTextures().size() : 0;
-#endif
                 if (runtime) {
                     // The bullet holes the step stamped (special_130, package #16): the C#'s
                     // TextureStamped -> MaterialResolver.Refresh (Viewer.cs:263), each changed
@@ -3303,14 +2814,6 @@ int main(int argc, char** argv) {
                     runtime->clearStampedTextures();
                 }
                 const uint64_t tp2 = mdk::harnessProfileTick();
-#ifdef MDK_HW_PROFILE
-                if (stampCount > 0 &&
-                    (double)(tp2 - tpStamps) * 1000.0 / (double)SYSCLOCK_ARM11 > 5.0) {
-                    mdk::log3dsPrintf("stamprefresh frame %lu %u texture(s) %.1f ms",
-                                      (unsigned long)frame, (unsigned)stampCount,
-                                      (double)(tp2 - tpStamps) * 1000.0 / (double)SYSCLOCK_ARM11);
-                }
-#endif
                 // The pitch the camera eases to (Viewer.cs:746-747). The oracle's
                 // sources are a live camera_track request first and the scripts'
                 // current arena's rest pitch after it.
@@ -3576,15 +3079,6 @@ int main(int argc, char** argv) {
         // its door, and its textures are pumped from the resident MTO -- no SD
         // read and no unplanned build lands on the frame Kurt crosses a door.
         // Outside begin/end_frame: it can make and release GPU resources.
-#ifdef MDK_HW_PROFILE
-        // This frame's view work, for the arena-entry table (harness_3ds.h).
-        float hwViewsMs = 0.0f;
-        int32_t hwViewsBuilt = 0;
-        double hwFlow0 = 0.0;
-        float hwWarmMs = 0.0f;
-        float hwPumpMs = 0.0f;
-        float hwMusicMs = 0.0f;
-#endif
         if (arena) {
             const std::string& streamCurrent =
                 (runtime && !runtime->currentArena().empty()) ? runtime->currentArena()
@@ -3711,13 +3205,7 @@ int main(int argc, char** argv) {
             // (arena_views.h): from the resident MTO, so a make is decode and
             // upload with no SD read. Two a frame; the entry stall was 442 ms
             // for nine at once.
-#ifdef MDK_HW_PROFILE
-            const double pump0 = nowSeconds();
-#endif
             arenaViews.pumpSurfaces(2);
-#ifdef MDK_HW_PROFILE
-            hwPumpMs = (float)((nowSeconds() - pump0) * 1000.0);
-#endif
             // The script effects' textures for the resident arenas, one
             // texture a frame per arena (EffectsView::warmStep): an
             // effect's first frame is its spawn frame, so without this its
@@ -3726,17 +3214,8 @@ int main(int argc, char** argv) {
             // resolving all six in the arena-change frame was most of that
             // frame's remaining stall, so the warm is spread like the
             // builds above it.
-#ifdef MDK_HW_PROFILE
-            const double warm0 = nowSeconds();
-            g_hwAskMs = 0.0f;
-            g_hwStartMs = 0.0f;
-            g_hwStarted[0] = '\0';
-#endif
             effectsView.warmStep(streamCurrent, requestPackedSurface, startEffectSurface,
                                  &warmAsk);
-#ifdef MDK_HW_PROFILE
-            const double warmHints0 = nowSeconds();
-#endif
             // The bubble's arenas warm too: they are approached, not yet
             // resident, and their lead is the whole point (no deferral --
             // the bubble IS the early start).
@@ -3746,9 +3225,6 @@ int main(int argc, char** argv) {
                                          startEffectSurface, &warmAsk);
                 }
             }
-#ifdef MDK_HW_PROFILE
-            const double warmSecond0 = nowSeconds();
-#endif
             if (!streamSecond.empty() && streamSecond != streamCurrent) {
                 // Not the change frame either (see the music step below):
                 // each name's first warm step is deferred exactly once
@@ -3768,9 +3244,6 @@ int main(int argc, char** argv) {
                                          startEffectSurface, &warmAsk);
                 }
             }
-#ifdef MDK_HW_PROFILE
-            const double warmObjects0 = nowSeconds();
-#endif
             // THE OBJECTS' TEXTURES for the pair (warmObjectStep): one model a
             // frame per arena -- its own models, then every type the scripts
             // can spawn -- each Lit surface the orig pack holds asked for as a
@@ -3804,52 +3277,11 @@ int main(int argc, char** argv) {
                 const mdk::formats::Arena* owner = level.arenaNamed(name);
                 if (owner != nullptr) {
                     size_t& cursor = objectWarmAt[name];
-#ifdef MDK_HW_PROFILE
-                    // A slow step named (the model, and how long): the evidence
-                    // for the next hardware run that no step is large. Only
-                    // over 4 ms, so a normal step writes nothing to the SD card.
-                    const size_t stepAt = cursor;
-                    const double step0 = nowSeconds();
-#endif
                     mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr, objectLook(name),
                                         objectResolver, requestPackedSurface, &warmAsk,
                                         &cursor);
-#ifdef MDK_HW_PROFILE
-                    const double stepMs = (nowSeconds() - step0) * 1000.0;
-                    if (stepMs > 4.0 && stepAt != cursor) {
-                        const size_t own = (size_t)owner->modelCount();
-                        const std::string model =
-                            stepAt < own ? owner->modelName((int32_t)stepAt)
-                                         : (cmiReady && stepAt - own < cmi.modelOffsets().size()
-                                                ? cmi.modelOffsets()[stepAt - own].first
-                                                : std::string("?"));
-                        mdk::log3dsPrintf("objwarm %s model %u (%s) %.1f ms", name.c_str(),
-                                          (unsigned)stepAt, model.c_str(), stepMs);
-                    }
-#endif
                 }
             }
-#ifdef MDK_HW_PROFILE
-            const double warmEnd = nowSeconds();
-            hwWarmMs = (float)((warmEnd - warm0) * 1000.0);
-            if ((stream2 - stream1 + warmEnd - warm0) * 1000.0 > 8.0 && g_hwFlowRowCount < 64) {
-                HwFlowRow& row = g_hwFlowRows[g_hwFlowRowCount++];
-                row.frame = (unsigned long)frame;
-                row.sync = (float)((stream2 - stream1) * 1000.0);
-                row.fxCurrent = (float)((warmHints0 - warm0) * 1000.0);
-                row.fxHints = (float)((warmSecond0 - warmHints0) * 1000.0);
-                row.fxSecond = (float)((warmObjects0 - warmSecond0) * 1000.0);
-                row.objects = (float)((warmEnd - warmObjects0) * 1000.0);
-                row.ask = g_hwAskMs;
-                row.start = g_hwStartMs;
-                snprintf(row.started, sizeof(row.started), "%s", g_hwStarted);
-            }
-#endif
-#ifdef MDK_HW_PROFILE
-            hwViewsMs = (float)((stream2 - stream1) * 1000.0);
-            hwViewsBuilt = builtViews;
-            hwFlow0 = stream1;
-#endif
             if (arenaViews.stats().failed != lastViewsFailed) {
                 mdk::log3dsPrintf("views: build FAILED (%d so far); it is tried again",
                                   (int)arenaViews.stats().failed);
@@ -3898,9 +3330,6 @@ int main(int argc, char** argv) {
             // (SoundBank::kDecodeStepSamples). No frame reads, and none decodes a
             // whole track: those are the last resort, a track wanted before its
             // prefetch is in (counted, and said below).
-#ifdef MDK_HW_PROFILE
-            const double music0 = nowSeconds();
-#endif
             bool musicStartedHere = false;
             if (music) {
                 // The bubble's nearest arena's track too, when no
@@ -4032,9 +3461,6 @@ int main(int argc, char** argv) {
                 audioDemandSaid = audio.demandReads;
                 audioDemandBytesSaid = audio.demandBytes;
             }
-#ifdef MDK_HW_PROFILE
-            hwMusicMs = (float)((nowSeconds() - music0) * 1000.0);
-#endif
         }
 
         MdkFrameParams params;
@@ -4070,17 +3496,6 @@ int main(int argc, char** argv) {
         // P2: the camera is handed to the renderer every frame, whether or not a
         // step ran, and every GPU state the frame needs is set inside
         // begin/end_frame by the backend.
-#ifdef MDK_HW_PROFILE
-        if (hwFlow0 > 0.0) {
-            const double flowMs = (nowSeconds() - hwFlow0) * 1000.0;
-            if (flowMs > 30.0) {
-                mdk::log3dsPrintf("flow: frame %lu flow %.1f ms (sync %.1f, warm %.1f, "
-                                  "pump %.1f, music %.1f)",
-                                  (unsigned long)frame, flowMs, (double)hwViewsMs,
-                                  (double)hwWarmMs, (double)hwPumpMs, (double)hwMusicMs);
-            }
-        }
-#endif
         const uint64_t spanBegin0 = mdk::harnessProfileTick();
         mdk_render_begin_frame(renderer, &params);
         const uint64_t spanDraw0 = mdk::harnessProfileTick();
@@ -4318,44 +3733,7 @@ int main(int argc, char** argv) {
             // A refusal is reported like the object pass's, edge-triggered
             // and re-armed, but on this pass's own latch.
             effectsView.build(*runtime, sceneCamera, &effectsFrame);
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_GLOWPROBE)
-            // THE HARNESS'S GLOW PROBE (`make AUTOQUIT=.. GLOWPROBE=1`): one halo,
-            // 30 units in front of the camera, 12 across, warm white -- the
-            // billboard path drawn on hardware without waiting for a script to
-            // explode something. A harness build only.
-            {
-                mdk::Mat4 view;
-                mdk::Mat4 projection;
-                memcpy(view.m, sceneCamera.view, sizeof(view.m));
-                memcpy(projection.m, sceneCamera.projection, sizeof(projection.m));
-                mdk::Vec3 right;
-                mdk::Vec3 up;
-                mdk::Vec3 forward;
-                mdk::effectsBillboardBasis(mdk::multiply(view, projection), &right, &up, &forward);
-                const mdk::Vec3 at{sceneCamera.position.x + forward.x * 30.0f,
-                                   sceneCamera.position.y + forward.y * 30.0f,
-                                   sceneCamera.position.z + forward.z * 30.0f};
-                mdk::GlowQuad probe;
-                mdk::effectsQuadVertices(at, right, up, 12, 12, probe.corners);
-                probe.colour[0] = 1.0f;
-                probe.colour[1] = 0.8f;
-                probe.colour[2] = 0.5f;
-                effectsFrame.glows.push_back(probe);
-            }
-#endif
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
-#ifdef MDK_HW_PROFILE
-            // The draw span's two big items, sized (census frames of the
-            // level-7 walk): how much geometry the object and effects
-            // passes lay out in a corridor frame.
-            if (frame == 785 || frame == 805 || frame == 815) {
-                mdk::log3dsPrintf("drawcounts: frame %d objects %d corners %d draws (runtime %d), effects %d verts %d draws %d glows",
-                                  (int)frame, (int)objectCorners, (int)objectDraws,
-                                  (int)runtime->objects().size(),
-                                  (int)effectsFrame.vertices.size(), (int)effectsFrame.draws.size(),
-                                  (int)effectsFrame.glows.size());
-            }
-#endif
             if (mdk::log3dsPeriodic() && (frame % 300u) == 0u) {
                 mdk::log3dsPrintf("effects: frame %d: %d sprite effects, %d with a halo, %d not "
                                   "yet measured (pixels away)",
@@ -4496,55 +3874,6 @@ int main(int argc, char** argv) {
                                      spanEnd0 - spanDraw0,
                                      mdk::harnessProfileTick() - spanEnd0, spanAudio);
         }
-#ifdef MDK_HW_PROFILE
-        // The arena-entry table's sample (harness_3ds.h): counters and the arena
-        // pair, copied into RAM; nothing reaches the SD card before exit.
-        {
-            mdk::HarnessArenaFrame sample;
-            sample.arena = (runtime && !runtime->currentArena().empty())
-                               ? runtime->currentArena().c_str()
-                               : startArenaName.c_str();
-            sample.second = runtime ? runtime->secondArena().c_str() : "";
-            sample.secondActive = runtime && runtime->secondActive();
-            // Residency retired the arena stream: its columns stay in the
-            // table at zero, so old logs and new read the same shape.
-            sample.streamSwitches = 0;
-            sample.streamBytes = 0;
-            sample.streamStalls = 0;
-            sample.streamMs = 0.0f;
-            sample.viewsBuilt = hwViewsBuilt;
-            sample.viewsMs = hwViewsMs;
-            MdkC3dFirstUse made;
-            mdk_render_c3d_first_use(renderer, &made);
-            sample.texturesMade = made.texturesMade;
-            sample.texturesFirstMade = made.texturesFirstMade;
-            sample.texturesRemade = made.texturesRemade;
-            sample.mtoDemandReads = surfaces.sourceStats().mtoDemandReads;
-            sample.mtoDemandBytes = surfaces.sourceStats().mtoDemandBytes;
-            sample.packImported = made.packImported;
-            sample.packSync = made.packSync;
-            sample.packLanded = made.packLanded;
-            sample.hdReads = made.hdReads;
-            sample.musicDemandReads = bank.stats().demandReads;
-            sample.musicPrefetchStalls = bank.stats().prefetchStalls;
-            sample.musicReaderSteps = bank.stats().prefetchReads;
-            sample.musicDecodeSteps = bank.stats().decodeSteps;
-            sample.hdImported = made.hdImported;
-            sample.texturesEvicted = made.texturesEvicted;
-            sample.hdEvicted = made.hdEvicted;
-            sample.textureMakeTicks = made.textureMakeTicks;
-            sample.hdImportTicks = made.hdImportTicks;
-            sample.linearFreeKB = (uint32_t)(linearSpaceFree() >> 10);
-            if (kurtSpriteReady) {
-                sample.kurtReads = kurtSprite.streamStats().reads;
-                // E12 replaced the 16-bit stand-in with the HOLD (KurtSprite::chooseFrame):
-                // a draw whose frame is still being read shows the last frame, or none.
-                sample.kurtHolds = kurtSprite.streamStats().holds + kurtSprite.streamStats().holdMisses;
-            }
-            sample.logLines = mdk::log3dsLinesWritten();
-            mdk::harnessArenaFrame(frame, sample);
-        }
-#endif
         frame++;
 
         if (frame == 1u) {
@@ -4826,11 +4155,6 @@ int main(int argc, char** argv) {
     } else {
         mdk::audioClose();
     }
-#ifdef MDK_HW_PROFILE
-    if (runtime) {
-        logScriptProbe(*runtime);
-    }
-#endif
     // THE HD RULE'S PROOF, once per level (docs/HD_TEXTURES_3DS_SPEC.md 3.1):
     // the lookup's content hashes, the HD answers made from SD anyway, the SD
     // copies made for a texture with a linked HD copy while the toggle was on
@@ -4874,22 +4198,6 @@ int main(int argc, char** argv) {
                           (int)made.hdTopCap, (int)made.hdPinned, (int)made.hdPinnedResident,
                           (unsigned)made.hdPinnedBytes, (int)made.hdPinFailed,
                           (int)made.hdStampsSkipped, (int)made.hdLinkedAfterSd);
-#ifdef MDK_AUTOQUIT
-        // THE HARNESS GATE (spec 3.2): with the set on and resident, no surface
-        // may have been late or blank and no covered surface may have been made
-        // from SD -- a run that breaks it says FAIL in its log.
-        if (enhancedToggles.enableHdTextures && made.hdPinned > 0) {
-            const bool pass = made.hdLateTextures == 0 && made.hdBlankDraws == 0 &&
-                              made.hdCoveredSdMade == 0 && made.hdPinFailed == 0 &&
-                              surfaces.sourceStats().hdAnsweredSd == 0 && g_lookupHashes == 0;
-            mdk::log3dsPrintf("hdrule: gate %s (late %d, blank %d, covered SD %d, given up %d, "
-                              "answered SD %d, hashes %d)",
-                              pass ? "PASS" : "FAIL", (int)made.hdLateTextures,
-                              (int)made.hdBlankDraws, (int)made.hdCoveredSdMade,
-                              (int)made.hdPinFailed, (int)surfaces.sourceStats().hdAnsweredSd,
-                              (int)g_lookupHashes);
-        }
-#endif
         mdk::log3dsPrintf("hdrule: margin firsts=%d min=%d frames (at frame %d, %s) under30=%d",
                           (int)made.hdSlackFirsts, (int)made.hdSlackMin, (int)made.hdSlackMinFrame,
                           made.hdSlackWorst[0] ? made.hdSlackWorst : "-",
@@ -4941,16 +4249,6 @@ int main(int argc, char** argv) {
     printf("[3ds] exiting after %lu frames\n", (unsigned long)frame);
 
     mdk::harnessProfileReport();
-#ifdef MDK_HW_PROFILE
-    for (int32_t i = 0; i < g_hwFlowRowCount; i++) {
-        const HwFlowRow& row = g_hwFlowRows[i];
-        mdk::log3dsPrintf("flowrow: frame %lu sync %.1f fx cur %.1f hints %.1f second %.1f "
-                          "obj %.1f (ask %.1f start %.1f last %s)",
-                          row.frame, (double)row.sync, (double)row.fxCurrent,
-                          (double)row.fxHints, (double)row.fxSecond, (double)row.objects,
-                          (double)row.ask, (double)row.start, row.started);
-    }
-#endif
     mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
                       (unsigned)steps, exitReason);
     aptUnhook(&s_lifecycleCookie);

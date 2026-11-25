@@ -77,11 +77,7 @@ namespace mdk {
 // channel), so the console can A/B the two; every other build, release included,
 // mixes on the DSP. A build constant (the kDrawDedupe pattern), not a runtime
 // toggle: this is not an enhancement, it is the 3DS's sound system.
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_DSPAUDIO_OFF)
-static constexpr bool kDspAudio = false;
-#else
 static constexpr bool kDspAudio = true;
-#endif
 
 // ndsp + the sample arena + the music buffers + the worker. FALSE with a logged
 // reason (no DSP firmware, ndspInit failed, no linear memory); the game then runs

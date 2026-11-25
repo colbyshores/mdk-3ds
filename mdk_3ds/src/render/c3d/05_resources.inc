@@ -16,16 +16,6 @@ static MdkTextureId createIndexTexture(MdkRenderer r, int32_t w, int32_t h, cons
     if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !px) {
         return -1;
     }
-#ifdef MDK_HW_PROFILE
-    // WHO MADE IT (profile builds only): a large index texture's creator, by
-    // return address -- `addr2line -f -e mdk_3ds/mdk.elf <caller>` names the
-    // function. The menu's transition frames create pictures whose owners the
-    // texchunk lines alone cannot name.
-    if ((size_t)w * (size_t)h >= kChunkMinTexels) {
-        mdk::log3dsPrintf("texcreate %dx%d frame %d caller %p", (int)w, (int)h,
-                          (int)renderer->frame, __builtin_return_address(0));
-    }
-#endif
     if (!paletteRgba) {
         // Without a palette there is nothing to expand through. The Vulkan
         // backend binds the palette as a texture of its own and does not
@@ -958,9 +948,6 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
     // reading this buffer when the frame's own draws write it. An update outside a
     // frame would be an in-flight write; no caller does one.
     float* out = static_cast<float*>(mesh.data);
-#ifdef MDK_HW_PROFILE
-    const uint64_t updStart = svcGetSystemTick();
-#endif
     for (int32_t i = 0; i < n; i++) {
         out[i * 5 + 0] = v[i].pos.x;
         out[i * 5 + 1] = v[i].pos.y;
@@ -968,23 +955,6 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
         out[i * 5 + 3] = v[i].uv.x;
         out[i * 5 + 4] = v[i].uv.y;
     }
-#ifdef MDK_HW_PROFILE
-    {
-        static uint64_t copySum = 0;
-        static int32_t copyCalls = 0;
-        copySum += svcGetSystemTick() - updStart;
-        copyCalls++;
-        if ((renderer->frame % 300) == 0 && copyCalls > 0) {
-            mdk::log3dsPrintf("meshupd: frame %d mean copy %.3f ms over %d calls",
-                              (int)renderer->frame,
-                              (double)copySum / (double)copyCalls * 1000.0 /
-                                  (double)SYSCLOCK_ARM11,
-                              (int)copyCalls);
-            copySum = 0;
-            copyCalls = 0;
-        }
-    }
-#endif
     // THE CPU/GPU CACHE-VISIBILITY OBLIGATION (AGENTS.md P3) -- AND THIS CALL IS
     // NOT WHAT MEETS IT.
     //

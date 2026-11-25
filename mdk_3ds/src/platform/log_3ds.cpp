@@ -113,9 +113,6 @@ void log3dsPrintf(const char* format, ...) {
     }
     fprintf(g_log, "%s\n", line);
     fflush(g_log);
-#ifdef MDK_HW_PROFILE
-    g_linesWritten++;   // the PROFILE build's arena-entry table reads it
-#endif
 }
 
 uint32_t log3dsLinesWritten() {

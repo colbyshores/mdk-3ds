@@ -33,11 +33,7 @@ bool log3dsOpen();
 // the stalls the profile measures (2026-11-19: the 4+ vblank spikes). Event
 // lines (boot, level, the first frames, failures) are not periodic and stay.
 inline bool log3dsPeriodic() {
-#if defined(MDK_AUTOQUIT) && !defined(MDK_HW_PROFILE)
-    return true;
-#else
     return false;
-#endif
 }
 
 // Close the log. Safe to call when the open failed.

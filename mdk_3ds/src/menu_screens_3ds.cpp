@@ -138,16 +138,6 @@ MenuPresses& harnessPresses() {
     static bool parsed = false;
     if (!parsed) {
         parsed = true;
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_MENU)
-        std::string error;
-        if (presses.parse(MDK_HW_MENU, &error)) {
-            log3dsPrintf("menu: harness presses MENU=%s (%d)", MDK_HW_MENU,
-                         (int)presses.presses.size());
-        } else {
-            log3dsPrintf("menu: harness presses MENU=%s REFUSED: %s", MDK_HW_MENU, error.c_str());
-            presses.presses.clear();
-        }
-#endif
     }
     return presses;
 }
@@ -263,11 +253,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     auto openFall = [&]() -> bool {
         fall::FallViewOptions options;
         options.lean = true;
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_FIXED)
-        const int32_t seed = 1;   // FIXED=1 replays one fall, as the Linux --fixed-step
-#else
         const int32_t seed = (int32_t)(uint32_t)svcGetSystemTick();   // the C#'s `new Random()`
-#endif
         fall::FallScreen::Print print;
         print.line = printLine;
         std::string why;
@@ -398,9 +384,6 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         if (frontFrames++ > 0) harnessProfileFrontFrame(delta);
         if (delta < 0.0) delta = 0.0;
         if (delta > 0.25) delta = 0.25;
-#if defined(MDK_AUTOQUIT) && defined(MDK_HW_FIXED)
-        delta = 1.0 / 60.0;
-#endif
         const float elapsed = (float)delta;
         pressTime += elapsed;
 

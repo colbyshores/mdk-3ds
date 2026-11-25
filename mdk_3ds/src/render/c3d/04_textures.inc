@@ -150,37 +150,17 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
     // arena went invisible through the alpha test rather than merely looking
     // wrong.
     memset(pixels, 0, texels * 4);
-#ifdef MDK_HW_PROFILE
-    const uint64_t expT0 = svcGetSystemTick();
-#endif
     // Transparent texels need no write (the memset left the slot all-zero,
     // and black-with-alpha-255 is what the palette would wrongly give).
     const bool sawTransparent =
         expandIndexRows(indices, width, 0, height, paletteRgba, paddedWidth, pixels);
-#ifdef MDK_HW_PROFILE
-    const uint64_t expT1 = svcGetSystemTick();
-#endif
     // Ready for Enhanced Mode filtering whichever way its toggle stands now: the
     // toggle is live, the texture is made once (pica::prepareForFiltering; a
     // nearest sample of any texel it touches is unchanged in colour or
     // discarded as before, except at an exact padded edge, which now clamps).
     mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight,
                                    sawTransparent);
-#ifdef MDK_HW_PROFILE
-    const uint64_t expT2 = svcGetSystemTick();
-#endif
     mdk::pica::buildMipChain(pixels, paddedWidth, paddedHeight, width, height, mipLevels);
-#ifdef MDK_HW_PROFILE
-    const uint64_t expT3 = svcGetSystemTick();
-    const double msPer = 1000.0 / (double)SYSCLOCK_ARM11;
-    const double expMs = (double)(expT3 - expT0) * msPer;
-    if (expMs > 50.0) {
-        mdk::log3dsPrintf("expandstage: %dx%d main %.1f filter %.1f mip %.1f ms%s", (int)width,
-                          (int)height, (double)(expT1 - expT0) * msPer,
-                          (double)(expT2 - expT1) * msPer, (double)(expT3 - expT2) * msPer,
-                          sawTransparent ? "" : " (opaque)");
-    }
-#endif
     return pixels;
 }
 
@@ -357,23 +337,9 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture, const u
         return false;
     }
     Tex3DS_Texture t3x = nullptr;
-#ifdef MDK_HW_PROFILE
-    // How many evictions the import took to fit (profile builds only; logged
-    // only when it took more than one try, so the timed make stays clean of
-    // an SD write -- one costs ~10 ms on the Old 3DS).
-    int32_t importTries = 0;
-#endif
     for (;;) {
-#ifdef MDK_HW_PROFILE
-        importTries++;
-#endif
         t3x = Tex3DS_TextureImport(bytes, size, &texture.tex, nullptr, false);
         if (t3x) {
-#ifdef MDK_HW_PROFILE
-            if (importTries > 1) {
-                mdk::log3dsPrintf("packimport needed %d tries (evictions)", (int)importTries);
-            }
-#endif
             break;
         }
         if (mayEvict && (evictHd(renderer, protectFrom, true) ||
@@ -562,10 +528,6 @@ static int32_t startExpansion(RendererC3D* renderer, C3dTexture& texture, bool f
     texture.expandSawTransparent = false;
     texture.expandPackAt = 0;
     texture.expandPending = true;
-#ifdef MDK_HW_PROFILE
-    mdk::log3dsPrintf("texchunk: %dx%d start frame %d", (int)texture.realWidth,
-                      (int)texture.realHeight, (int)renderer->frame);
-#endif
     return 1;
 }
 
@@ -669,12 +631,6 @@ static bool advanceExpansionSteps(RendererC3D* renderer, C3dTexture& texture, bo
                 if (!made) {
                     dropExpansion(texture);
                 }
-#ifdef MDK_HW_PROFILE
-                if (made) {
-                    mdk::log3dsPrintf("texchunk: %dx%d ready frame %d", (int)texture.realWidth,
-                                      (int)texture.realHeight, (int)renderer->frame);
-                }
-#endif
                 return made;
             }
         }
@@ -685,14 +641,7 @@ static bool advanceExpansionSteps(RendererC3D* renderer, C3dTexture& texture, bo
 }
 
 static bool advanceExpansion(RendererC3D* renderer, C3dTexture& texture, bool finishAll) {
-#ifdef MDK_HW_PROFILE
-    const uint64_t stepStart = svcGetSystemTick();
-    const bool stepped = advanceExpansionSteps(renderer, texture, finishAll);
-    renderer->textureMakeTicks += svcGetSystemTick() - stepStart;
-    return stepped;
-#else
     return advanceExpansionSteps(renderer, texture, finishAll);
-#endif
 }
 
 // The stale re-make's chunked start (03_frame.inc's settle): same
@@ -748,35 +697,7 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     if (texture.expandPending) {
         return advanceExpansion(renderer, texture, true);
     }
-#ifdef MDK_HW_PROFILE
-    // Timed for the arena-entry table (textureMakeTicks): one tick read a
-    // making. Profile builds only — an SVC per make does not belong in the
-    // shipped path, least of all in the stutter being measured.
-    const uint64_t start = svcGetSystemTick();
-    const bool made = makeTextureNow(renderer, texture, diagnostics);
-    const uint64_t mk = svcGetSystemTick() - start;
-    renderer->textureMakeTicks += mk;
-    // WHICH make was the expensive one: the entry table says how many and how
-    // long; this names each by size and path (the oversized refused strips are
-    // identifiable by dimension alone: sl_big 64x1920, fire 64x2628,
-    // explode 128x3328). Profile builds only, like the tick read above. A
-    // packed original's draw-time make is its own line (`packsync`, the read
-    // included; landed=1: the reader's read was taken, no read here), named by
-    // its file so a hitch's textures can be traced to the surfaces asking.
-    if (!texture.packPath.empty()) {
-        mdk::log3dsPrintf("packsync %dx%d %.1f ms landed=%d %s", (int)texture.realWidth,
-                          (int)texture.realHeight, (double)mk * 1000.0 / (double)SYSCLOCK_ARM11,
-                          renderer->packLastLanded ? 1 : 0, texture.packPath.c_str());
-    } else {
-        mdk::log3dsPrintf("texmake %dx%d %s %.1f ms", (int)texture.realWidth,
-                          (int)texture.realHeight,
-                          texture.compressed ? "pack" : (texture.streamed ? "stream" : "expand"),
-                          (double)mk * 1000.0 / (double)SYSCLOCK_ARM11);
-    }
-    return made;
-#else
     return makeTextureNow(renderer, texture, diagnostics);
-#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -885,9 +806,6 @@ static bool finishPackNow(RendererC3D* renderer, C3dTexture& texture) {
         return false;
     }
     const int32_t id = (int32_t)(&texture - renderer->textures.data());
-#ifdef MDK_HW_PROFILE
-    const uint64_t start = svcGetSystemTick();
-#endif
     uint8_t* landedBytes = nullptr;
     size_t landedSize = 0;
     bool ok = false;
@@ -924,11 +842,6 @@ static bool finishPackNow(RendererC3D* renderer, C3dTexture& texture) {
         texture.packState = C3dTexture::PackIdle;
         texture.packNoRoomFrame = renderer->frame;
     }
-#ifdef MDK_HW_PROFILE
-    if (!landed) {
-        renderer->packSyncTicks += svcGetSystemTick() - start;
-    }
-#endif
     return made;
 }
 
@@ -978,14 +891,6 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     // memory, and the arena's textures stopped allocating one after
     // another.
     uint8_t* pixels = nullptr;
-#ifdef MDK_HW_PROFILE
-    // THE STAGES OF A SLOW MAKE (profile builds only -- 42ee7a22's lesson: an
-    // SVC read per texture make does not belong in the shipped path). The
-    // arena-entry stalls are 53-163 ms a texture on OG; this says which stage
-    // eats it: expand (palette), alloc (C3D_TexInit + eviction), pack (16-bit
-    // rewrite), load (memcpy), flush (GSPGPU_FlushDataCache).
-    const uint64_t texT0 = svcGetSystemTick();
-#endif
     // A chunked expansion's finished buffer arrives as a preset: already
     // expanded, filtered, mip-built and packed in expandFormat/expandLevels,
     // so neither the expansion nor the pack below runs again.
@@ -1006,19 +911,6 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     if (!pixels) {
         return false;
     }
-#ifdef MDK_HW_PROFILE
-    if (!prepacked && texture.indexed &&
-        (size_t)texture.realWidth * (size_t)texture.realHeight >= kChunkMinTexels) {
-        // A large texture expanded whole, in one call: who asked, and in
-        // what state (the DANT_2 entry's 320 ms re-make hunt).
-        mdk::log3dsPrintf("texsync: %dx%d frame %d stale=%d restamped=%d streamed=%d "
-                          "keepRgba8=%d hd=%d",
-                          (int)texture.realWidth, (int)texture.realHeight, (int)renderer->frame,
-                          (int)texture.stale, (int)texture.restamped, (int)texture.streamed,
-                          (int)texture.keepRgba8, (int)texture.hdCopy);
-    }
-    const uint64_t texT1 = svcGetSystemTick();
-#endif
     // THE STORE (EnhancedToggles::texture16): RGBA8, or 16 bits a texel -- RGB565
     // with no transparent texel, RGBA5551 with only 0/255 alpha (every index
     // texture), RGBA4 with partial alpha. pica::expandedTexelFormat carries the
@@ -1108,9 +1000,6 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
                           (int)texture.realWidth, (int)texture.realHeight);
         return false;
     }
-#ifdef MDK_HW_PROFILE
-    const uint64_t texT2 = svcGetSystemTick();
-#endif
 
     // SAMPLING, set explicitly rather than inherited from C3D_TexInit.
     //   Filter: NEAREST both ways at creation -- the ORIGINAL look. The oracle's
@@ -1145,9 +1034,6 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
                             mdk::pica::mipChainTexels(texture.paddedWidth, texture.paddedHeight,
                                                       levels),
                             format);
-#ifdef MDK_HW_PROFILE
-    const uint64_t texT3 = svcGetSystemTick();
-#endif
     C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);
     // The chain, already in the same buffer after level 0 (the expansion built
     // it: pica::buildMipChain). Each level is handed to the sink from its offset:
@@ -1159,9 +1045,6 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
         C3D_TexLoadImage(&texture.tex, pixels + offset, GPU_TEXFACE_2D, level);
         made = level;
     }
-#ifdef MDK_HW_PROFILE
-    const uint64_t texT4 = svcGetSystemTick();
-#endif
     texture.mipLevels = made;
     // C3D_TexFlush flushes level 0 plus `maxLevel` levels; the draw path rewrites
     // maxLevel per draw, so put back what the allocation holds first.
@@ -1206,22 +1089,6 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     // which is this GPU's far plane, and so were clipped before rasterisation).
     // See docs/OPEN_ITEMS.md, "The 3DS canvas draws no pixels".
     C3D_TexFlush(&texture.tex);
-#ifdef MDK_HW_PROFILE
-    {
-        const uint64_t texT5 = svcGetSystemTick();
-        const double msTotal = (double)(texT5 - texT0) * 1000.0 / (double)SYSCLOCK_ARM11;
-        if (msTotal > 50.0) {
-            const double msPer = 1000.0 / (double)SYSCLOCK_ARM11;
-            mdk::log3dsPrintf("texperf: %dx%d %s expand %.1f alloc %.1f pack %.1f load %.1f "
-                              "flush %.1f ms",
-                              (int)texture.realWidth, (int)texture.realHeight,
-                              texture.indexed ? "indexed" : "rgba",
-                              (double)(texT1 - texT0) * msPer, (double)(texT2 - texT1) * msPer,
-                              (double)(texT3 - texT2) * msPer, (double)(texT4 - texT3) * msPer,
-                              (double)(texT5 - texT4) * msPer);
-        }
-    }
-#endif
     free(pixels);
     texture.valid = true;
     texture.format = format;
@@ -1717,18 +1584,12 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         // is on, is the first such -- then any HD copy, each only from what the
         // last frame did not draw. A hint takes free memory only.
         forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)
-#ifdef MDK_HW_PROFILE
-        const uint64_t importStart = svcGetSystemTick();
-#endif
         Tex3DS_Texture t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
         while (!t3x && demanded &&
                (evictHd(renderer, protectFrom, true) || evictTextures(renderer, protectFrom) ||
                 evictHd(renderer, protectFrom, false))) {
             t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
         }
-#ifdef MDK_HW_PROFILE
-        renderer->hdImportTicks += svcGetSystemTick() - importStart;
-#endif
         free(bytes);
         if (!t3x && !demanded) {
             copy.state = HdCopy::None;   // a hint with no free room: asked for again later
@@ -1929,14 +1790,8 @@ static void pumpPackOriginals(RendererC3D* renderer, uint32_t previousFrameStart
         }
         forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)
         bool refused = false;
-#ifdef MDK_HW_PROFILE
-        const uint64_t importStart = svcGetSystemTick();
-#endif
         const bool made = importCompressed(renderer, texture, bytes, size, previousFrameStart,
                                            demanded, &refused);
-#ifdef MDK_HW_PROFILE
-        renderer->textureMakeTicks += svcGetSystemTick() - importStart;
-#endif
         free(bytes);
         imported++;
         if (made) {
