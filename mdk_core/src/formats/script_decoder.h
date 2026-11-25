@@ -175,6 +175,15 @@ public:
     // an invalid opcode, which is what the C#'s null return means.
     bool decode(int32_t pc, Instruction* out);
 
+    // The same instruction WITHOUT the copy: a pointer to the decoder's own
+    // cached one, or null where decode() returns false. The VM's per-opcode
+    // path (script_vm.cpp): decode() copies the operands -- strings and nested
+    // lists -- out of the cache on every opcode. The pointer stays valid for
+    // the decoder's life (the cache only grows, and a std::map never moves
+    // its nodes). A recently used pc is found in a flat table indexed by the
+    // pc's low bits before the map is searched.
+    const Instruction* find(int32_t pc);
+
     // Decodes every instruction reachable from `starts` into the cache (a
     // level's load: the scripts then run without decoding); returns how
     // many. The retail dialect only: the C# returns 0 for the demo's.
@@ -253,6 +262,27 @@ private:
 
     // The instructions decoded so far, by offset.
     std::map<int32_t, Instruction> cache_;
+
+    // find()'s flat table: slot (pc & (kRecentSlots - 1)) holds the last pc
+    // looked up there and its instruction in cache_. A collision only sends
+    // the lookup to the map. The pointers are into THIS decoder's cache_, so
+    // a copied decoder starts with an empty table rather than the original's
+    // pointers (the copy constructor below).
+    struct RecentSlot {
+        int32_t pc = -1;
+        const Instruction* instruction = nullptr;
+    };
+    static const int32_t kRecentSlots = 8192;
+    struct RecentTable {
+        std::vector<RecentSlot> slots;
+        RecentTable() : slots((size_t)kRecentSlots) {}
+        RecentTable(const RecentTable&) : slots((size_t)kRecentSlots) {}
+        RecentTable& operator=(const RecentTable&) {
+            slots.assign((size_t)kRecentSlots, RecentSlot());
+            return *this;
+        }
+    };
+    RecentTable recent_;
 
     // The offsets whose opcode is not in the table. The C# caches the null
     // too, so an invalid opcode is only looked up once.

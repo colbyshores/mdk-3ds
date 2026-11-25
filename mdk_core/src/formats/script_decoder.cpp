@@ -1063,6 +1063,28 @@ bool ScriptDecoder::decode(int32_t pc, Instruction* out) {
     return true;
 }
 
+const Instruction* ScriptDecoder::find(int32_t pc) {
+    RecentSlot& slot = recent_.slots[(size_t)((uint32_t)pc & (uint32_t)(kRecentSlots - 1))];
+    if (slot.instruction != nullptr && slot.pc == pc) {
+        return slot.instruction;
+    }
+    std::map<int32_t, Instruction>::const_iterator cached = cache_.find(pc);
+    if (cached == cache_.end()) {
+        // Not decoded yet (or invalid): decode() caches it, or says it is invalid.
+        Instruction decoded;
+        if (!decode(pc, &decoded)) {
+            return nullptr;
+        }
+        cached = cache_.find(pc);
+        if (cached == cache_.end()) {
+            return nullptr;
+        }
+    }
+    slot.pc = pc;
+    slot.instruction = &cached->second;
+    return slot.instruction;
+}
+
 int32_t ScriptDecoder::preload(const std::vector<int32_t>& starts) {
     if (dialect_ != ScriptDialect::Retail) {
         return 0;

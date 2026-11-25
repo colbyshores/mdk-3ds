@@ -225,11 +225,13 @@ void ScriptVm::run(MdkObject* obj) {
 
     int32_t count = 0;
     while (true) {
-        Instruction ins;
-        if (!decoder_.decode(pc, &ins)) {
+        // A pointer into the decoder's cache, not a copy (ScriptDecoder::find).
+        const Instruction* found = decoder_.find(pc);
+        if (found == nullptr) {
             obj->restart = 0;
             return;
         }
+        const Instruction& ins = *found;
         if (ins.opcode == formats::ScriptDecoder::kEnd) {
             obj->hit_event = 0;
             return;
