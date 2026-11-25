@@ -1416,3 +1416,121 @@ the fallback when a set does not fit and serves the legacy HUD/Kurt copies).
 - **Not verified:** the player build itself on a console or in Mandarine (the
   hardware runs are its code plus the harness); the frame-loop split (not done).
 - **Commit:** see `git log cleanup/immaculate-hd`.
+
+## 2026-11-25 -- 3DS render/CPU optimisations, one commit each (branch perf/3ds-render-opts)
+
+- **Owner's words:** level 1's wide open arenas, many distant enemies barely
+  visible, "the frame rate tanks in spots; facing a wall still chugs". Target the
+  Old 3DS; one feature per commit so each can be dropped and profiled. Approved
+  list: a shared pixel-size helper, the script interpreter's copies, a frustum cull
+  for debris/effects, debris and enemies of 2 px or less not drawn, mono in the
+  scope, the scope frame's hidden fill. NOT built (owner): occlusion/BSP culling,
+  tick-rate LOD, closed-form debris catch-up.
+- **Base:** cleanup/immaculate-hd be83d1dc. Measurements on throwaway branches
+  (never on the perf branch): `throwaway/render-opts-hw` (7d86f347's harness +
+  spans, GPU time `C3D_GetDrawingTime`, draw sub-spans, scope-frame histograms, a
+  level-1 census, AT=/ARENA=), `-s` / `-s1` (+ the script commits), `-final`
+  (+ every perf commit). Prior-solution lookup: Obsidian searched (the 2026-11-19
+  perf-pass note: decide on steady mean + vblank spread); Cognee `recall` timed out
+  (300 s, recorded); pi-knowledge not in this session.
+
+### The commits (each droppable; effect measured on the console)
+
+| commit | what | measured effect (Old 3DS) | verdict |
+|---|---|---|---|
+| 00297b61 | `projectedPixelSize` / `sphereNearDepth` (camera_builder): px = size * max(P00*W/2, P11*H/2) / zNear, FLT_MAX at the near plane | helper only; layer_tests pin formula, axis, resolution, zoom, near guard | keep (the culls use it) |
+| 61638733 | the VM reads each opcode by pointer from the decoder's cache (flat 8192-slot table by pc, then the std::map) instead of deep-copying the Instruction | scripts per 1/60 step **1.43 -> 0.82 ms** (DANT_5, s1-wall5 vs b0-wall5); sim p95 5.1 -> 3.5 ms | **keep -- the biggest CPU win** |
+| 38912530 | runTick's object snapshot and partBounds' vectors reused | 0.82 -> 0.76 ms/step on top (s-wall5) | within noise of one run; drop if you want fewer lines |
+| 26ee9e50 | debris pieces and sprite effects frustum-culled before they are built (3DS only; Linux untouched) | walk+fire route: effects build 0.66 (b0) vs 0.71 ms (with the cull, debris px off): **no measurable gain** -- the pieces were on screen | within noise; keep only as the base the next commit edits (or drop both) |
+| aab20290 | debris of <= 2 px not drawn (TINY DEBRIS, default 2) | same route: effects build **0.71 -> 0.50 ms**, cpu busy p95 16.1 -> 15.5 ms; GPU unchanged (12.47 / 12.44) | small; keep (default 2 px) |
+| 583a5ef0 | enemies of <= 2 px not drawn (TINY ENEMIES, default 2), hysteresis 2 / 2.5, current zoom, one decision for both eyes, draw only; never projectiles (XG_MISS, XG_BOMB1), never bosses (XB* family -- XB1 is DANT_10's boss, max health 9000 -- XGUNTA, the health bar's object) | **no enemy was ever <= 2.5 px in any measured spot** (census: smallest 3.0 px XF on the start route, 9.5 px XGEN / 19.6 px XG in DANT_5). Its cost after moving the test behind the frustum cull: cpu 10.22 (on) vs 10.48 ms (off), noise. A first version that measured every enemy before the frustum cull cost ~0.4-0.8 ms and was rewritten | gain unproven here; harmless at 0 cost -- drop unless you see dot-sized enemies |
+| 3700feb5 | the scope in 2D (SCOPE IN 2D, default **off**: changes the look) -- gfxSet3D(false) while scoped, renderer plans eyes only while gfxIs3D() | scope frames: **GPU 21.75 -> 10.51 ms**, cpu busy 13.31 -> 10.03 ms; 3-vblank frames 62 -> 12 per 90 s | the biggest scope win; your call on the look |
+| 41006e69 | the scene scissored to the scope's 600x360 window (SCOPE CLIP, default **on**): new seam `mdk_render_set_scene_window`, Vulkan no-op | scope frames: GPU **21.75 -> 20.62 ms** (-5%); 3-vblank frames 62 -> 34 | small but free; keep. Same picture: identical by construction (the frame is opaque outside the window; scissor grown 2 px) and checked side by side in Mandarine (`cap-clip1/0`, the only 37 differing px are a moving marker) |
+
+### Before/after on the console (old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, HD set on 143/143)
+
+Config every run: `TOGGLES=enableHdTextures=1;texture16=1;kurtCompressed=1;cap30Fps=1;enableHaze=1;enableFiltering=1;enableMipmaps=1;enableSkyShadows=1`
+over the console's config (lights, mirrors, glow, lighting, edge smoothing on).
+`AUTOQUIT=90 PROFILE=1 LEVEL=7 HDROMFS=1 FIXED=1` (one 1/60 step a frame, so the
+same frame is the same scene in both builds). DANT_5 spot: `AT=100,2320,-60,90
+ARENA=DANT_5` (yaw 270 = "wall"). Logs: `.git/worktrees/render-opts/hw-logs/2026-11-25-*.log`.
+
+| scenario | build | steady mean ms | 3 / 4+ vblank frames | cpu busy mean (p95) ms | scripts ms/step | GPU mean (p95) ms |
+|---|---|---|---|---|---|---|
+| DANT_5 open, standing | b0 (base) | 33.71 | 6 / 16 | 11.62 (14.5) | 1.44 | 15.42 (17.7) |
+| | scripts | 33.72 | 8 / 16 | 10.28 (11.9) | 0.73 | 15.09 (17.4) |
+| | final, enemies off | 33.69 | 6 / 15 | 10.48 (12.2) | 0.74 | 15.19 (17.4) |
+| | final (all defaults) | 33.70 | 8 / 12 | 10.22 (12.2) | 0.73 | 15.00 (17.4) |
+| DANT_5 facing yaw 270 | b0 | 33.62 | 5 / 9 | 7.53 (10.4) | 1.43 | 13.54 (15.8) |
+| | decoder only | 33.59 | 5 / 9 | 7.03 (9.0) | 0.82 | 13.63 (15.7) |
+| | scripts | 33.62 | 6 / 8 | 6.67 (8.1) | 0.76 | 13.49 (15.7) |
+| DANT_5 scope (scope frames only) | b0 | 34.57 | 71 / 15 | 14.13 (16.7) | 1.62 | 21.81 (24.0) |
+| | final, clip off | 34.41 | 62 / 13 | 13.31 (14.9) | 0.91 | 21.75 (23.9) |
+| | final (clip on) | 33.97 | 34 / 10 | 13.32 (14.9) | 0.92 | 20.62 (22.7) |
+| | final + scope in 2D | 33.70 | 12 / 11 | 10.03 (11.4) | 0.90 | 10.51 (11.7) |
+| start route walk + fire (debris) | b0 | 33.52 | 10 / 3 | 10.18 (17.0) | 0.91 | 12.46 (14.6) |
+| | final, debris px off | 33.50 | 9 / 2 | 9.80 (16.1) | 0.70 | 12.47 (14.6) |
+| | final (debris 2 px) | 33.54 | 8 / 5 | 9.55 (15.5) | 0.70 | 12.44 (14.5) |
+| start route walk | b0 | 33.54 | 8 / 5 | 8.63 (12.9) | 0.63 | 12.29 (14.3) |
+| | final | 33.52 | 7 / 4 | 8.37 (12.1) | 0.42 | 12.29 (14.3) |
+
+(~2,600 frames each; "cpu busy" = sim + draw build + C3D_FrameEnd + audio per
+frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
+~0.3 ms CPU / ~0.3 ms GPU are noise.)
+
+### Findings
+
+- **At these spots the Old 3DS already holds the 30 fps cap**: CPU busy 7-14 ms
+  and GPU 12-22 ms against a 33.3 ms frame; 98-99% of frames are 2 vblanks. So no
+  optimisation moves the frame-period percentiles here; they buy headroom (CPU
+  -1.3 ms in the open arena, -0.9 ms on the wall; GPU -11 ms in the scope with
+  2D). The spot where the owner's frame rate tanks was not found by these walks:
+  the next step is the owner's own route with the free-play PROFILE build.
+- **Facing a wall** (DANT_5 yaw 270): GPU 13.5 ms vs 15.4 ms looking across the
+  arena, and 13.1 ms in the start room. The GPU's time is mostly per-pixel cost
+  of the full screen (stereo, 2x1 supersample, lighting, haze, shadows), not hidden
+  geometry. The CPU part at the wall was the scripts (1.43 ms per step, two steps
+  a frame in real time) -- that is what the decoder commit cut.
+- **Census (every 30th frame):** enemies by full bounding-sphere diameter at
+  400x240: none <= 2.5 px anywhere measured; debris on the walk+fire route: of
+  ~30-55 in-frustum pieces, 10-35 at <= 2 px per sample.
+- **Occlusion/BSP culling -- design note, not built.** Today: per-eye batch
+  frustum cull (06_draw.inc) and the object/effects culls; the original drew BSP
+  painter order. Expected gain: bounded by the geometry behind walls, which the
+  numbers above put at <= ~2 ms GPU (open view 15.4 ms vs wall 13.5 ms includes
+  everything that is not hidden too) and ~0.1-0.2 ms CPU (the arena draw build is
+  0.13-0.17 ms a frame). A portal/arena-graph cull (draw only arenas reachable
+  through visible connector openings, the DTI connections the runtime already
+  has) would be the cheapest form: CPU ~0.1 ms a frame, no new data. Not worth
+  building while the frame is capped at 30 with 11+ ms of GPU slack; revisit only
+  if a measured spot is GPU-bound above 33 ms.
+- **Defaults chosen:** TINY DEBRIS 2 px, TINY ENEMIES 2 px, SCOPE IN 2D off,
+  SCOPE CLIP on. Existing config.ini files keep working (a missing key keeps its
+  default; tests pin it). Linux/Vulkan: no behaviour change (the culls are set
+  only by the 3DS frontend; the scene-window seam is a no-op there).
+- **Not changed:** gameplay, RNG streams (all culls are draw-side; script goldens
+  identical), CPU culls are not gated by console model (they cost nothing on the
+  New 3DS either); resolution enters only through projectedPixelSize.
+
+### Evidence
+
+- Emulator (Mandarine r1.2.1 md5 0d2adab6..., `DISPLAY=:99`, one instance,
+  `mdk_3ds/tools/emurun.sh --seed-sdmc` with the HD pack on the SD and
+  `enableLighting=0`): the cleaned player build `play-4b8669ae.3dsx` and the final
+  `play-41006e69.3dsx` both boot splash -> menu -> briefing -> fall -> level 1
+  (A presses by xdotool on :99), HD set 155/155 resident, 0 given up, the level
+  drawn (`hw-logs/2026-11-25-emu-smoke-play-*.log`). The emulator's heap is 100 MB
+  (not the console's 64 MB) and it has no geometry shader: it checks boot and
+  loading, not memory or speed. emurun's frame counter reads 0 on a player build
+  (no frame lines): expected.
+- tools/check.sh ALL GATES PASSED; tests/formats 200652 checks, 0 failures;
+  tests/scripts all suites (c3d_frame included) exit 0; clean release build
+  `make -C mdk_3ds` zero compiler warnings, no harness strings in the ELF.
+- Player build: `.git/worktrees/render-opts/hw-logs/play-41006e69.3dsx` (md5
+  56b65f34953f62022e39326daa9f2bac, ELF 2de8c9a4b0654702ec101a0eac328f5b).
+- **Not verified:** the player build itself on the console (the hardware runs are
+  its code plus the harness; the boss exclusion list was added to the enemy cull
+  after the hardware runs, so XB*/XGUNTA are never hidden -- none were in the
+  measured spots); scope in 2D on a real 3D panel by eye (the frame times are
+  measured, the look is not); the owner's own slow spot.
+- **Commit:** see `git log perf/3ds-render-opts`.
