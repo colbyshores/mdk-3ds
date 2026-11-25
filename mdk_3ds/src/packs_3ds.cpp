@@ -464,7 +464,6 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
             }
             source->path = hit->second;
             out->compressedPath = source->path.c_str();
-            out->compressedOriginal = true;
             std::map<std::pair<const void*, std::string>, std::string>::const_iterator hd =
                 source->byname->hdPaths.find(key);
             if (hd != source->byname->hdPaths.end()) {
@@ -522,7 +521,6 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
         // nothing for this texture -- the arena's 600-1600 ms of palette
         // expansion, filter and mip chain becomes a RomFS read on the reader
         // thread and an import at a frame boundary.
-        out->compressedOriginal = true;
         return true;
     }
     return false;

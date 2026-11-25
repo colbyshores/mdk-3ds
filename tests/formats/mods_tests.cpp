@@ -39,8 +39,6 @@ extern int32_t mdk_test_replaceWidth;
 extern int32_t mdk_test_replaceHeight;
 extern int mdk_test_replaceFirstByte;
 extern int mdk_test_compressedCalls;
-extern int32_t mdk_test_compressedTexture;
-extern std::string mdk_test_compressedPath;
 // The packed original's side (render_seam_stubs.cpp).
 extern MdkTextureId mdk_test_compressedFileId;
 extern int mdk_test_compressedFileCalls;
@@ -318,42 +316,20 @@ MDK_TEST(modImagesFromListResolvesByTheScansOrder) {
 
 namespace {
 
-const char* const kHookPath = "sdmc:/3ds/mdk/hd/textures/LEVEL3/WALL.t3x";
+// The replacement lookup for the hook case: an image for WALL only.
+const uint8_t kHookPixels[] = {77, 0, 0, 255};
 
-bool compressedLookup(void*, const mdk::Surface& surface, const mdk::formats::Palette*,
-                      mdk::ColourReplacement* out) {
+bool hookLookup(void*, const mdk::Surface& surface, const mdk::formats::Palette*,
+                mdk::ColourReplacement* out) {
     if (surface.name != "WALL") {
         return false;
     }
-    out->compressedPath = kHookPath;
+    out->width = 1;
+    out->height = 1;
+    out->frames = 1;
+    out->rgba = kHookPixels;
     return true;
 }
-
-} // namespace
-
-MDK_TEST(surfaceCacheHandsACompressedReplacementToItsSeam) {
-    mdk_test_replaceCalls = 0;
-    mdk_test_compressedCalls = 0;
-    mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
-    cache.setColourReplacementLookup(compressedLookup, nullptr);
-    mdk::formats::Texture texture = keyTexture();
-    mdk::formats::Palette palette = keyPalette();
-    mdk::Surface lit;
-    lit.texture = &texture;
-    lit.name = "WALL";
-    lit.shading = mdk::Shading::Lit;
-    lit.frameCount = 1;
-    cache.surfaceId(lit, &palette);
-    MDK_CHECK_EQ(mdk_test_compressedCalls, 1);
-    MDK_CHECK_EQ(mdk_test_replaceCalls, 0);   // not the decoded path
-    MDK_CHECK_EQ(mdk_test_compressedTexture, 0);
-    MDK_CHECK_STR_EQ(mdk_test_compressedPath, kHookPath);
-    MDK_CHECK_EQ(cache.replacementFound(), 1);
-    cache.surfaceId(lit, &palette);
-    MDK_CHECK_EQ(mdk_test_compressedCalls, 1);   // once per pair
-}
-
-namespace {
 
 // THE ORIG PACK'S HIT (main_3ds.cpp's lookup): the original look, asked for from
 // its file instead of expanded.
@@ -366,7 +342,6 @@ bool origLookup(void*, const mdk::Surface& surface, const mdk::formats::Palette*
         return false;
     }
     out->compressedPath = kOrigPath;
-    out->compressedOriginal = true;
     return true;
 }
 
@@ -504,21 +479,22 @@ MDK_TEST(surfaceCacheRequestPackedMakesOnlyAPackedOriginal) {
         MDK_CHECK_EQ(mdk_test_prepareCalls, 1);
     }
     {
-        // An HD-pack upscale (not a compressedOriginal): nothing made, nothing
+        // A decoded image (not a packed original): nothing made, nothing
         // marked -- surfaceId still makes the index texture AND attaches it.
         resetPackedStubs();
+        mdk_test_replaceCalls = 0;
         mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
-        cache.setColourReplacementLookup(compressedLookup, nullptr);
+        cache.setColourReplacementLookup(hookLookup, nullptr);
         MDK_CHECK_EQ(cache.requestPacked(lit, &palette), -1);
         MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
         MDK_CHECK_EQ(mdk_test_indexTextures, 0);
-        MDK_CHECK_EQ(mdk_test_compressedCalls, 0);
+        MDK_CHECK_EQ(mdk_test_replaceCalls, 0);
         mdk_test_prepareCalls = 0;
         cache.prepareCached(lit, &palette);
         MDK_CHECK_EQ(mdk_test_prepareCalls, 0);   // nothing cached to prepare
         cache.surfaceId(lit, &palette);
         MDK_CHECK_EQ(mdk_test_indexTextures, 1);
-        MDK_CHECK_EQ(mdk_test_compressedCalls, 1);
+        MDK_CHECK_EQ(mdk_test_replaceCalls, 1);
     }
     {
         // A miss: nothing made; surfaceId makes the index texture, attaching
@@ -564,25 +540,6 @@ MDK_TEST(modImagesFramesStripAndPerFrame) {
     MDK_CHECK_EQ((int)out.rgba[0], 10);
     MDK_CHECK_EQ((int)out.rgba[4], 20);
 }
-
-namespace {
-
-// The replacement lookup for the hook case: an image for WALL only.
-const uint8_t kHookPixels[] = {77, 0, 0, 255};
-
-bool hookLookup(void*, const mdk::Surface& surface, const mdk::formats::Palette*,
-                mdk::ColourReplacement* out) {
-    if (surface.name != "WALL") {
-        return false;
-    }
-    out->width = 1;
-    out->height = 1;
-    out->frames = 1;
-    out->rgba = kHookPixels;
-    return true;
-}
-
-} // namespace
 
 MDK_TEST(surfaceCacheReplacesLitSurfacesOncePerPair) {
     mdk_test_replaceCalls = 0;
@@ -630,13 +587,13 @@ mdk::Surface spriteOf(const mdk::Surface& surface) {
     return sprite;
 }
 
-// An HD answer (compressedLookup's) for the name WALL only, counted: a lookup
+// A decoded image (hookLookup's) for the name WALL only, counted: a lookup
 // that answers by name, as ModImages::resolve's name fallback does.
 int g_namedLookups = 0;
-bool namedHdLookup(void* user, const mdk::Surface& surface, const mdk::formats::Palette* palette,
-                   mdk::ColourReplacement* out) {
+bool namedLookup(void* user, const mdk::Surface& surface, const mdk::formats::Palette* palette,
+                 mdk::ColourReplacement* out) {
     g_namedLookups++;
-    return compressedLookup(user, surface, palette, out);
+    return hookLookup(user, surface, palette, out);
 }
 
 } // namespace
@@ -709,7 +666,6 @@ bool hdOnlyLookup(void*, const mdk::Surface& surface, const mdk::formats::Palett
         return false;
     }
     out->compressedPath = kOrigPath;
-    out->compressedOriginal = true;
     out->hdPath = kHdPath;
     return true;
 }
@@ -717,8 +673,8 @@ bool hdOnlyLookup(void*, const mdk::Surface& surface, const mdk::formats::Palett
 } // namespace
 
 // AN HD-ONLY PAIR IS MADE FROM THE TWO FILES ALONE: one create_compressed_file
-// carrying the HD path -- no index texture, no HD copy attached to an expansion,
-// nothing counted as made from SD -- for a Lit draw, a Sprite draw, and a warm's
+// carrying the HD path -- no index texture, no HD copy attached to an expansion
+// -- for a Lit draw, a Sprite draw, and a warm's
 // hint alike, once per pair. The backend decides per draw which file it reads.
 MDK_TEST(surfaceCacheMakesAnHdOnlyPairFromItsFilesAlone) {
     mdk::formats::Texture texture = keyTexture();
@@ -746,7 +702,6 @@ MDK_TEST(surfaceCacheMakesAnHdOnlyPairFromItsFilesAlone) {
         MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);   // once per pair
         MDK_CHECK_EQ(mdk_test_indexTextures, 0);         // never expanded
         MDK_CHECK_EQ(mdk_test_compressedCalls, 0);       // never attached to one
-        MDK_CHECK_EQ(cache.sourceStats().hdAnsweredSd, 0);
     }
     mdk_test_compressedFileId = -1;
 }
@@ -773,12 +728,11 @@ MDK_TEST(surfaceCacheKeepsAPairsTextureOverALaterPackedAnswer) {
     MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
     MDK_CHECK_EQ(mdk_test_compressedCalls, 0);
     MDK_CHECK_EQ(mdk_test_indexTextures, 1);
-    MDK_CHECK_EQ(cache.sourceStats().hdAnsweredSd, 1);
     mdk_test_compressedFileId = -1;
 }
 
-// AND NOTHING ELSE. An HD-pack upscale or a decoded image is not a Sprite's: the
-// Sprite gets the plain expansion with nothing attached, and the pair's Lit draw
+// AND NOTHING ELSE. A decoded image is not a Sprite's: the Sprite gets the
+// plain expansion with nothing attached, and the pair's Lit draw
 // still asks and attaches its replacement to that same texture -- as when a
 // Sprite drew the pair first before Sprites asked at all. A Sprite's MISS marks
 // nothing either: the Lit draw, named differently, still finds its answer.
@@ -791,25 +745,6 @@ MDK_TEST(surfaceCacheKeepsHdAndDecodedReplacementsLitOnly) {
     lit.shading = mdk::Shading::Lit;
     lit.frameCount = 1;
     const mdk::Surface sprite = spriteOf(lit);
-    {
-        resetPackedStubs();
-        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
-        cache.setColourReplacementLookup(compressedLookup, nullptr);
-        MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), 0);
-        MDK_CHECK_EQ(mdk_test_indexTextures, 1);
-        MDK_CHECK_EQ(mdk_test_compressedCalls, 0);   // no HD copy on the Sprite
-        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
-        MDK_CHECK_EQ(cache.replacementFound(), 0);
-        MDK_CHECK_EQ(cache.replacementLooked(), 0);  // not marked
-        MDK_CHECK_EQ(cache.surfaceId(lit, &palette), 0);
-        MDK_CHECK_EQ(mdk_test_indexTextures, 1);     // one texture for the pair
-        MDK_CHECK_EQ(mdk_test_compressedCalls, 1);   // the Lit draw's HD copy
-        MDK_CHECK_EQ(mdk_test_compressedTexture, 0);
-        MDK_CHECK_EQ(cache.replacementFound(), 1);
-        // Both made the pair from its standard-definition pixels though an HD
-        // copy was the answer: what the 3DS's hdrule: line counts.
-        MDK_CHECK_EQ(cache.sourceStats().hdAnsweredSd, 2);
-    }
     {
         mdk_test_replaceCalls = 0;
         resetPackedStubs();
@@ -824,9 +759,10 @@ MDK_TEST(surfaceCacheKeepsHdAndDecodedReplacementsLitOnly) {
     }
     {
         resetPackedStubs();
+        mdk_test_replaceCalls = 0;
         g_namedLookups = 0;
         mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
-        cache.setColourReplacementLookup(namedHdLookup, nullptr);
+        cache.setColourReplacementLookup(namedLookup, nullptr);
         mdk::Surface named = sprite;
         named.name = "SL_FX";
         cache.surfaceId(named, &palette);
@@ -836,7 +772,7 @@ MDK_TEST(surfaceCacheKeepsHdAndDecodedReplacementsLitOnly) {
         MDK_CHECK_EQ(cache.replacementLooked(), 0);
         cache.surfaceId(lit, &palette);
         MDK_CHECK_EQ(g_namedLookups, 2);
-        MDK_CHECK_EQ(mdk_test_compressedCalls, 1);
+        MDK_CHECK_EQ(mdk_test_replaceCalls, 1);
         MDK_CHECK_EQ(mdk_test_indexTextures, 1);
     }
 }

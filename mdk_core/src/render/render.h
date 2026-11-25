@@ -359,7 +359,9 @@ void mdk_render_replace_colour(MdkRenderer r, MdkTextureId texture, MdkPaletteId
 // docs/HD_TEXTURES_3DS_SPEC.md). The backend records the path and makes the
 // texture itself when it decides to (the 3DS streams them under a budget, and
 // draws the original until the replacement is resident). The Linux backend
-// decodes mods through mdk_render_replace_colour and ignores this.
+// decodes mods through mdk_render_replace_colour and ignores this. Its caller
+// is Kurt's sprite frames (game/kurt_sprite.cpp); the arena surfaces are made
+// from their files instead (mdk_render_create_compressed_file's hdPath).
 void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId texture, const char* path);
 
 // The same for a CANVAS image (a HUD or menu picture): the HD pack's .t3x for

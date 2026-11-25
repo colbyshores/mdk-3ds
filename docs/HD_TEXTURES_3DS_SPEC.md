@@ -101,6 +101,11 @@ expansion and not the packed original in `romfs:/orig`. It never blocks either.
   (`mdk_render_create_compressed_file`'s `hdPath`; `C3dTexture::hdOnly`). Toggle
   on: every ask (creation, the pump, the warms, a draw) goes to the HD stream;
   the packed original is not read. Toggle off: the packed original, as before.
+  The older step -- an HD copy attached after the fact to a palette-expanded
+  texture (`SurfaceCache::surfaceId` calling `mdk_render_replace_compressed`,
+  counted as `hdAnsweredSd`) -- was removed on 2026-11-25: no lookup answered
+  for it any more, so it never ran. `mdk_render_replace_compressed` stays for
+  Kurt's HD frames (`game/kurt_sprite.cpp`).
 - **Not arrived yet:** the draw draws nothing (or an original already resident
   from before the toggle went on); the early asks (the pump's walk of resident
   views, hidden batches, the object and effects warms) make it rare. A draw's

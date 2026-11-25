@@ -49,18 +49,14 @@ struct ColourReplacement {
     int32_t height = 0;
     int32_t frames = 1;
     const uint8_t* rgba = nullptr;
-    // OR a compressed file (the 3DS HD pack's .t3x), handed to
-    // mdk_render_replace_compressed instead; borrowed for the call only.
+    // OR the pair's PACKED ORIGINAL (the 3DS arena orig pack's .t3x): the
+    // original look at the original size, not an upscale. surfaceId asks for
+    // the texture from the file up front (mdk_render_create_compressed_file:
+    // read and made by the backend off the frame) and the palette is never
+    // expanded -- unless the backend cannot make the file, when textureId hands
+    // it the index pixels. Borrowed for the call only.
     const char* compressedPath = nullptr;
-    // The compressedPath is the ORIGINAL look at the original size (the arena
-    // orig pack), not an upscale: surfaceId asks for the texture from the file
-    // up front (mdk_render_create_compressed_file: read and made by the backend
-    // off the frame) and the palette is never expanded -- unless the backend
-    // cannot make the file, when textureId hands it the index pixels. False
-    // for an HD-pack upscale, which keeps the expansion as its fallback and the
-    // toggle's per-draw choice.
-    bool compressedOriginal = false;
-    // With a compressedOriginal: the HD pack's copy of the same pair, found
+    // With a compressedPath: the HD pack's copy of the same pair, found
     // without reading the texture (the 3DS's name index). The pair is made from
     // the two files alone (mdk_render_create_compressed_file's hdPath): the
     // backend draws the HD copy while its toggle is on and never touches the
@@ -71,13 +67,13 @@ struct ColourReplacement {
 // Asks for a Lit surface's colour replacement, or returns false. Called
 // once per (texture, palette) pair, the first time the pair is drawn (the
 // C#'s MaterialResolver.Replace runs as surfaces resolve). It is asked
-// BEFORE the texture is made, so a compressedOriginal hit can be made from
+// BEFORE the texture is made, so a packed original can be made from
 // its file instead of expanded; the replacement then lands on the id the
 // surface ends up with (the file's, or the made expansion for the other
 // replacement kinds).
 //
 // A Sprite surface asks it too (SurfaceCache::surfaceId) and takes ONLY a
-// compressedOriginal answer (with its hdPath, if any: the backend draws a
+// packed-original answer (with its hdPath, if any: the backend draws a
 // Sprite's HD copy as it draws a Lit one's). So the answer must be the pair's, never the
 // shading's: a Sprite's packed original is the texture a later Lit draw of the
 // same pair is handed, and it must be the one that Lit draw would have asked for.
@@ -129,9 +125,8 @@ public:
     // SPRITE (an effect, an object's shine) takes the pair's packed original
     // -- with the HD copy the name index pairs with it (ColourReplacement::
     // hdPath), which the backend draws for a Sprite as for a Lit draw -- and
-    // nothing else: requestPacked, then the index texture as before. An HD
-    // upscale attached to an expansion, or a decoded image, stays Lit-only (the
-    // C# replaces only Lit materials), and an answer it does not take is left
+    // nothing else: requestPacked, then the index texture as before. A decoded
+    // image stays Lit-only (the C# replaces only Lit materials), and an answer it does not take is left
     // for the pair's Lit draw to ask for again. An Original-shaded surface asks
     // nothing.
     MdkTextureId surfaceId(const Surface& surface, const formats::Palette* palette);
@@ -146,13 +141,14 @@ public:
     // scripts hid is not drawn, so its texture is not made -- but a surface the
     // orig pack holds costs nothing to ask for (a pending id, no I/O, no
     // expansion; the backend reads it off the frame). So: the replacement
-    // lookup, and ONLY when its answer is a compressedOriginal, the pending id
+    // lookup, and ONLY when its answer is a packed original, the pending id
     // made and cached exactly as surfaceId makes it (one helper, createPacked).
     // Any other answer makes nothing -- a hidden index texture would be a
     // palette expansion for a surface nobody may ever see -- and leaves the pair
     // to surfaceId: a miss is marked asked (surfaceId then makes the index
     // texture, as it would after its own miss); a hit of another kind is NOT
-    // marked, so surfaceId asks again and attaches it to the texture it makes.
+    // marked, so surfaceId asks again and attaches it (a decoded colour image)
+    // to the texture it makes.
     //
     // ALSO A SPRITE'S WHOLE LOOKUP (surfaceId) and the effects warm's ask: a
     // Sprite surface comes through here too, an Original-shaded one never. A
@@ -207,18 +203,13 @@ public:
     struct SourceStats {
         int32_t mtoDemandReads = 0;
         int64_t mtoDemandBytes = 0;
-        // Pairs the lookup answered with an HD copy (a compressedPath that is not
-        // a compressedOriginal) that were made from their standard-definition
-        // pixels anyway: the copy attached to an expansion, or a Sprite's answer
-        // dropped for the index texture. The 3DS's HD rule wants 0.
-        int32_t hdAnsweredSd = 0;
     };
     const SourceStats& sourceStats() const { return sourceStats_; }
 
 private:
     typedef std::pair<const formats::Texture*, const formats::Palette*> Key;
 
-    // A compressedOriginal answer made into the pair's pending id
+    // A packed-original answer made into the pair's pending id
     // (mdk_render_create_compressed_file), cached and marked asked. -1, with
     // nothing marked, when the answer is not one or the backend has no
     // compressed textures. surfaceId's and requestPacked's one implementation.

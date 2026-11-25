@@ -46,7 +46,7 @@ MdkTextureId SurfaceCache::textureId(const formats::Texture* texture,
     if (found != textures_.end()) {
         const MdkTextureId id = found->second;
         // A PACKED ORIGINAL the backend could not make from its file (surfaceId's
-        // compressedOriginal hit, unreadable or not this set's .t3x): it gets
+        // packed-original hit, unreadable or not this set's .t3x): it gets
         // its index pixels, the same fetch as a first make's below, and from
         // then on it is an ordinary index texture under the SAME id -- nothing
         // the caller holds changes. Pixels that cannot be had yet are asked for
@@ -192,8 +192,7 @@ MdkTextureId SurfaceCache::prepare(const Surface& surface, const formats::Palett
 MdkTextureId SurfaceCache::createPacked(const Key& key, const Surface& surface,
                                         const formats::Palette* palette,
                                         const ColourReplacement& replacement) {
-    if (!replacement.compressedOriginal || palette == nullptr || !replacement.compressedPath ||
-        !replacement.compressedPath[0]) {
+    if (palette == nullptr || !replacement.compressedPath || !replacement.compressedPath[0]) {
         return -1;
     }
     // A PAIR ALREADY MADE (its index texture, by a draw that asked nothing or
@@ -237,10 +236,6 @@ MdkTextureId SurfaceCache::requestPacked(const Surface& surface,
         }
         return -1;
     }
-    if (surface.shading == Shading::Sprite && !replacement.compressedOriginal &&
-        replacement.compressedPath && replacement.compressedPath[0]) {
-        sourceStats_.hdAnsweredSd++;
-    }
     return createPacked(key, surface, palette, replacement);
 }
 
@@ -264,7 +259,7 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
     // drops were palette-expanded whole in their first draw though the orig pack
     // holds them (measured on the Old 3DS level-7 walk, frame 650: SL_MED 32x960
     // 42.7 ms and SL_SMA 16x480 11.0 ms in one effects draw). requestPacked makes
-    // and caches the pending id only for a compressedOriginal answer; anything
+    // and caches the pending id only for a packed-original answer; anything
     // else leaves the pair to textureId, which also hands a pack file the backend
     // could not make its index pixels.
     if (surface.shading == Shading::Sprite) {
@@ -276,10 +271,9 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
     // ASKED FOR from that file (mdk_render_create_compressed_file: the backend
     // reads and imports it off the frame) and the ARM11 never expands its
     // palette -- the 600-1600 ms an arena's expansion costs is exactly the
-    // hitch the pack exists to remove. An HD-pack upscale is NOT this: it keeps
-    // the expansion as its fallback and the toggle's per-draw choice, so only a
-    // compressedOriginal hit takes this path, and a -1 (no compressed textures
-    // in this backend) falls through to the ordinary expansion. A file the
+    // hitch the pack exists to remove. Only a packed-original hit takes this
+    // path, and a -1 (no compressed textures in this backend, or a pair already
+    // made) falls through to the ordinary expansion. A file the
     // backend later cannot make gets its index pixels in textureId's hit path.
     // Asked once per pair, as before; the bytes the lookup hands back are
     // borrowed for the call only.
@@ -304,22 +298,13 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
         }
     }
     const MdkTextureId id = textureId(surface.texture, palette);
-    // The replacement that is NOT asked for up front: the HD pack's compressed
-    // upscale (attached to the expansion through the pump, the toggle deciding
-    // per draw) and a decoded colour image. The backend copies the bytes, so
-    // the lookup's image need only live for this call.
+    // The replacement that is NOT asked for up front: a decoded colour image
+    // (the PC mods). The backend copies the bytes, so the lookup's image need
+    // only live for this call. A packed original's answer for a pair already
+    // made attaches nothing (the file IS the original; its HD copy is not taken).
     if (lookedNow && id >= 0) {
-        if (replacement.compressedOriginal) {
-            // A packed original's answer for a pair already made: nothing to
-            // attach (the file IS the original). Its HD copy is not taken.
-            if (replacement.hdPath && replacement.hdPath[0]) {
-                sourceStats_.hdAnsweredSd++;
-            }
-        } else if (replacement.compressedPath && replacement.compressedPath[0]) {
-            mdk_render_replace_compressed(renderer_, id, replacement.compressedPath);
-            replacementFound_++;
-            sourceStats_.hdAnsweredSd++;
-        } else if (replacement.rgba && replacement.width > 0 && replacement.height > 0) {
+        const bool packed = replacement.compressedPath && replacement.compressedPath[0];
+        if (!packed && replacement.rgba && replacement.width > 0 && replacement.height > 0) {
             mdk_render_replace_colour(renderer_, id, paletteId(palette), surface.frameCount,
                                       replacement.width, replacement.height, replacement.rgba);
             replacementFound_++;

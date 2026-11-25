@@ -318,7 +318,7 @@ extern int mdk_test_prepareCalls;
 
 namespace {
 
-// The lookup answers for ONE texture only (the hidden one): a compressedOriginal
+// The lookup answers for ONE texture only (the hidden one): a packed original
 // when g_packAnswer, a miss otherwise. Every other surface is a miss.
 const mdk::formats::Texture* g_packTarget = nullptr;
 bool g_packAnswer = true;
@@ -334,7 +334,6 @@ bool targetLookup(void*, const mdk::Surface& surface, const mdk::formats::Palett
         return false;
     }
     out->compressedPath = "romfs:/orig/textures/HIDDEN.t3x";
-    out->compressedOriginal = true;
     return true;
 }
 

@@ -1534,3 +1534,34 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   measured spots); scope in 2D on a real 3D panel by eye (the frame times are
   measured, the look is not); the owner's own slow spot.
 - **Commit:** see `git log perf/3ds-render-opts`.
+
+## 2026-11-25 -- the dead HD attach step is removed (branch cleanup/dead-hd-attach)
+
+- **What:** `SurfaceCache::surfaceId` no longer attaches an HD copy to a
+  palette-expanded texture (`mdk_render_replace_compressed` when the lookup
+  answered a `compressedPath` without `compressedOriginal`). Gone with it: the
+  `SourceStats::hdAnsweredSd` counter (read only by tests; the `hdrule:` line
+  that printed it left main with the harness) and the `compressedOriginal` flag,
+  which meant nothing once the branch was gone (every `compressedPath` is a
+  packed original). Tests: `surfaceCacheHandsACompressedReplacementToItsSeam` and
+  the HD-upscale Sprite block of `surfaceCacheKeepsHdAndDecodedReplacementsLitOnly`
+  removed (they covered only the removed step); the `hdAnsweredSd` checks
+  dropped; the requestPacked "other answer makes nothing" block and the
+  named-Sprite-miss block now use a decoded image (the live non-packed answer)
+  with the same checks against `mdk_render_replace_colour`.
+- **Kept:** `mdk_render_replace_compressed` itself (Kurt's HD frames), the rgba
+  colour replacements (PC/Linux), the packed-original and HD-pair creation, the
+  per-surface HD streaming, toggle give-back, the door bubble and arena loading.
+- **Why:** owner, 2026-11-25: "Remove the dead attach step, its counter and the
+  tests that only cover it. This shouldn't change anything you see." The only
+  `compressedPath` producers (`mdk_3ds/src/packs_3ds.cpp`, name index and orig
+  pack by content) both set `compressedOriginal`; `mdk_linux` sets only rgba.
+- **Evidence:** tools/check.sh ALL GATES PASSED; tests/formats 200630 checks,
+  0 failures (22 fewer: the removed checks); tests/scripts all suites exit 0
+  (c3d_frame included); Linux build compiles; clean release `make -C mdk_3ds`
+  with zero compiler warnings. Mandarine r1.2.1 (md5 0d2adab6), `DISPLAY=:99`,
+  `emurun.sh --seed-sdmc` (HD pack, enableLighting=0), A presses by xdotool:
+  menu -> briefing -> fall -> level 7, HD set 155/155 resident, 0 given up, main
+  loop entered (`hw-logs/2026-11-25-emu-smoke-dead-attach.log`). Not run on the
+  console (the owner tests it).
+- **Commit:** this one.
