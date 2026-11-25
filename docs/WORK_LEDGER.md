@@ -2152,3 +2152,13 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   regex the test FAILS ("endFrame is not in the file", mutation arms inert), so
   the regex change is what keeps its coverage, not a loosening.
 - **Commit:** this one.
+
+### game/player.cpp (1794 lines) split into a .cpp and four fragments
+- **What:** `player.cpp` (628: constants, helpers, update, turning, items, firing,
+  muzzle) and `player_state.inc` (449), `player_vertical.inc` (257),
+  `player_platforms.inc` (267), `player_slide.inc` (225), included at the bottom
+  in the original order. The @vfp-exempt R6 pins (carry, slide heading x2) moved
+  with their functions. player_ledge.cpp and player_sniper.cpp untouched.
+- **Evidence:** player.o byte-identical on the 3DS (md5 fab37454); debug-stripped
+  objects identical for the Linux build and tests/scripts.
+- **Commit:** this one.
