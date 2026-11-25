@@ -148,6 +148,9 @@ struct MusicSlot {
     MusicFile stream;
     uint32_t started = 0;      // the serial of the last start carried out
     uint32_t restarts = 0;     // this channel's drained restarts (underruns)
+    bool restartAllBack = false;   // the last one: every buffer had come back
+    uint32_t restartAt = 0;        // ... the track's next sample then
+    uint32_t restartSamples = 0;   // ... and the track's length
     bool startPrimed = false;  // the last start came from a prime
     uint32_t startUs = 0;      // ... and took this long on the worker
     // ---- main thread only ----
@@ -624,6 +627,7 @@ void musicWork(int32_t m) {
     bool fresh = false;
     bool refill[kMusicBuffers] = {false};
     bool restart = false;
+    bool restartAllBack = false;
     bool looping = false;
     uint32_t serial = 0;
     LightLock_Lock(&g_lock);
@@ -663,6 +667,7 @@ void musicWork(int32_t m) {
         // channel is not yet marked playing) and not in a resume's grace ticks.
         // Every restart is an UNDERRUN: the reads fell more than the queue behind.
         restart = (drained || slot.silentTicks >= 2) && g_resumeGrace == 0;
+        restartAllBack = drained;
         if (restart) {
             slot.silentTicks = 0;
             ndspChnWaveBufClear(ndsp);
@@ -701,6 +706,9 @@ void musicWork(int32_t m) {
         if (restart) {
             g_musicRestarts++;
             slot.restarts++;
+            slot.restartAllBack = restartAllBack;
+            slot.restartAt = slot.stream.next;
+            slot.restartSamples = slot.stream.head.samples;
             if (any) {
                 musicConfigure(ndsp, slot);
             } else {
@@ -864,6 +872,9 @@ void musicSay() {
         const bool primed = slot.startPrimed;
         const uint32_t us = slot.startUs;
         const uint32_t restarts = slot.restarts;
+        const bool allBack = slot.restartAllBack;
+        const uint32_t at = slot.restartAt;
+        const uint32_t length = slot.restartSamples;
         char name[kMusicNameBytes];
         memcpy(name, slot.name, sizeof(name));
         slot.said = slot.started;
@@ -874,8 +885,11 @@ void musicSay() {
                          (double)us / 1000.0, active ? "" : " -- NO FILE, silent");
         }
         if (restarts != slot.restartsSaid) {
-            log3dsPrintf("music: UNDERRUN on ch%d (%s): %u drained restart(s) on this channel",
-                         (int)kMusicNdsp[m], name, (unsigned)restarts);
+            log3dsPrintf("music: UNDERRUN on ch%d (%s): %u drained restart(s) on this channel; "
+                         "the last: %s, at sample %u of %u",
+                         (int)kMusicNdsp[m], name, (unsigned)restarts,
+                         allBack ? "every buffer back" : "the channel silent two ticks",
+                         (unsigned)at, (unsigned)length);
             slot.restartsSaid = restarts;
         }
     }
