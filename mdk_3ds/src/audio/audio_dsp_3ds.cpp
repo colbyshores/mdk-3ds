@@ -115,7 +115,11 @@ struct MusicPrime {
     char name[kMusicNameBytes] = {0};  // guarded by g_lock: what is wanted (empty: nothing)
     // ---- the worker's ----
     char loaded[kMusicNameBytes] = {0};  // what `stream` and `data` hold
-    MusicFile stream;                  // positioned after the primed bytes
+    // Where the primed bytes end: path, header, sample and history there. Its
+    // file is CLOSED once the prime is read, so a prime is not used up by a start
+    // (the start opens its own file at that place): a track the door bubble
+    // hinted stays primed for every return through that door.
+    MusicFile stream;
     uint8_t* data = nullptr;           // kMusicBuffers x kMusicBufBytes (main memory)
     uint32_t bufferSamples[kMusicBuffers] = {0};
     audio::DspAdpcmContext bufferHistory[kMusicBuffers];
@@ -142,11 +146,14 @@ struct MusicSlot {
     int32_t silentTicks = 0; // worker ticks in a row the channel was not playing
     // ---- the worker's ----
     MusicFile stream;
+    uint32_t started = 0;      // the serial of the last start carried out
+    uint32_t restarts = 0;     // this channel's drained restarts (underruns)
     bool startPrimed = false;  // the last start came from a prime
     uint32_t startUs = 0;      // ... and took this long on the worker
     // ---- main thread only ----
     bool owned = false;      // a logical voice is (or was, until stopped) streaming here
     uint32_t said = 0;       // the serial whose start the log has said
+    uint32_t restartsSaid = 0;
 };
 
 bool g_live = false;
@@ -179,7 +186,6 @@ uint32_t g_musicRestarts = 0; // guarded by g_lock
 uint32_t g_musicUnprimed = 0; // guarded by g_lock: starts that had to read first
 uint32_t g_musicMissing = 0;  // guarded by g_lock: tracks whose file did not open
 uint32_t g_musicReadMax = 0;  // guarded by g_lock: the slowest buffer read, microseconds
-uint32_t g_musicRestartsSaid = 0;  // main thread
 
 // ---- the arena --------------------------------------------------------------
 
@@ -553,7 +559,14 @@ void musicApplyStart(int32_t m, const MusicRequest& req) {
         MusicPrime& prime = g_primes[p];
         musicClose(slot.stream);
         slot.stream = prime.stream;
-        prime.stream.file = nullptr;
+        slot.stream.file = fopen(slot.stream.path, "rb");
+        if (slot.stream.file != nullptr &&
+            fseek(slot.stream.file,
+                  (long)(audio::DspAdpcm::kHeaderBytes +
+                         audio::DspAdpcm::framesFor(slot.stream.next) * audio::DspAdpcm::kFrameBytes),
+                  SEEK_SET) != 0) {
+            musicClose(slot.stream);
+        }
         for (int32_t i = 0; i < prime.buffers; i++) {
             memcpy(slot.buf + (size_t)i * kMusicBufBytes, prime.data + (size_t)i * kMusicBufBytes,
                    kMusicBufBytes);
@@ -562,8 +575,6 @@ void musicApplyStart(int32_t m, const MusicRequest& req) {
         }
         DSP_FlushDataCache(slot.buf, (u32)prime.buffers * kMusicBufBytes);
         filled = prime.buffers;
-        prime.buffers = 0;
-        prime.loaded[0] = '\0';
     } else if (musicOpen(slot.stream, req.name)) {
         musicSeek(slot.stream, req.startFrame);
         for (int32_t i = 0; i < kMusicBuffers; i++) {
@@ -577,16 +588,9 @@ void musicApplyStart(int32_t m, const MusicRequest& req) {
     }
     const uint32_t us = (uint32_t)((svcGetSystemTick() - t0) / (SYSCLOCK_ARM11 / 1000000ull));
     LightLock_Lock(&g_lock);
-    if (p >= 0) {
-        // Primed once, played once: the wish is spent.
-        if (strcmp(g_primes[p].name, req.name) == 0) {
-            g_primes[p].name[0] = '\0';
-        }
-    } else {
+    if (p < 0) {
         g_musicUnprimed++;
     }
-    slot.startPrimed = p >= 0;
-    slot.startUs = us;
     if (filled == 0) {
         g_musicMissing += slot.stream.file == nullptr ? 1u : 0u;
     }
@@ -594,6 +598,9 @@ void musicApplyStart(int32_t m, const MusicRequest& req) {
     // handed over (the next pass carries out the newer request, or this one again).
     if (slot.serial == req.serial && !g_suspended) {
         slot.applied = req.serial;
+        slot.started = req.serial;
+        slot.startPrimed = p >= 0;
+        slot.startUs = us;
         slot.active = filled > 0;
         slot.silentTicks = 0;
         if (slot.active) {
@@ -693,6 +700,7 @@ void musicWork(int32_t m) {
     if (slot.serial == serial && slot.active && !g_suspended) {
         if (restart) {
             g_musicRestarts++;
+            slot.restarts++;
             if (any) {
                 musicConfigure(ndsp, slot);
             } else {
@@ -740,6 +748,7 @@ void musicPrimeWork() {
             }
             prime.buffers++;
         }
+        musicClose(prime.stream);
     }
 }
 
@@ -850,28 +859,25 @@ void musicSay() {
     for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
         MusicSlot& slot = g_music[m];
         LightLock_Lock(&g_lock);
-        const bool fresh = slot.applied != slot.said;
-        const bool want = slot.want;
+        const bool fresh = slot.started != slot.said;
         const bool active = slot.active;
         const bool primed = slot.startPrimed;
         const uint32_t us = slot.startUs;
+        const uint32_t restarts = slot.restarts;
         char name[kMusicNameBytes];
         memcpy(name, slot.name, sizeof(name));
-        slot.said = slot.applied;
+        slot.said = slot.started;
         LightLock_Unlock(&g_lock);
-        if (fresh && want) {
+        if (fresh) {
             log3dsPrintf("music: %s on ch%d: %s (%.1f ms on the worker)%s", name,
                          (int)kMusicNdsp[m], primed ? "primed" : "NOT primed, read at the start",
                          (double)us / 1000.0, active ? "" : " -- NO FILE, silent");
         }
-    }
-    LightLock_Lock(&g_lock);
-    const uint32_t restarts = g_musicRestarts;
-    LightLock_Unlock(&g_lock);
-    if (restarts != g_musicRestartsSaid) {
-        log3dsPrintf("music: UNDERRUN -- %u drained channel restart(s) so far",
-                     (unsigned)restarts);
-        g_musicRestartsSaid = restarts;
+        if (restarts != slot.restartsSaid) {
+            log3dsPrintf("music: UNDERRUN on ch%d (%s): %u drained restart(s) on this channel",
+                         (int)kMusicNdsp[m], name, (unsigned)restarts);
+            slot.restartsSaid = restarts;
+        }
     }
 }
 

@@ -1692,3 +1692,18 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   tests updated (the Old 3DS boot-log figures, the boundaries at 28 MiB).
 - **Evidence:** see the branch's hardware entry.
 - **Commit:** this one.
+
+## 2026-11-25 -- the music primes are kept across starts (branch perf/3ds-memory)
+
+- **Why:** the first hardware walk of the DSP-ADPCM stream (level 8,
+  `hw-logs/2026-11-25-fw-8.log`) showed a primed track used up by its start: going
+  back through the same door (GUNT_2's DUNE_M2) found no prime and read the track's
+  start on the worker first (105 ms late), because the door bubble hints a track
+  once per change of its arena.
+- **What:** a prime closes its file once read and keeps its bytes and the place
+  they end (header, sample, predictor history); a start copies the bytes and opens
+  its own file at that place. So a hinted track stays primed until two other
+  wishes replace it. The music log names each start's channel and whether it was
+  primed (the start's own serial, not the newest request's) and each underrun's
+  channel and track.
+- **Commit:** this one.
