@@ -447,7 +447,7 @@ struct RendererC3D {
     // The target installEye selected last: the glow pass copies from it.
     C3D_RenderTarget* eyeTarget = nullptr;
 
-    // THE GLOW (Enhanced Mode enableGlowBillboards, 06_draw.inc drawGlow). Made on
+    // THE GLOW (Enhanced Mode enableGlowBillboards, 06_glow.inc drawGlow). Made on
     // first use, in VRAM (citro3d renders only into VRAM), and released whenever
     // the eye targets are rebuilt (releaseGlow): the picture's texture (256x512,
     // one level), one single-level texture per blur level 1-5 plus the mix, each
@@ -458,10 +458,10 @@ struct RendererC3D {
     bool glowSmallMade[mdk::pica::kGlowSmallCount] = {};
     C3D_RenderTarget* glowTarget[mdk::pica::kGlowSmallCount] = {};
     u32* glowScratch = nullptr;
-    u32* glowScratchTiled = nullptr; // the shrink re-tiled (06_draw.inc drawGlow, step 2)
+    u32* glowScratchTiled = nullptr; // the shrink re-tiled (06_glow.inc drawGlow, step 2)
     u32* copyDrain = nullptr;        // 64 bytes the readbacks' trailing copy lands in (readBack)
     float* glowQuad = nullptr;
-    // THE GLOW BILLBOARDS (the 3DS default: config glowBloom = 0; 06_draw.inc
+    // THE GLOW BILLBOARDS (the 3DS default: config glowBloom = 0; 06_glow_billboards.inc
     // drawGlowBillboards): the frame's halos from mdk_render_set_glow_quads, a
     // linear vertex buffer they are written into once a frame, and the 32x32
     // soft-dot texture they are drawn with (white, alpha falling off from the

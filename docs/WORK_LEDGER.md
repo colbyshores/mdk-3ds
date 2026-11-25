@@ -2092,3 +2092,24 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   the only free slot (core 1, 10-30%) is too small for it.
 - **Commits:** c93b2ede (log writer), 411bdc95 (music worker core), a2aed4ff (file
   reader core), this one (10% share, ledger).
+## 2026-11-25 -- cleanup/split-large-files: the oversized sources split along their seams
+
+- **Why (all entries below):** the owner asked for the files over 1500 lines to be
+  split so they can be read at a glance (AGENTS.md section 10, plain flat code). Pure
+  code movement: no behaviour change, no renames, no new abstractions. Where the
+  pieces share file-static state (anonymous-namespace helpers, `static` functions)
+  they become `.inc` fragments of the SAME translation unit, in the original order
+  -- the renderer_c3d.cpp / renderer_vk.cpp precedent -- so the object code can be
+  checked byte for byte instead of argued.
+
+### c3d/06_draw.inc (1758 lines) split into five fragments
+- **What:** `06_draw.inc` (561: the combiner stages, haze, prepareDraw),
+  `06_draw_submit.inc` (540: drawRecorded, the diagnostic triangle), `06_glow.inc`
+  (336: the glow bloom pass), `06_queue.inc` (221: coalescing, prepareQueue,
+  replayQueue), `06_glow_billboards.inc` (116). renderer_c3d.cpp includes them in
+  the original order. Comments that named a moved function by file now name its
+  new file.
+- **Evidence:** `renderer_c3d.o` built with the 3DS release flags is byte-identical
+  to main's (md5 7eed41db, whole object and disassembly); tests/scripts
+  c3d_frame_test.sh passes (it expands `c3d/*.inc` like the compiler).
+- **Commit:** this one.

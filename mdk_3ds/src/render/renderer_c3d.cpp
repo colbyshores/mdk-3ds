@@ -103,6 +103,10 @@ namespace {
 // transform for its animation frame, the combiner, the vertex buffer, one
 // C3D_DrawArrays -- issued at FLUSH time, in the frame's pass order.
 #include "c3d/06_draw.inc"
+#include "c3d/06_draw_submit.inc"
+#include "c3d/06_glow.inc"
+#include "c3d/06_queue.inc"
+#include "c3d/06_glow_billboards.inc"
 // ---------------------------------------------------------------------------
 // The 2D canvas
 // ---------------------------------------------------------------------------

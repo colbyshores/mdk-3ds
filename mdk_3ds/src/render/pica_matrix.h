@@ -332,7 +332,7 @@ struct BlendState {
 const BlendState kBlendReplace = {false, kBlendOne, kBlendZero, kBlendOne,
                                   kBlendZero};
 
-// THE GLOW'S BLEND (Enhanced Mode glow, 06_draw.inc drawGlow): a SCREEN,
+// THE GLOW'S BLEND (Enhanced Mode glow, 06_glow.inc drawGlow): a SCREEN,
 // s * (1 - d) + d = 1 - (1 - s)(1 - d), which is the PC's post.frag
 // `1.0 - (1.0 - colour) * (1.0 - shine)` exactly -- here in the panel's sRGB
 // values, where the PC's is in linear light. Alpha is left as it was.
@@ -341,7 +341,7 @@ const BlendState kBlendScreen = {true, kBlendOneMinusDstColour, kBlendOne, kBlen
 
 // THE GLOW'S LEVEL MIX: level 3 := a * level5 + (1 - a) * level3 with the blend
 // colour's alpha a = 1/2 -- the PC's (scene@mip3 + scene@mip5) / 2, folded into
-// level 3 so one texture unit reads both (06_draw.inc drawGlow).
+// level 3 so one texture unit reads both (06_glow.inc drawGlow).
 const BlendState kBlendGlowMix = {true, kBlendConstantAlpha, kBlendOneMinusConstantAlpha,
                                   kBlendZero, kBlendOne};
 
@@ -371,7 +371,7 @@ const BlendState kBlendShadowMultiply = {true, kBlendDstColour, kBlendZero, kBle
 // result over every background colour (fitted 2026-11-18): the PC's own shine
 // (s = 0.15u) misses it by up to 69/255, s* by up to 30/255. The combiner draws
 // s* as P * min(1, u / u0) + Q * u (within 2.8/255 of s*): six stages, the
-// buffer carrying Q * u past the clamp (06_draw.inc drawGlow).
+// buffer carrying Q * u past the clamp (06_glow.inc drawGlow).
 // ---------------------------------------------------------------------------
 const float kGlowThresholdSrgb = 0.9036f;
 const float kGlowBand = 0.0964f;          // 1 - kGlowThresholdSrgb: u's unit
@@ -1108,7 +1108,7 @@ constexpr size_t sunShadowVramBytes(int32_t mapSize) {
     return (size_t)mapSize * (size_t)mapSize * 6u;
 }
 
-// The VRAM the glow's textures take (06_draw.inc ensureGlow): the 256x512
+// The VRAM the glow's textures take (06_glow.inc ensureGlow): the 256x512
 // picture and its blur levels 1-5 and mix, RGBA8 -- 707,072 bytes -- rounded up
 // to 768 KiB for the allocator's alignment. The sun shadow's map leaves this
 // much for a glow that is wanted and not made yet.

@@ -120,7 +120,7 @@ static void drawPass(void) {
     C3D_DrawArrays(GPU_GEOMETRY_PRIM, 0, 3);
 }
 
-// THE GLOW'S SHRINK (06_draw.inc drawGlow at edge-smoothing scale 2): a
+// THE GLOW'S SHRINK (06_glow.inc drawGlow at edge-smoothing scale 2): a
 // 480x800 RGBA8 eye in VRAM, 2x2-averaged into linear memory by the display
 // transfer engine. Each variant below is one of the stages 20-23.
 static u32* g_vramEye;

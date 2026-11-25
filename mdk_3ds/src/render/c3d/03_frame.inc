@@ -467,7 +467,7 @@ static void bindVertexBuffer(RendererC3D* r, const void* data) {
 // geometry work before the plain program's configuration runs) when a plain
 // program follows a geometry program in the list. The scene avoids most of
 // those splits by drawing its unlit draws through the pass-through program
-// once it is in geometry mode (06_draw.inc drawRecorded), so an eye leaves
+// once it is in geometry mode (06_draw_submit.inc drawRecorded), so an eye leaves
 // geometry mode once, where its scene ends.
 //
 // ALSO ON THE WAY BACK: in geometry mode shader unit 3 is the geometry unit and
@@ -1362,7 +1362,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
                         r->lighting.enabled;
     r->billboardsDrawn = 0;
     // Resolve the queue once for both eyes (STEREO-REPLAY analogue,
-    // 06_draw.inc prepareQueue): the eye loop below only culls, composes
+    // 06_queue.inc prepareQueue): the eye loop below only culls, composes
     // matrices and submits.
     // A frame that draws no eye resolves nothing (validator F4; eyePlan
     // only yields 1-2 today, so this is the guard, not a behaviour change).
@@ -1852,7 +1852,7 @@ static void prepareShadows(RendererC3D* r) {
          mdk::pica::sunShadowDepthBias(r->shadowMapSize), 0.0f},
     };
     memcpy(r->shadowUniforms, values, sizeof(values));
-    // The lit draws take the shadow in their own pass (06_draw.inc drawRecorded).
+    // The lit draws take the shadow in their own pass (06_draw_submit.inc drawRecorded).
     r->shadowLitLive = true;
 }
 

@@ -55,7 +55,7 @@ static void releaseEyeTargets(RendererC3D* r) {
     r->targetsShareDepth = false;
 }
 
-// The glow's VRAM (06_draw.inc ensureGlow), outside a frame only, like the eye
+// The glow's VRAM (06_glow.inc ensureGlow), outside a frame only, like the eye
 // targets: the first C3D_RenderTargetDelete waits for the GPU queue, so nothing
 // still reads the textures freed after it. Released whenever the eye targets are
 // rebuilt and remade on the glow's next use, so the glow's 0.7 MB never sits
