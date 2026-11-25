@@ -2613,6 +2613,23 @@ int main(int argc, char** argv) {
             exitReason = "harness autoquit (MDK_AUTOQUIT)";
             break;
         }
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_HDFLIP)
+        // THE HD SET FLIPPED ON A SCHEDULE (`make AUTOQUIT=90 HDFLIP=f,...`, a
+        // harness aid): enableHdTextures toggled at each listed frame and applied
+        // as the pause menu applies it. One line a flip, at the flip.
+        {
+            static const uint32_t kHdFlips[] = {MDK_HW_HDFLIP};
+            for (size_t i = 0; i < sizeof(kHdFlips) / sizeof(kHdFlips[0]); i++) {
+                if (frame == kHdFlips[i]) {
+                    enhancedToggles.enableHdTextures = !enhancedToggles.enableHdTextures;
+                    mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
+                    mdk::log3dsPrintf("hdflip: frame %lu hd=%d lin=%u", (unsigned long)frame,
+                                      (int)enhancedToggles.enableHdTextures,
+                                      (unsigned)linearSpaceFree());
+                }
+            }
+        }
+#endif
 #ifdef MDK_TOGGLE_WALK
         // One step every kWalkFrames: the next toggle the config asked for.
         {
@@ -4612,6 +4629,20 @@ int main(int argc, char** argv) {
                           (int)made.hdLateTextures, (int)made.hdLateDraws,
                           (int)made.hdBlankDraws, (int)made.hdImported, (int)made.hdEvicted,
                           (unsigned)made.hdResidentPeak);
+        // The late copies: how many landed after a draw wanted them, their frames
+        // late (sum, worst with its file and wanted frame), the first eight.
+        char rows[8 * 16];
+        size_t at = 0;
+        rows[0] = '\0';
+        for (int32_t i = 0; i < made.hdLateLanded && i < 8 && at < sizeof(rows); i++) {
+            at += (size_t)snprintf(rows + at, sizeof(rows) - at, "%s%d+%d", i ? "," : "",
+                                   (int)made.hdLateRows[i][0], (int)made.hdLateRows[i][1]);
+        }
+        mdk::log3dsPrintf("hdrule: late landed=%d frames=%d worst=%d (wanted frame %d, %s) "
+                          "first=%s",
+                          (int)made.hdLateLanded, (int)made.hdLateFramesSum,
+                          (int)made.hdLateFramesMax, (int)made.hdLateWorstFrame,
+                          made.hdLateWorst[0] ? made.hdLateWorst : "-", rows[0] ? rows : "-");
         g_lookupHashes = 0;
         g_lookupHashMs = 0.0;
         g_lookupNameMisses = 0;

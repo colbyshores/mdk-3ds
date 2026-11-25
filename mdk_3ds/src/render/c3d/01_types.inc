@@ -423,6 +423,9 @@ struct HdCopy {
     // The image's rectangle in the texture's own texcoords (Tex3DS_SubTexture):
     // the draw maps the oracle's [0,1] uv through it, assuming no orientation.
     float left = 0.0f, top = 1.0f, right = 1.0f, bottom = 0.0f;
+    // The frame a draw first wanted this copy while it was not resident (-1:
+    // none since its last import): how late it landed (render_c3d_stats.h).
+    int32_t wantedFrame = -1;
 };
 
 // One queue record resolved for the frame (STEREO-REPLAY analogue,
@@ -981,6 +984,12 @@ struct RendererC3D {
     int32_t hdLateDraws = 0;
     int32_t hdBlankDraws = 0;
     size_t hdResidentPeak = 0;
+    int32_t hdLateLanded = 0;
+    int32_t hdLateFramesSum = 0;
+    int32_t hdLateFramesMax = 0;
+    int32_t hdLateWorstFrame = -1;
+    char hdLateWorst[64] = {0};
+    int32_t hdLateRows[8][2] = {};
 
     // THE ORIG PACK'S READS (04_textures.inc pumpPackOriginals): the packed
     // originals waiting for a reader slot (texture ids; an entry whose texture

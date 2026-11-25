@@ -51,6 +51,16 @@ struct MdkC3dFirstUse {
     int32_t hdLateDraws = 0;
     int32_t hdBlankDraws = 0;
     uint32_t hdResidentPeak = 0;
+    // HOW LATE: for each copy a draw wanted before it was resident, the frames
+    // from that first draw to its import -- the count, their sum and the worst,
+    // with the worst one's file and the frame it was first wanted, and the first
+    // eight (wanted frame, frames late) in order.
+    int32_t hdLateLanded = 0;
+    int32_t hdLateFramesSum = 0;
+    int32_t hdLateFramesMax = 0;
+    int32_t hdLateWorstFrame = -1;
+    char hdLateWorst[64] = {0};
+    int32_t hdLateRows[8][2] = {};
 };
 
 void mdk_render_c3d_first_use(MdkRenderer r, MdkC3dFirstUse* out);

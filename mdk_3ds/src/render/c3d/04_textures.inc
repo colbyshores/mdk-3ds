@@ -1602,6 +1602,23 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         if (renderer->hdResidentBytes > renderer->hdResidentPeak) {
             renderer->hdResidentPeak = renderer->hdResidentBytes;
         }
+        if (copy.wantedFrame >= 0) {
+            // A draw wanted it before it landed: how late (render_c3d_stats.h).
+            const int32_t late = (int32_t)renderer->frame - copy.wantedFrame;
+            if (renderer->hdLateLanded < 8) {
+                renderer->hdLateRows[renderer->hdLateLanded][0] = copy.wantedFrame;
+                renderer->hdLateRows[renderer->hdLateLanded][1] = late;
+            }
+            renderer->hdLateLanded++;
+            renderer->hdLateFramesSum += late;
+            if (late > renderer->hdLateFramesMax) {
+                renderer->hdLateFramesMax = late;
+                renderer->hdLateWorstFrame = copy.wantedFrame;
+                snprintf(renderer->hdLateWorst, sizeof(renderer->hdLateWorst), "%s",
+                         copy.path.c_str());
+            }
+            copy.wantedFrame = -1;
+        }
         copy.state = HdCopy::Resident;
         // A demanded copy is fresh: not the next eviction's victim. A HINT keeps
         // the stamp its last draw left (0 if none), so the LRU takes it before

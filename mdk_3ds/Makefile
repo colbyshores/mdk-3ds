@@ -278,6 +278,17 @@ $(error UNLOCK=$(UNLOCK) needs AUTOQUIT: clearing door locks on a schedule is a 
 endif
 DEFINES += -DMDK_HW_UNLOCK='"$(UNLOCK)"'
 endif
+# `make AUTOQUIT=90 HDFLIP=frame[,frame...]` flips enableHdTextures at each listed
+# frame, live, the way the pause menu applies a change (mdk_render_set_enhanced_
+# toggles), so a walk measures switching the HD set off and on again -- that it
+# loads the other set without a freeze and gives the memory back. Only
+# main_3ds.cpp reads it: touch it after changing HDFLIP.
+ifneq ($(strip $(HDFLIP)),)
+ifndef AUTOQUIT
+$(error HDFLIP=$(HDFLIP) needs AUTOQUIT: flipping the HD set on a schedule is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_HDFLIP=$(HDFLIP)
+endif
 # `make AUTOQUIT=90 EVENT=1` runs special_event 1 after one second of game time, the
 # C#'s --event test option (Program.cs:53, Viewer.RunTests): 50 and below end the level
 # (the arena breaks up, Kurt rises, the screen goes white). Since package 2 the flow

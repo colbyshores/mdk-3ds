@@ -321,4 +321,10 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     out->hdLateDraws = cr->hdLateDraws;
     out->hdBlankDraws = cr->hdBlankDraws;
     out->hdResidentPeak = (uint32_t)cr->hdResidentPeak;
+    out->hdLateLanded = cr->hdLateLanded;
+    out->hdLateFramesSum = cr->hdLateFramesSum;
+    out->hdLateFramesMax = cr->hdLateFramesMax;
+    out->hdLateWorstFrame = cr->hdLateWorstFrame;
+    memcpy(out->hdLateWorst, cr->hdLateWorst, sizeof(out->hdLateWorst));
+    memcpy(out->hdLateRows, cr->hdLateRows, sizeof(out->hdLateRows));
  }

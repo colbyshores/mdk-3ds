@@ -271,6 +271,9 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
                 }
                 if (copy->state != HdCopy::Resident) {
                     r->hdLateDraws++;
+                    if (copy->wantedFrame < 0) {
+                        copy->wantedFrame = (int32_t)r->frame;
+                    }
                 }
             }
             if (wantsHd && copy->state == HdCopy::Resident) {
