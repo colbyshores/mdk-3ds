@@ -718,15 +718,6 @@ void mdk_render_cancel_file_read(MdkRenderer r, int32_t tag) {
     }
 }
 
-// The HD pack's compressed replacement for an index texture: recorded only.
-// The draw that first wants it queues it, and the frame-boundary pump imports
-// it under the HD budget (04_textures.inc, THE HD STREAM).
-void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId t, const char* path) {
-    recordHdPath(r, t, path, false);
-}
-
-// The same for a canvas picture (HUD, menus): drawn on the canvas's own
-// Original-shaded pass.
 // THE CANVAS PIN, SAID UP FRONT (render.h): the first Overlay draw pins a
 // texture RGBA8 (06_draw.inc) and re-makes a copy already made 16-bit -- for the
 // menu's font atlas and MDKOPT background that was a second whole expansion on
@@ -769,12 +760,9 @@ void mdk_render_mark_unmipped(MdkRenderer r, MdkTextureId t) {
     }
 }
 
-void mdk_render_replace_image_compressed(MdkRenderer r, MdkTextureId t, const char* path) {
-    recordHdPath(r, t, path, true);
-}
-
 // The mod system's DECODED colour-image replacements: the 3DS takes the HD
-// pack's compressed .t3x instead (mdk_render_replace_compressed above) and never
+// pack's compressed .t3x instead (mdk_render_create_compressed_file's and
+// mdk_render_create_hd_image's hdPath) and never
 // decodes a PNG, so these stay deliberate no-ops.
 void mdk_render_replace_colour(MdkRenderer, MdkTextureId, MdkPaletteId, int32_t, int32_t,
                                int32_t, const uint8_t*) {}

@@ -163,7 +163,6 @@ void mdk_render_release_texture(MdkRenderer, MdkTextureId texture) {
     }
 }
 
-void mdk_render_replace_compressed(MdkRenderer, MdkTextureId, const char*) {}
 
 void mdk_render_replace_colour(MdkRenderer, MdkTextureId, MdkPaletteId, int32_t, int32_t, int32_t,
                                const uint8_t*) {}

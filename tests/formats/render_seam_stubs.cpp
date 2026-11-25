@@ -196,24 +196,8 @@ MdkPaletteId mdk_render_create_palette(MdkRenderer, const uint8_t*) {
 
 void mdk_render_canvas_quad(MdkRenderer, const mdk::CanvasQuad*) {}
 
-int mdk_test_compressedCalls = 0;
-MdkTextureId mdk_test_compressedTexture = -1;
-std::string mdk_test_compressedPath;
-void mdk_render_replace_compressed(MdkRenderer, MdkTextureId texture, const char* path) {
-    mdk_test_compressedCalls++;
-    mdk_test_compressedTexture = texture;
-    mdk_test_compressedPath = path ? path : "";
-}
-
 void mdk_render_mark_canvas(MdkRenderer, MdkTextureId) {}
 void mdk_render_mark_unmipped(MdkRenderer, MdkTextureId) {}
-
-int mdk_test_compressedImageCalls = 0;
-std::string mdk_test_compressedImagePath;
-void mdk_render_replace_image_compressed(MdkRenderer, MdkTextureId, const char* path) {
-    mdk_test_compressedImageCalls++;
-    mdk_test_compressedImagePath = path ? path : "";
-}
 
 void mdk_render_replace_colour(MdkRenderer, MdkTextureId texture, MdkPaletteId palette,
                                int32_t frames, int32_t width, int32_t height,

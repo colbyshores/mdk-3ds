@@ -340,22 +340,6 @@ void mdk_render_replace_colour(MdkRenderer r, MdkTextureId texture, MdkPaletteId
                                int32_t frames, int32_t width, int32_t height,
                                const uint8_t* rgba);
 
-// Give an index texture a COMPRESSED replacement read from a file: the 3DS HD
-// pack's .t3x (ETC1 / ETC1A4, its mip chain prebuilt by tex3ds on the host;
-// docs/HD_TEXTURES_3DS_SPEC.md). The backend records the path and makes the
-// texture itself when it decides to (the 3DS streams them under a budget, and
-// draws the original until the replacement is resident). The Linux backend
-// decodes mods through mdk_render_replace_colour and ignores this. Its caller
-// is Kurt's sprite frames (game/kurt_sprite.cpp); the arena surfaces are made
-// from their files instead (mdk_render_create_compressed_file's hdPath).
-void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId texture, const char* path);
-
-// The same for a CANVAS image (a HUD or menu picture): the HD pack's .t3x for
-// it. Separate from mdk_render_replace_compressed because the canvas is drawn
-// with the original shading, which a world texture's HD copy never applies to
-// (the PC's mods replace a canvas image through its own path, ReplaceImage).
-void mdk_render_replace_image_compressed(MdkRenderer r, MdkTextureId texture, const char* path);
-
 // A CANVAS PICTURE WITH AN HD IMAGE (the 3DS HD pack's .t3x at `hdPath`, resolved
 // by ModImages::resolve): an index texture as mdk_render_create_index_texture
 // makes it, except that with the backend's HD set on the HD file is its only

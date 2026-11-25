@@ -38,7 +38,6 @@ extern int32_t mdk_test_replaceFrames;
 extern int32_t mdk_test_replaceWidth;
 extern int32_t mdk_test_replaceHeight;
 extern int mdk_test_replaceFirstByte;
-extern int mdk_test_compressedCalls;
 // The packed original's side (render_seam_stubs.cpp).
 extern MdkTextureId mdk_test_compressedFileId;
 extern int mdk_test_compressedFileCalls;
@@ -375,7 +374,6 @@ void resetPackedStubs() {
     mdk_test_updateHeight = 0;
     mdk_test_prepareCalls = 0;
     mdk_test_indexTextures = 0;
-    mdk_test_compressedCalls = 0;
 }
 
 } // namespace
@@ -393,7 +391,6 @@ MDK_TEST(surfaceCacheKeepsAPackedOriginalsPendingId) {
     MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
     MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);
     MDK_CHECK_EQ(mdk_test_indexTextures, 0);    // the palette is never expanded
-    MDK_CHECK_EQ(mdk_test_compressedCalls, 0);  // not an HD copy of anything
     MDK_CHECK_EQ(cache.replacementFound(), 1);
     MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
     MDK_CHECK_EQ(cache.prepare(lit, &palette), kPendingId);
@@ -614,7 +611,6 @@ MDK_TEST(surfaceCacheGivesASpriteItsPackedOriginal) {
         MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), kPendingId);
         MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);
         MDK_CHECK_EQ(mdk_test_indexTextures, 0);   // the palette is never expanded
-        MDK_CHECK_EQ(mdk_test_compressedCalls, 0);
         MDK_CHECK_EQ(cache.replacementFound(), 1);
         MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), kPendingId);
         MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
@@ -701,7 +697,6 @@ MDK_TEST(surfaceCacheMakesAnHdOnlyPairFromItsFilesAlone) {
         MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), kPendingId);
         MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);   // once per pair
         MDK_CHECK_EQ(mdk_test_indexTextures, 0);         // never expanded
-        MDK_CHECK_EQ(mdk_test_compressedCalls, 0);       // never attached to one
     }
     mdk_test_compressedFileId = -1;
 }
@@ -726,7 +721,6 @@ MDK_TEST(surfaceCacheKeepsAPairsTextureOverALaterPackedAnswer) {
     MDK_CHECK_EQ(mdk_test_indexTextures, 1);
     MDK_CHECK_EQ(cache.surfaceId(lit, &palette), made);
     MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
-    MDK_CHECK_EQ(mdk_test_compressedCalls, 0);
     MDK_CHECK_EQ(mdk_test_indexTextures, 1);
     mdk_test_compressedFileId = -1;
 }

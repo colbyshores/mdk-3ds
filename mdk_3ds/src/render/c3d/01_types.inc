@@ -202,7 +202,7 @@ struct C3dTexture {
     // and while it is off the packed original is, as for any other. Cleared when
     // the texture stops being a packed original (a stamp, its index pixels).
     bool hdOnly = false;
-    // A CANVAS picture's copy (mdk_render_replace_image_compressed): eligible on
+    // A CANVAS picture's copy (mdk_render_create_hd_image): eligible on
     // the canvas's Original-shaded draws, where a world texture's never is.
     bool hdCanvas = false;
 

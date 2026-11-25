@@ -104,8 +104,9 @@ expansion and not the packed original in `romfs:/orig`. It never blocks either.
   The older step -- an HD copy attached after the fact to a palette-expanded
   texture (`SurfaceCache::surfaceId` calling `mdk_render_replace_compressed`,
   counted as `hdAnsweredSd`) -- was removed on 2026-11-25: no lookup answered
-  for it any more, so it never ran. (Kurt's HD frames used `mdk_render_replace_compressed`
-  until 2026-11-25; the 3DS now gives Kurt no HD copy at all, below.)
+  for it any more, so it never ran. (Kurt's HD frames and the HUD's pictures used `mdk_render_replace_compressed` /
+  `mdk_render_replace_image_compressed` until 2026-11-25; both seams are gone: Kurt
+  has no HD copy and the pictures are made by `mdk_render_create_hd_image`.)
 - **Not arrived yet:** the draw draws nothing (or an original already resident
   from before the toggle went on); the early asks (the pump's walk of resident
   views, hidden batches, the object and effects warms) make it rare. A draw's

@@ -1787,3 +1787,19 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   - HD spec 3.1/3.2/4 updated.
 - **Evidence:** host suites; hardware: the walk's covered-standard census.
 - **Commit:** this one.
+
+## 2026-11-25 -- the HD replace seams that nothing reaches are removed (branch perf/3ds-memory)
+
+- **Why:** after items 1 and 3 no caller can reach `mdk_render_replace_compressed`
+  (its only caller, KurtSprite's compressed-mods branch, needs `setMods` with the
+  3DS's compressed pack, which main_3ds.cpp no longer does; the desktop's mods are
+  never compressed) or `mdk_render_replace_image_compressed` (no caller left).
+- **What:** both seams out of render.h, the 3DS backend, the Vulkan stubs and the
+  test stubs; KurtSprite keeps its decoded-mod path (Linux) and its `hdSkipped`
+  count; mods_tests' "never attached to an HD copy" checks counted calls to the
+  removed seam and go with it (the same tests still check no index texture and
+  one pending file id).
+- **Per-surface HD streaming is still reachable**, so it stays: a level whose set
+  does not fit (`DOES NOT FIT: streamed per surface`), and the HUD/bomber pictures
+  in that case (pinned only with a set). Nothing else of it is provably dead.
+- **Commit:** this one.

@@ -246,7 +246,7 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
             // for a Lit or Sprite surface -- the PC draws a mod's colour image only
             // in its enhanced lit/sprite modes, never on an Original-shaded world
             // pass (sky, glass) -- and for a CANVAS picture linked through
-            // mdk_render_replace_image_compressed (hdCanvas: the PC replaces those
+            // mdk_render_create_hd_image (hdCanvas: the PC replaces those
             // through its own ReplaceImage); never for a stacked-frame (animated)
             // texture (spec 3).
             HdCopy* copy = resource.hdCopy >= 0 && (size_t)resource.hdCopy < r->hdCopies.size()
