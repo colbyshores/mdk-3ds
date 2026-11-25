@@ -44,17 +44,13 @@
 #   3. THE SINK STAYS OBSERVABLE. The reason defect 1 survived a whole batch is
 #      that the evidence was `sink=1` and `plays=1`, which count ndsp starting
 #      and mixer voices launched and say nothing about wave buffers. The counters
-#      and the log line are the instrument; a sink that silently stops retiring
-#      has to be visible in the guest log, not inferred from silence. There are
-#      TWO retirement sites — reap()'s poll, and audioSink()'s re-check of the
-#      slot it picked up between the two — and both are pinned, because losing
-#      either one under-reports `done` and the ledger stops being a proof
-#      (review F5). What the ledger proves is `submitted - done == inDsp`; the
-#      RATE is `submitted` against the SECONDS the same line carries,
-#      `submitted / (secs x 50)`, and NOT `done` against `submitted` (review F1)
-#      and NOT the frame count in place of the clock, which is the same number
-#      only at exactly 60 fps (review-2 F3 of run-20261106-062909, closing the
-#      header this file used to carry, review-8 F4).
+#      are the instrument (audioStats). There are TWO retirement sites -- reap()'s
+#      poll, and audioSink()'s re-check of the slot it picked up between the two
+#      -- and both are pinned, because losing either one under-reports `done` and
+#      `submitted - done == inDsp` stops being a proof (review F5). The frontend's
+#      periodic `audio: frame=... secs=... submitted=...` ledger line, and the
+#      checks on its clock, were a harness-build instrument and left with the
+#      harness (branch harness/3ds-profiling).
 #
 # WHAT THIS DOES NOT COVER, stated plainly: it reads the source, so it pins the
 # SHAPE of the calls and not the DSP's behaviour. The unit of nsamples is a
@@ -62,22 +58,18 @@
 # log, not by proof from the firmware; the definitive Old-3DS check stays open
 # (AGENTS.md P6/P8 — emulator-green is not hardware-pass).
 #
-# usage: sh ndsp_sink_test.sh [path-to-audio_3ds.cpp] [path-to-main_3ds.cpp]
+# usage: sh ndsp_sink_test.sh [path-to-audio_3ds.cpp]
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 SRC=${1:-$ROOT/mdk_3ds/src/audio/audio_3ds.cpp}
-MAIN=${2:-$ROOT/mdk_3ds/src/main_3ds.cpp}
 [ -f "$SRC" ] || { printf '  FAIL ndsp_sink: cannot read %s\n' "$SRC"; exit 1; }
-[ -f "$MAIN" ] || { printf '  FAIL ndsp_sink: cannot read %s\n' "$MAIN"; exit 1; }
 
-python3 - "$SRC" "$MAIN" <<'PY'
+python3 - "$SRC" <<'PY'
 import re
 import sys
 
 PATH = sys.argv[1]
-MAIN_PATH = sys.argv[2]
 SRC = open(PATH, errors="replace").read()
-MAIN = open(MAIN_PATH, errors="replace").read()
 
 
 def code(text):
@@ -131,211 +123,8 @@ def body(text, name):
     return None
 
 
-def enclosing_brace(text, pos):
-    """The index of the `{` that opens the innermost block containing `pos`, or -1.
-    Walks back with a brace balance, so the opener of a sibling block is not
-    mistaken for this one's. Returns an INDEX and not the opener's line because an
-    Allman brace sits alone and its keyword is one line higher (review-12 R11-1)."""
-    depth = 0
-    i = pos
-    while i >= 0:
-        c = text[i]
-        if c == "}":
-            depth += 1
-        elif c == "{":
-            if depth == 0:
-                return i
-            depth -= 1
-        i -= 1
-    return -1
-
-
-# The loop these three statements live in. Naming it is what keeps the guard test
-# from flagging legitimate code: "not inside a block" would reject the frame loop
-# itself, and a gate that reds correct code is a gate somebody relaxes.
-FRAME_LOOP = r"\bwhile\s*\(\s*aptMainLoop\s*\(\s*\)\s*\)"
-
-# `else if` precedes `else` so the pair reads as one guard rather than as `else`.
-GUARD_KEYWORD = re.compile(r"\b(if|else if|else|switch|for|while|do)\b")
-
-# A line that ENDS a construct, so the walk below stops there and a statement after
-# an ordinary call, a closed block, or a `case`/`default`/`public:` label is never
-# read as somebody's body. Written as the negative of "must end in `{`, `}` or `;`"
-# on purpose: the positive form reds correct code after a label, and a gate that
-# reds correct code is a gate somebody relaxes.
-#
-# BUT A `;` IS ONLY A TERMINATOR OUTSIDE A PARAMETER LIST, and review-2 F2 of
-# run-20261108-195620 is the hole that made this predicate the ninth could-not-see
-# clause in a row: a `for` header wraps over three lines,
-#
-#     for (int32_t extra = 0;
-#          extra < 3; extra++)
-#         audioClock += elapsed;
-#
-# and the walk's last step landed on `for (int32_t extra = 0;`, which ENDS IN A `;`
-# — the clause separator inside the header's own parens. Read as a terminator it
-# returned "" (unconditional) one line short of the keyword, so a clock accumulated
-# THREE TIMES PER FRAME adjudicated PASS, while the identical statement with the
-# header on one line was red. The wrap alone moved it from red to green.
-# So a terminator only terminates when it sits at paren depth 0; see `paren_depth`
-# and the stop clause in `header_above`. `:` gets the same treatment for the same
-# reason (a wrapped `?:`), and `}` cannot appear inside a paren group this file
-# cares about.
-HEADER_STOP = re.compile(r"[;}:]\s*$")
-
-# A condition can wrap, so the header is read by a WALK and not by one line. The
-# walk is bounded, but not by a line count: review-1 F1 of run-20261108-195620
-# reproduced a braceless `if` whose condition wrapped over seven lines as a PASS
-# against batch 93, because batch 93 capped the walk at six non-blank lines and
-# the seventh line is where the `if` lived. A cap is the wrong bound for this
-# walk: it is a bound on how much a condition may be worth, and it reopens the
-# hole one wrapped line further out every time somebody formats a guard the long
-# way. The bound is STRUCTURAL instead — see `header_above`'s `floor`, which is
-# the index of the enclosing block's opener, already computed by `guard_of`.
-
-
-def paren_depth(text, lo, hi):
-    """How many `(` opened in text[lo:hi] and were not closed inside it.
-
-    Used as "at what nesting does this line's last character sit?", with `lo` the
-    `{` of the block that owns the statement. A block body at statement level has
-    no unclosed paren anywhere in it — every statement closes what it opens — so a
-    positive depth at a line's end means that `;` belongs to a header still open
-    above it, and not to a statement that finished. Comments and string literals
-    are already blanked by code(), so neither can contribute a paren."""
-    return text.count("(", lo, hi) - text.count(")", lo, hi)
-
-
-def header_above(text, pos, floor=0):
-    """The control-header line whose body begins at or below the line containing
-    `pos`, or "" when nothing above it hands a body to the statement.
-
-    It walks more than one line because a condition can wrap:
-
-        if (frame > 0 &&
-            frame < 10u)
-            call();
-
-    where the line directly above the call is `frame < 10u)` and names no keyword,
-    so a one-line look reads that guard as unconditional — the same mistake
-    review-12 R11-1 is about, one style further.
-
-    `floor` is the index the walk may not rise above, and it is always the `{` of
-    the block that owns the statement: a braceless guard lives INSIDE its block,
-    so anything above that opener is somebody else's construct, and a walk that
-    passed it could read an unrelated keyword as a guard and red correct code.
-    With that bound the walk needs no step count at all, and a condition of any
-    length is seen. Comments and strings are already blanked by code(), so neither
-    can supply a keyword or hide a header, and blank lines are skipped for the
-    same reason."""
-    end = text.rfind("\n", 0, pos)
-    while end > floor:
-        start = text.rfind("\n", 0, end)
-        line = text[start + 1:end]
-        line_end = end          # index just past this line's last character
-        end = start
-        if not line.strip():
-            continue
-        # The stop test goes FIRST: `if (paused) return;` names a keyword and ends a
-        # statement, and a line that ends a construct is nobody's header — UNLESS the
-        # character that ends it is a `;` or `:` inside a paren group that opened on
-        # this line and closes below it, which is a `for` header's clause separator
-        # and not a terminator (review-2 F2, and the header comment on HEADER_STOP).
-        # Note the direction this can only move: a stop that fires is a "no guard"
-        # answer, so making stops rarer can turn a PASS into a FAIL and never the
-        # other way round. The green-side risk is a stop that stops firing on code
-        # that really did finish, and `wrapped-for-body-above-the-accumulate` is the
-        # probe that would notice a depth measured from the wrong place.
-        if HEADER_STOP.search(line) and paren_depth(text, floor, line_end) <= 0:
-            return ""
-        if GUARD_KEYWORD.search(line):
-            return line
-    return ""
-
-
-def guard_of(text, match):
-    """The keyword that guards `match`, or "" for none.
-
-    THREE forms of guard exist, and a whole-line test sees only the first:
-
-        if (c) call();    // shares its line with its condition — `bare` rejects
-        if (c) {          // brace on the condition's line — seen by walking back
-            call();       // to the opener of the enclosing block
-        }
-        if (c)            // braceless, and the same guard in Allman style with the
-            call();       // `{` alone above: NEITHER line test sees either
-
-    Review-12 R11-1 reproduced the third form — both its braceless and its Allman
-    spelling — as mutants that adjudicated PASS against batch 92, whose fix closed
-    only the first two. So the header is read from AROUND the statement rather than
-    from its own line: the line above it (braceless), the opener of the enclosing
-    block (`if (c) {`), and — when that opener is an Allman `{` sitting alone — the
-    header above the brace. Each of those is a walk, not a single line, and each
-    walk is bounded by the opener of the block that owns the statement, so a
-    condition of any length is seen without the walk escaping the block (review-1
-    F1). The frame loop is whitelisted by name in every form, because it is the
-    loop these statements are supposed to be in."""
-    line_start = text.rfind("\n", 0, match.start()) + 1
-    bi = enclosing_brace(text, match.start())
-    cands = [text[line_start:match.start()]]            # same-line guard
-    # The braceless walk stops at the enclosing block's opener: a guard of this
-    # statement cannot live outside the block this statement is in.
-    cands.append(header_above(text, match.start(), bi if bi >= 0 else 0))
-    if bi >= 0:
-        opener = text[text.rfind("\n", 0, bi) + 1:bi]
-        cands.append(opener)                            # `if (c) {`
-        if not opener.strip():                          # Allman: `{` alone
-            outer = enclosing_brace(text, bi - 1) if bi > 0 else -1
-            cands.append(header_above(text, bi, outer if outer >= 0 else 0))
-    for c in cands:
-        if re.search(FRAME_LOOP, c):
-            return ""
-        m = GUARD_KEYWORD.search(c)
-        if m:
-            return m.group(1)
-    return ""
-
-
-def bare(text, pattern):
-    """(group(1), guard) for every match of `pattern` that is the WHOLE of its own
-    line, where guard is the keyword guarding it ("" when it is unconditional).
-
-    A call that is the body of an `if`, one arm of a `?:`, or the tail of a `&&`
-    chain is still exactly one call site in the file, but it is not handed the
-    value on the frames it does not run — so a count of call sites cannot tell an
-    unconditional feed from a guarded one. Requiring the statement to own its line
-    is the same depth-0 test c3d_frame_test.sh applies to the eye loop
-    (`eye-loop-statements-unconditional`, review-3 F2 there, review-11 R10-2
-    here); `guard_of` is the half that file does not need, and it is needed here
-    because a guard owns its line too — in all three brace styles, not just the
-    block style c3d_frame_test.sh has to handle (review-12 R11-1). Comments are
-    already blanked by code(), so the only thing
-    allowed between the statement's `;` and the end of its line is whitespace."""
-    out = []
-    for mm in re.finditer(pattern, text):
-        a = text.rfind("\n", 0, mm.start()) + 1
-        b = text.find("\n", mm.end())
-        b = len(text) if b < 0 else b
-        if text[a:mm.start()].strip() == "" and text[mm.end():b].strip() == "":
-            out.append((mm.group(1), guard_of(text, mm)))
-    return out
-
-
-def fed_ok(feeds):
-    """True when `feeds` is exactly one unconditional feed."""
-    return len(feeds) == 1 and feeds[0][1] == ""
-
-
-def fed_text(feeds):
-    return ", ".join("%s%s" % (n, "" if not g else " (guarded by `%s`)" % g)
-                     for n, g in feeds) or "-"
-
-
-def adjudicate(src, main, quiet=False):
+def adjudicate(src, quiet=False):
     c = code(src)
-    m = code(main)
-    raw = main  # the log FORMAT STRING sits in a string literal, which code()
-                # blanks out; matching it has to read the raw file.
     sub = body(c, r"void\s+submit\s*\(") or ""
     checks = []
 
@@ -400,147 +189,6 @@ def adjudicate(src, main, quiet=False):
           "a dropped fill must be counted, or a saturated queue reads as a working sink")
     check("stats-exposed", re.search(r"AudioStats\s+audioStats\s*\(\s*\)", c) is not None,
           "the counters must be readable from the frontend")
-    check("frontend-logs-stats",
-          re.search(r"audioStats\s*\(\s*\)", m) is not None
-          and re.search(r"submitted=%[0-9a-z]+", raw) is not None,
-          "the frontend must publish the sink's ledger in the guest log")
-    # The DENOMINATOR must be on the same line as `submitted`, or the reader has
-    # to pair two log lines printed for different reasons (F1). And it must be
-    # the CLOCK and not the frame count: `frame x 735/882` is the same number
-    # only at exactly 60 fps, so a half-rate sink at 30 fps scores 1.00 against
-    # it (review F3 of run-20261106-062909). Both are pinned, and each is read
-    # out of the ledger's own format STRING rather than out of the file, so
-    # deleting one field cannot satisfy the other check by accident.
-    #
-    # The VALUE, not just the field (review-8 F2). A check that only looks for
-    # `secs=` in the format string passes with ANY variable printed there: the
-    # frame's own wall delta (~0.017 s) could stand in for the clock, be wrong by
-    # three orders of magnitude, and every arm would still adjudicate red. So
-    # three clauses, all read out of the shipped text: the field ORDER on the
-    # line (frame, then secs, then submitted, so the rate's two operands are
-    # adjacent), the ARGUMENT that fills `secs` (audioClock immediately after the
-    # frame cast in the printf's argument list), and the ACCUMULATION that makes
-    # audioClock the time the mixer was actually given.
-    #
-    # And the third clause had the same defect as the second (review-9 F1): it was
-    # `audioClock\s*\+=\s*elapsed` as a substring, which `audioClock += elapsed *
-    # 0.5f;` satisfies and which a following `audioClock *= 0.999;` never even had
-    # to hide. Both mutants printed a ledger rate that was wrong by a factor and
-    # both adjudicated PASS, so the accumulation was pinned as a SHAPE and not as
-    # a value. It was made structural, and review-10 F4 then showed the structure
-    # was still two clauses short — both holes reproduced as mutants that
-    # adjudicated PASS:
-    #   * the window STOPPED at the printf's argument, so a decay placed AFTER the
-    #     ledger printf — still once per frame, still wrong — sat outside the
-    #     region and was invisible to it;
-    #   * "the same elapsed the device got" was prose and nothing more. Handing
-    #     the device `elapsed * 0.5f` while accumulating `elapsed` printed a secs
-    #     at twice the audio time and the check could not see it.
-    # So: the region is now the REST OF THE FUNCTION (this file closes a function
-    # with `}` in column 0), a superset of the frame loop, so a write after the
-    # printf is inside it; the count is of WRITES, because the printf's own
-    # argument is a read and must not be counted; and the identifier the clock
-    # accumulates must be the identifier BOTH update calls are handed.
-    #
-    # Review-11 found the sixth and seventh holes in the same line, both by
-    # counting something that a mutation can leave alone: a WRITE count only sees a
-    # write that spells `audioClock` (a reference bound to it decays it behind the
-    # check's back, R10-1), and a CALL count only sees that a feed exists, not that
-    # it runs (a feed inside `if (frame & 1u)` is one call site that is handed
-    # nothing on half the frames, R10-2). Both mutants adjudicated PASS against
-    # batch 91, and both are arms now. The fixes are that the clock may not be
-    # aliased, and that all three statements must own their line. Review-12 R11-1
-    # then found that "owns its line" had three spellings and only two were closed:
-    # a braceless `if (c)` with the body below it, and the same guard in Allman
-    # style, each adjudicated PASS, so the guard is now read from the lines AROUND
-    # the statement rather than from the statement's own line alone.
-    lits = [s for s in re.findall(r'"((?:[^"\\]|\\.)*)"', main) if "submitted=" in s]
-    ledger = "".join(lits)
-    check("frontend-logs-the-frame-with-the-ledger",
-          re.search(r"frame=%[0-9a-z.]+", ledger) is not None,
-          "the ledger line must carry the frame it was printed at, so it can be "
-          "matched against the frame line the frontend prints on the same cadence")
-    decl = re.search(r"double\s+audioClock\s*=\s*0\.0\s*;", m)
-    fend = re.search(r"\n\}", m[decl.end():]) if decl else None
-    region = m[decl.end():decl.end() + fend.start()] if decl and fend else ""
-    arg = re.search(r"\(\s*unsigned long\s*\)\s*frame\s*,\s*audioClock\s*,", m)
-    writes = re.findall(r"audioClock\s*[-+*/%]?=|\baudioClock\s*(?:\+\+|--)", region)
-    # An alias is a write the line above cannot see (review-11 R10-1). Inside this
-    # function there are exactly two ways to write `audioClock` without spelling
-    # its name: take its address, or bind a reference to it. Both are forbidden
-    # below, which is what makes the single-write rule a bound on the VALUE and
-    # not merely on one spelling of it.
-    #
-    # The gap between the `&` and the name is [ \t] and NOT \s (review-1 F5):
-    # `\s` matches a newline, so a perfectly correct wrapped condition whose
-    # continuation line happened to begin with the clock —
-    #
-    #     if (frame > 0u &&
-    #         audioClock < 3600.0f)
-    #
-    # — read as an address-taken alias and reds correct code, which is the one
-    # failure mode this file keeps naming: a gate that reds correct code is a gate
-    # somebody relaxes. The probe `wrapped-condition-naming-the-clock` pins it.
-    aliases = re.findall(r"&[ \t]*audioClock\b|\w+[ \t]*&[ \t]*\w+[ \t]*=[ \t]*audioClock\b",
-                         region)
-    add = bare(region, r"audioClock\s*\+=\s*([A-Za-z_]\w*)\s*;")
-    # WHICH object is spelled here is deliberately not pinned by this file. The
-    # frontend's mixer now sits behind a pointer that follows the script runtime
-    # (`mix->update(elapsed)`), because ScriptRuntime owns the mixer every script
-    # sound is written into, and requiring that spelling is main_3ds_flow_test.sh's
-    # check "the frame mixes the pointer that follows the runtime", not this one's.
-    # What this check owns is narrower and unchanged: exactly ONE unconditional feed
-    # of the SAME identifier the clock accumulates. Accepting either spelling keeps
-    # the count a count of feeds rather than of one variable's name — two feeds in
-    # any mix of the two spellings is still two, and a guarded one is still guarded.
-    FEED = r"(?:mixer\.|mix->)"
-    fed_mixer = bare(m, r"\b" + FEED + r"update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
-    fed_dev = bare(m, r"\b" + FEED + r"device\(\)\.update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
-    check("frontend-logs-the-clock-with-the-ledger",
-          re.search(r"frame=%[0-9a-z.]+\s+secs=%[0-9a-z.]+\s+submitted=", ledger)
-          is not None
-          and arg is not None
-          and len(writes) == 1
-          and re.search(r"audioClock\s*\+=\s*elapsed\s*;", region) is not None,
-          "the rate test is submitted / (secs x 50): the line must carry frame, "
-          "secs and submitted in that order, secs must be FILLED BY the "
-          "accumulated audioClock rather than any other expression, and from its "
-          "declaration to the end of the function audioClock may be written ONCE "
-          "and only as `audioClock += elapsed;`. The window deliberately runs "
-          "past the printf: a decay or re-scale placed after it is still once per "
-          "frame and still makes the printed secs a different quantity from the "
-          "audio time. If a second reader of the clock is genuinely needed, give "
-          "it its own accumulator rather than moving this one")
-    check("frontend-never-aliases-the-clock", not aliases,
-          "audioClock is written once, textually, and never through another name: "
-          "%d alias(es) `%s`. Taking the clock's address or binding a reference to "
-          "it is how a per-frame decay hides from the single-write rule above — "
-          "`double& ac = audioClock; ac *= 0.999;` drops the ledger clock 0.1%% per "
-          "frame (0.84%% over a 47 s run) while every textual count stays at one, and "
-          "the printed secs stops being the audio's time. If a second reader of the "
-          "clock is genuinely needed, give it its own accumulator"
-          % (len(aliases), "`, `".join(aliases)))
-    check("frontend-feeds-the-clock-and-the-device-the-same-elapsed",
-          len(add) == 1 and add[0][1] == "" and fed_ok(fed_mixer) and fed_ok(fed_dev)
-          and fed_mixer[0][0] == add[0][0] and fed_dev[0][0] == add[0][0],
-          "`secs` is only the audio time if it sums what the mixer and the device "
-          "were actually handed: the one `audioClock += X;` and both "
-          "`mix->update(X)` / `mix->device().update(X)` calls must each be the "
-          "whole of its own line — unconditional, not the body of an `if` in any of "
-          "its three brace styles (same line, `{` on the condition's line, or "
-          "braceless/Allman) nor the arm of a `?:` — and must name the same "
-          "identifier. Found %d accumulate(s) "
-          "`%s`, %d mixer feed(s) `%s`, %d device feed(s) `%s`. Two distinct errors "
-          "live here: a feed handed a scaled or different value than the one "
-          "accumulated (review-10 F4), and a feed that runs on SOME frames while the "
-          "clock accumulates on all of them (review-11 R10-2 — "
-          "`if (frame & 1u) mix->device().update(elapsed);` is still exactly one "
-          "call site and makes the rate test divide by a clock at twice the audio "
-          "time). Either way the rate this line exists to publish stops meaning "
-          "anything"
-          % (len(add), fed_text(add), len(fed_mixer), fed_text(fed_mixer),
-             len(fed_dev), fed_text(fed_dev)))
-
     failed = [n for n, ok, _ in checks if not ok]
     return checks, failed
 
@@ -549,7 +197,7 @@ class Res:
     pass
 
 
-real_checks, real_failed = adjudicate(SRC, MAIN)
+real_checks, real_failed = adjudicate(SRC)
 real = Res()
 real.checks = len(real_checks)
 real.failed = real_failed
@@ -557,250 +205,46 @@ real.broke = real_failed[0] if real_failed else ""
 
 ARMS = [
     ("status-pre-set-to-queued",
-     lambda s, m: (s.replace("s.wave.status = NDSP_WBUF_FREE;",
-                             "s.wave.status = NDSP_WBUF_QUEUED;", 1), m)),
+     lambda s: s.replace("s.wave.status = NDSP_WBUF_FREE;",
+                             "s.wave.status = NDSP_WBUF_QUEUED;", 1)),
     ("nsamples-back-to-halfwords",
-     lambda s, m: (s.replace("s.wave.nsamples = (u32)kBufFrames;",
-                             "s.wave.nsamples = (u32)kBufHalfwords;", 1), m)),
+     lambda s: s.replace("s.wave.nsamples = (u32)kBufFrames;",
+                             "s.wave.nsamples = (u32)kBufHalfwords;", 1)),
     ("flush-shortened-to-frames",
-     lambda s, m: (s.replace(
+     lambda s: s.replace(
          "DSP_FlushDataCache(s.linear, (u32)kBufHalfwords * sizeof(int16_t));",
-         "DSP_FlushDataCache(s.linear, (u32)kBufFrames * sizeof(int16_t));", 1), m)),
+         "DSP_FlushDataCache(s.linear, (u32)kBufFrames * sizeof(int16_t));", 1)),
     ("dropped-stops-being-counted",
-     lambda s, m: (s.replace("g_dropped++;", "", 1), m)),
+     lambda s: s.replace("g_dropped++;", "", 1)),
     ("done-stops-being-counted",
-     lambda s, m: (s.replace("g_done++;", "", 1), m)),
+     lambda s: s.replace("g_done++;", "", 1)),
     # The second retirement site, targeted by its own text so the arm cannot
     # collide with reap()'s identical statement.
     ("done-not-counted-at-the-sink-recheck",
-     lambda s, m: (s.replace(
+     lambda s: s.replace(
          "slot.inDsp = false;\n            slot.filled = 0;\n            g_inDsp--;\n            g_done++;",
-         "slot.inDsp = false;\n            slot.filled = 0;\n            g_inDsp--;", 1), m)),
+         "slot.inDsp = false;\n            slot.filled = 0;\n            g_inDsp--;", 1)),
     ("inDsp-not-decremented-at-the-sink-recheck",
-     lambda s, m: (s.replace(
+     lambda s: s.replace(
          "slot.inDsp = false;\n            slot.filled = 0;\n            g_inDsp--;\n            g_done++;",
-         "slot.inDsp = false;\n            slot.filled = 0;\n            g_done++;", 1), m)),
+         "slot.inDsp = false;\n            slot.filled = 0;\n            g_done++;", 1)),
     ("requeued-stops-being-counted",
-     lambda s, m: (s.replace("g_requeued++;", "", 1), m)),
-    ("frontend-stops-logging-the-frame-with-the-ledger",
-     lambda s, m: (s, m.replace("frame=%lu ", "", 1))),
-    # The `%.3f` is literal HERE on purpose (review-11 open question 1). This arm
-    # exists to prove the ledger's `secs` field is load-bearing, and the only
-    # honest way to delete the field is to delete the text that prints it. If the
-    # precision changes again, the arm mutates nothing and the run FAILS with "the
-    # mutation changed nothing" — fail-closed, and the fix is to change the arm in
-    # the same commit as the format string, having decided the new precision is
-    # right. Editing the arm to match a precision nobody thought about is the
-    # failure mode this comment is here to name.
-    ("frontend-stops-logging-the-clock-with-the-ledger",
-     lambda s, m: (s, m.replace("secs=%.3f ", "", 1))),
-    # The substitution case the presence-only check could not see (review-8 F2):
-    # the field stays on the line and the value printed is the frame's own wall
-    # delta instead of the accumulated clock.
-    ("frontend-logs-a-stand-in-for-the-clock",
-     lambda s, m: (s, m.replace("(unsigned long)frame, audioClock,",
-                                "(unsigned long)frame, (double)delta,", 1))),
-    ("frontend-stops-logging-the-ledger",
-     lambda s, m: (s, m.replace("submitted=%u", "x=%u", 1))),
-    # The accumulation substitutions review-9 F1 produced, both of which the
-    # substring clause scored as a PASS: the field stays, the argument stays, and
-    # the clock runs at half speed (or decays) behind them.
-    ("frontend-scales-the-clock",
-     lambda s, m: (s, m.replace("audioClock += elapsed;",
-                                "audioClock += elapsed * 0.5f;", 1))),
-    ("frontend-decays-the-clock-after-adding",
-     lambda s, m: (s, m.replace("audioClock += elapsed;",
-                                "audioClock += elapsed; audioClock *= 0.999;", 1))),
-    # Review-10 F4: the two holes in the review-9 hardening, each reproduced as a
-    # mutant that adjudicated PASS. The first sits AFTER the ledger printf, which
-    # is where the old window stopped; the second leaves the clock alone and
-    # scales what the device is fed instead.
-    ("frontend-decays-the-clock-after-the-ledger",
-     lambda s, m: (s, m.replace(
-         "(unsigned)st.dspFrames, (unsigned)st.dspDropped);",
-         "(unsigned)st.dspFrames, (unsigned)st.dspDropped);\n            "
-         "audioClock *= 0.999;", 1))),
-    ("frontend-feeds-the-device-a-scaled-elapsed",
-     lambda s, m: (s, m.replace("mix->device().update(elapsed);",
-                                "mix->device().update(elapsed * 0.5f);", 1))),
-    ("frontend-feeds-the-mixer-a-different-clock",
-     lambda s, m: (s, m.replace("mix->update(elapsed);", "mix->update(delta);", 1))),
-    # Review-11 R10-1 and R10-2, each reproduced as a mutant that adjudicated PASS
-    # against the review-10 hardening. The first writes the clock through a
-    # reference, so no textual write count changes; the other three guard one of
-    # the three statements, so no call-site count changes and no identifier moves.
-    ("frontend-decays-the-clock-through-an-alias",
-     lambda s, m: (s, m.replace("audioClock += elapsed;",
-                                "audioClock += elapsed; "
-                                "{ double& ac = audioClock; ac *= 0.999; }", 1))),
-    ("frontend-feeds-the-device-only-some-frames",
-     lambda s, m: (s, m.replace("mix->device().update(elapsed);",
-                                "if (frame & 1u) mix->device().update(elapsed);", 1))),
-    ("frontend-feeds-the-mixer-only-some-frames",
-     lambda s, m: (s, m.replace("mix->update(elapsed);",
-                                "if (frame & 1u) mix->update(elapsed);", 1))),
-    ("frontend-accumulates-the-clock-only-some-frames",
-     lambda s, m: (s, m.replace("audioClock += elapsed;",
-                                "if (frame & 1u) audioClock += elapsed;", 1))),
-    # The same guard in its block form, which owns its line and so is invisible to
-    # a whole-line test on its own. The plausible version of it is "only advance
-    # the audio clock while the game is not paused", and that is a guard.
-    ("frontend-accumulates-the-clock-in-a-guarded-block",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "if (frame != 0u) {\n            audioClock += elapsed;\n        }", 1))),
-    ("frontend-feeds-the-device-in-a-guarded-block",
-     lambda s, m: (s, m.replace(
-         "mix->device().update(elapsed);",
-         "if (frame != 0u) {\n            mix->device().update(elapsed);\n        }",
-         1))),
-    # Review-12 R11-1: the same guard in the two styles batch 92 could not see.
-    # A braceless body and an Allman brace both own their line, and neither has a
-    # `{` on a keyword line for the block walk to land on, so all three of these
-    # adjudicated PASS against batch 92 and the first two are the reviewer's own
-    # mutants G and H. The plausible code is the same as above — "only feed the
-    # device while not paused" — written in the style the author prefers.
-    ("frontend-feeds-the-device-in-a-braceless-guard",
-     lambda s, m: (s, m.replace(
-         "mix->device().update(elapsed);",
-         "if (frame & 1u)\n            mix->device().update(elapsed);", 1))),
-    ("frontend-feeds-the-mixer-in-a-braceless-guard",
-     lambda s, m: (s, m.replace(
-         "mix->update(elapsed);",
-         "if (frame & 1u)\n            mix->update(elapsed);", 1))),
-    ("frontend-accumulates-the-clock-in-a-braceless-guard",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "if (frame & 1u)\n            audioClock += elapsed;", 1))),
-    ("frontend-accumulates-the-clock-in-an-allman-guard",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "if (frame & 1u)\n        {\n            audioClock += elapsed;\n        }",
-         1))),
-    ("frontend-feeds-the-device-in-an-allman-guard",
-     lambda s, m: (s, m.replace(
-         "mix->device().update(elapsed);",
-         "if (frame & 1u)\n        {\n            mix->device().update(elapsed);\n        }",
-         1))),
-    # The same guard with a condition that WRAPS, which is why the header is read by
-    # a walk and not by one line: the line directly above the statement is then
-    # `frame < 999999u)`, which names no keyword at all.
-    ("frontend-accumulates-the-clock-in-a-wrapped-guard",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "if (frame > 0u &&\n            frame < 999999u)\n            "
-         "audioClock += elapsed;", 1))),
-    # The same class one format further out (review-1 F1): a condition long enough
-    # to need SEVEN lines. Batch 93 bounded the walk at six non-blank lines, so
-    # this mutant — the reviewer's own, reproduced — adjudicated PASS: the `if` was
-    # on the seventh line and the walk stopped before it. The bound is now the
-    # enclosing block's opener, so length is no longer a way past the check.
-    ("frontend-accumulates-the-clock-in-a-long-wrapped-guard",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "if (frame > 0u && elapsed > 0.0f && player.feet.z >= 0.0f &&\n"
-         "            camera.position.z > 0.0f && camera.forward.z < 1.0f &&\n"
-         "            camera.up.z > -1.0f && player.facing() < 6.0f)\n"
-         "            audioClock += elapsed;", 1))),
-    # Review-2 F2: the guard whose header WRAPS, which is a different hole from a
-    # condition that wraps because a `for` header puts a `;` on a continuation line
-    # and the stop test read that as the end of a statement. These are the
-    # reviewer's own mutants, reproduced as PASSes against batch 95: the clock
-    # triple-counted per frame, and the device fed on some frames and not others,
-    # both behind a three-line `for` header. The one-line spelling of the same two
-    # constructs was already red, which is what made it a formatting escape and not
-    # a missing rule.
-    ("frontend-accumulates-the-clock-in-a-wrapped-for-guard",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
-         "            audioClock += elapsed;", 1))),
-    ("frontend-feeds-the-device-in-a-wrapped-for-guard",
-     lambda s, m: (s, m.replace(
-         "mix->device().update(elapsed);",
-         "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
-         "            mix->device().update(elapsed);", 1))),
-    ("frontend-feeds-the-mixer-in-a-wrapped-for-guard",
-     lambda s, m: (s, m.replace(
-         "mix->update(elapsed);",
-         "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
-         "            mix->update(elapsed);", 1))),
+     lambda s: s.replace("g_requeued++;", "", 1)),
 ]
 
-# The other side of a guard test: it must not red CORRECT code, and a mutation
-# list alone cannot show that. Each probe below is a legal, plausible spelling of
-# the same three statements that must adjudicate GREEN; batch 93 ran its probes by
-# hand and lost them with the terminal, so they are committed here (review-1 F1's
-# fix is a walk whose bound is structural, and the only proof that a structural
-# bound does not over-read is correct code that stays green through it).
-PROBES = [
-    ("accumulate-first-in-the-frame-loop",
-     lambda s, m: (s, m.replace("        audioClock += elapsed;\n", "", 1).replace(
-         "while (aptMainLoop()) {",
-         "while (aptMainLoop()) {\n        audioClock += elapsed;", 1))),
-    ("frame-loop-written-allman",
-     lambda s, m: (s, m.replace("while (aptMainLoop()) {",
-                                "while (aptMainLoop())\n    {", 1))),
-    ("accumulate-in-a-plain-allman-block",
-     lambda s, m: (s, m.replace("audioClock += elapsed;",
-                                "{\n            audioClock += elapsed;\n        }", 1))),
-    ("label-above-the-accumulate",
-     lambda s, m: (s, m.replace("audioClock += elapsed;",
-                                "after_mix:\n            audioClock += elapsed;", 1))),
-    ("one-line-if-above-the-accumulate",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "if (frame == 0u) mix->listenFromCamera(camera);\n        audioClock += elapsed;", 1))),
-    ("do-while-false-above-the-accumulate",
-     lambda s, m: (s, m.replace("audioClock += elapsed;",
-                                "do { } while (false);\n        audioClock += elapsed;", 1))),
-    # Review-1 F5: a wrapped condition whose continuation line BEGINS with the
-    # clock. The `&&` is on the line above, so an alias detector whose gap matches
-    # a newline reads this as `&audioClock` and reds a file with nothing wrong
-    # with it. The gap is [ \t] for exactly this reason.
-    ("wrapped-condition-naming-the-clock",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "audioClock += elapsed;\n        if (frame > 0u &&\n"
-         "            audioClock < 3600.0f)\n            mix->listenFromCamera(camera);",
-         1))),
-    # The green half of review-2 F2's fix. A wrapped `for` sits directly above the
-    # accumulate and its BODY is a one-line statement, so the accumulate is not in
-    # the loop at all. The walk meets the body's `;` first, and that one really is
-    # at paren depth 0 — the header closed two lines up — so it must still stop.
-    # If the depth were measured from the wrong place (the statement instead of the
-    # block opener, say) the header's `(` would still be counted here, the stop
-    # would not fire, the walk would reach `for`, and correct code would go red.
-    ("wrapped-for-body-above-the-accumulate",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
-         "            mix->listenFromCamera(camera);\n        audioClock += elapsed;",
-         1))),
-    # And the same construct with the header on one line, which was never the hole
-    # but is the case a naive "does this line contain `for (`" fix would break: the
-    # whole header and its body sit on one line ending in `;` at depth 0.
-    ("one-line-for-body-above-the-accumulate",
-     lambda s, m: (s, m.replace(
-         "audioClock += elapsed;",
-         "for (int32_t extra = 0; extra < 3; extra++) mix->listenFromCamera(camera);\n"
-         "        audioClock += elapsed;", 1))),
-]
-
-print("ndsp_sink: %s — %d checks, %d mutation arms, %d correct-code probes"
-      % (PATH, real.checks, len(ARMS), len(PROBES)))
+print("ndsp_sink: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))
 for name, ok, detail in real_checks:
     if not ok:
         print("  FAIL ndsp_sink %s: %s" % (name, detail))
 
 arms_red = 0
 for label, mutate in ARMS:
-    ms, mm = mutate(SRC, MAIN)
-    if ms == SRC and mm == MAIN:
+    ms = mutate(SRC)
+    if ms == SRC:
         print("  FAIL ndsp_sink arm %s: the mutation changed nothing, so the arm tested the "
               "file it was handed instead of the invariant" % label)
         continue
-    _, failed = adjudicate(ms, mm)
+    _, failed = adjudicate(ms)
     if failed:
         arms_red += 1
         print("  ok   arm %s: turned `%s` red as required" % (label, failed[0]))
@@ -814,31 +258,6 @@ if arms_red != len(ARMS):
     print("  FAIL ndsp_sink: only %d of %d arms adjudicated red; a PASS here would be a "
           "reading of nothing" % (arms_red, len(ARMS)))
     sys.exit(1)
-
-# And the green half: a probe that turns the checks red is the gate rejecting code
-# that is allowed, which is the failure this file has named over and over — a gate
-# that reds correct code is a gate somebody relaxes. A probe that mutates nothing
-# is a red too, for the same reason the arms have that test.
-probes_green = 0
-for label, mutate in PROBES:
-    ms, mm = mutate(SRC, MAIN)
-    if ms == SRC and mm == MAIN:
-        print("  FAIL ndsp_sink probe %s: the probe changed nothing, so it tested the "
-              "file it was handed and not the spelling it claims to" % label)
-        continue
-    _, failed = adjudicate(ms, mm)
-    if failed:
-        print("  FAIL ndsp_sink probe %s: correct code was rejected as `%s`, so the gate "
-              "is now a thing that has to be worked around" % (label, failed[0]))
-    else:
-        probes_green += 1
-        print("  ok   probe %s: stayed green, as correct code must" % label)
-
-if probes_green != len(PROBES):
-    print("  FAIL ndsp_sink: only %d of %d correct-code probes stayed green" %
-          (probes_green, len(PROBES)))
-    sys.exit(1)
-print("PASS NdspSink (%d checks, %d arms adjudicated red, %d probes green)"
-      % (real.checks, arms_red, probes_green))
+print("PASS NdspSink (%d checks, %d arms adjudicated red)" % (real.checks, arms_red))
 PY
 exit $?

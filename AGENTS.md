@@ -53,7 +53,9 @@ and continue on the next one rather than treating the summary as a stop.
 **Any increment whose exit criterion is on the console runs P10's loop.** Read
 §11 P10 before touching the device: it names the one command
 (`mdk_3ds/tools/hw_cycle.sh --once`), the two ports, the log path, and the traps
-that make a finished push look like a failed one.
+that make a finished push look like a failed one. The harness (P10's script and
+the `AUTOQUIT`/`PROFILE`/... build flags) is not on `main`: it lives on branches
+`harness/3ds-profiling` and `fix/3ds-hd-only`.
 
 ### Prior-solution lookup (mandatory before starting an increment)
 
@@ -760,6 +762,13 @@ host DNS-routing fault for the owner (root) to fix, not a server outage. Say whi
 `10-projects/mdk-sdl/ralph-pi-mandarine-setup.md`.
 
 ### P10 — The hardware loop is `hw_cycle.sh`, and this is the whole of it
+
+**The harness is not on `main`.** `hw_cycle.sh`, its self-test,
+`platform/harness_3ds.{h,cpp}` and the Makefile's harness flags (`AUTOQUIT`,
+`PROFILE`, `CAPTURE`, `LEVEL`, `WALK`, `HDROMFS`, ...) live on branches
+`harness/3ds-profiling` and `fix/3ds-hd-only`. A hardware run is made on a
+throwaway branch that brings them back (merge or cherry-pick); everything below
+describes that branch.
 
 **THIS SECTION IS THE SOURCE OF TRUTH FOR RUNNING MDK ON THE CONSOLE.** It was
 established the hard way on 2026-11-17 against `old3ds-lan167`; every claim here

@@ -117,7 +117,6 @@ void colourFillChain(uint8_t* chain, int32_t width, int32_t height) {
     const int32_t count = colourLevels(width, height);
     for (int32_t level = 1; level < count; level++) {
         const int32_t size = levelSize(width, height);
-        const int32_t next = levelSize(halfOf(width), halfOf(height));
         downsample(chain + offset, width, height, chain + offset + size);
         offset += size;
         width = halfOf(width);

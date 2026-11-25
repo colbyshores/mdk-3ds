@@ -379,9 +379,9 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
                 }
             }
         }
-        mdk::log3dsPrintf("draw dedupe: %s; vertex-shader constants from c%d (%s the uniforms "
+        mdk::log3dsPrintf("draw dedupe: on; vertex-shader constants from c%d (%s the uniforms "
                           "c0-c%d)",
-                          kDrawDedupe ? "on" : "OFF (harness DRAWDEDUPE=0)", lowest,
+                          lowest,
                           lowest >= r->vshUniformVecs ? "clear of" : "INSIDE",
                           (int)r->vshUniformVecs - 1);
     }

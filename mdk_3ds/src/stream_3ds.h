@@ -37,7 +37,7 @@ struct Stream3dsFrontend {
 };
 
 // Returns Event::Quit when the RUN ends inside the stream (aptMainLoop false, the
-// harness deadline, the frame budget) with `exitReason` set; otherwise the
+// frame budget) with `exitReason` set; otherwise the
 // screen's Event and, in `endHealth`, Kurt's health at its end (the C#'s
 // StreamScreen.Health, which AfterStream reads).
 flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& data, int32_t level,

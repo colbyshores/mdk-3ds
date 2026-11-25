@@ -260,35 +260,6 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
                                    (draw->material.shading != mdk::Shading::Original ||
                                     resource.hdCanvas)) ||
                                   hdOnlyNow);
-            // THE HD RULE'S LATE COUNT (render_c3d_stats.h): a draw that wants
-            // the copy before it is resident, and the texture's first such draw.
-            if (wantsHd) {
-                if (!resource.hdWanted) {
-                    resource.hdWanted = true;
-                    if (copy->state != HdCopy::Resident) {
-                        r->hdLateTextures++;
-                    } else if (copy->landedFrame > r->settledFrame) {
-                        // Landed in play, in time: by how many frames (the margin).
-                        const int32_t slack = (int32_t)r->frame - copy->landedFrame;
-                        r->hdSlackFirsts++;
-                        if (slack < 30) {
-                            r->hdSlackUnder30++;
-                        }
-                        if (r->hdSlackMin < 0 || slack < r->hdSlackMin) {
-                            r->hdSlackMin = slack;
-                            r->hdSlackMinFrame = (int32_t)r->frame;
-                            snprintf(r->hdSlackWorst, sizeof(r->hdSlackWorst), "%s",
-                                     copy->path.c_str());
-                        }
-                    }
-                }
-                if (copy->state != HdCopy::Resident) {
-                    r->hdLateDraws++;
-                    if (copy->wantedFrame < 0) {
-                        copy->wantedFrame = (int32_t)r->frame;
-                    }
-                }
-            }
             if (wantsHd && copy->state == HdCopy::Resident) {
                 // Bound whether or not the original is resident: an evicted
                 // original must not take a resident HD copy's surface with it (F1).
@@ -305,7 +276,7 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
                 // that a draw wants it, which reads it before any hint -- and the
                 // standard-definition copy is NOT made. An original already
                 // resident (made before the toggle went on) stands in, costing
-                // nothing; otherwise this draw draws nothing (hdBlankDraws), which
+                // nothing; otherwise this draw draws nothing, which
                 // the early asks (the pump, the warms) keep rare.
                 requestHdCopy(r, resource.hdCopy);
                 copy->lastUsed = ++r->drawCounter;
@@ -373,12 +344,6 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
         }
     }
     if (!texture && !out->texPending) {
-        if (draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
-            const C3dTexture& resource = r->textures[(size_t)draw->material.texture];
-            if (r->toggles.enableHdTextures && resource.hdCopy >= 0 && !resource.releasePending) {
-                r->hdBlankDraws++;
-            }
-        }
         return false;
     }
     // THE FILTER (SPEC.md 7.9 enableFiltering): bilinear for every draw while
@@ -625,9 +590,6 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
             }
         }
         if (outside) {
-            if (r->census.active) {
-                r->census.culled++;
-            }
             return;
         }
     }
@@ -896,150 +858,6 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
         installBlendState(r, draw->material.pass, draw->material.blend);
     }
 
-    // THE ONE-FRAME GEOMETRY CENSUS (see the `Census` struct). Cold by
-    // construction: `census.active` is true for exactly one frame of the
-    // process, so every other frame pays one integer compare and this loop runs
-    // once in a run.
-    //
-    // It measures, in the SAME matrix the GPU is about to receive, where each of
-    // this draw's triangles lands and which way it winds. Batch 77's single
-    // triangle could not separate "the room is not queued" from "the room is
-    // queued and the GPU discards it", and could not say what the room's winding
-    // is, which is what the cull enum turns on.
-    if (r->census.active && count >= 3) {
-        float cm[16];
-        memcpy(cm, upload, sizeof(cm));
-        const float* cv = static_cast<const float*>(mesh.data);
-        const int32_t tris = count / 3;
-        for (int32_t t = 0; t < tris; t++) {
-            float nx[3];
-            float ny[3];
-            float nz[3];
-            float w[3];
-            bool behind = false;
-            for (int32_t v = 0; v < 3; v++) {
-                const int32_t at = (first + t * 3 + v) * 5;
-                const float x = cv[at];
-                const float y = cv[at + 1];
-                const float z = cv[at + 2];
-                const float cx = x * cm[0] + y * cm[4] + z * cm[8] + cm[12];
-                const float cy = x * cm[1] + y * cm[5] + z * cm[9] + cm[13];
-                const float cz = x * cm[2] + y * cm[6] + z * cm[10] + cm[14];
-                const float cw = x * cm[3] + y * cm[7] + z * cm[11] + cm[15];
-                if (cw <= 0.0f) {
-                    behind = true;
-                }
-                w[v] = cw;
-                const float inv = cw != 0.0f ? 1.0f / cw : 0.0f;
-                nx[v] = cx * inv;
-                ny[v] = cy * inv;
-                nz[v] = cz * inv;
-            }
-            Census& c = r->census;
-            c.triangles++;
-            float wmin = w[0];
-            float wmax = w[0];
-            float wsum = 0.0f;
-            for (int32_t v = 0; v < 3; v++) {
-                if (w[v] < wmin) {
-                    wmin = w[v];
-                }
-                if (w[v] > wmax) {
-                    wmax = w[v];
-                }
-                wsum += w[v];
-            }
-            if (c.triangles == 1 || wmin < c.minW) {
-                c.minW = wmin;
-            }
-            if (c.triangles == 1 || wmax > c.maxW) {
-                c.maxW = wmax;
-            }
-            if (behind) {
-                c.behind++;
-                continue;
-            }
-            float lox = nx[0];
-            float hix = nx[0];
-            float loy = ny[0];
-            float hiy = ny[0];
-            for (int32_t v = 1; v < 3; v++) {
-                if (nx[v] < lox) {
-                    lox = nx[v];
-                }
-                if (nx[v] > hix) {
-                    hix = nx[v];
-                }
-                if (ny[v] < loy) {
-                    loy = ny[v];
-                }
-                if (ny[v] > hiy) {
-                    hiy = ny[v];
-                }
-            }
-            if (hix < -1.0f || lox > 1.0f || hiy < -1.0f || loy > 1.0f) {
-                c.offscreen++;
-                continue;
-            }
-            // The depth half, counted separately rather than folded into onscreen:
-            // a triangle inside the clip SQUARE in x/y but entirely past the far
-            // plane (or in front of the near one) is not something the GPU will
-            // show, and the census's on-screen count was read that way (review-1
-            // F5). The PICA's depth map decides which side of [-1,1] is "in", so
-            // this is reported as a range and not as a verdict.
-            float loz = nz[0];
-            float hiz = nz[0];
-            for (int32_t v = 1; v < 3; v++) {
-                if (nz[v] < loz) {
-                    loz = nz[v];
-                }
-                if (nz[v] > hiz) {
-                    hiz = nz[v];
-                }
-            }
-            if (hiz < -1.0f || loz > 1.0f) {
-                c.depthOut++;
-            }
-            const float area = (nx[1] - nx[0]) * (ny[2] - ny[0]) -
-                               (ny[1] - ny[0]) * (nx[2] - nx[0]);
-            c.onscreen++;
-            if (area < 0.0f) {
-                c.cw++;
-            } else {
-                c.ccw++;
-            }
-            c.areaSum += area < 0.0f ? -area : area;
-            if (lox < c.loX) { c.loX = lox; }
-            if (hix > c.hiX) { c.hiX = hix; }
-            if (loy < c.loY) { c.loY = loy; }
-            if (hiy > c.hiY) { c.hiY = hiy; }
-            const float wc = wsum / 3.0f;
-            if (wc < 60.0f) {
-                c.near60++;
-                if (lox < c.nLoX) { c.nLoX = lox; }
-                if (hix > c.nHiX) { c.nHiX = hix; }
-                if (loy < c.nLoY) { c.nLoY = loy; }
-                if (hiy > c.nHiY) { c.nHiY = hiy; }
-            }
-            if (c.bestW < 0.0f || wc < c.bestW) {
-                c.bestW = wc;
-                c.bestDraw = (int32_t)r->drawCount;
-                c.bestFirst = first + t * 3;
-                c.bestArea = area;
-                for (int32_t v = 0; v < 3; v++) {
-                    const int32_t at = (c.bestFirst + v) * 5;
-                    c.bestV[v * 3 + 0] = cv[at];
-                    c.bestV[v * 3 + 1] = cv[at + 1];
-                    c.bestV[v * 3 + 2] = cv[at + 2];
-                }
-                c.bestNdc[0] = nx[0];
-                c.bestNdc[1] = ny[0];
-                c.bestNdc[2] = nx[1];
-                c.bestNdc[3] = ny[1];
-            }
-        }
-    }
-
     // THE LIGHT'S PROGRAM (decided with `lit` and `shadowLit` above), and
     // combiner stage 1 multiplies the texture by that light. Both switches are
     // cached.
@@ -1057,21 +875,8 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
         } else if (lit) {
             installLitUniforms(r);
         }
-        r->programSwitches++;
     }
     r->litBound = lit && !shadowLit;
-    if (shadowLit) {
-        r->shadowReceivers++;
-    }
-    if (r->boundProgram == &r->programShadow) {
-        r->drawsShadowLit++;
-    } else if (r->boundProgram == &r->programLit) {
-        r->drawsLit++;
-    } else if (r->boundProgram == &r->programPass) {
-        r->drawsPass++;
-    } else {
-        r->drawsPlain++;
-    }
     if (lit) {
         // The world position the geometry shader takes its normal from; the
         // identity (every arena batch) is written only when it is not there.
@@ -1855,7 +1660,6 @@ static void drawGlowBillboards(RendererC3D* r) {
         r->gsInList && r->passReady ? &r->programPass : &r->program;
     if (wanted != r->boundProgram) {
         bindProgram(r, wanted);
-        r->programSwitches++;
     }
     r->litBound = false;
     if (!r->matrixIsFrame) {

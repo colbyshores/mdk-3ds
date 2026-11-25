@@ -7,10 +7,8 @@
 
 #include <memory>
 
-#include "audio/audio_3ds.h"
 #include "audio/audio_dsp_3ds.h"
 #include "audio/sound_mixer.h"
-#include "platform/harness_3ds.h"
 #include "platform/input_3ds.h"
 #include "platform/log_3ds.h"
 #include "stream/stream_screen.h"
@@ -34,7 +32,7 @@ static void logStreamLine(void*, const char* line) {
 // THE STREAM SCREEN (package #18b; stream/stream_screen.h): one stream, from its
 // first frame to its Event (C# Game.Run's loop over a StreamScreen), on this
 // frontend's clock, input and sound. Returns Event::Quit when the RUN ends inside
-// it (aptMainLoop false, the harness deadline, the frame budget) with
+// it (aptMainLoop false, the frame budget) with
 // `exitReason` set; otherwise the screen's Event and, in `endHealth`, Kurt's health
 // at its end. The caller marks and releases the renderer's scope around it.
 //
@@ -43,7 +41,7 @@ static void logStreamLine(void*, const char* line) {
 // between begin and end; every GPU state is the backend's per draw.
 // The sound: the screen's own bank and mixer (the BNI's WAVs), on the DSP path
 // (audio_dsp_3ds.h) -- opened here for the stream's bank and closed before the
-// screen, and with it the bank, goes -- or the software sink (DSPAUDIO=0).
+// screen, and with it the bank, goes.
 flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& data,
                          int32_t level, int32_t health, uint32_t seed, int32_t* endHealth,
                          const char** exitReason) {
@@ -68,11 +66,8 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
     }
     f.heapProbe("stream-open");
     audio::SoundMixer& mixer = screen->mixer();
-    const bool audioReady = kDspAudio ? audioDspOpen(&screen->bank()) : audioOpen();
-    mixer.device().setSampleMix(!kDspAudio);
-    if (audioReady) {
-        mixer.device().setSink(kDspAudio ? nullptr : audioSink, nullptr);
-    }
+    audioDspOpen(&screen->bank());
+    mixer.device().setSampleMix(false);
 
     // The circle pad steers too (its range is about +-156; a third of it is a push).
     const int32_t kPadDead = 52;
@@ -82,11 +77,6 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
     while (result == flow::Event::None) {
         if (!aptMainLoop()) {
             *exitReason = "aptMainLoop returned false";
-            result = flow::Event::Quit;
-            break;
-        }
-        if (harnessAutoquitDue()) {
-            *exitReason = "harness autoquit (MDK_AUTOQUIT)";
             result = flow::Event::Quit;
             break;
         }
@@ -116,17 +106,12 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
 
         const flow::Event next = screen->update(elapsed, steering, back);
 
-        static char capturePath[128] = {};
-        capturePath[0] = '\0';
-        if (const char* hw = harnessCapturePath(*frame)) {
-            std::snprintf(capturePath, sizeof(capturePath), "%s", hw);
-        }
         MdkFrameParams params;
         params.elapsed = elapsed;
         params.frame_index = *frame;
         params.clear_colour = 0xFF000000u;   // C# Ui.Black
         params.present = true;
-        params.screenshot_path = capturePath[0] ? capturePath : nullptr;
+        params.screenshot_path = nullptr;
         mdk_render_begin_frame(renderer, &params);
         screen->draw();
         // C# Game.Run: the device after the screen, with the same elapsed; the DSP
@@ -153,11 +138,7 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
     }
     // The output before the bank it plays from: the DSP worker joined and its
     // pins given back while the screen's bank lives (audio_dsp_3ds.h).
-    if (kDspAudio) {
-        audioDspClose();
-    } else {
-        audioClose();
-    }
+    audioDspClose();
     screen.reset();
     f.heapProbe("stream-end");
     return result;

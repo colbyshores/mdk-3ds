@@ -952,7 +952,7 @@ CHK = {
     "mixes-runtime-mixer":
         "the frame mixes the pointer that follows the runtime, not the standalone mixer",
     "respawn-reattaches":
-        "a respawn re-points the mixer, rebinds Kurt, and re-attaches the sink",
+        "a respawn re-points the mixer, rebinds Kurt, and turns the new device's sample plane off",
     "music-follows-kurts-arena":
         "the level's music is made on the runtime's mixer, dropped before the runtime is, "
         "entered and faded every step after the camera, and the loading arena's track is "
@@ -1127,16 +1127,20 @@ def adjudicate(text, quiet=False):
         mix_ok, "the scripts write to the runtime's mixer; mixing another one is a silent "
                 "level that still drains its audio queue")
 
-    # 9. a respawn re-points the mixer AND re-attaches the sink. The runtime owns
-    #    its mixer and its SoundDevice, so a rebuilt runtime is a new device: the
-    #    sink attached to the old one leaves every level after the first death
-    #    silent, which is the kind of bug that only shows up after a minute of play.
+    # 9. a respawn re-points the mixer AND sets the new device up for the DSP path.
+    #    The runtime owns its mixer and its SoundDevice, so a rebuilt runtime is a
+    #    new device: the frame binds the voices of `*mix` to ndsp channels
+    #    (audioDspFrame), and a new device left with its sample plane on mixes
+    #    every sample on the ARM11 for nobody -- the cost the DSP path exists to
+    #    remove, and only after the first death.
     spawn_mix = (spawn_body is not None
                  and re.search(r"mix[ \t]*=[ \t]*&runtime->mixer\(\)[ \t]*;", spawn_body) is not None
                  and re.search(r"player\.setMixer\(&runtime->mixer\(\)\)", spawn_body) is not None
-                 and re.search(r"mix->device\(\)[ \t]*\.setSink\(", spawn_body) is not None)
+                 and re.search(r"mix->device\(\)[ \t]*\.setSampleMix\([ \t]*false[ \t]*\)",
+                               spawn_body) is not None)
     say(CHK["respawn-reattaches"], spawn_mix,
-        "the rebuilt runtime owns a new SoundDevice; the old sink is a device nothing reads")
+        "the rebuilt runtime owns a new SoundDevice; left with its sample plane on it "
+        "mixes on the ARM11 what the DSP already plays")
 
     # 10. the runtime is built only when its three assets are present. A runtime
     #     with a hole in one of them is a different random stream, not a degraded
@@ -2029,13 +2033,13 @@ def arm_mixes_standalone(text):
 
 def arm_sink_not_reattached(text):
     """The respawn rebuilds the runtime — and with it the mixer and its device — but
-    leaves the sink on the device the old runtime owned."""
+    leaves the new device's sample plane on."""
     sp = body_span(text, "spawnPlayer")
     if sp is None:
         return text
     a, b = sp
     body = text[a:b]
-    mutated, n = re.subn(r"(?m)^[ \t]*mix->device\(\)[ \t]*\.setSink\([^;]*;[ \t]*\n", "", body)
+    mutated, n = re.subn(r"(?m)^[ \t]*mix->device\(\)[ \t]*\.setSampleMix\([^;]*;[ \t]*\n", "", body)
     if not n:
         return text
     return text[:a] + mutated + text[b:]
@@ -2969,7 +2973,7 @@ ARMS = [
     ("scripts-tick-moved-after-the-camera", arm_scripts_tick_after_camera,
      CHK["scripts-tick-order"]),
     ("frame-mixes-the-standalone-mixer", arm_mixes_standalone, CHK["mixes-runtime-mixer"]),
-    ("respawn-does-not-re-attach-the-sink", arm_sink_not_reattached, CHK["respawn-reattaches"]),
+    ("respawn-leaves-the-sample-plane-on", arm_sink_not_reattached, CHK["respawn-reattaches"]),
     ("the music outlives the runtime it plays through", arm_music_outlives_the_runtime,
      CHK["music-follows-kurts-arena"]),
     ("the music is built on the standalone mixer", arm_music_on_the_standalone_mixer,

@@ -9,8 +9,8 @@
 // mdk_core (SoundMixer, SoundDevice), advanced every frame exactly as on the PC
 // because the scripts read them (`if_sound_playing`). What this file replaces is
 // the OUTPUT: instead of summing the voices into one stereo float stream on the
-// ARM11 and handing it to one ndsp channel (audio_3ds.cpp, still compiled for the
-// harness's DSPAUDIO=0 A/B), every audible voice plays on its own ndsp channel and
+// ARM11 and handing it to one ndsp channel (audio_3ds.cpp, which the screens
+// between levels still use), every audible voice plays on its own ndsp channel and
 // the DSP mixes them. The device runs with its sample plane OFF
 // (SoundDevice::setSampleMix(false)): positions and ends are solved, not stepped,
 // so the ARM11 runs no per-sample loop at all.
@@ -71,13 +71,6 @@
 #include "audio/sound_mixer.h"
 
 namespace mdk {
-
-// THE A/B SWITCH. A harness build made with `make AUTOQUIT=90 DSPAUDIO=0` keeps the
-// software mix (the shared mixer summing on the ARM11 into audio_3ds.cpp's one
-// channel), so the console can A/B the two; every other build, release included,
-// mixes on the DSP. A build constant (the kDrawDedupe pattern), not a runtime
-// toggle: this is not an enhancement, it is the 3DS's sound system.
-static constexpr bool kDspAudio = true;
 
 // ndsp + the sample arena + the music buffers + the worker. FALSE with a logged
 // reason (no DSP firmware, ndspInit failed, no linear memory); the game then runs

@@ -419,10 +419,9 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     // is on). The stamp would have to be expanded from the SD pixels -- the HD
     // image does not have the hole -- so the hole is skipped instead and the HD
     // copy stays: a VISIBLE CHANGE from the original (bullet holes do not show on
-    // HD-covered surfaces), counted (hdStampsSkipped) for the owner to revisit.
+    // HD-covered surfaces), for the owner to revisit.
     // With the set off, the stamp lands as before.
     if (drawsHdOnly(renderer, texture)) {
-        renderer->hdStampsSkipped++;
         return;
     }
     // A COMPRESSED texture's source is a .t3x's bytes, not indices to replace,
@@ -598,12 +597,6 @@ static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool c
             }
         }
         renderer->hdCopies[(size_t)index].links++;
-    }
-    // A picture linked after its standard-definition copy was made (the HUD's,
-    // at level load: hud_view.cpp makes the index texture, then hashes it to
-    // find its file) -- an SD load of a covered picture, counted for the proof.
-    if (texture.hdCopy != index && texture.valid && renderer->toggles.enableHdTextures) {
-        renderer->hdLinkedAfterSd++;
     }
     texture.hdCopy = index;
     texture.hdCanvas = canvas;

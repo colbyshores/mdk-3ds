@@ -9,12 +9,7 @@
 // on, B to skip, Fire or Jump held to run fast; the save prompt the D-pad, A
 // and B.
 //
-// THE ENTRY SCREEN. A release build boots into the main menu, as the C#'s game
-// does; a harness build with LEVEL=<n> still boots straight into that level
-// (every existing hardware and emulator run names one), and a harness build
-// without LEVEL= boots into the menu, which `MENU=` (game/menu_presses.h's
-// spelling) can drive: `make AUTOQUIT=90 MENU=Menu.Accept@2,Menu.Back@4,
-// Menu.Accept@5` is New Game, the briefing skipped, the level.
+// THE ENTRY SCREEN. The game boots into the main menu, as the C#'s game does.
 //
 // THE CONTROLS are the ones the START menu already uses: the D-pad moves (and
 // steps an option left/right), A or START chooses, B goes back (the C#'s Esc:
@@ -22,10 +17,9 @@
 // takes any button, B finishes its typing, and Fire or Jump held runs it fast.
 //
 // THE FALL (package #17b, fall/fall_screen.h) is shown here too, after a
-// briefing, after a level's statistics and from a harness FALL=<n>: the circle
+// briefing and after a level's statistics: the circle
 // pad, the D-pad and the movement actions of controls.ini (forward/back,
-// strafe/turn left/right) steer, START skips it (the C#'s Esc; a harness
-// MENU=...Menu.Back@t too). It is drawn the lean way (fall_view.h), its sounds
+// strafe/turn left/right) steer, START skips it (the C#'s Esc). It is drawn the lean way (fall_view.h), its sounds
 // on the DSP path (audio_dsp_3ds.h, opened for its bank and closed before the
 // level opens its own), and everything it made is released when it ends.
 //
@@ -72,7 +66,7 @@ struct FrontScreens3ds {
     // The frame clock (main_3ds.cpp's nowSeconds) and its wake flag (P1).
     double (*now)() = nullptr;
     volatile bool* resumePending = nullptr;
-    // The run's frame count, shared with the level loop (CAPTURE=, the budget).
+    // The run's frame count, shared with the level loop (the frame budget).
     uint32_t* frame = nullptr;
     uint32_t frameBudget = 0;
     // Set when the run ends here: why.
@@ -81,7 +75,7 @@ struct FrontScreens3ds {
 
 // Runs the Menu, the Briefing, the Statistics, the Fall, the EndMovie and the
 // SavePrompt after LEVEL8 (whichever the flow shows) until the flow names a Level (returned) or the run
-// ends (Screen::None: Quit, aptMainLoop, the harness deadline, the frame budget).
+// ends (Screen::None: Quit, aptMainLoop, the frame budget).
 flow::Screen runFrontScreens3ds(FrontScreens3ds* front);
 
 // C# Play's LoadingScreen.Show (package #20c, game/loading_screen.h): one frame

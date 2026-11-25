@@ -290,60 +290,25 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
  void mdk_render_capture_stats(MdkRenderer r, int32_t* requested, int32_t* written) {
     RendererC3D* cr = asC3d(r);
     if (requested) *requested = cr ? cr->capturesRequested : 0;
-    if (written) *written = cr ? cr->capturesWritten : 0;
+    if (written) *written = 0;
  }
 
-// The first-use counters (render_c3d_stats.h): what this renderer has made since
-// it was created, for the harness's arena-entry table. Copies, nothing else.
- void mdk_render_c3d_first_use(MdkRenderer r, MdkC3dFirstUse* out) {
+// The level's resident HD set (render_c3d_hd_set.h). Copies, nothing else.
+ void mdk_render_hd_set_state(MdkRenderer r, MdkHdSetState* out) {
     if (!out) return;
-    *out = MdkC3dFirstUse();
+    *out = MdkHdSetState();
     RendererC3D* cr = asC3d(r);
     if (!cr) return;
-    out->texturesMade = cr->texturesMade[0] + cr->texturesMade[1] + cr->texturesMade[2] +
-                        cr->texturesMade[3] + cr->compressedMade;
-    out->texturesFirstMade = cr->texturesFirstMade;
-    out->texturesRemade = cr->texturesRemade;
-    out->hdReads = cr->hdReads;
-    out->hdReadBytes = cr->hdReadBytes;
-    out->hdImported = cr->hdImported;
-    out->hdEvicted = cr->hdEvicted;
-    out->texturesEvicted = cr->texturesEvicted;
-    out->textureMakeTicks = cr->textureMakeTicks;
-    out->hdImportTicks = cr->hdImportTicks;
-    out->packImported = cr->packImported;
-    out->packSync = cr->packSync;
-    out->packSyncTicks = cr->packSyncTicks;
-    out->packLanded = cr->packLanded;
-    out->packFailed = cr->packFailed;
-    out->hdCoveredSdMade = cr->hdCoveredSdMade;
-    out->hdLateTextures = cr->hdLateTextures;
-    out->hdLateDraws = cr->hdLateDraws;
-    out->hdBlankDraws = cr->hdBlankDraws;
-    out->hdResidentPeak = (uint32_t)cr->hdResidentPeak;
-    out->hdLateLanded = cr->hdLateLanded;
-    out->hdLateFramesSum = cr->hdLateFramesSum;
-    out->hdLateFramesMax = cr->hdLateFramesMax;
-    out->hdLateWorstFrame = cr->hdLateWorstFrame;
-    memcpy(out->hdLateWorst, cr->hdLateWorst, sizeof(out->hdLateWorst));
-    memcpy(out->hdLateRows, cr->hdLateRows, sizeof(out->hdLateRows));
-    out->hdSlackMin = cr->hdSlackMin;
-    out->hdSlackMinFrame = cr->hdSlackMinFrame;
-    out->hdSlackUnder30 = cr->hdSlackUnder30;
-    out->hdSlackFirsts = cr->hdSlackFirsts;
-    memcpy(out->hdSlackWorst, cr->hdSlackWorst, sizeof(out->hdSlackWorst));
     for (size_t i = 0; i < cr->hdCopies.size(); i++) {
         const HdCopy& copy = cr->hdCopies[i];
         if (copy.pinned) {
-            out->hdPinned++;
+            out->pinned++;
             if (copy.state == HdCopy::Resident) {
-                out->hdPinnedResident++;
-                out->hdPinnedBytes += copy.bytes;
+                out->resident++;
+                out->residentBytes += copy.bytes;
             }
         }
     }
-    out->hdPinFailed = cr->hdPinFailed;
-    out->hdTopCap = cr->hdTopCap;
-    out->hdStampsSkipped = cr->hdStampsSkipped;
-    out->hdLinkedAfterSd = cr->hdLinkedAfterSd;
+    out->givenUp = cr->hdPinFailed;
+    out->topCap = cr->hdTopCap;
  }

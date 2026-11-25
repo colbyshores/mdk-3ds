@@ -58,7 +58,7 @@
 #include <vector>
 
 #include "render/render.h"
-#include "render/render_c3d_stats.h"
+#include "render/render_c3d_hd_set.h"
 #include "render/render_types.h"
 #include "render/draw_queue.h"
 #include "render/pica_matrix.h"

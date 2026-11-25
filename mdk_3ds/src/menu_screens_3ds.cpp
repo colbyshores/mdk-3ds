@@ -31,11 +31,9 @@
 #include "game/save_prompt_screen.h"
 #include "game/movie_view.h"
 #include "game/viewer_saves.h"
-#include "game/menu_presses.h"
 #include "game/screen_view.h"
 #include "game/stats_screen.h"
 #include "platform/controls_3ds.h"
-#include "platform/harness_3ds.h"
 #include "platform/input_3ds.h"
 #include "platform/log_3ds.h"
 #include "render/render_types.h"
@@ -131,17 +129,6 @@ void lentCancel(void* user, int32_t tag) {
     mdk_render_cancel_file_read(static_cast<MdkRenderer>(user), tag);
 }
 
-// The harness's menu keys (MENU=..., game/menu_presses.h), parsed once; the
-// clock is the screens' own game time, across every call.
-MenuPresses& harnessPresses() {
-    static MenuPresses presses;
-    static bool parsed = false;
-    if (!parsed) {
-        parsed = true;
-    }
-    return presses;
-}
-
 } // namespace
 
 // The main menu's view of the saves (package #19): the C#'s SaveGames.In(user)
@@ -168,8 +155,6 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         front->exitReason = "the menus' assets did not load";
         return flow::Screen::None;
     }
-    MenuPresses& presses = harnessPresses();
-    static float pressTime = 0.0f;
 
     std::unique_ptr<menu::MainMenu> mainMenu(new menu::MainMenu());
     // THE STATISTICS AND THE BRIEFING (package #20b): the C#'s StatsScreen, all its
@@ -239,11 +224,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     bool fallAudio = false;
     auto closeFall = [&]() {
         if (fallAudio) {
-            if (kDspAudio) {
-                audioDspClose();
-            } else {
-                audioClose();
-            }
+            audioDspClose();
             fallAudio = false;
         }
         fall->close(front->renderer);
@@ -264,11 +245,8 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             return false;
         }
         audio::SoundDevice& device = fall->mixer().device();
-        fallAudio = kDspAudio ? audioDspOpen(fall->bank()) : audioOpen();
-        device.setSampleMix(!kDspAudio);
-        if (fallAudio) {
-            device.setSink(kDspAudio ? nullptr : audioSink, nullptr);
-        }
+        fallAudio = audioDspOpen(fall->bank());
+        device.setSampleMix(false);
         front->settings->applyAudio(&device);
         log3dsPrintf("flow: the fall before level %d (seed %d, audio %d)", (int)flow.state().level,
                      (int)seed, fallAudio ? 1 : 0);
@@ -289,7 +267,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     // THE SAVE PROMPT AFTER LEVEL8 (C# SavePromptScreen, game/save_prompt_screen.h):
     // the Gunter stream's AfterStream shows it before LEVEL5. The D-pad chooses, A
     // answers (yes: saved under the offered name, "6" -- there is no keyboard to
-    // type another), B says no; then LEVEL5. A harness MENU=...Menu.Back@t closes it.
+    // type another), B says no; then LEVEL5.
     SavePromptScreen savePrompt;
     // Package #20c: the end movies, and the pictures of the splash and the movies
     // (game/movie_view.h). The splash is the GPU cross-fade of its two pictures
@@ -358,7 +336,6 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     open(screen);
 
     double last = front->now();
-    uint32_t frontFrames = 0;
     bool slidesLoading = false;
     // Every button counts as held on the first frame: the press that left the
     // last screen (A on the START menu's MAIN MENU) must not choose here too.
@@ -366,10 +343,6 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     front->exitReason = "aptMainLoop returned false";
     flow::Screen result = flow::Screen::None;
     while (aptMainLoop()) {
-        if (harnessAutoquitDue()) {
-            front->exitReason = "harness autoquit (MDK_AUTOQUIT)";
-            break;
-        }
         const double now = front->now();
         if (*front->resumePending) {
             *front->resumePending = false;
@@ -378,14 +351,9 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         }
         double delta = now - last;
         last = now;
-        // The raw period, before the clamp, into the harness's front-screen
-        // histogram (a no-op outside PROFILE builds). The first frame carries
-        // the screen's open time, so it is skipped, as the level loop skips it.
-        if (frontFrames++ > 0) harnessProfileFrontFrame(delta);
         if (delta < 0.0) delta = 0.0;
         if (delta > 0.25) delta = 0.25;
         const float elapsed = (float)delta;
-        pressTime += elapsed;
 
         // ONE HID scan for the frame (input_3ds.h's trap), its edges.
         Input input;
@@ -402,17 +370,14 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         keys.leftHeld = (held & KEY_DLEFT) != 0;
         keys.rightHeld = (held & KEY_DRIGHT) != 0;
         keys.any = pressed != 0;
-        presses.apply(pressTime, &keys);
 
         flow::Event next = flow::Event::None;
         const bool halfRate = front->toggles != nullptr && front->toggles->movieHalfRate;
         if (screen == flow::Screen::Fall) {
-            // C# FallScreen.Frame: START skips (the C#'s Esc; a harness Menu.Back
-            // too -- `keys.back` with no B pressed, B being the back movement here),
-            // the movement actions, the circle pad and the D-pad steer.
-            const bool harnessBack = keys.back && (pressed & KEY_B) == 0;
-            fall::FallSim::Input steer = fall::FallScreen::steering(
-                input, (pressed & KEY_START) != 0 || harnessBack);
+            // C# FallScreen.Frame: START skips (the C#'s Esc), the movement
+            // actions, the circle pad and the D-pad steer.
+            fall::FallSim::Input steer =
+                fall::FallScreen::steering(input, (pressed & KEY_START) != 0);
             const int32_t padX = ((held & (KEY_CPAD_RIGHT | KEY_DRIGHT)) != 0 ? 1 : 0) -
                                  ((held & (KEY_CPAD_LEFT | KEY_DLEFT)) != 0 ? 1 : 0);
             const int32_t padY = ((held & (KEY_CPAD_UP | KEY_DUP)) != 0 ? 1 : 0) -
@@ -484,7 +449,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         params.frame_index = *front->frame;
         params.clear_colour = screen == flow::Screen::Fall ? fall->backdrop() : 0xFF000000u;
         params.present = true;
-        params.screenshot_path = harnessCapturePath(*front->frame);
+        params.screenshot_path = nullptr;
         mdk_render_begin_frame(front->renderer, &params);
         if (screen == flow::Screen::Fall) {
             fall->draw(front->renderer);

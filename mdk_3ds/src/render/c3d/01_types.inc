@@ -52,12 +52,7 @@ static constexpr size_t kGpuScratchSize = 256u * 1024u;
 // `ensureCanvasMesh` sizes from the quads actually queued and only clamps here.
 static constexpr int32_t kCanvasQuadCapacity = 4096;
 
-// THE PER-DRAW STATE DEDUPE's switch and its categories (03_frame.inc, THE
-// DEDUPE). On in every build; a harness build may turn it off for the owner's
-// A/B profile (`make AUTOQUIT=90 DRAWDEDUPE=0`), and the off build sends the
-// command stream the backend sent before the dedupe: every category written on
-// every draw.
-static constexpr bool kDrawDedupe = true;
+// THE PER-DRAW STATE DEDUPE's categories (03_frame.inc, THE DEDUPE).
 enum DedupeCategory {
     kDedupeTexEnv0 = 0,   // combiner stage 0
     kDedupeBufInfo,       // the vertex buffer table
@@ -171,9 +166,6 @@ static constexpr size_t kPackHintReserveBytes = 1024u * 1024u;
 struct C3dTexture {
     C3D_Tex tex;
     bool valid = false;
-    // A GPU copy has been made for this slot at least once: the next make
-    // is a remake (profile classification, render_c3d_stats.h).
-    bool madeOnce = false;
 
     // The real size, and the size the texture was PADDED to. The
     // difference is what the UV transform has to undo.
@@ -210,9 +202,6 @@ struct C3dTexture {
     // and while it is off the packed original is, as for any other. Cleared when
     // the texture stops being a packed original (a stamp, its index pixels).
     bool hdOnly = false;
-    // A draw has wanted this texture's HD copy (counted once per texture as late
-    // when the copy was not resident then: RendererC3D::hdLateTextures).
-    bool hdWanted = false;
     // A CANVAS picture's copy (mdk_render_replace_image_compressed): eligible on
     // the canvas's Original-shaded draws, where a world texture's never is.
     bool hdCanvas = false;
@@ -346,57 +335,6 @@ struct C3dMesh {
     bool releasePending = false;
 };
 
-// The one frame whose geometry is censused (see `Census`). It has to be a frame
-// after the level-7 landing (the golden lands at step 43) so the census measures
-// the standing camera the golden pins, and it has to be well inside the 30 s the
-// emulator harness runs, which reaches frame ~1700.
-static constexpr int32_t kCensusFrame = 120;
-
-// A one-shot census of ONE frame's triangles, for the named level-7 picture
-// defect (docs/CONTINUATION.md "NEXT": "sample triangles near the spawn and
-// compare the vertices/MVP/clip values with host-derived geometry; inspect the
-// PICA winding and depth/cull behavior before modifying renderer state").
-//
-// Batch 77 traced the FIRST triangle of the first draw and that was not enough:
-// it is a far-distance triangle at y=438 and it says nothing about the room the
-// camera is standing in. This counts every triangle the frame queues, in the
-// frame's real per-draw matrix, and sorts it by where it landed: behind the
-// camera, outside the clip square, or on screen -- and for the on-screen ones,
-// which way they wind. The winding is what decides the cull enum, and the
-// on-screen count is what separates "the room is not queued" from "the room is
-// queued and the GPU is throwing it away".
-//
-// It is COLD by construction: `active` is true for exactly one frame of the
-// process, so the per-triangle loop runs once in a run and every other frame
-// pays one integer compare.
-struct Census {
-    bool active = false;
-    int32_t triangles = 0;   // queued triangles seen
-    int32_t behind = 0;      // a vertex with clip w <= 0
-    int32_t offscreen = 0;   // the whole bbox outside [-1,1] IN X/Y
-    int32_t onscreen = 0;    // the bbox touches the clip square IN X/Y — see
-                             // depthOut for the depth half, which this does NOT
-                             // test: "inside the clip square" is an x/y statement
-                             // and reading it as "the GPU will show it" over-reads
-                             // it (review-1 F5).
-    int32_t depthOut = 0;    // of those, the ones wholly outside [-1,1] in ndc z
-    int32_t culled = 0;      // BATCHES the frustum cull rejected (the rest count triangles)
-    int32_t cw = 0;          // on-screen, negative signed area in NDC (y up)
-    int32_t ccw = 0;         // on-screen, positive
-    int32_t near60 = 0;      // on-screen AND within 60 units of the eye
-    float areaSum = 0.0f;    // sum of |ndc signed area| over the on-screen ones
-    float loX, hiX, loY, hiY;   // the ndc bbox of everything on screen
-    float nLoX, nHiX, nLoY, nHiY;  // the same, for the near60 ones only
-    float minW = 0.0f;       // nearest and farthest clip w seen
-    float maxW = 0.0f;
-    float bestW = -1.0f;     // the closest on-screen triangle's w, for the sample
-    int32_t bestDraw = -1;
-    int32_t bestFirst = -1;
-    float bestV[9] = {0};    // its three world positions
-    float bestArea = 0.0f;
-    float bestNdc[6] = {0};  // its first two vertices' ndc x,y
-};
-
 // ONE HD COPY: a .t3x from the HD pack (ETC1 / ETC1A4, its mip chain prebuilt
 // by tex3ds on the host). Asked for by a draw (Queued), read from SD by the
 // reader thread (Reading), imported at a frame boundary under the budget
@@ -428,11 +366,6 @@ struct HdCopy {
     // The image's rectangle in the texture's own texcoords (Tex3DS_SubTexture):
     // the draw maps the oracle's [0,1] uv through it, assuming no orientation.
     float left = 0.0f, top = 1.0f, right = 1.0f, bottom = 0.0f;
-    // The frame a draw first wanted this copy while it was not resident (-1:
-    // none since its last import): how late it landed (render_c3d_stats.h).
-    int32_t wantedFrame = -1;
-    // The frame it was last imported (the margin, render_c3d_stats.h).
-    int32_t landedFrame = -1;
     // IN THE LEVEL'S RESIDENT SET (mdk_render_pin_hd_set): read on the loading
     // screen, never evicted, never freed as nobody's, while the set stands.
     bool pinned = false;
@@ -531,16 +464,11 @@ struct RendererC3D {
     mdk::GlowQuad glowQuads[kMaxGlowQuads];
     int32_t glowQuadCount = 0;
     float* glowQuadMesh = nullptr;
-    uint32_t glowQuadMeshFrame = 0xFFFFFFFFu;   // the frame it was last written for
+    int glowQuadMeshFrame = -1;   // the frame it was last written for
     C3D_Tex glowHalo;
     bool glowHaloReady = false;
     bool billboardsLive = false;   // the frame's glow is billboards (end_frame)
     int32_t billboardsDrawn = 0;   // halos drawn this frame, both eyes
-    // THE DRAW CENSUS by program (both eyes), logged every 300 frames: which
-    // program each queued draw went through (drawRecorded).
-    int32_t drawsLit = 0, drawsShadowLit = 0, drawsPass = 0, drawsPlain = 0;
-    int32_t billboardsPeak = 0;    // the most halos in one frame since the last log line
-    int32_t glowQuadsDropped = 0;  // halos past kMaxGlowQuads since the last log line
     float* glowLevelQuad = nullptr;
     float glowQuadWidth = 0.0f;   // the canvas width the quad was built for
     bool glowReady = false;
@@ -784,7 +712,6 @@ struct RendererC3D {
     int frame = 0;
     int32_t drawCount = 0;
     int32_t triangleCount = 0;
-    Census census;
     bool diagnosticTriangle = true;
     bool ready = false;
     bool inFrame = false;
@@ -820,7 +747,6 @@ struct RendererC3D {
     bool litBound = false;     // the program bound is programLit (cache)
     bool lightStageOn = false; // combiner stage 1 multiplies by the light (cache)
     bool worldIsIdentity = true; // the world uniform holds the identity (cache)
-    int32_t programSwitches = 0; // lit/unlit binds this frame, for the census
     // THE GEOMETRY-STAGE RULE (03_frame.inc bindProgram): the pass-through
     // program (VS + mdk_pass.g.pica, DVLE[4]) for unlit scene draws once the
     // command list is in geometry mode; the program bound; whether a program
@@ -897,7 +823,6 @@ struct RendererC3D {
     float sunVp[16] = {};           // world -> the caster pass's clip (pica::sunCasterMatrix)
     float sunFrustum[6][4] = {};    // the sun volume's planes (engine VP, prepareShadows)
     bool sunFrustumValid = false;
-    int32_t shadowCastersCulled = 0;   // casters the sun-frustum test skipped this cast
     // THE MAP'S CACHE (config shadowMapRefresh): the map is redrawn every few
     // frames, and between redraws the receivers keep the matrices it was cast
     // with (sunVp, shadowSunMtx), so a reused map stays where the world is.
@@ -909,9 +834,6 @@ struct RendererC3D {
     // The rest of what the map was cast for: the reach, and the rig's sky and
     // ground (a new level's rig differs: its map is not the last level's).
     float shadowCastRig[7] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    int32_t shadowCastersLast = 0;     // the last cast's casters (the log's)
-    int32_t shadowHoleCastersLast = 0;
-    int32_t shadowReuses = 0;       // frames that reused it since the last log line
     // The receive program's uniforms, written at every bind of it: the six of
     // the light (the lit program's, with the offset and the bias in params)
     // and the four registers of world -> (u, v, depth, 1).
@@ -919,7 +841,6 @@ struct RendererC3D {
     float shadowSunMtx[16] = {};    // already in register order (pica::registers)
     int32_t shadowCasters = 0;      // draws the caster pass made this frame
     int32_t shadowHoleCasters = 0;  // casters left out: their textures have holes
-    int32_t shadowReceivers = 0;    // lit draws that took the shadow this frame (both eyes)
     float hazeExponent = 0.0f;
     bool hazeLive = false;
     bool hazeOn = false;
@@ -975,20 +896,6 @@ struct RendererC3D {
     int32_t hdImported = 0;
     int32_t hdEvicted = 0;
     int32_t hdFailedCount = 0;
-    // The HD rule's counters (render_c3d_stats.h): SD copies made for a texture
-    // with a linked HD copy while the toggle is on, and the draws that wanted an
-    // HD copy before it was resident.
-    int32_t hdCoveredSdMade = 0;
-    int32_t hdLateTextures = 0;
-    int32_t hdLateDraws = 0;
-    int32_t hdBlankDraws = 0;
-    size_t hdResidentPeak = 0;
-    int32_t hdLateLanded = 0;
-    int32_t hdLateFramesSum = 0;
-    int32_t hdLateFramesMax = 0;
-    int32_t hdLateWorstFrame = -1;
-    char hdLateWorst[64] = {0};
-    int32_t hdLateRows[8][2] = {};
     // THE LEVEL'S RESIDENT HD SET (mdk_render_pin_hd_set, spec 3.2): while
     // hdPinnedMode, an HD-only texture is drawn only from a pinned copy, the set
     // is read on the loading screen with each copy's levels over its topCap
@@ -998,38 +905,16 @@ struct RendererC3D {
     // The toggle came back on: the originals the HD-off stretch made for HD-only
     // textures are given back once their set copies are resident (04_textures.inc).
     bool hdFreeOriginals = false;
-    // Stamps (bullet holes) not drawn on an HD-only surface (05_resources.inc).
-    int32_t hdStampsSkipped = 0;
-    // HD copies linked to a texture already made from SD (the HUD's pictures).
-    int32_t hdLinkedAfterSd = 0;
     int32_t hdTopCap = 0;
     int32_t hdPinFailed = 0;
-    // The renderer's frame when the loading screen's wait ended
-    // (mdk_render_settle_streams): the margin counts only copies landed after it.
-    int32_t settledFrame = -1;
-    int32_t hdSlackMin = -1;
-    int32_t hdSlackMinFrame = -1;
-    int32_t hdSlackUnder30 = 0;
-    int32_t hdSlackFirsts = 0;
-    char hdSlackWorst[64] = {0};
 
     // THE ORIG PACK'S READS (04_textures.inc pumpPackOriginals): the packed
     // originals waiting for a reader slot (texture ids; an entry whose texture
     // is no longer PackQueued is dropped when the pump next scans), and what
-    // happened. packSync counts the draws that could not wait and READ THE FILE
-    // on the main thread, inside the frame (finishPackNow) -- the number this
-    // stream exists to keep near zero -- and packSyncTicks their time (PROFILE);
-    // packLanded the draws that took a read the reader had already finished
-    // (an import inside the frame, but no read).
+    // happened.
     std::vector<int32_t> packQueue;
     int32_t packImported = 0;
-    int32_t packSync = 0;
-    int32_t packLanded = 0;
     int32_t packFailed = 0;
-    uint64_t packSyncTicks = 0;
-    // The last draw-time make's kind, for makeTexture's profile line (logged
-    // there, after its timed window, never inside it).
-    bool packLastLanded = false;
 
     // THE STORES makeTexture chose (EnhancedToggles::texture16), counted per
     // making -- an evicted texture made again counts again -- indexed by
@@ -1043,17 +928,6 @@ struct RendererC3D {
     // not allocate against the RGBA8 expansion of the same padded size.
     int32_t compressedMade = 0;
     size_t compressedBytesSaved = 0;
-    // THE COST OF FIRST USE, for the harness's arena-entry table
-    // (render_c3d_stats.h): textures the LRU evicted (each comes back through
-    // makeTexture on its next draw), and the svcGetSystemTick spans spent making
-    // textures and importing HD copies. Cumulative; the harness takes differences.
-    int32_t texturesEvicted = 0;
-    int32_t texturesFirstMade = 0;
-    int32_t texturesRemade = 0;
-    int32_t hdReads = 0;
-    int64_t hdReadBytes = 0;
-    uint64_t textureMakeTicks = 0;
-    uint64_t hdImportTicks = 0;
 
     // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
     // may still be reading the last frame's textures then. C3D_FrameBegin
@@ -1061,18 +935,9 @@ struct RendererC3D {
     bool gpuPending = false;
 
     // The capture accounting, for the frontend's "asked for a picture, got a
-    // picture" rule. The request is counted at begin_frame; the readback
-    // (03_frame.inc's writeScreenshotBmp: a GX transfer of the left eye
-    // target into linear memory, written as a BMP) runs at that frame's
-    // end, and `capturesWritten` counts the files it actually wrote -- so
-    // the frontend can still tell "asked and got nothing" from "nobody
-    // asked", which is the rule this accounting exists for.
-    // See `mdk_render_capture_stats`.
+    // picture" rule: requests are counted at begin_frame and this backend
+    // writes none (see `mdk_render_capture_stats`).
     int32_t capturesRequested = 0;
-    int32_t capturesWritten = 0;
-    // The pending capture's output path (a fixed buffer: a frame-time
-    // allocation for a diagnostic path is not worth it).
-    char pendingScreenshot[128] = {};
 };
 
 RendererC3D* asC3d(MdkRenderer r) {

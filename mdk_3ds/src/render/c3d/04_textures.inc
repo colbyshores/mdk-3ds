@@ -59,7 +59,6 @@ static bool evictTextures(RendererC3D* renderer, uint32_t protectFrom) {
     C3dTexture& victim = renderer->textures[(size_t)oldest];
     C3D_TexDelete(&victim.tex);
     victim.valid = false;
-    renderer->texturesEvicted++;
     return true;
 }
 
@@ -274,20 +273,6 @@ static int32_t texelStoreIndex(mdk::pica::TexelFormat format) {
     }
 }
 
-static void classifyTextureMade(RendererC3D* renderer, C3dTexture& texture) {
-    // THE HD RULE'S PROOF (render_c3d_stats.h): an SD copy of a texture whose HD
-    // copy is linked, made while the toggle is on.
-    if (texture.hdCopy >= 0 && !texture.hdCanvas && renderer->toggles.enableHdTextures) {
-        renderer->hdCoveredSdMade++;
-    }
-    if (texture.madeOnce) {
-        renderer->texturesRemade++;
-    } else {
-        renderer->texturesFirstMade++;
-        texture.madeOnce = true;
-    }
-}
-
 // THE COMPRESSED TEXTURE'S GPU COPY (EnhancedToggles::kurtCompressed): tex3ds'
 // import of a .t3x's bytes -- Kurt's kept in `source`, a packed original's just
 // read from its file -- an LZ decompress (none for the uncompressed orig pack)
@@ -375,7 +360,6 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture, const u
                    texture.realHeight == texture.paddedHeight ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
     texture.valid = true;
     renderer->compressedMade++;
-    classifyTextureMade(renderer, texture);
     renderer->compressedBytesSaved +=
         mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,
                                 texture.paddedHeight, 0) -
@@ -419,7 +403,6 @@ static bool makeStreamed(RendererC3D* renderer, C3dTexture& texture) {
     texture.mipLevels = 0;
     texture.hasHoles = false;
     renderer->texturesMade[texelStoreIndex(texture.format)]++;
-    classifyTextureMade(renderer, texture);
     return true;
 }
 
@@ -537,8 +520,6 @@ static int32_t startExpansion(RendererC3D* renderer, C3dTexture& texture, bool f
 // frozen at the start (the chain buffer is sized by them) and the store is
 // chosen at stage 3, so an enableMipmaps flip mid-expansion reaches this
 // texture only at its next making; the texture16 store follows the flip.
-// PROFILE builds charge the step to textureMakeTicks, so the pump's
-// work stays visible in the arena table instead of vanishing from texMs.
 static bool advanceExpansionSteps(RendererC3D* renderer, C3dTexture& texture, bool finishAll) {
     if (!texture.expandPending) {
         return texture.valid;
@@ -794,11 +775,8 @@ static bool packMakeableNow(const RendererC3D* renderer, const C3dTexture& textu
 // surface into a missing one, and a texture behind the camera never gets here
 // (the cull runs first), which already makes this cheaper than the old
 // make-everything-at-prepare. The import keeps this frame's draws
-// (frameStartUse), as every mid-frame make's evictions do. Counted: packSync
-// when the file was read here (the number the pump exists to keep near zero,
-// timed in profile builds), packLanded when the reader's read was taken; the
-// profile line (`packsync`) is makeTexture's, after its timed window. A failure
-// draws nothing this frame, and nothing later this frame reads the file again.
+// (frameStartUse), as every mid-frame make's evictions do. A failure draws
+// nothing this frame, and nothing later this frame reads the file again.
 static bool finishPackNow(RendererC3D* renderer, C3dTexture& texture) {
     // Never for a texture its HD copy stands for (the HD rule): no draw path
     // asks, and this is the one place a read would happen on the main thread.
@@ -816,12 +794,6 @@ static bool finishPackNow(RendererC3D* renderer, C3dTexture& texture) {
     if (!landed) {
         renderer->hdReader.discard(mdk::AsyncFileReader::kChannelOrig, id);
         ok = readWholeFile(texture.packPath.c_str(), &read);
-    }
-    renderer->packLastLanded = landed;
-    if (landed) {
-        renderer->packLanded++;
-    } else {
-        renderer->packSync++;
     }
     bool made = false;
     bool refused = false;
@@ -1093,7 +1065,6 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     texture.valid = true;
     texture.format = format;
     renderer->texturesMade[texelStoreIndex(format)]++;
-    classifyTextureMade(renderer, texture);
     renderer->textureBytesSaved +=
         mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,
                                 texture.paddedHeight, levels) -
@@ -1391,7 +1362,6 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             }
             C3D_TexDelete(&texture.tex);
             texture.valid = false;
-            renderer->texturesEvicted++;
         }
         renderer->hdFreeOriginals = waiting;
     }
@@ -1524,8 +1494,6 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             hdFailed(renderer, copy, "cannot read");
             continue;
         }
-        renderer->hdReads++;
-        renderer->hdReadBytes += (int64_t)size;
         // Reserve the decoded upper bound, not the file's compressed size:
         // Tex3DS allocates the expanded ETC chain inside the import, so
         // admitting against `size` can overshoot the budget before the exact
@@ -1568,9 +1536,8 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         // THE IMPORT: a copy into the linear heap, the ETC blocks already tiled
         // on the host and already decompressed on the reader thread
         // (hdUnpackWork) -- at the frame boundary, after C3D_FrameBegin's wait
-        // (P3), at most kHdImportsPerFrame a frame (the profile timing below,
-        // hdImportTicks, counts it; the read and the decompress ran on the
-        // reader thread, off the frame). The ORIG pack's textures do NOT come through
+        // (P3), at most kHdImportsPerFrame a frame (the read and the decompress
+        // ran on the reader thread, off the frame). The ORIG pack's textures do NOT come through
         // here: they have their own pump (pumpPackOriginals, below, run before
         // this one) and import through importCompressed, timed as texture-make
         // work. No sampler state
@@ -1632,27 +1599,6 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         C3D_TexSetWrap(&copy.tex, fullU ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,
                        fullV ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
         renderer->hdResidentBytes += copy.bytes;
-        if (renderer->hdResidentBytes > renderer->hdResidentPeak) {
-            renderer->hdResidentPeak = renderer->hdResidentBytes;
-        }
-        copy.landedFrame = (int32_t)renderer->frame;
-        if (copy.wantedFrame >= 0) {
-            // A draw wanted it before it landed: how late (render_c3d_stats.h).
-            const int32_t late = (int32_t)renderer->frame - copy.wantedFrame;
-            if (renderer->hdLateLanded < 8) {
-                renderer->hdLateRows[renderer->hdLateLanded][0] = copy.wantedFrame;
-                renderer->hdLateRows[renderer->hdLateLanded][1] = late;
-            }
-            renderer->hdLateLanded++;
-            renderer->hdLateFramesSum += late;
-            if (late > renderer->hdLateFramesMax) {
-                renderer->hdLateFramesMax = late;
-                renderer->hdLateWorstFrame = copy.wantedFrame;
-                snprintf(renderer->hdLateWorst, sizeof(renderer->hdLateWorst), "%s",
-                         copy.path.c_str());
-            }
-            copy.wantedFrame = -1;
-        }
         copy.state = HdCopy::Resident;
         // A demanded copy is fresh: not the next eviction's victim. A HINT keeps
         // the stamp its last draw left (0 if none), so the LRU takes it before
@@ -1847,7 +1793,6 @@ int32_t mdk_render_settle_streams(MdkRenderer rr, int32_t maxMs) {
         }
         svcSleepThread(1000000LL);
     }
-    renderer->settledFrame = (int32_t)renderer->frame;
     return renderer->hdImported + renderer->packImported - before;
 }
 

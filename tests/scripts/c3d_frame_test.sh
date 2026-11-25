@@ -1652,7 +1652,7 @@ def adjudicate(text, quiet=False):
     #   * installEye re-sends every vertex uniform (P2, and what makes the array
     #     the registers' value for the eye: the caster pass ran its own program);
     #   * drawRecorded makes none of those writes raw, and the dedupe is on in
-    #     every build (kDrawDedupe is a constant true).
+    #     every build (it has no switch).
     tex_bind = calls(text, r"C3D_TexBind\(")
     tb_body = body(text, "bindTexUnit") or ""
     tb_stray = [loc for ln, loc in tex_bind
@@ -1701,10 +1701,9 @@ def adjudicate(text, quiet=False):
                                       "setVsUniform(r, kDedupeUv, r->uvLocation,",
                                       "setVsMatrix(r, kDedupeMvp, r->mvpLocation, &gpuMtx);",
                                       "bindTexUnitIfChanged(r, p->texUnit, texture);"))
-    # The dedupe is on in every build: the harness's DRAWDEDUPE=0 A/B switch left
-    # with the harness (branch harness/3ds-profiling), so the switch is a constant.
-    off_switch = (re.search(r"^static constexpr bool kDrawDedupe = true;", text, re.M) is not None
-                  and "kDrawDedupe = false" not in text)
+    # The dedupe is on in every build and has no switch: the harness's
+    # DRAWDEDUPE=0 A/B left with the harness (branch harness/3ds-profiling).
+    off_switch = re.search(r"\bkDrawDedupe\b", text) is None
     rep.check("per-draw-state-dedupe",
               len(tex_bind) == 1 and not tb_stray and tb_records and tbi_compares
               and all(forgets.values()) and live_env and live_buf and redirty and env_cmp
@@ -1714,7 +1713,7 @@ def adjudicate(text, quiet=False):
               "live stage 0 %s and buffer table %s and re-sends the vertex uniforms %s; "
               "compares read the context's stage 0 %s, its buffer table %s, citro3d's "
               "vertex uniform array %s; raw writes left in drawRecorded: %s; routed through "
-              "the dedupe %s; the dedupe on in every build %s"
+              "the dedupe %s; no switch turns the dedupe off %s"
               % (len(tex_bind), "; ".join(tb_stray) or "none", "yes" if tb_records else "NO",
                  "yes" if tbi_compares else "NO",
                  ", ".join("%s %s" % (k, "yes" if v else "NO") for k, v in forgets.items()),
@@ -3581,9 +3580,9 @@ ARMS = [
      lambda s: s.replace("    r->texUnitBound[unit] = refused ? nullptr : tex;\n", "", 1),
      "per-draw-state-dedupe"),
     ("texture-bind-skipped-on-the-pointer-alone",
-     lambda s: s.replace("    if (kDrawDedupe && tex && unit >= 0 && unit <= 2 && r->texUnitBound[unit] == tex &&\n"
+     lambda s: s.replace("    if (tex && unit >= 0 && unit <= 2 && r->texUnitBound[unit] == tex &&\n"
                          "        memcmp(&r->texUnitState[unit], tex, sizeof(C3D_Tex)) == 0) {\n",
-                         "    if (kDrawDedupe && tex && unit >= 0 && unit <= 2 && r->texUnitBound[unit] == tex) {\n", 1),
+                         "    if (tex && unit >= 0 && unit <= 2 && r->texUnitBound[unit] == tex) {\n", 1),
      "per-draw-state-dedupe"),
     ("vertex-uniforms-not-resent-per-eye",
      lambda s: s.replace("    if (r->vshUniformVecs > 0) {\n"
@@ -3620,9 +3619,9 @@ ARMS = [
      lambda s: s.replace("        setTexEnv0(r, stage0Variant(r, p->stage0Index));",
                          "        C3D_SetTexEnv(0, C3D_GetTexEnv(0));", 1),
      "per-draw-state-dedupe"),
-    ("dedupe-switched-off-in-the-release-build",
-     lambda s: s.replace("static constexpr bool kDrawDedupe = true;",
-                         "static constexpr bool kDrawDedupe = false;", 1),
+    ("dedupe-given-a-build-switch-again",
+     lambda s: s.replace("enum DedupeCategory {",
+                         "static constexpr bool kDrawDedupe = false;\nenum DedupeCategory {", 1),
      "per-draw-state-dedupe"),
     ("the-glow-runs-over-the-shadowed-layout",
      lambda s: s.replace("    leaveShadowLitStages(r);\n    frameSplit(r);\n", "    frameSplit(r);\n", 1),

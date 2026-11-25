@@ -64,8 +64,12 @@ p7.romfs-streaming	d2	slow	done	mdk_3ds/tools/emurun.sh	mdk_3ds/tools/emurun.sh	
 p8.cia-build	d2	slow	done	mdk_3ds/tools/build_cia.sh	mdk_3ds/cia/mdk.rsf	ed9d653
 opcodes.remaining-27	d2	slow	todo	make -C tests/scripts		
 audio.bank-bound	d2	slow	done	make -C tests/scripts	tests/scripts	4852429
+# 3ds.screenshot and 3ds.harness-hooks (2026-11-25, cleanup/immaculate-hd): the
+# 3DS framebuffer capture and the harness hooks were harness-build features and
+# left this branch with the harness; they live on harness/3ds-profiling and
+# fix/3ds-hd-only. The rows record what was verified at their commits.
 3ds.screenshot	d2	slow	done	bash tools/check.sh	mdk_3ds/src/render/c3d/03_frame.inc	5a7d296
-3ds.harness-hooks	d2	fast	done	bash tools/check.sh	mdk_3ds/src/platform/harness_3ds.cpp	5eb69f3
+3ds.harness-hooks	d2	fast	done	bash tools/check.sh	docs/evidence/3ds.harness-hooks-5eb69f3.txt	5eb69f3
 spec.voice-pool	d2	-	todo	make -C tests/scripts test		
 hw.harness-cycle	d3	slow	done	mdk_3ds/tools/hw_cycle.sh --once	docs/evidence/hw.harness-cycle-9ac0a83.txt	9ac0a83
 hw.profile-og	d3	slow	done	mdk_3ds/tools/hw_cycle.sh --profile	docs/evidence/hw.profile-og-5ddae7a.txt	5ddae7a

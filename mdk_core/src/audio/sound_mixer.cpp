@@ -65,10 +65,10 @@ Vec3 rotatedZ(const Vec3& v, float degrees) {
 } // namespace
 
 SoundMixer::SoundMixer(SoundBank* bank)
-    : bank_(bank),
-      listenerRight(),
+    : listenerRight(),
       listenerForward(),
-      listenerUp() {
+      listenerUp(),
+      bank_(bank) {
     // The C#'s field initializers: UnitX, UnitY, UnitZ.
     listenerRight.x = 1.0f;
     listenerForward.y = 1.0f;

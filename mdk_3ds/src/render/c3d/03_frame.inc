@@ -351,9 +351,6 @@ static void installAlphaTest(RendererC3D* r, int reference, bool force) {
 //     caster pass, the shadowed lit layout -- the compare sees it.
 //   * a texture unit: the shadow bindTexUnit keeps (citro3d has no getter), so
 //     C3D_TexBind has exactly one call site, here.
-//
-// Off in a harness build made with DRAWDEDUPE=0 (kDrawDedupe): every category is
-// then written on every draw, as before, for the owner's A/B profile.
 static void bindTexUnit(RendererC3D* r, int unit, C3D_Tex* tex) {
     if (unit < 0 || unit > 2) {
         return;
@@ -380,7 +377,7 @@ static void forgetTextureBinds(RendererC3D* r) {
 // drawRecorded's bind: skipped when the unit already holds this C3D_Tex with
 // the same address, size, format, filter, wrap and levels it was bound with.
 static void bindTexUnitIfChanged(RendererC3D* r, int unit, C3D_Tex* tex) {
-    if (kDrawDedupe && tex && unit >= 0 && unit <= 2 && r->texUnitBound[unit] == tex &&
+    if (tex && unit >= 0 && unit <= 2 && r->texUnitBound[unit] == tex &&
         memcmp(&r->texUnitState[unit], tex, sizeof(C3D_Tex)) == 0) {
         r->dedupeSkipped[kDedupeTexBind]++;
         return;
@@ -402,12 +399,10 @@ static bool vsUniformsHold(int location, const C3D_FVec* want, int count) {
 
 static void setVsUniform(RendererC3D* r, DedupeCategory category, int location, float x,
                          float y, float z, float w) {
-    if (kDrawDedupe) {
-        const C3D_FVec want = FVec4_New(x, y, z, w);
-        if (vsUniformsHold(location, &want, 1)) {
-            r->dedupeSkipped[category]++;
-            return;
-        }
+    const C3D_FVec want = FVec4_New(x, y, z, w);
+    if (vsUniformsHold(location, &want, 1)) {
+        r->dedupeSkipped[category]++;
+        return;
     }
     C3D_FVUnifSet(GPU_VERTEX_SHADER, location, x, y, z, w);
     r->dedupeWritten[category]++;
@@ -415,7 +410,7 @@ static void setVsUniform(RendererC3D* r, DedupeCategory category, int location, 
 
 static void setVsMatrix(RendererC3D* r, DedupeCategory category, int location,
                         const C3D_Mtx* m) {
-    if (kDrawDedupe && vsUniformsHold(location, m->r, 4)) {
+    if (vsUniformsHold(location, m->r, 4)) {
         r->dedupeSkipped[category]++;
         return;
     }
@@ -425,7 +420,7 @@ static void setVsMatrix(RendererC3D* r, DedupeCategory category, int location,
 
 // Combiner stage 0, against the context's own stage 0.
 static void setTexEnv0(RendererC3D* r, C3D_TexEnv* want) {
-    if (kDrawDedupe && r->liveTexEnv &&
+    if (r->liveTexEnv &&
         memcmp(r->liveTexEnv, want, sizeof(C3D_TexEnv)) == 0) {
         r->dedupeSkipped[kDedupeTexEnv0]++;
         return;
@@ -443,7 +438,7 @@ static void bindVertexBuffer(RendererC3D* r, const void* data) {
         BufInfo_Add(&r->vbufInfo, data, 5 * sizeof(float), 2, 0x10);
         r->vbufFor = data;
     }
-    if (kDrawDedupe && r->liveBufInfo &&
+    if (r->liveBufInfo &&
         memcmp(r->liveBufInfo, &r->vbufInfo, sizeof(C3D_BufInfo)) == 0) {
         r->dedupeSkipped[kDedupeBufInfo]++;
         return;
@@ -1112,19 +1107,18 @@ static void testNativeShadowWrites(RendererC3D* r) {
 
 // THE DEDUPE'S LINE (THE DEDUPE, above): per category, the writes made and the
 // writes skipped over the window, and the command list's length in 32-bit words
-// a frame -- what a DRAWDEDUPE=0 build is compared against. Prints and starts a
-// new window. Cold: every 300 frames in the logging harness, once at teardown.
+// a frame. Prints and starts a new window. Cold: once, at teardown.
 static void logDedupeWindow(RendererC3D* r) {
     if (r->cmdWordsFrames == 0) {
         return;
     }
     const int32_t* w = r->dedupeWritten;
     const int32_t* k = r->dedupeSkipped;
-    mdk::log3dsPrintf("dedupe: frame %d (%s): skipped/written over %d frames: stage0 %d/%d "
+    mdk::log3dsPrintf("dedupe: frame %d: skipped/written over %d frames: stage0 %d/%d "
                       "bufinfo %d/%d uv %d/%d tint %d/%d mvp %d/%d world %d/%d "
                       "texbind %d/%d; command list %lu words in all, %u in the "
                       "longest frame",
-                      (int)r->frame, kDrawDedupe ? "on" : "OFF", (int)r->cmdWordsFrames,
+                      (int)r->frame, (int)r->cmdWordsFrames,
                       (int)k[kDedupeTexEnv0], (int)w[kDedupeTexEnv0],
                       (int)k[kDedupeBufInfo], (int)w[kDedupeBufInfo],
                       (int)k[kDedupeUv], (int)w[kDedupeUv],
@@ -1188,32 +1182,10 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     r->geometrySplits = 0;
     r->drawCount = 0;
     r->triangleCount = 0;
-    // A capture request: counted here, honoured at this frame's end
-    // (writeScreenshotBmp below) with a readback of the left eye target.
+    // A capture request: counted, never honoured (mdk_render_capture_stats).
     if (params && params->screenshot_path && *params->screenshot_path) {
         r->capturesRequested++;
-        snprintf(r->pendingScreenshot, sizeof(r->pendingScreenshot), "%s",
-                 params->screenshot_path);
     }
-    // The one frame that gets censused (see `Census`). Everything else pays the
-    // compare and nothing more.
-    r->census.active = mdk::log3dsPeriodic() && r->frame == kCensusFrame;
-    r->census.triangles = 0;
-    r->census.culled = 0;
-    r->census.behind = 0;
-    r->census.offscreen = 0;
-    r->census.onscreen = 0;
-    r->census.depthOut = 0;
-    r->census.cw = 0;
-    r->census.ccw = 0;
-    r->census.near60 = 0;
-    r->census.areaSum = 0.0f;
-    r->census.loX = r->census.nLoX = 1e30f;
-    r->census.hiX = r->census.nHiX = -1e30f;
-    r->census.loY = r->census.nLoY = 1e30f;
-    r->census.hiY = r->census.nHiY = -1e30f;
-    r->census.bestW = -1.0f;
-    r->census.bestDraw = -1;
     // C3D_FrameBegin waited for the previous queue above. The old frame's
     // GPU reads are complete, so deferred releases and replacements can be
     // made now (AGENTS.md P3).
@@ -1232,28 +1204,6 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // surface about to draw, an HD copy only replaces one that already does.
     pumpPackOriginals(r, previousFrameStart);
     pumpHdTextures(r, previousFrameStart);
-    // The stream's state, every 300 frames once it has done anything: the
-    // evidence a budget is read from (docs/HD_TEXTURES_3DS_SPEC.md 4.2).
-    if (mdk::log3dsPeriodic() && (r->frame % 300) == 0 &&
-        (r->hdImported > 0 || !r->hdQueue.empty())) {
-        mdk::log3dsPrintf("hd: frame %d: %d imported, %u bytes resident of %u, %d evicted, "
-                          "%d failed, %d queued, %d reading",
-                          (int)r->frame, (int)r->hdImported, (unsigned)r->hdResidentBytes,
-                          (unsigned)kHdBudgetBytes, (int)r->hdEvicted, (int)r->hdFailedCount,
-                          (int)r->hdQueue.size(),
-                          (int)r->hdReader.busy(mdk::AsyncFileReader::kChannelHd));
-    }
-    // The orig pack's reads on the same clock: imported at the boundary, made by
-    // a draw that could not wait (the number to keep near zero), failed.
-    if (mdk::log3dsPeriodic() && (r->frame % 300) == 0 &&
-        (r->packImported > 0 || r->packSync > 0 || r->packLanded > 0 ||
-         !r->packQueue.empty())) {
-        mdk::log3dsPrintf("pack: frame %d: %d imported, %d read by a draw, %d landed for a "
-                          "draw, %d failed, %d queued, %d reading",
-                          (int)r->frame, (int)r->packImported, (int)r->packSync,
-                          (int)r->packLanded, (int)r->packFailed, (int)r->packQueue.size(),
-                          (int)r->hdReader.busy(mdk::AsyncFileReader::kChannelOrig));
-    }
     // THE STORES THE TEXTURES WERE MADE IN (EnhancedToggles::texture16): once a
     // level's textures are made (frame 30), then every 300 frames when more were
     // made since (an arena streamed in, an evicted texture made again). The
@@ -1263,10 +1213,8 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     {
         const int32_t made = r->texturesMade[0] + r->texturesMade[1] + r->texturesMade[2] +
                              r->texturesMade[3] + r->compressedMade;
-        // Frame 30 once in every build (the A/B evidence, one write); every 300
-        // frames only where the log is periodic (no SD write inside play).
-        if ((r->frame == 30 || (mdk::log3dsPeriodic() && (r->frame % 300) == 0)) &&
-            made != r->texturesMadeLogged) {
+        // Frame 30, once (one write, no SD write inside play after it).
+        if (r->frame == 30 && made != r->texturesMadeLogged) {
             r->texturesMadeLogged = made;
             int32_t resident16 = 0;
             int32_t resident = 0;
@@ -1327,10 +1275,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // from exactly that: an unclamped depth became an eye separation of
     // billions of units and the screen went black. The clamp, the sign of each
     // eye and the mono skip are pica::eyePlan, which a host test pins.
-    //
-    // A harness build may force mono (`make AUTOQUIT=90 MONO=1`): the slider
-    // reads as 0, so one pass, for the owner's stereo-cost A/B on a console
-    // whose slider nobody is there to move.
+
     const float slider = (float)osGet3DSliderState();
     r->eyes = mdk::pica::eyePlan(slider, r->eyeSeparation);
 
@@ -1370,171 +1315,6 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
                                          : (r->targetsShareDepth ? C3D_CLEAR_COLOR : C3D_CLEAR_ALL),
                               clear, mdk::pica::kDepthClearValue);
     }
-}
-
-// Report one censused frame. Cold: called once per process, from the end of the
-// first eye's replay of frame `kCensusFrame`.
-static void logCensus(RendererC3D* r) {
-    const Census& c = r->census;
-    mdk::log3dsPrintf("census frame=%d draws=%d culled=%d tris=%d behind=%d offscreen=%d onscreen=%d depthout=%d near60=%d cw=%d ccw=%d w=[%.1f,%.1f] areaset=%.4f",
-                      r->frame, (int)r->drawCount, (int)c.culled, (int)c.triangles, (int)c.behind,
-                      (int)c.offscreen, (int)c.onscreen, (int)c.depthOut, (int)c.near60,
-                      (int)c.cw, (int)c.ccw, c.minW,
-                      c.maxW, c.areaSum);
-    if (c.bestDraw >= 0) {
-        mdk::log3dsPrintf("census nearest draw=%d first=%d w=%.1f area=%+.8f v0=(%.3f,%.3f,%.3f) v1=(%.3f,%.3f,%.3f) v2=(%.3f,%.3f,%.3f)",
-                          (int)c.bestDraw, (int)c.bestFirst, c.bestW, c.bestArea,
-                          c.bestV[0], c.bestV[1], c.bestV[2], c.bestV[3],
-                          c.bestV[4], c.bestV[5], c.bestV[6], c.bestV[7],
-                          c.bestV[8]);
-        mdk::log3dsPrintf("census nearest ndc v0=(%.5f,%.5f) v1=(%.5f,%.5f)",
-                          c.bestNdc[0], c.bestNdc[1], c.bestNdc[2], c.bestNdc[3]);
-    }
-    {
-        // The ndc bbox is the mapping probe: the panel's painted rectangle has to
-        // be this box, or the framebuffer is not showing what the matrix produced.
-        //
-        // IT PRINTS THE PIXEL BOX NOW, BECAUSE THE TEST WAS NEVER APPLIED (review-1
-        // F2). Batch 78 logged the ndc box, said "or the framebuffer is not
-        // showing what the matrix produced", and then moved on without applying it.
-        // Applied, it FAILS: the box maps outside the target on three sides, so it
-        // covers the whole panel, while the panel was 61% clear colour. That is not
-        // a contradiction — the box is the UNION of every triangle's bbox with no
-        // per-pixel coverage and no depth test in it, so "the union covers the
-        // panel" and "the panel is mostly clear" are both true and neither says
-        // where the geometry is. The probe is kept because a box that landed wholly
-        // INSIDE the panel while the panel stayed clear would be a real finding; a
-        // box that overflows it proves only that the union is large.
-        //
-        // THE SPACE IS STATED, because a number without one is how batch 78 ended
-        // up reporting a "407x9 strip" in a 400-pixel-wide panel (review-1 F6).
-        // The target is 240x400 PORTRAIT; the capture's 400x240 panel is that
-        // transposed, so a pixel box here is not directly a pixel box there.
-        const Census& c = r->census;
-        const float pxLo = (c.loX + 1.0f) * 0.5f * (float)kScreenWidth;
-        const float pxHi = (c.hiX + 1.0f) * 0.5f * (float)kScreenWidth;
-        const float pyLo = (1.0f - c.hiY) * 0.5f * (float)kScreenHeight;
-        const float pyHi = (1.0f - c.loY) * 0.5f * (float)kScreenHeight;
-        mdk::log3dsPrintf("census ndc box=[%.3f,%.3f]x[%.3f,%.3f] near60 box=[%.3f,%.3f]x[%.3f,%.3f]",
-                          c.loX, c.hiX, c.loY, c.hiY, c.nLoX, c.nHiX,
-                          c.nLoY, c.nHiY);
-        mdk::log3dsPrintf("census mapping: target px x=[%.1f,%.1f] y=[%.1f,%.1f] of %dx%d portrait"
-                          " (panel capture is this transposed); covers=%s",
-                          pxLo, pxHi, pyLo, pyHi, kScreenWidth, kScreenHeight,
-                          (pxLo < 0.0f && pxHi > (float)kScreenWidth &&
-                           pyLo < 0.0f && pyHi > (float)kScreenHeight)
-                              ? "whole target"
-                              : "part of the target");
-    }
-}
-
-// One framebuffer readback: the left eye target (240x400 portrait RGBA8)
-// GX-transferred into linear memory, rotated into the panel's 400x240
-// landscape, and written as a 24-bit BMP. The transfer is queued after
-// the frame's draws (the GPU runs it in order), and the PPF wait makes
-// the pixels final before the CPU reads them. A capture is a diagnostic
-// path, never frame-critical: any failure is a refusal line and no file.
-static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const char* path) {
-    if (!target || !target->frameBuf.colorBuf) {
-        return false;
-    }
-    // The capture is the PANEL's picture: at edge-smoothing scale 2 the same
-    // 2x2-averaging transfer the display gets brings the 480x800 target down to
-    // 240x400, so the file shows exactly what the screen shows.
-    const int32_t srcW = kScreenWidth;    // 240, portrait width
-    const int32_t srcH = kScreenHeight;   // 400, portrait height
-    const int32_t scaleX = r->targetScaleX;
-    const int32_t scaleY = r->targetScaleY;
-    const size_t bytes = (size_t)srcW * (size_t)srcH * 4;
-    u32* pixels = (u32*)linearAlloc(bytes);
-    if (!pixels) {
-        mdk::log3dsPrintf("screenshot: linearAlloc(%u) FAILED for %s", (unsigned)bytes, path);
-        return false;
-    }
-    const u32 flags = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) |
-                      GX_TRANSFER_RAW_COPY(0) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-                      GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-                      transferScaling(scaleX, scaleY);
-    // BOTH dimensions are the INPUT's, as citro3d's own display output passes
-    // them: the transfer engine halves the output dimension itself when it
-    // scales (measured: passing the panel's 240x400 as the output read a
-    // quarter of the target, unscaled, twice).
-    const u32 dim = GX_BUFFER_DIM(srcW * scaleX, srcH * scaleY);
-    // SYNCHRONOUS: C3D_SyncDisplayTransfer waits for citro3d's queue to drain
-    // (the frame's draws and the panel transfers), THEN runs this transfer and
-    // waits for ITS completion. A bare GX_DisplayTransfer + PPF wait here could be
-    // satisfied by the queue's own panel transfer firing first and read the
-    // buffer early -- on hardware, not in the emulator, which finishes transfers
-    // at once (review, 2026-11-18: four times likelier at scale 2, and a stereo
-    // capture now makes two). The flush keeps no dirty line over the buffer.
-    GSPGPU_FlushDataCache(pixels, bytes);
-    C3D_SyncDisplayTransfer((u32*)target->frameBuf.colorBuf, dim, pixels, dim, flags);
-    GSPGPU_InvalidateDataCache(pixels, bytes);
-
-    FILE* file = fopen(path, "wb");
-    if (!file) {
-        mdk::log3dsPrintf("screenshot: cannot open %s", path);
-        linearFree(pixels);
-        return false;
-    }
-    // 24-bit BMP, bottom-up. The panel image is the portrait buffer
-    // rotated: landscape (x, y) reads portrait (srcW-1-y, x). The PICA's
-    // RGBA8 texel in memory is [A, B, G, R], so BMP's B, G, R are the
-    // source bytes 1, 2, 3.
-    const int32_t outW = srcH;  // 400
-    const int32_t outH = srcW;  // 240
-    const int32_t rowBytes = outW * 3;
-    const int32_t imageBytes = rowBytes * outH;
-    uint8_t header[54] = {};
-    header[0] = 'B';
-    header[1] = 'M';
-    const uint32_t fileSize = 54 + (uint32_t)imageBytes;
-    memcpy(header + 2, &fileSize, 4);
-    const uint32_t dataOffset = 54;
-    memcpy(header + 10, &dataOffset, 4);
-    const uint32_t infoSize = 40;
-    memcpy(header + 14, &infoSize, 4);
-    memcpy(header + 18, &outW, 4);
-    memcpy(header + 22, &outH, 4);
-    header[26] = 1;
-    header[28] = 24;
-    memcpy(header + 34, &imageBytes, 4);
-    // ONE fwrite PER ROW, not per pixel. On the console the sdmc devoptab
-    // turns small writes into FS calls, and 96,000 three-byte fwrites took
-    // ~69 s on old3ds-lan167 (2026-11-17: frame 600 reached at 21 s of game
-    // time, the capture's frame 601 at the 90 s autoquit). A 1200-byte row
-    // on the main thread's stack is the same bytes in the same order.
-    const uint8_t* src = (const uint8_t*)pixels;
-    uint8_t row[kScreenHeight * 3];
-    if ((size_t)rowBytes > sizeof(row)) {
-        mdk::log3dsPrintf("screenshot: row %d B exceeds its %u B buffer for %s",
-                          (int)rowBytes, (unsigned)sizeof(row), path);
-        fclose(file);
-        linearFree(pixels);
-        return false;
-    }
-    bool written = fwrite(header, 1, sizeof(header), file) == sizeof(header);
-    for (int32_t y = outH - 1; y >= 0 && written; y--) {
-        for (int32_t x = 0; x < outW; x++) {
-            const int32_t sx = srcW - 1 - y;
-            const int32_t sy = x;
-            const uint8_t* px = src + ((size_t)sy * (size_t)srcW + (size_t)sx) * 4;
-            row[x * 3 + 0] = px[1];
-            row[x * 3 + 1] = px[2];
-            row[x * 3 + 2] = px[3];
-        }
-        written = fwrite(row, 1, (size_t)rowBytes, file) == (size_t)rowBytes;
-    }
-    written = (fclose(file) == 0) && written;
-    linearFree(pixels);
-    if (!written) {
-        // No "wrote" line: the harness treats a capture as real only when
-        // this session logged a completed write.
-        mdk::log3dsPrintf("screenshot: write FAILED for %s", path);
-        return false;
-    }
-    mdk::log3dsPrintf("screenshot: wrote %s (%dx%d)", path, (int)outW, (int)outH);
-    return true;
 }
 
  void mdk_render_end_frame(MdkRenderer rr) {
@@ -1589,22 +1369,6 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
-        if (eye == 0 && r->shadowLive && mdk::log3dsPeriodic() &&
-            (r->frame == 30 || (r->frame % 600) == 0)) {
-            mdk::log3dsPrintf("shadows: frame %lu: %d caster draws into the map at its last cast (%d more left "
-                              "out: their textures have holes), %d shadowed lit draws (both eyes); "
-                              "%d frames reused the map since the last line, %d casters culled by the sun frustum",
-                              (unsigned long)r->frame, (int)r->shadowCastersLast,
-                              (int)r->shadowHoleCastersLast, (int)r->shadowReceivers,
-                              (int)r->shadowReuses, (int)r->shadowCastersCulled);
-            r->shadowReuses = 0;
-        }
-        // The census is read after the FIRST eye's replay: the second eye draws
-        // the same records and would double every count.
-        if (r->census.active) {
-            logCensus(r);
-            r->census.active = false;
-        }
         // The canvas's own width, because the canary is drawn in the canvas's own
         // pixel space and that space is what `canvasMatrix` projects.
         // drawDiagnostic returns at once unless the canary is armed by a file
@@ -1619,9 +1383,7 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // emitted, so a canvas that was queued but never drawn, or drawn into one eye
     // only, is a different pair of numbers and not the same picture.
     //
-    // On the first frame and then every sixtieth, which is the cadence the
-    // frontend's own frame line uses: a line every frame is a line nobody reads,
-    // and a line once is a line that cannot show the HUD disappearing mid-run.
+    // On the first frame: a line every frame is a line nobody reads.
     //
     // IT PRINTS EVEN WHEN THE ANSWER IS ZERO, and that is the whole point of the
     // line being evidence (review-9 F3). `emurun.sh --expect hud` reads the LAST
@@ -1632,7 +1394,7 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
     // able to say it.
     {
         r->canvasFrames++;
-        if (r->canvasFrames == 1 || (mdk::log3dsPeriodic() && (r->canvasFrames % 60) == 0)) {
+        if (r->canvasFrames == 1) {
             mdk::log3dsPrintf("canvas: quads=%d draws=%d mesh=%d corners=%d eyes=%d "
                               "(canvas frame %d)",
                               (int)r->canvasQuadsThisFrame, (int)r->canvasDrawsThisFrame,
@@ -1640,44 +1402,9 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
                               (int)r->eyes.passes, (int)r->canvasFrames);
         }
     }
-    // The lit program's switches (each re-sends the dirty uniforms of both
-    // shaders and its own six): the number a draw sort by program would be
-    // judged by on hardware (review of the lighting batch).
-    if (r->litLive && mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
-        mdk::log3dsPrintf("light: frame %d: %d program switches, %d geometry splits (%d eyes)",
-                          (int)r->frame, (int)r->programSwitches, (int)r->geometrySplits,
-                          (int)r->eyes.passes);
-    }
-    r->programSwitches = 0;
-    if (r->glowLive && mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
-        mdk::log3dsPrintf("glow (bloom): frame %d: %d passes (%d eyes, scale %dx%d)", (int)r->frame,
-                          (int)r->glowPasses, (int)r->eyes.passes, (int)r->targetScaleX,
-                          (int)r->targetScaleY);
-    }
-    if (r->billboardsLive) {
-        if (r->glowQuadCount > r->billboardsPeak) {
-            r->billboardsPeak = r->glowQuadCount;
-        }
-        if (mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
-            mdk::log3dsPrintf("glow (billboards): frame %d: %d halos now (%d drawn, both eyes), "
-                              "at most %d a frame since the last line, %d dropped past the cap",
-                              (int)r->frame, (int)r->glowQuadCount, (int)r->billboardsDrawn,
-                              (int)r->billboardsPeak, (int)r->glowQuadsDropped);
-            r->billboardsPeak = 0;
-            r->glowQuadsDropped = 0;
-        }
-    }
-    if (mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
-        mdk::log3dsPrintf("programs: frame %d: %d lit, %d lit+shadow, %d pass-through, %d plain "
-                          "draws (both eyes)",
-                          (int)r->frame, (int)r->drawsLit, (int)r->drawsShadowLit,
-                          (int)r->drawsPass, (int)r->drawsPlain);
-    }
-    r->drawsLit = r->drawsShadowLit = r->drawsPass = r->drawsPlain = 0;
     // THE DEDUPE'S LINE (03_frame.inc, THE DEDUPE): per category, the writes
     // made and the writes skipped over the window, and the command list's length
-    // in 32-bit words a frame (C3D_FrameBegin to here, every split included) --
-    // what a DRAWDEDUPE=0 build is compared against.
+    // in 32-bit words a frame (C3D_FrameBegin to here, every split included).
     {
         const u32* now = gpuCmdBuf + gpuCmdBufOffset;
         if (r->cmdFrameStart && now >= r->cmdFrameStart) {
@@ -1686,14 +1413,8 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
             r->cmdWordsPeak = words > r->cmdWordsPeak ? words : r->cmdWordsPeak;
             r->cmdWordsFrames++;
         }
-        // Every 300 frames only where the log is periodic (harness builds without
-        // PROFILE): an SD write inside a play or profile frame costs 25-30 ms --
-        // measured 2026-11-19 as the spikes at frames 600 and 1200 of a profile
-        // run (the same defect class as 4cde286). Every build still prints the
-        // last window once at teardown (mdk_render_destroy).
-        if (mdk::log3dsPeriodic() && (r->frame % 300) == 0) {
-            logDedupeWindow(r);
-        }
+        // Printed once, at teardown (mdk_render_destroy): an SD write inside a
+        // play frame costs 25-30 ms.
     }
     // The halos are this frame's: a frame whose game hands none over (no
     // runtime) must not draw the last frame's again (review, 2026-11-19).
@@ -1752,32 +1473,6 @@ static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const c
                                   "measured broken on this GPU)", (int)r->shadowCasters);
             }
         }
-    }
-    // A pending capture reads the frame just ended (the transfer queues
-    // behind its draws), then the request is spent either way.
-    if (r->pendingScreenshot[0]) {
-        if (writeScreenshotBmp(r, r->targetLeft, r->pendingScreenshot)) {
-            r->capturesWritten++;
-        }
-        // A STEREO frame's right eye as well, beside it: the both-eye evidence
-        // AGENTS.md P6 asks of rendering changes, and the only picture of the
-        // edge-smoothing pass that draws against a borrowed depth buffer. The
-        // name keeps the left file's suffix (hwcap.bmp.log -> hwcap.right.bmp.log)
-        // because the console's HTTP serves only /3ds/**.log and .txt. The
-        // harness's verdict stays the left eye's file.
-        if (r->eyes.passes > 1) {
-            char rightPath[sizeof(r->pendingScreenshot) + 16];
-            const char* slash = strrchr(r->pendingScreenshot, '/');
-            const char* dot = strchr(slash ? slash : r->pendingScreenshot, '.');
-            if (dot) {
-                snprintf(rightPath, sizeof(rightPath), "%.*s.right%s",
-                         (int)(dot - r->pendingScreenshot), r->pendingScreenshot, dot);
-            } else {
-                snprintf(rightPath, sizeof(rightPath), "%s.right", r->pendingScreenshot);
-            }
-            writeScreenshotBmp(r, r->targetRight, rightPath);
-        }
-        r->pendingScreenshot[0] = '\0';
     }
     // C3D_FrameEnd submits the queue; it does not wait for it. Until the
     // next C3D_FrameBegin, the GPU may still be reading this frame's
@@ -2084,8 +1779,6 @@ static bool ensureShadowTint(RendererC3D* r) {
 static void prepareShadows(RendererC3D* r) {
     r->shadowCasters = 0;
     r->shadowHoleCasters = 0;
-    r->shadowCastersCulled = 0;
-    r->shadowReceivers = 0;
     r->shadowLitLive = false;
     // The tint first: without it no lit draw can take the shadow, and a map
     // cast for no receiver is a pass for nothing (review, 2026-11-19).
@@ -2144,8 +1837,6 @@ static void prepareShadows(RendererC3D* r) {
         r->shadowCastSun[1] = l.sun_direction.y;
         r->shadowCastSun[2] = l.sun_direction.z;
         memcpy(r->shadowCastRig, rig, sizeof(rig));
-    } else {
-        r->shadowReuses++;
     }
     const float values[6][4] = {
         {l.sun_direction.x, l.sun_direction.y, l.sun_direction.z, 0.0f},
@@ -2321,7 +2012,6 @@ static void castShadows(RendererC3D* r) {
                     }
                 }
                 if (outside) {
-                    r->shadowCastersCulled++;
                     continue;
                 }
             }
@@ -2363,9 +2053,6 @@ static void castShadows(RendererC3D* r) {
     // The vertex stage's matrix registers hold the last caster's: installEye
     // uploads the eye's before anything else is drawn.
     r->matrixIsFrame = false;
-    // The log reports the last cast's counts: a reused map's frame casts none.
-    r->shadowCastersLast = r->shadowCasters;
-    r->shadowHoleCastersLast = r->shadowHoleCasters;
 }
 
 static void prepareHaze(RendererC3D* r) {
@@ -2419,7 +2106,6 @@ static void applyFramePacing(RendererC3D* r) {
         memcpy(r->glowQuads, quads, sizeof(mdk::GlowQuad) * (size_t)kept);
     }
     r->glowQuadCount = quads ? kept : 0;
-    r->glowQuadsDropped += quads && count > kept ? count - kept : 0;
 }
 
  void mdk_render_set_point_lights(MdkRenderer rr, const mdk::PointLight* lights, int32_t count) {

@@ -186,34 +186,9 @@ else
     echo "stage_romfs:   (skip) orig -- no compressed arena set; arena textures are expanded"
 fi
 
-# THE HD PACK IN THE RomFS (harness builds only: `make AUTOQUIT=90 LEVEL=n
-# HDROMFS=1` exports MDK_HD_ROMFS_LEVEL). One level's textures and every 2D
-# image, hard-linked from build-hd-pack/ with the manifest lines that name them,
-# so the appliance -- whose SD card the hardware loop never writes -- can run the
-# HD stream from romfs:/hd. Without the variable no hd/ is staged, and a stale
-# one from an earlier harness build is removed.
-HD_PACK_DIR="${HD_PACK_DIR:-$REPO/build-hd-pack}"
-if [ -n "${MDK_HD_ROMFS_LEVEL:-}" ]; then
-    if [ ! -f "$HD_PACK_DIR/manifest.txt" ]; then
-        echo "stage_romfs: HDROMFS asked for, but $HD_PACK_DIR/manifest.txt is missing" >&2
-        exit 1
-    fi
-    rm -rf "$OUT/hd"
-    mkdir -p "$OUT/hd"
-    {
-        grep '^#' "$HD_PACK_DIR/manifest.txt" || true
-        grep -E "^(textures/LEVEL${MDK_HD_ROMFS_LEVEL}/|images/)" "$HD_PACK_DIR/manifest.txt" || true
-    } > "$OUT/hd/manifest.txt"
-    while IFS=$'\t' read -r key _; do
-        case "$key" in '#'*|'') continue ;; esac
-        mkdir -p "$OUT/hd/$(dirname "$key")"
-        ln "$HD_PACK_DIR/$key.t3x" "$OUT/hd/$key.t3x" 2>/dev/null ||
-            cp "$HD_PACK_DIR/$key.t3x" "$OUT/hd/$key.t3x"
-    done < "$OUT/hd/manifest.txt"
-    echo "stage_romfs:   hd (level ${MDK_HD_ROMFS_LEVEL}: $(find "$OUT/hd" -name '*.t3x' | wc -l) files, $(du -sh "$OUT/hd" | cut -f1))"
-else
-    rm -rf "$OUT/hd"
-fi
+# The HD pack is read from the SD card (sdmc:/3ds/mdk/hd), never the RomFS: a
+# romfs hd/ left by an older build is removed so it does not ship.
+rm -rf "$OUT/hd"
 
 # A manifest, so the build can verify the staging WITHOUT depending on the
 # bytes (which are not in the repository).

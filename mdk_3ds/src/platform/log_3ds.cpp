@@ -21,7 +21,6 @@ namespace {
 FILE* g_log = nullptr;
 bool g_tried = false;
 bool g_fsOpen = false;
-uint32_t g_linesWritten = 0;   // lines flushed to the SD file (log3dsLinesWritten)
 
 } // namespace
 
@@ -52,9 +51,8 @@ bool log3dsOpen() {
     // kRotateBytes becomes mdk.prev.log, the one before it mdk.prev2.log (two
     // generations, both served under /3ds/mdk/), and this session starts a
     // fresh file. Two, so a timed-out cycle's session survives the NEXT boot's
-    // rotation as well (AGENTS.md P10: "the run is still on the card"). The
-    // harness recognises the rotation by the line below, which names the
-    // rotated size. Failures are harmless: the open appends to whatever is there.
+    // rotation as well. The line below says the rotation and names the rotated
+    // size. Failures are harmless: the open appends to whatever is there.
     const long kRotateBytes = 128 * 1024;
     long rotated = 0;
     struct stat st;
@@ -113,10 +111,6 @@ void log3dsPrintf(const char* format, ...) {
     }
     fprintf(g_log, "%s\n", line);
     fflush(g_log);
-}
-
-uint32_t log3dsLinesWritten() {
-    return g_linesWritten;
 }
 
 } // namespace mdk

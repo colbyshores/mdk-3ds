@@ -17,8 +17,7 @@
 //   * The screens the flow can ask for other than the level, the menu and the
 //     briefing (statistics, stream, fall, end movies): skipped the C#'s way
 //     (GameFlow::skipUnported). The main menu and the briefing are package #20a's
-//     (menu_screens_3ds.h): a release build boots into the menu, a harness LEVEL=
-//     straight into its level.
+//     (menu_screens_3ds.h): the game boots into the menu.
 //   * The HUD is HERE, AND IT IS NOT YET ON SCREEN. hud_view.cpp was ported long
 //     before this backend could draw it, because mdk_render_canvas_quad was a
 //     no-op on the Citro3D backend. The canvas is now a record in the frame's
@@ -72,7 +71,6 @@
 #include "game/arena_space.h"
 #include "game/arena_views.h"
 #include "game/enhanced_config.h"
-#include "game/harness_aids.h"
 #include "game/enhanced_menu.h"
 #include "game/cheats_menu.h"
 #include "platform/controls_3ds.h"
@@ -103,11 +101,10 @@
 #include "game/sniper_view.h"
 #include "render/material_resolver.h"
 #include "render/render.h"
-#include "render/render_c3d_stats.h"
+#include "render/render_c3d_hd_set.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
-#include "platform/harness_3ds.h"
 #include "render/sky_dome.h"
 #include "game/sky_modes.h"
 #include "platform/input_3ds.h"
@@ -650,20 +647,6 @@ bool loadKurtPack(const char* path, KurtPackLoad* out) {
 // surfaceId), answered by the pair and its names, never by the shading. `pack`
 // is the HD pack (the SD card's upscale), `orig` the orig pack (the RomFS's
 // original-resolution pre-encode); either may be absent.
-// THE CONTENT HASHES the lookup ran (ModImages::resolve's hdKeyOf over the
-// texture's whole index array, after any MTO read-back of its pixels): how many,
-// their time, and the first texture's name. Said once per level (hdrule:, at
-// teardown) -- the HD rule's proof that play never hashes a covered surface.
-static int32_t g_lookupHashes = 0;
-static double g_lookupHashMs = 0.0;
-static char g_lookupHashFirst[40];
-// The name index's other outcomes: misses with an HD pack installed (never
-// hashed: expanded), rows refused for their size, and HD files not taken for an
-// animated texture.
-static int32_t g_lookupNameMisses = 0;
-static char g_lookupNameMissFirst[48];
-static int32_t g_lookupSizeRefused = 0;
-static int32_t g_lookupHdAnimated = 0;
 
 struct HdPackSource {
     mdk::ModImages* pack = nullptr;
@@ -715,7 +698,6 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
             std::map<std::pair<const void*, std::string>, uint32_t>::const_iterator dims =
                 source->byname->dims.find(key);
             if (dims != source->byname->dims.end() && dims->second != size) {
-                g_lookupSizeRefused++;
                 continue;
             }
             source->path = hit->second;
@@ -727,8 +709,6 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
                 if (surface.texture->frameCount() <= 1) {
                     source->hdPath = hd->second;
                     out->hdPath = source->hdPath.c_str();
-                } else {
-                    g_lookupHdAnimated++;
                 }
             }
             return true;
@@ -753,14 +733,8 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // its pixels. A texture the name index does not know -- one over the PICA's
     // 1024 (refused from both packs by the builds), a model's texture outside
     // the arenas' archives -- is drawn the way it would be with no pack at all:
-    // expanded from its indices. Counted and named (hdrule:, at teardown).
+    // expanded from its indices.
     if (source->pack && source->byname) {
-        if (g_lookupNameMisses == 0) {
-            snprintf(g_lookupNameMissFirst, sizeof(g_lookupNameMissFirst), "%s %dx%d",
-                     name.c_str(), (int)surface.texture->width(),
-                     (int)(surface.texture->height() * surface.texture->frameCount()));
-        }
-        g_lookupNameMisses++;
         return false;
     }
     // NOTHING OVER THE PICA'S 1024 IS IN THE ORIG PACK (arena_etc1_convert.py
@@ -778,22 +752,13 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // HD pack does not cover still skips the ARM11 expansion. Both resolve by
     // the same hdKeyOf key, so a texture the HD pack rekeys (a stamped texture,
     // 05_resources.inc) matches neither pack and takes the index path.
-    if (g_lookupHashes == 0) {
-        snprintf(g_lookupHashFirst, sizeof(g_lookupHashFirst), "%s", name.c_str());
-    }
-    g_lookupHashes++;
-    const double hashStart = nowSeconds();
     if (source->pack && source->pack->resolve(mdk::ModImages::Kind::Textures, name,
                                               *surface.texture, *palette, &source->path)) {
-        g_lookupHashMs += (nowSeconds() - hashStart) * 1000.0;
         out->compressedPath = source->path.c_str();
         return true;
     }
-    const bool origHit =
-        source->orig && source->orig->resolve(mdk::ModImages::Kind::Textures, name,
-                                              *surface.texture, *palette, &source->path);
-    g_lookupHashMs += (nowSeconds() - hashStart) * 1000.0;
-    if (origHit) {
+    if (source->orig && source->orig->resolve(mdk::ModImages::Kind::Textures, name,
+                                              *surface.texture, *palette, &source->path)) {
         out->compressedPath = source->path.c_str();
         // THE ORIG PACK'S HIT IS ASKED FOR UP FRONT, not attached after an
         // expansion: surfaceId's pre-creation consult (surface_cache.h) turns
@@ -899,7 +864,7 @@ int main(int argc, char** argv) {
     // and accumulate small values. FZ and DN are the chosen numerical mode.
     // Modern libctru already initialises these bits on supported entry
     // paths, but MAIN-THREAD STATE ALONE IS NOT EVIDENCE OF A WORKER'S
-    // STATE, so each worker sets its own (see audio_3ds.cpp).
+    // STATE, so each worker sets its own (see audio_dsp_3ds.cpp).
     // ---------------------------------------------------------------------
     if (!mdk::vfpSetFzDnMain()) {
         printf("[3ds] FZ/DN could not be set on the main thread; refusing to run.\n");
@@ -1042,18 +1007,15 @@ int main(int argc, char** argv) {
     // The flow, BEFORE the level: the flow is what decides which level plays
     // (C# Game owns _state.Level and hands it to the Viewer), so the frontend
     // asks it rather than naming a level of its own. It starts at the main menu
-    // (package #20a), or in the harness's LEVEL=.
+    // (package #20a).
     // ---------------------------------------------------------------------
     // THE ENTRY SCREEN (package #20a, the owner un-cut 2026-11-20): the main menu,
-    // as the C#'s game starts (Start.Menu). A harness LEVEL= still starts in that
-    // level (Start.Level, the C#'s --level), so every hardware and emulator run
-    // that names one is unchanged (menu_screens_3ds.h).
+    // as the C#'s game starts (Start.Menu).
     g_toggles = &enhancedToggles;
     mdk::flow::FlowOptions options;
     options.start = mdk::flow::Start::Menu;
     // THE INTRO1A SPLASH at boot (package #20c): the C#'s default (Program.cs:241,
-    // no --menu). A harness build's `SPLASH=0` is the C#'s --menu: the menu alone,
-    // so MENU= presses reach it at once.
+    // no --menu).
     options.splash = true;
     mdk::flow::GameFlow flow(options);
     // THE SAVES (package #19): sdmc:/3ds/mdk/saves, an explicit path (AGENTS.md P5),
@@ -1078,18 +1040,13 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // The run's frame and step counts and its end: run-scoped, so CAPTURE=, WALK=,
-    // the frame budget and the log count across every level the run plays.
+    // The run's frame and step counts and its end: run-scoped, so the frame
+    // budget and the log count across every level the run plays.
     uint32_t frame = 0;
     uint32_t steps = 0;
     const char* exitReason = "aptMainLoop returned false";
-    // C# Game._firstLevel: the first level gets the test options (the harness's
-    // EVENT= and AT=), later ones do not (Game.cs:487) -- unless EVENT_EVERY=1, the
-    // harness's level-to-level chain (package 2).
-    bool firstLevel = true;
     heapProbe("run-start");
-    // The menus' screens (menu_screens_3ds.h). A run that starts there hands no
-    // test option to a level (C# Handle(Menu) clears _firstLevel first).
+    // The menus' screens (menu_screens_3ds.h).
     mdk::FrontScreens3ds front;
     front.renderer = renderer;
     front.flow = &flow;
@@ -1103,9 +1060,6 @@ int main(int argc, char** argv) {
     front.frameBudget = g_frameBudget;
     // The main menu's Continue and Saved Game page read the saves (package #19).
     front.saves = &saves;
-    if (screen == mdk::flow::Screen::Menu || screen == mdk::flow::Screen::Fall) {
-        firstLevel = false;
-    }
     // The START menu's OPTIONS row opens the C# PauseMenu's options pages
     // (pause_menu.h's openOptions). Static: it outlives the levels, as the menu
     // and its fonts do.
@@ -1114,8 +1068,7 @@ int main(int argc, char** argv) {
     // toggles, because this target has no keyboard for TOOSCARYFORME and no console for
     // god and noclip. The switches are the session's, as the C#'s DevSession holds god
     // and noclip for every level (Viewer.cs:286-288); gore is the settings' own flag,
-    // mirrored when the page opens. Harness builds can start with them on:
-    // `make AUTOQUIT=.. GOD=1 NOCLIP=1`.
+    // mirrored when the page opens.
     static mdk::CheatsMenu cheatsPage;
     static mdk::CheatsMenu::Switches cheatSwitches;
 
@@ -1145,15 +1098,14 @@ int main(int argc, char** argv) {
     // =====================================================================
     for (;;) {
     // THE STREAM (package #18b), when the flow shows one: after a level's end (the
-    // level-end hook goes round the loop for it, after the level's teardown) or
-    // first, from the harness's STREAM=1. Its own renderer scope and the same two
+    // level-end hook goes round the loop for it, after the level's teardown). Its
+    // own renderer scope and the same two
     // empty frames a level's teardown gets; then its Event is handled, the screens
     // this port still lacks are skipped, and the level that follows loads below.
     if (flow.screen() == mdk::flow::Screen::Stream) {
         const MdkScope streamScope = mdk_render_mark(renderer);
         // C# ShowStream's seed: DefaultSeed for a direct stream, else
-        // Environment.TickCount -- the console's tick counter, except in the
-        // harness's FIXED=1 runs, whose every stream takes the default seed.
+        // Environment.TickCount -- the console's tick counter.
         const uint32_t clockSeed = (uint32_t)svcGetSystemTick();
         const int32_t streamLevel = flow.state().level;
         int32_t streamEndHealth = flow.streamHealth();
@@ -1217,8 +1169,6 @@ int main(int argc, char** argv) {
             exitReason = "stream ended";
             break;
         }
-        // C# Handle clears _firstLevel after the stream's event.
-        firstLevel = false;
     }
     // THE MENU AND THE BRIEFING (package #20a), until the flow names a level.
     if (screen != mdk::flow::Screen::Level) {
@@ -1234,8 +1184,7 @@ int main(int argc, char** argv) {
     // Set when the level is left for the main menu (the START menu's MAIN MENU,
     // or a level that ends into the menu).
     bool toMenu = false;
-    mdk::log3dsPrintf("level loop: level %d%s", (int)flow.state().level,
-                      firstLevel ? " (the run's first: the harness's test options apply)" : "");
+    mdk::log3dsPrintf("level loop: level %d", (int)flow.state().level);
     const MdkScope levelScope = mdk_render_mark(renderer);
     bool nextLevel = false;
     {
@@ -1758,23 +1707,13 @@ int main(int argc, char** argv) {
         heapProbe("post-level-animations");
     }
     mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
-    // THE OUTPUT (SPEC.md 8). Release builds mix on the DSP (audio_dsp_3ds.h):
-    // every audible voice on its own ndsp channel, the device's sample plane OFF
-    // so the ARM11 sums nothing and only advances the voices' lifecycle. A harness
-    // build made with DSPAUDIO=0 keeps the software mix into audio_3ds.cpp's one
-    // channel, for the console's A/B. Either way the device keeps the frame's own
-    // `owed` accounting (no queue query), so the voices end on the same frames.
-    const bool audioReady = mdk::kDspAudio ? mdk::audioDspOpen(bankReady ? &bank : nullptr)
-                                           : mdk::audioOpen();
-    if (!mdk::kDspAudio) {
-        mdk::log3dsPrintf("audio: software mix (harness DSPAUDIO=0): 64 voices summed on the "
-                          "ARM11 into ndsp chn0, limiter on; the `audio: frame=` ledger is "
-                          "this sink's");
-    }
-    mixer.device().setSampleMix(!mdk::kDspAudio);
-    if (audioReady) {
-        mixer.device().setSink(mdk::kDspAudio ? nullptr : mdk::audioSink, nullptr);
-    }
+    // THE OUTPUT (SPEC.md 8). The level mixes on the DSP (audio_dsp_3ds.h): every
+    // audible voice on its own ndsp channel, the device's sample plane OFF so the
+    // ARM11 sums nothing and only advances the voices' lifecycle. The device keeps
+    // the frame's own `owed` accounting (no queue query). When the DSP path does
+    // not open the level runs muted, its voices' lifecycle still advancing.
+    const bool audioReady = mdk::audioDspOpen(bankReady ? &bank : nullptr);
+    mixer.device().setSampleMix(false);
 
     // The three assets the scripts need, all of them loaded above: the CMI is the
     // bytecode, the bank is what decides whether a script's play_sound names a
@@ -2068,20 +2007,15 @@ int main(int argc, char** argv) {
             follow.clipView.clip = &mdk::scripts::ScriptRuntime::clipViewTrampoline;
             // The scripts shake the camera (Viewer.cs:238, `ShakeRaised +=
             // _follow.RaiseShake`; package #15), whose offsets take the scripts' seed:
-            // the C#'s camera Random is time-seeded, and a WALK harness build replays
-            // its fixed seed.
+            // the C#'s camera Random is time-seeded.
             runtime->setShakeRaisedHook(&mdk::FollowCamera::raiseShakeHook, &follow);
             follow.seedShake(seed);
             player.setMixer(&runtime->mixer());
             mix = &runtime->mixer();
             g_gameSettings.applyAudio(&mix->device());
-            // The new mixer owns a new SoundDevice, so the output has to be handed
-            // to it: a respawn without this would be a silent level (and, on the
-            // DSP path, a device mixing samples nobody hears).
-            mix->device().setSampleMix(!mdk::kDspAudio);
-            if (audioReady) {
-                mix->device().setSink(mdk::kDspAudio ? nullptr : mdk::audioSink, nullptr);
-            }
+            // The new mixer owns a new SoundDevice: its sample plane goes off too, or
+            // it would mix samples nobody hears (the DSP plays the voices).
+            mix->device().setSampleMix(false);
             mdk::log3dsPrintf("scripts: runtime ready (seed %d, option %d)", (int)seed,
                               (int)runtime->option);
             heapProbe("runtime");
@@ -2212,16 +2146,6 @@ int main(int argc, char** argv) {
     // the simulation as one enormous step).
     // ---------------------------------------------------------------------
     double last = nowSeconds();
-    // What the AUDIO has been handed, in seconds, and not the wall clock: the
-    // device's `owed` grows by rate*elapsed and `elapsed` is the CLAMPED delta,
-    // so a 40 s sleep the loop clamped to 0.25 s owes 0.25 s of audio and this
-    // clock says so. It is the denominator the sink's rate test needs, because
-    // that test is a rate against the time the mixer was given and not against
-    // a frame count (review F3 of run-20261106-062909: frame x 735/882 is the
-    // same number only at exactly 60 fps). Accumulated in double for the same
-    // reason `last` and `delta` are: this is a running time sum, not a hot-path
-    // accumulator, and it is read once every 60 frames.
-    double audioClock = 0.0;
     const float step = mdk::flow::GameFlow::stepFor(false, false, 0.0f);
     const float maxPending = step * 10.0f;  // the C#'s ten-step ceiling
     float pending = 0.0f;
@@ -2373,13 +2297,13 @@ int main(int argc, char** argv) {
             }
         }
         made += mdk_render_settle_streams(renderer, 2000);   // the packed originals asked
-        MdkC3dFirstUse state;
-        mdk_render_c3d_first_use(renderer, &state);
+        MdkHdSetState state;
+        mdk_render_hd_set_state(renderer, &state);
         mdk::log3dsPrintf("hd: set %s: %d of %d resident (%u bytes, cap %d), %d given up, "
                           "%d files made in %.0f ms; linear free %u",
-                          why, (int)state.hdPinnedResident, (int)state.hdPinned,
-                          (unsigned)state.hdPinnedBytes, (int)state.hdTopCap,
-                          (int)state.hdPinFailed, (int)made, (nowSeconds() - hold0) * 1000.0,
+                          why, (int)state.resident, (int)state.pinned,
+                          (unsigned)state.residentBytes, (int)state.topCap,
+                          (int)state.givenUp, (int)made, (nowSeconds() - hold0) * 1000.0,
                           (unsigned)linearSpaceFree());
     };
     // The last level's copies are given back first, so the heap read below is
@@ -2499,18 +2423,6 @@ int main(int argc, char** argv) {
     // only while the menu is ready and closed.
     const double hintUntil = nowSeconds() + 5.0;
     while (aptMainLoop()) {
-        // The harness deadline (harness builds only; a no-op question in
-        // any other build): quit through the ordinary teardown so the
-        // atexit chain-load hands the console back to the stub.
-        // The OG profile's per-frame spans (PROFILE builds; all zero otherwise).
-        uint64_t spanSim0 = 0, spanSim = 0;
-        uint64_t spanAudio = 0;
-        uint32_t spanSteps0 = steps;
-        if (mdk::harnessAutoquitDue()) {
-            exitReason = "harness autoquit (MDK_AUTOQUIT)";
-            break;
-        }
-
         // The frame's clock FIRST: the look integrates over the time since the
         // previous frame, so the input poll needs the same delta the simulation is
         // about to get. Clamp it here -- the platform's floor under the game's own
@@ -2526,12 +2438,6 @@ int main(int argc, char** argv) {
         }
         double delta = now - last;
         last = now;
-        // The OG profile (harness PROFILE builds only; a no-op otherwise): the
-        // raw period, before the gameplay clamp, and never the first frame,
-        // which carries the time since init.
-        if (frame > 0) {
-            mdk::harnessProfileFrame(delta);
-        }
         if (delta < 0.0) delta = 0.0;
         if (delta > 0.25) delta = 0.25;
         const float elapsed = mdk::flow::GameFlow::elapsedFor(false, step, (float)delta);
@@ -2787,12 +2693,8 @@ int main(int argc, char** argv) {
 
             pending += elapsed;
             if (pending > maxPending) pending = maxPending;
-            spanSim0 = mdk::harnessProfileTick();
-            spanSteps0 = steps;
             while (pending >= step) {
-                const uint64_t tp0 = mdk::harnessProfileTick();
                 player.update(input, step);
-                const uint64_t tp1 = mdk::harnessProfileTick();
                 // The C# Viewer's step order is Kurt, then the scripts, then the
                 // camera (Viewer.cs:505-535). ScriptRuntime keeps its own 1/30 s
                 // clock, so a 1/60 s call completes a script tick every second step
@@ -2813,7 +2715,6 @@ int main(int argc, char** argv) {
                     }
                     runtime->clearStampedTextures();
                 }
-                const uint64_t tp2 = mdk::harnessProfileTick();
                 // The pitch the camera eases to (Viewer.cs:746-747). The oracle's
                 // sources are a live camera_track request first and the scripts'
                 // current arena's rest pitch after it.
@@ -2844,7 +2745,6 @@ int main(int argc, char** argv) {
                     }
                 }
                 follow.update(&camera, &space, player, target, step, kAspect);
-                const uint64_t tp3 = mdk::harnessProfileTick();
                 // The music follows Kurt's arena, which the scripts set (C#
                 // Viewer.cs:521-525: Enter, then Update(Step), every step, after
                 // the camera). A track that is not in memory yet is read HERE,
@@ -2933,8 +2833,6 @@ int main(int argc, char** argv) {
                 }
                 // The C# advances the HUD blink once per 30 Hz boundary
                 // (Viewer.cs:535-538), not once per 60 Hz frame.
-                mdk::harnessProfileStepSpans(tp1 - tp0, tp2 - tp1, tp3 - tp2,
-                                             mdk::harnessProfileTick() - tp3);
                 hudPending += step;
                 if (hudPending >= kHudStep) {
                     hud.tick();
@@ -2943,7 +2841,6 @@ int main(int argc, char** argv) {
                 pending -= step;
                 steps++;
             }
-            spanSim = mdk::harnessProfileTick() - spanSim0;
 
             // Death. The C#'s Kurt.Died (Viewer.OnDied) counts it and leaves for
             // Game.Handle(KurtDied), which writes LASTGAME and opens the main menu
@@ -3016,8 +2913,6 @@ int main(int argc, char** argv) {
         // after the mixer, so this frame's gain, pitch and pan are set and stopped
         // voices are gone; before the device, so a voice started this frame is
         // bound at its first sample. A no-op on the software path.
-        // The `audio` profile span is all of it, in both modes (PROFILE builds).
-        const uint64_t spanAudio0 = mdk::harnessProfileTick();
         // The scope's view in sniper mode (C# Viewer.SceneView), but never over the
         // strike's frame: DrawStrike presents its own view before SceneView is asked
         // (Viewer.cs:396-410), and Bones' strike is called from the scope.
@@ -3036,43 +2931,6 @@ int main(int argc, char** argv) {
         mix->update(elapsed);
         mdk::audioDspFrame(*mix);
         mix->device().update(elapsed);
-        spanAudio = mdk::harnessProfileTick() - spanAudio0;
-        // AFTER the device, so the clock is exactly the sum of what the device
-        // was given and not of what the frame happened to measure.
-        audioClock += elapsed;
-
-        // The screenshot arming file (the hardware loop's picture, ledger
-        // 3ds.screenshot): dropping sdmc:/3ds/mdk/capture.txt beside the
-        // log asks for one framebuffer BMP at the next frame; the file is
-        // consumed so the ask fires once. Checked every 30 frames -- a
-        // stat a second, never frame-critical work.
-        // NOT in release or PROFILE builds: the fopen of a file that is not
-        // there costs ~85 ms on the console's SD (measured 2026-11-19: a stall
-        // every 30 frames, the 30-frame spikes). Release screenshots are
-        // ATM's / Rosalina's; the harness's fixed-frame capture is below.
-        static char capturePath[128] = {};
-        if (mdk::log3dsPeriodic() && capturePath[0] == '\0' && (frame % 30) == 0) {
-            if (FILE* armed = std::fopen("sdmc:/3ds/mdk/capture.txt", "rb")) {
-                char named[sizeof(capturePath)] = {};
-                size_t got = std::fread(named, 1, sizeof(named) - 1, armed);
-                std::fclose(armed);
-                while (got > 0 && (named[got - 1] == '\n' || named[got - 1] == '\r' ||
-                                   named[got - 1] == ' ')) {
-                    named[--got] = '\0';
-                }
-                std::snprintf(capturePath, sizeof(capturePath), "%s",
-                              named[0] ? named : "sdmc:/3ds/mdk/capture.bmp");
-                std::remove("sdmc:/3ds/mdk/capture.txt");
-            }
-        }
-        // The harness's fixed-frame capture (harness_3ds.h; hw.pixels-rgba8):
-        // no file to drop on a console nobody touches, so the frame is a build
-        // flag. nullptr in every build without MDK_HW_CAPTURE.
-        if (capturePath[0] == '\0') {
-            if (const char* hw = mdk::harnessCapturePath(frame)) {
-                std::snprintf(capturePath, sizeof(capturePath), "%s", hw);
-            }
-        }
 
         // THE ARENAS ON THE GPU FOLLOW THE SCRIPTS (arena_views.h): the pair and
         // its corridors are kept, the second arena's mesh is built long before
@@ -3412,11 +3270,8 @@ int main(int argc, char** argv) {
                 // once a second, every decoded track but the one playing, the one
                 // fading out (both pinned by their voices) and the loading arena's.
                 // A level played end to end then holds three tracks, not all nine.
-                // HOUSEKEEPING, NOT A LOG LINE: it runs in every build (it was
-                // under log3dsPeriodic(), so release and PROFILE builds never gave
-                // a track back nor re-asked an evicted one). Its cost is a walk of
-                // the decoded names (tens) against three; its lines are events
-                // (something was freed or re-asked), not periodic.
+                // Its cost is a walk of the decoded names (tens) against three; its
+                // lines are events (something was freed or re-asked), not periodic.
                 if ((frame % 60u) == 0u) {
                     // The bubble's prefetched track is kept too: it is the
                     // door ahead's music, and freeing it within the second
@@ -3491,17 +3346,12 @@ int main(int argc, char** argv) {
             }
         }
         params.present = true;
-        params.screenshot_path = capturePath[0] ? capturePath : nullptr;
+        params.screenshot_path = nullptr;
 
         // P2: the camera is handed to the renderer every frame, whether or not a
         // step ran, and every GPU state the frame needs is set inside
         // begin/end_frame by the backend.
-        const uint64_t spanBegin0 = mdk::harnessProfileTick();
         mdk_render_begin_frame(renderer, &params);
-        const uint64_t spanDraw0 = mdk::harnessProfileTick();
-        if (capturePath[0]) {
-            capturePath[0] = '\0';  // one frame, one picture (after the copy above)
-        }
         mdk_render_set_camera(renderer, &sceneCamera);
 
         // The enhanced look's light (LevelLight.Update): the scripts' current
@@ -3510,7 +3360,6 @@ int main(int argc, char** argv) {
         // CHANGES, because enhancedLighting walks the sky panorama and every
         // triangle of the arena -- level-load work, not frame work, on an ARM11.
         // The rig carries the haze's colour and density (SPEC.md 7.9).
-        uint64_t tRig0 = 0, tRig1 = 0;
         {
             const mdk::formats::Arena* lightArena = arena;
             if (runtime) {
@@ -3521,16 +3370,13 @@ int main(int argc, char** argv) {
             }
             if (lightArena && lightArena != litArena) {
                 litArena = lightArena;
-                tRig0 = mdk::harnessProfileTick();
                 const mdk::Lighting rig = cachedLighting(lightCache, level, lightArena);
-                tRig1 = mdk::harnessProfileTick();
                 mdk_render_set_lighting(renderer, &rig);
                 mdk::log3dsPrintf("light: arena %s haze rgb=(%.3f,%.3f,%.3f) density=%.5f",
                                   lightArena->name().c_str(), rig.haze_colour.r,
                                   rig.haze_colour.g, rig.haze_colour.b, rig.haze_density);
             }
         }
-        const uint64_t tLight = mdk::harnessProfileTick();
 
         // The sky first (see SkyRange): centred on the camera, DoubleSided -- only when
         // the scripts' sky mode shows it (C# `Backdrop == Backdrop.Sky`).
@@ -3553,7 +3399,6 @@ int main(int argc, char** argv) {
                 mdk_render_draw_mesh(renderer, &sky);
             }
         }
-        const uint64_t tSky = mdk::harnessProfileTick();
 
         // The arenas the scripts say are drawn: Kurt's and the active second
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
@@ -3574,8 +3419,6 @@ int main(int argc, char** argv) {
             }
             arenaViews.draw(*frameDrawn);
         }
-        const uint64_t tArena = mdk::harnessProfileTick();
-        uint64_t tLay = tArena;
         if (runtime) {
             // C# Viewer.DrawScene draws the objects after the arena and before
             // Kurt (Viewer.cs:702-708): every object the scripts hold, in its
@@ -3652,7 +3495,6 @@ int main(int argc, char** argv) {
                                          &objectStream);
                 }
             }
-            const uint64_t tLay = mdk::harnessProfileTick();
             objectDraw.draw(renderer, &surfaces, objectStream);
             // The frame's own cost, kept for the log line below. The peak over a
             // run is what a level costs the stream mesh; one frame's count is not.
@@ -3725,7 +3567,6 @@ int main(int argc, char** argv) {
                                   (int)objectCorners, (int)objectDraws);
             }
         }
-        const uint64_t tObj = mdk::harnessProfileTick();
         if (runtime && !strikeFrame) {
             // The pieces and sprite effects, where the C# draws them:
             // after the objects, before Kurt (Viewer.cs:707). The ropes
@@ -3734,13 +3575,6 @@ int main(int argc, char** argv) {
             // and re-armed, but on this pass's own latch.
             effectsView.build(*runtime, sceneCamera, &effectsFrame);
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
-            if (mdk::log3dsPeriodic() && (frame % 300u) == 0u) {
-                mdk::log3dsPrintf("effects: frame %d: %d sprite effects, %d with a halo, %d not "
-                                  "yet measured (pixels away)",
-                                  (int)frame, (int)effectsView.spriteEffects(),
-                                  (int)effectsView.glowingEffects(),
-                                  (int)effectsView.unmeasuredGlows());
-            }
             if (effectsDraw.allocationFailed()) {
                 if (!effectsFailureLogged) {
                     effectsFailureLogged = true;
@@ -3771,7 +3605,6 @@ int main(int argc, char** argv) {
                 sniperClipFailureLogged = false;
             }
         }
-        const uint64_t tFx = mdk::harnessProfileTick();
         if (kurtSpriteReady && playerReady && !strikeFrame) {
             // THE PACK STREAM'S PUMP (KurtSprite::pumpStream): the read the
             // reader thread finished, if any, staged -- no I/O on this thread. A
@@ -3790,7 +3623,6 @@ int main(int argc, char** argv) {
             // not DrawScene's, so they leave it alone.
             runtime->eye = sceneCamera.position;
         }
-        const uint64_t tKurt = mdk::harnessProfileTick();
         const bool showHint = menuReady && !menu.open() && now < hintUntil;
         if (!strikeFrame && (hudReady || menu.open() || showHint)) {
             // The HUD is the last thing drawn before the frame ends, which is the
@@ -3864,16 +3696,7 @@ int main(int argc, char** argv) {
             }
             mdk_render_canvas_end(renderer);
         }
-        const uint64_t spanEnd0 = mdk::harnessProfileTick();
         mdk_render_end_frame(renderer);
-        if (frame > 0) {
-            mdk::harnessProfileDrawSub(tLight - spanDraw0, tRig1 - tRig0, tSky - tLight,
-                                       tArena - tSky, tLay - tArena, tObj - tLay,
-                                       tFx - tObj, tKurt - tFx, spanEnd0 - tKurt);
-            mdk::harnessProfileSpans(spanSim, steps - spanSteps0, spanDraw0 - spanBegin0,
-                                     spanEnd0 - spanDraw0,
-                                     mdk::harnessProfileTick() - spanEnd0, spanAudio);
-        }
         frame++;
 
         if (frame == 1u) {
@@ -3922,7 +3745,7 @@ int main(int argc, char** argv) {
                                   : "-",
                               runtime ? "runtime" : "standalone");
         }
-        if (frame <= 5u || (mdk::log3dsPeriodic() && (frame % 60u) == 0u)) {
+        if (frame <= 5u) {
             mdk::log3dsPrintf("frame %lu elapsed=%.4f steps=%u feet=(%.1f,%.1f,%.1f) "
                               "yaw=%.1f health=%d eye=(%.1f,%.1f,%.1f) voices=%d plays=%d "
                               "objects=%d obj=%dc/%dd peak=%dc/%dd",
@@ -3934,63 +3757,6 @@ int main(int argc, char** argv) {
                               runtime ? (int)runtime->objectCount() : 0,
                               (int)objectCorners, (int)objectDraws,
                               (int)objectPeakCorners, (int)objectPeakDraws);
-        }
-        if (audioReady && mdk::log3dsPeriodic() && (frame % 60u) == 0u) {
-            // The sink's own ledger, on the same cadence as the frame line. The
-            // frame number is repeated HERE on purpose (review F1 of
-            // run-20261106-062909): the only reading that discriminates a healthy
-            // sink from a wrong-nsamples one is `submitted` against what the clock
-            // owes, so the two numbers have to be on the same line to be divided.
-            // `done` cannot carry that test: submitted - done == inDsp <= 4 by
-            // construction. See audio_3ds.h.
-            //
-            // AND THE CLOCK IS ON THE LINE TOO, as seconds (review F3). Dividing
-            // `submitted` by frame x 735/882 was the frame count standing in for
-            // the clock, and it is only the same number at exactly 60 fps; at 30
-            // fps a half-rate sink scores 1.00 that way. `secs` is the sum of the
-            // elapsed values the mixer actually received, so the rate test is
-            // submitted/(secs x 50) and is frame-rate independent by construction.
-            //
-            // THREE DECIMAL PLACES, not two (review-10 F1). This line is also the
-            // instrument for the sink's own frame counter, and that test is a
-            // SLOPE between two rows: dpf is an integer, so the width of the
-            // result is set entirely by the rounding of `secs`. At 2 dp a 47 s
-            // window carries +/-0.005 s at each end, which is +/-0.043/s — wider
-            // than the residual the slope exists to resolve, and the reason three
-            // batches read a fixed 20 ms start offset as instrument noise. At 3 dp
-            // the same band is +/-0.004/s, which is finer than the clock pair's own
-            // scatter and so is no longer the limiting error.
-            const mdk::AudioStats st = mdk::audioStats();
-            mdk::log3dsPrintf("audio: frame=%lu secs=%.3f submitted=%u done=%u dropped=%u "
-                              "requeued=%u inDsp=%d dspframes=%u dspdropped=%u",
-                              (unsigned long)frame, audioClock, (unsigned)st.submitted,
-                              (unsigned)st.done,
-                              (unsigned)st.dropped, (unsigned)st.requeued, st.inDsp,
-                              (unsigned)st.dspFrames, (unsigned)st.dspDropped);
-            if (mdk::kDspAudio) {
-                // THE DSP PATH'S LEDGER (audio_dsp_3ds.h). The line above counts the
-                // software sink and reads 0 here; this one says what the DSP path did:
-                // voices bound, evicted, rebound, cut and left to finish; the sample
-                // arena; the music stream (buffers queued, drained-channel restarts =
-                // underruns); and ndsp's own frame counters.
-                const mdk::AudioDspStats ds = mdk::audioDspStats();
-                // `frame` goes in as %u and not as the sink line's %lu: that line's
-                // `(unsigned long)frame, audioClock` argument pair is the one
-                // tests/scripts/ndsp_sink_test.sh pins, and a second spelling of it
-                // here would let a mutant of the first pass unseen.
-                mdk::log3dsPrintf("audio: dsp frame=%u secs=%.3f bound=%d binds=%u evicted=%u "
-                                  "rebound=%u cut=%u drained=%u arena=%u/%u fills=%u "
-                                  "arenaevict=%u nospace=%u music=%d queued=%u restarts=%u "
-                                  "dspframes=%u dspdropped=%u",
-                                  (unsigned)frame, audioClock, (int)ds.bound, (unsigned)ds.binds,
-                                  (unsigned)ds.evictions, (unsigned)ds.rebinds,
-                                  (unsigned)ds.cuts, (unsigned)ds.drains,
-                                  (unsigned)ds.arenaUsed, (unsigned)ds.arenaBytes,
-                                  (unsigned)ds.cacheFills, (unsigned)ds.cacheEvictions,
-                                  (unsigned)ds.cacheMisses, (int)ds.musicActive,
-                                  (unsigned)ds.musicQueued, (unsigned)ds.musicRestarts,
-                                  (unsigned)ds.dspFrames, (unsigned)ds.dspDropped);
-            }
         }
 
         if (g_frameBudget != 0 && frame >= g_frameBudget) {
@@ -4150,64 +3916,7 @@ int main(int argc, char** argv) {
     //    its bank pins given back WHILE the bank is alive; the software sink's ndsp
     //    channel), then the runtime and its mixer. The next level opens them again.
     music.reset();
-    if (mdk::kDspAudio) {
-        mdk::audioDspClose();
-    } else {
-        mdk::audioClose();
-    }
-    // THE HD RULE'S PROOF, once per level (docs/HD_TEXTURES_3DS_SPEC.md 3.1):
-    // the lookup's content hashes, the HD answers made from SD anyway, the SD
-    // copies made for a texture with a linked HD copy while the toggle was on
-    // (all three must be 0 with the toggle on), and the HD copies that were late.
-    {
-        MdkC3dFirstUse made;
-        mdk_render_c3d_first_use(renderer, &made);
-        mdk::log3dsPrintf("hdrule: level %d hd=%d pack=%d nameMisses=%d (first %s) "
-                          "sizeRefused=%d hdAnimated=%d",
-                          (int)flow.state().level, (int)enhancedToggles.enableHdTextures,
-                          hdSource.pack ? 1 : 0, (int)g_lookupNameMisses,
-                          g_lookupNameMisses > 0 ? g_lookupNameMissFirst : "-",
-                          (int)g_lookupSizeRefused, (int)g_lookupHdAnimated);
-        mdk::log3dsPrintf("hdrule: level %d hd=%d pack=%d hashes=%d (%.1f ms, first %s) "
-                          "hdAnsweredSd=%d coveredSdMade=%d lateTextures=%d lateDraws=%d "
-                          "blankDraws=%d hdImported=%d hdEvicted=%d residentPeak=%u "
-                          "(backend counts since boot)",
-                          (int)flow.state().level, (int)enhancedToggles.enableHdTextures,
-                          hdSource.pack ? 1 : 0, (int)g_lookupHashes, g_lookupHashMs,
-                          g_lookupHashes > 0 ? g_lookupHashFirst : "-",
-                          (int)surfaces.sourceStats().hdAnsweredSd, (int)made.hdCoveredSdMade,
-                          (int)made.hdLateTextures, (int)made.hdLateDraws,
-                          (int)made.hdBlankDraws, (int)made.hdImported, (int)made.hdEvicted,
-                          (unsigned)made.hdResidentPeak);
-        // The late copies: how many landed after a draw wanted them, their frames
-        // late (sum, worst with its file and wanted frame), the first eight.
-        char rows[8 * 16];
-        size_t at = 0;
-        rows[0] = '\0';
-        for (int32_t i = 0; i < made.hdLateLanded && i < 8 && at < sizeof(rows); i++) {
-            at += (size_t)snprintf(rows + at, sizeof(rows) - at, "%s%d+%d", i ? "," : "",
-                                   (int)made.hdLateRows[i][0], (int)made.hdLateRows[i][1]);
-        }
-        mdk::log3dsPrintf("hdrule: late landed=%d frames=%d worst=%d (wanted frame %d, %s) "
-                          "first=%s",
-                          (int)made.hdLateLanded, (int)made.hdLateFramesSum,
-                          (int)made.hdLateFramesMax, (int)made.hdLateWorstFrame,
-                          made.hdLateWorst[0] ? made.hdLateWorst : "-", rows[0] ? rows : "-");
-        mdk::log3dsPrintf("hdrule: set cap=%d pinned=%d resident=%d bytes=%u givenUp=%d "
-                          "stampsSkipped=%d linkedAfterSd=%d",
-                          (int)made.hdTopCap, (int)made.hdPinned, (int)made.hdPinnedResident,
-                          (unsigned)made.hdPinnedBytes, (int)made.hdPinFailed,
-                          (int)made.hdStampsSkipped, (int)made.hdLinkedAfterSd);
-        mdk::log3dsPrintf("hdrule: margin firsts=%d min=%d frames (at frame %d, %s) under30=%d",
-                          (int)made.hdSlackFirsts, (int)made.hdSlackMin, (int)made.hdSlackMinFrame,
-                          made.hdSlackWorst[0] ? made.hdSlackWorst : "-",
-                          (int)made.hdSlackUnder30);
-        g_lookupHashes = 0;
-        g_lookupHashMs = 0.0;
-        g_lookupNameMisses = 0;
-        g_lookupSizeRefused = 0;
-        g_lookupHdAnimated = 0;
-    }
+    mdk::audioDspClose();
     // The level's HD set goes with the level (its copies are nobody's from here
     // and the pump frees them).
     mdk_render_pin_hd_set(renderer, nullptr, nullptr, 0);
@@ -4240,7 +3949,6 @@ int main(int argc, char** argv) {
         // The heap and linear figures with no level loaded: a level-to-level run
         // returns to the same figures here (mem[run-start] is the first).
         heapProbe("level-teardown");
-        firstLevel = false;
         continue;
     }
     break;
@@ -4248,7 +3956,6 @@ int main(int argc, char** argv) {
 
     printf("[3ds] exiting after %lu frames\n", (unsigned long)frame);
 
-    mdk::harnessProfileReport();
     mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
                       (unsigned)steps, exitReason);
     aptUnhook(&s_lifecycleCookie);

@@ -1,0 +1,16 @@
+row: 3ds.harness-hooks
+verified-at: 5eb69f3
+moved: 2026-11-25, branch cleanup/immaculate-hd
+
+The harness hooks were built and verified at 5eb69f3 (mdk_3ds/src/platform/
+harness_3ds.{h,cpp}: the AUTOQUIT deadline armed on the first frame, the atexit
+chain-load to netload_stub, the CIA's refusal of a harness build). They are not
+on this branch: the harness -- harness_3ds.{h,cpp}, the Makefile's AUTOQUIT /
+PROFILE / CAPTURE / LEVEL / WALK / HDROMFS flags, mdk_3ds/tools/hw_cycle.sh and
+its self-test -- lives whole on branches harness/3ds-profiling and
+fix/3ds-hd-only. The source as verified:
+
+    git show 5eb69f3:mdk_3ds/src/platform/harness_3ds.cpp
+    git show harness/3ds-profiling:mdk_3ds/src/platform/harness_3ds.cpp
+
+build_cia.sh still refuses an ELF that carries a harness literal.
