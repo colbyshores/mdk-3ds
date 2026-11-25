@@ -2668,12 +2668,24 @@ int main(int argc, char** argv) {
         const double hold0 = nowSeconds();
         int32_t made = 0;
         int32_t pending = mdk_render_hd_set_pending(renderer);
-        while (pending > 0 && nowSeconds() - hold0 < 60.0) {
+        // A wait that makes nothing for a second (no file read or imported, the
+        // count unchanged: what is left cannot be read) ends the hold, as does a
+        // minute in all, or the applet loop saying stop.
+        int32_t idle = 0;
+        while (pending > 0 && idle < 20 && nowSeconds() - hold0 < 60.0) {
             if (!aptMainLoop()) {
                 break;
             }
-            made += mdk_render_settle_streams(renderer, 50);
+            const int32_t slice = mdk_render_settle_streams(renderer, 50);
+            const int32_t before = pending;
+            made += slice;
             pending = mdk_render_hd_set_pending(renderer);
+            if (slice == 0 && pending == before) {
+                idle++;
+                svcSleepThread(50000000LL);
+            } else {
+                idle = 0;
+            }
         }
         made += mdk_render_settle_streams(renderer, 2000);   // the packed originals asked
         MdkC3dFirstUse state;

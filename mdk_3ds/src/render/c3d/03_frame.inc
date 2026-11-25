@@ -2499,6 +2499,9 @@ void mdk_render_set_enhanced_toggles(MdkRenderer rr, const mdk::EnhancedToggles*
     if (!r || !toggles) {
         return;
     }
+    if (!r->toggles.enableHdTextures && toggles->enableHdTextures) {
+        r->hdFreeOriginals = true;
+    }
     r->toggles = *toggles;
     mdk::pica::dialledLighting(r->rig, r->toggles, &r->lighting);
     applyFramePacing(r);

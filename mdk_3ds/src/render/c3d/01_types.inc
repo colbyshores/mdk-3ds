@@ -1012,6 +1012,9 @@ struct RendererC3D {
     // dropped (hdUnpack), and no copy of it is evicted in play. hdTopCap: the
     // smallest cap in the set, for the log (0: none dropped).
     bool hdPinnedMode = false;
+    // The toggle came back on: the originals the HD-off stretch made for HD-only
+    // textures are given back once their set copies are resident (04_textures.inc).
+    bool hdFreeOriginals = false;
     // Stamps (bullet holes) not drawn on an HD-only surface (05_resources.inc).
     int32_t hdStampsSkipped = 0;
     int32_t hdTopCap = 0;

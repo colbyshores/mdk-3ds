@@ -1488,12 +1488,45 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     }
     // THE SET COMES BACK WITH THE TOGGLE: a pinned copy the toggle-off freed is
     // asked for again (the frontend holds until it is resident).
+    // So is every other linked copy the toggle freed (the HUD's pictures, Kurt's
+    // non-pack frames), once, so the same hold brings them back before their
+    // originals would stand in (measured without this: 3-6 frames of SD HUD).
     if (renderer->hdPinnedMode) {
         for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
-            if (renderer->hdCopies[i].pinned && renderer->hdCopies[i].state == HdCopy::None) {
+            const HdCopy& copy = renderer->hdCopies[i];
+            if (copy.state == HdCopy::None &&
+                (copy.pinned || (renderer->hdFreeOriginals && copy.links > 0))) {
                 requestHdCopy(renderer, (int32_t)i);
             }
         }
+    }
+    // AND THE ORIGINALS GO: the packed originals the HD-off stretch made for
+    // HD-only textures are never drawn while the set is on, so each is given
+    // back once its pinned copy is resident (measured without this: 1.9 MB of
+    // linear left after a toggle back on, against 7.2 MB at level start). At a
+    // frame boundary: C3D_FrameBegin has waited for the last frame (P3), and
+    // from here every draw of the texture binds its HD copy instead.
+    if (renderer->hdFreeOriginals && !renderer->gpuPending) {
+        bool waiting = false;
+        for (size_t i = 0; i < renderer->textures.size(); i++) {
+            C3dTexture& texture = renderer->textures[i];
+            if (!texture.hdOnly || !texture.valid || texture.releasePending ||
+                texture.hdCopy < 0 || (size_t)texture.hdCopy >= renderer->hdCopies.size()) {
+                continue;
+            }
+            const HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
+            if (!copy.pinned) {
+                continue;
+            }
+            if (copy.state != HdCopy::Resident) {
+                waiting = true;
+                continue;
+            }
+            C3D_TexDelete(&texture.tex);
+            texture.valid = false;
+            renderer->texturesEvicted++;
+        }
+        renderer->hdFreeOriginals = waiting;
     }
     // (0) NOBODY'S COPIES. A copy no texture links to any more (a level ended, a
     // sprite frame was trimmed) is cancelled if it was only asked for (a read in
@@ -2039,6 +2072,9 @@ int32_t mdk_render_hd_set_pending(MdkRenderer rr) {
         if (copy.pinned && copy.state != HdCopy::Resident &&
             !(copy.state == HdCopy::Failed && (copy.broken || copy.failures >= kHdMaxFailures))) {
             pending++;
+        } else if (!copy.pinned && copy.links > 0 &&
+                   (copy.state == HdCopy::Queued || copy.state == HdCopy::Reading)) {
+            pending++;   // a linked copy asked for (the HUD's): held for too
         }
     }
     return pending;
