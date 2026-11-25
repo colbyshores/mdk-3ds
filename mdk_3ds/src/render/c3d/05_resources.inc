@@ -10,8 +10,8 @@ static void logCreation(RendererC3D* renderer, uint8_t kind, int32_t id) {
     renderer->creationLog.push_back(created);
 }
 
-MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
-                                              const uint8_t* paletteRgba) {
+static MdkTextureId createIndexTexture(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
+                                       const uint8_t* paletteRgba, bool streamed) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !px) {
         return -1;
@@ -92,6 +92,17 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
     const int32_t id = acquireTextureSlot(renderer);
     C3dTexture& slot = renderer->textures[(size_t)id];
     slot = std::move(texture);
+    if (streamed) {
+        // A STREAMED picture from its creation (mdk_render_create_streamed_texture):
+        // made by makeStreamed (RGB565, no mips) at its first draw, and never
+        // through the chunked expansion -- whose start allocates and zeroes a whole
+        // RGBA8 chain (~2.8 MB for the menu video's 600x360) that a picture turned
+        // streamed a call later never used (the splash-to-menu frame, Old 3DS).
+        slot.streamed = true;
+        slot.streamDirty = true;
+        logCreation(renderer, 0, id);
+        return id;
+    }
     // A large indexed texture expands in slices across frames instead of
     // in one make (04_textures.inc, THE CHUNKED EXPANSION); the id is good
     // now, the GPU copy lands at a frame boundary or on first draw.
@@ -117,6 +128,16 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
     }
     logCreation(renderer, 0, id);
     return id;
+}
+
+MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
+                                              const uint8_t* paletteRgba) {
+    return createIndexTexture(r, w, h, px, paletteRgba, false);
+}
+
+MdkTextureId mdk_render_create_streamed_texture(MdkRenderer r, int32_t w, int32_t h,
+                                                const uint8_t* px, const uint8_t* paletteRgba) {
+    return createIndexTexture(r, w, h, px, paletteRgba, true);
 }
 
 void mdk_render_prepare_texture(MdkRenderer r, MdkTextureId t) {

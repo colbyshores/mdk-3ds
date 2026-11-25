@@ -49,6 +49,11 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t, int32_t, cons
     return 0;
 }
 
+MdkTextureId mdk_render_create_streamed_texture(MdkRenderer r, int32_t w, int32_t h,
+                                                const uint8_t* px, const uint8_t* paletteRgba) {
+    return mdk_render_create_index_texture(r, w, h, px, paletteRgba);
+}
+
 int mdk_test_prepareCalls = 0;
 void mdk_render_prepare_texture(MdkRenderer, MdkTextureId) {
     mdk_test_prepareCalls++;

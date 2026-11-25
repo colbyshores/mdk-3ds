@@ -145,6 +145,13 @@ mdk::MdkCapabilities mdk_render_capabilities(MdkRenderer r);
 MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t width, int32_t height,
                                               const uint8_t* indices, const uint8_t* paletteRgba);
 
+// The same, for a picture whose pixels and palette will be replaced as it plays
+// (a movie frame, the splash: mdk_render_update_paletted): a backend that keeps
+// such a picture in a cheaper streamed store makes it so from the start, instead
+// of preparing the ordinary store first. Elsewhere identical to the above.
+MdkTextureId mdk_render_create_streamed_texture(MdkRenderer r, int32_t width, int32_t height,
+                                                const uint8_t* indices, const uint8_t* paletteRgba);
+
 // Ask the backend to have a texture's GPU copy ready before it is drawn.
 // On the 3DS a large indexed texture whose copy was evicted is re-expanded
 // in slices across frames once prepared (its draw finishes the make

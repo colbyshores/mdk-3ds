@@ -1163,3 +1163,17 @@ vs 35/67/75: no 16-bit pack stage); menu p99 44.8 -> 33.5 ms. Still open: one
 96 ms frame at the transition (front 569) -- the video picture's create still
 starts a chunked expansion (a ~2.8 MB malloc and zero-fill) that
 update_paletted drops a call later, plus the first video frame.
+
+### MENU VIDEO PICTURE CREATED STREAMED (2026-11-24); deferral experiment reverted
+
+**What.** New seam `mdk_render_create_streamed_texture`: movie_view's
+makeImage (the menu video, the splash's two pictures) creates its picture
+already streamed, so the 3DS backend never starts the chunked expansion that
+update_paletted then dropped (a ~2.8 MB RGBA8 chain allocated and zeroed).
+Vulkan and the test stubs forward to create_index_texture.
+
+**Evidence.** Old 3DS no-LEVEL menu (.git/hw-logs/2026-11-24-menu6.log): the
+splash-to-menu frame 96.1 -> 78.4 ms; only the atlases and MDKOPT expand.
+Tried first and REVERTED (menu5): deferring every large creation's start to
+the next frame boundary -- transition 79.0 ms but front frame 1 275 -> 332 ms
+(the startup pictures' starts moved out of load into the first frame).

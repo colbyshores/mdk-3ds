@@ -120,6 +120,11 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t w, int32_t h, 
     return addTexture(texture);
 }
 
+MdkTextureId mdk_render_create_streamed_texture(MdkRenderer r, int32_t w, int32_t h,
+                                                const uint8_t* px, const uint8_t* paletteRgba) {
+    return mdk_render_create_index_texture(r, w, h, px, paletteRgba);
+}
+
 MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t w, int32_t h,
                                                   const uint8_t* t3x, int32_t size) {
     if (g_backend.refuseCompressed || !t3x || size <= 0) {

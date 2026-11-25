@@ -25,7 +25,7 @@ bool makeImage(MdkRenderer renderer, int32_t width, int32_t height, const uint8_
         return false;
     }
     const int32_t textureId =
-        mdk_render_create_index_texture(renderer, width, height, indices, palette.rgba());
+        mdk_render_create_streamed_texture(renderer, width, height, indices, palette.rgba());
     if (textureId < 0) {
         mdk_render_release_palette(renderer, paletteId);
         return false;
