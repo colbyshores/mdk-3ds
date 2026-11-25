@@ -15,6 +15,8 @@
 
 #include "audio/audio_3ds.h"
 #include "audio/audio_dsp_3ds.h"
+#include "audio/sound_bank.h"
+#include "audio/sound_mixer.h"
 #include "fall/fall_screen.h"
 #include "formats/bni.h"
 #include "formats/file_system.h"
@@ -157,6 +159,68 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     }
 
     std::unique_ptr<menu::MainMenu> mainMenu(new menu::MainMenu());
+    // THE MAIN MENU'S SONGS (MainMenu::song: MAINSONG, OPTSONG under the options),
+    // on the DSP path exactly as a level's music: a bank that knows only the two
+    // streamed tracks (romfs:/music/menu, mdk_3ds/music/menu), a mixer whose music
+    // voice the VoiceBinder streams on ndsp 23/22, the settings' master and music
+    // volumes and the music filter. Opened with the menu screen and closed -- the
+    // worker joined, its linear buffers freed -- when the flow leaves it (C#
+    // Game.Show's StopAll), so nothing of it is allocated once a level loads.
+    std::unique_ptr<audio::SoundBank> menuBank;
+    std::unique_ptr<audio::SoundMixer> menuMixer;
+    bool menuAudio = false;
+    int32_t menuVoice = 0;
+    std::string menuSong;
+    uint32_t menuStarts = 0;
+    auto closeMenuMusic = [&]() {
+        if (menuAudio) {
+            audioDspClose();
+            menuAudio = false;
+        }
+        menuMixer.reset();
+        menuBank.reset();
+        menuVoice = 0;
+        menuSong.clear();
+    };
+    auto openMenuMusic = [&]() {
+        closeMenuMusic();
+        menuBank.reset(new audio::SoundBank());
+        const int32_t tracks = audioDspMusicRegisterFolder(menuBank.get(), "romfs:/music/menu");
+        menuMixer.reset(new audio::SoundMixer(menuBank.get()));
+        menuAudio = tracks > 0 && audioDspOpen();
+        menuMixer->device().setSampleMix(false);
+        front->settings->applyAudio(&menuMixer->device());
+        menuStarts = mainMenu->songStarts() - 1u;   // the song the menu opened with starts
+    };
+    // One frame of it (the fall's order: mixer, the DSP path, the device). A new
+    // song, or the same one started again, stops the old voice and plays the
+    // song from its start, looping, at full volume on the music bus (C#
+    // `ui.Play(song, Bus.Music)`). The settings are applied every frame: the
+    // options' volume and filter changes are heard at once, as in the C#.
+    auto menuMusicFrame = [&](float elapsed) {
+        if (!menuMixer) {
+            return;
+        }
+        const char* want = mainMenu->song();
+        const uint32_t starts = mainMenu->songStarts();
+        if (std::string(want ? want : "") != menuSong || starts != menuStarts) {
+            if (menuVoice != 0) {
+                menuMixer->stopVoice(menuVoice);
+            }
+            menuVoice = 0;
+            menuSong = want ? want : "";
+            menuStarts = starts;
+            if (want) {
+                menuVoice = menuMixer->playMusic(want);
+                menuMixer->setVolume(menuVoice, audio::SoundMixer::kFullVolume);
+            }
+            log3dsPrintf("menu: song %s", want ? want : "none");
+        }
+        front->settings->applyAudio(&menuMixer->device());
+        menuMixer->update(elapsed);
+        audioDspFrame(*menuMixer);
+        menuMixer->device().update(elapsed);
+    };
     // THE STATISTICS AND THE BRIEFING (package #20b): the C#'s StatsScreen, all its
     // pages after a level, the briefing alone for a new game. Its renderer objects
     // (the pages' images, the heads' model) are this function's scope's; its sound
@@ -309,6 +373,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
                          lent ? "" : " (no file thread: the video and slides read at once)");
             mainMenu->open(&ui->fti, &flow.state(), menuSavesOf(front->saves), false,
                            menu::MenuPage::Main);
+            openMenuMusic();
             splashView.open(front->renderer, mainMenu->splash(), true);
         } else if (shown == flow::Screen::EndMovie) {
             // C# EndMovie: MDKEND.FLC, then MDKBZK.MVE, then the menu. FINISH.BNI's
@@ -389,6 +454,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             fall->frame(steer, elapsed);
         } else if (screen == flow::Screen::Menu) {
             next = mainMenu->frame(keys, elapsed);
+            menuMusicFrame(elapsed);
             movieView.sync(front->renderer, mainMenu->video(), halfRate);
             // The lent reader's slide load, for the log: its start and its end.
             if (mainMenu->slideshow().loading() != slidesLoading) {
@@ -513,6 +579,8 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         // port lacks skipped.
         if (screen == flow::Screen::Fall) {
             closeFall();
+        } else if (screen == flow::Screen::Menu) {
+            closeMenuMusic();
         } else if (screen == flow::Screen::SavePrompt) {
             savePrompt.close();
         } else if (screen != flow::Screen::Menu) {
@@ -555,6 +623,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     }
     closeFall();
     closeStats();
+    closeMenuMusic();
     if (endMovie) {
         endMovie->close();
     }

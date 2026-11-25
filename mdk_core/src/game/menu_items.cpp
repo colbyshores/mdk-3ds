@@ -338,6 +338,11 @@ void MenuItems::showOptions(int32_t back) {
         row++;
     }
     addItem("Back", back);
+    // C# `if (_songVoice == 0) _songVoice = _ui.Play(_song, Bus.Music)`.
+    if (!optionsSong_) {
+        optionsSong_ = true;
+        songStarts_++;
+    }
     print();
 }
 

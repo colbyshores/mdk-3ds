@@ -93,6 +93,9 @@ bool audioDspIsOpen();
 // (SoundBank::addStreamedMusic) so LevelMusic's tracks are never read or decoded
 // by the bank. Cold: call once a level, before audioDspOpen. The count, logged.
 int32_t audioDspMusicRegister(audio::SoundBank* bank, int32_t level);
+// The same for any folder of tracks (the main menu's: romfs:/music/menu,
+// MAINSONG and OPTSONG).
+int32_t audioDspMusicRegisterFolder(audio::SoundBank* bank, const char* folder);
 
 // A track LevelMusic is about to start (the loading arena's, the door bubble's
 // nearest): the worker opens it and reads its first two seconds ahead, so the

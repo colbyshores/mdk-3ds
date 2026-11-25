@@ -2011,3 +2011,36 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   levels' median gain ignores the menu, so every level track is byte-identical
   (re-run checked: no level .dsp changed); CONVERT_REPORT's rows now name the folder.
 - **Commit:** this one.
+
+## 2026-11-25 -- the 3DS main menu plays MAINSONG, and OPTSONG under its options (branch perf/3ds-memory)
+
+- **Owner (relayed):** no music at the title screen on play-08f80f9c; play the two
+  songs exactly as the game does.
+- **Behaviour, from the C# (9708e8d6^: Menu/MainMenu.cs, Menu/MenuItems.cs,
+  Flow/Game.cs):** MAINSONG starts when the main menu opens (under the INTRO1A
+  splash too), loops forever on the music bus at full gain; the options stop it and
+  start OPTSONG once (it plays on across the options' own pages); going back stops
+  OPTSONG and starts MAINSONG again from its beginning; any screen change stops
+  everything (Game.Show's StopAll), so the briefing, the fall and the level start
+  silent of it, and the menu reached again (from a level, a death, the statistics)
+  starts MAINSONG afresh. Volumes are the settings' master and music bus gains,
+  applied every frame so the Audio page is heard at once.
+- **What:** mdk_core: `MainMenu::song()` / `songStarts()` and MenuItems'
+  `optionsSong()` (the C#'s two _songVoice fields as state; menu_tests pin the
+  sequence: open, options, an options page and back, back to main, the quit page,
+  opening on the options). 3DS: menu_screens_3ds.cpp opens the DSP path with the menu
+  screen -- a bank that knows only romfs:/music/menu's two streamed tracks, a mixer,
+  the binder's music channels -- plays the song the menu names, and closes it (worker
+  joined, buffers freed) when the flow leaves the menu, before the next screen opens
+  its own audio. `audioDspMusicRegisterFolder`; the folder is forgotten at close.
+  OPEN_ITEMS updated.
+- **Not done:** the Linux frontend's menu stays silent (it has no streamed-music path;
+  the core state is there for it); OPTSONG under the in-level pause menu's options (the
+  C# PauseMenu shares MenuItems, so the original's pause options played it too);
+  SND_PUSH and OPTBUTT (out of scope); the movies' sound (not wired on either target).
+- **Evidence:** menu_tests; tests/formats, tests/scripts pass. Hardware
+  (old3ds-lan167, throwaway harness pressing keys, `hw-logs/2026-11-25-mm.log.partial`):
+  menu -> `music: MAINSONG on ch23` -> options -> `OPTSONG` -> an options page and back
+  (no restart) -> back -> `MAINSONG` again -> New Game -> briefing, fall (menu audio
+  closed) -> level 7 `TRACK11 on ch23` -> MAIN MENU -> `MAINSONG` again.
+- **Commit:** this one.

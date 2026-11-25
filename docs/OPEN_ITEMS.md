@@ -1614,9 +1614,11 @@ Still open:
 - **The 3DS's volumes are now the C#'s defaults** (master 80, music 50, effects 70: the mix
   at 0.8 x 0.5 and 0.8 x 0.7 of what it was). It is the oracle's behaviour and the Audio page
   raises it; the owner should hear it on the console.
-- **The menus are silent**: SND_PUSH on a move, OPTSONG under the options, OPTBUTT on a change,
-  MAINSONG under the menu. (TELETYPE in the briefing plays since #20b: the briefing is
-  StatsScreen's page.)
+- **The menus' sound effects are silent**: SND_PUSH on a move, OPTBUTT on a change. (TELETYPE
+  in the briefing plays since #20b: the briefing is StatsScreen's page.) Since 2026-11-25 the
+  3DS main menu plays MAINSONG, and OPTSONG under its options (perf/3ds-memory: MainMenu::song,
+  streamed as DSP-ADPCM); the Linux frontend's menu is still silent, and OPTSONG under the
+  in-level pause menu's options (the C#'s PauseMenu shares MenuItems) is not played.
 - ~~**Not drawn behind the menu**~~: MDK12.FLC, the slideshow it starts and the INTRO1A
   splash are drawn since #20c and the integration of #20b and #20c (see below).
 - **The saves are #19's**: `menu::MenuSaves` (list, peek, load) is null on both frontends, so
@@ -2285,7 +2287,7 @@ Still open:
   pie.flc; the MVE path (frame time, sound pacing) has no golden, only `mve_audio_tests`.
 - **The MVE's sound is not played**: streamed voices are not ported on either frontend
   (`audio/sound_device.h`), so `VideoAudio`'s hooks are null and the movie is paced by its frame
-  time alone. FINISH.BNI's sounds (EndSounds) and the menus' MAINSONG are not wired either.
+  time alone. FINISH.BNI's sounds (EndSounds) are not wired either.
 - **An MVE is read whole** before it plays (as `formats::Mve` takes it); its frames stream one
   at a time. A 3DS that met a large MDKBZK.MVE would need the decoder to read by chunk.
 - **The 1996 demo's loading screens** (`ui.Beta.LoadingScreen`) are not ported: the frontends

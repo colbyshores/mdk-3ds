@@ -42,8 +42,8 @@ void MainMenu::setMedia(const formats::Bni* options, const formats::MdkData* dat
     data_ = data;
 }
 
-// The C# constructor (the song is not ported: main_menu.h). The video's Finished
-// starts the slideshow (C# `_video.Finished += _slideshow.Start`).
+// The C# constructor: MAINSONG starts (`_songVoice = ui.Play(_song, Bus.Music)`).
+// The video's Finished starts the slideshow (C# `_video.Finished += _slideshow.Start`).
 void MainMenu::open(const formats::Fti* fti, flow::GameState* state, const MenuSaves& saves,
                     bool hasBeta, MenuPage first) {
     fti_ = fti;
@@ -62,12 +62,21 @@ void MainMenu::open(const formats::Fti* fti, flow::GameState* state, const MenuS
         splash_.open(*options_);
     }
     state_->splash = false;
+    mainSong_ = true;
+    songStarts_++;
     const int32_t index = flow::indexOf(state_->level);
     levelIndex_ = index > 0 ? index : 0;
     showMain();
     if (first == MenuPage::Options) {
         showOptions();
     }
+}
+
+const char* MainMenu::song() const {
+    if (items_.optionsSong()) {
+        return "OPTSONG";
+    }
+    return mainSong_ ? "MAINSONG" : nullptr;
 }
 
 const char* MainMenu::pageName() const {
@@ -220,8 +229,14 @@ void MainMenu::act(const Event& event) {
         case ActQuit:
         case ActQuitYes: next_ = flow::Event::Quit; break;
         case ActQuitNo:
-        case ActBack:
-        case ActOptionsBack: showMain(); break;
+        case ActBack: showMain(); break;
+        case ActOptionsBack:
+            // C# ShowOptions' back: `_songVoice = _ui.Play(_song, Bus.Music)`, then
+            // ShowMain (whose Clear stops the options' song).
+            mainSong_ = true;
+            songStarts_++;
+            showMain();
+            break;
         default: break;
     }
 }
@@ -316,9 +331,10 @@ void MainMenu::load(const std::string& name) {
     next_ = beforeLevel ? flow::Event::Briefing : flow::Event::Play;
 }
 
-// C# ShowOptions (MAINSONG/OPTSONG are not ported).
+// C# ShowOptions: MAINSONG stops while the options play OPTSONG.
 void MainMenu::showOptions() {
     page_ = Page::Other;
+    mainSong_ = false;
     items_.showOptions(ActOptionsBack);
 }
 

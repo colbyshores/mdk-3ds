@@ -537,6 +537,49 @@ void testSavesAndBeta(Fonts* fonts) {
     MENU_CHECK(menu.items().selected() == 2 && menu.levelIndex() == 1);
 }
 
+// THE MENU'S SONGS (C# MainMenu._song / MenuItems._song): MAINSONG from open,
+// OPTSONG on the options (once, across their pages), MAINSONG from its start
+// again when they go back; the quit page and its No change nothing.
+void testTheMenuSongs(Fonts* fonts) {
+    GameSettings settings;
+    flow::GameState state;
+    std::string printed;
+    menu::MainMenu menu;
+    setUp(&menu.items(), fonts, &settings, &printed);
+    menu.open(&fonts->fti, &state, menu::MenuSaves(), false, menu::MenuPage::Main);
+    MENU_CHECK(menu.song() != nullptr && strcmp(menu.song(), "MAINSONG") == 0);
+    MENU_CHECK(menu.songStarts() == 1);
+    const uint32_t opened = menu.songStarts();
+    menu::Keys down;
+    down.down = true;
+    menu::Keys accept;
+    accept.accept = true;
+    menu::Keys back;
+    back.back = true;
+    // New Game | Level: 1 | Saved Game | Options | Quit: Options is the fourth.
+    menu.frame(down, kStep);
+    menu.frame(down, kStep);
+    menu.frame(down, kStep);
+    menu.frame(accept, kStep);
+    MENU_CHECK(strcmp(menu.song(), "OPTSONG") == 0 && menu.songStarts() == opened + 1);
+    // An options page and back to the options: the song plays on.
+    menu.frame(accept, kStep);
+    menu.frame(back, kStep);
+    MENU_CHECK(strcmp(menu.song(), "OPTSONG") == 0 && menu.songStarts() == opened + 1);
+    // Back to the main page: MAINSONG again, from its start.
+    menu.frame(back, kStep);
+    MENU_CHECK(strcmp(menu.song(), "MAINSONG") == 0 && menu.songStarts() == opened + 2);
+    // Esc on the main page: "Really Quit?"; No goes back with the song untouched.
+    menu.frame(back, kStep);
+    menu.frame(back, kStep);
+    MENU_CHECK(strcmp(menu.song(), "MAINSONG") == 0 && menu.songStarts() == opened + 2);
+    // Opened on the options page: OPTSONG at once, MAINSONG not playing.
+    menu::MainMenu onOptions;
+    setUp(&onOptions.items(), fonts, &settings, &printed);
+    onOptions.open(&fonts->fti, &state, menu::MenuSaves(), false, menu::MenuPage::Options);
+    MENU_CHECK(strcmp(onOptions.song(), "OPTSONG") == 0);
+}
+
 } // namespace
 
 std::string menuDump(const formats::MdkData& data, const char* section) {
@@ -576,6 +619,7 @@ int runMenuTests(const formats::MdkData& data) {
         testConsoleConfig();
         testEnhancedMenuRows();
         testSavesAndBeta(fonts);
+        testTheMenuSongs(fonts);
     }
     delete fonts;
     return failures;

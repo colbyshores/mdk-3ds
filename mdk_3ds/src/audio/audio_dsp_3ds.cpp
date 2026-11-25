@@ -1090,6 +1090,8 @@ void audioDspClose() {
         g_primes[p] = MusicPrime();
     }
     g_binder.reset();
+    // The folder was this opening's (a level's, the menu's): the next names its own.
+    g_musicFolder[0] = '\0';
     ndspExit();
     // The DSP has stopped: its memory can go.
     linearFree(g_arena);
@@ -1108,8 +1110,15 @@ void audioDspClose() {
 bool audioDspIsOpen() { return g_live; }
 
 int32_t audioDspMusicRegister(audio::SoundBank* bank, int32_t level) {
-    // Cold (the level's load): the folder listed once, each track's header read.
-    snprintf(g_musicFolder, sizeof(g_musicFolder), "romfs:/music/level%d", (int)level);
+    char folder[kMusicPathBytes];
+    snprintf(folder, sizeof(folder), "romfs:/music/level%d", (int)level);
+    return audioDspMusicRegisterFolder(bank, folder);
+}
+
+int32_t audioDspMusicRegisterFolder(audio::SoundBank* bank, const char* folder) {
+    // Cold (a level's load, the main menu's opening): the folder listed once,
+    // each track's header read.
+    snprintf(g_musicFolder, sizeof(g_musicFolder), "%s", folder);
     DIR* dir = opendir(g_musicFolder);
     if (dir == nullptr) {
         log3dsPrintf("music: %s is missing -- the level's music plays from the bank, unstreamed "

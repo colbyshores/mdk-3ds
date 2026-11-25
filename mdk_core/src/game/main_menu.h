@@ -38,7 +38,8 @@
 // While the bare first slide shows, the items are hidden (ItemsShown).
 //
 // NOT PORTED, WITH CAUSE:
-//   * MAINSONG and the menus' sounds (menu_items.h).
+//   * The menus' sounds (menu_items.h). MAINSONG and OPTSONG are ported as
+//     STATE (song, songStarts below) that a frontend plays on its music bus.
 //   (The typed keys -- "Really Quit?"'s Y/J/O/S/T and N, and SEETHEWHOLEGAME's
 //   debug keys 3-8, D, F, S -- are ported with the cheat, package #21: Keys::typed.
 //   The 3DS has no keyboard, so there they are never typed.)
@@ -119,6 +120,17 @@ public:
     // Whether the last frame was the splash's (C# Frame's early return): the
     // frontend draws the splash then (nothing once it is done), not the menu.
     bool splashFrame() const { return splashFrame_; }
+
+    // THE SONG (C# MainMenu._song and MenuItems._song, 0x42bb6c / 0x42bbc0): the
+    // name the music bus plays now -- "OPTSONG" while the options' song plays,
+    // else "MAINSONG" (from open, under the splash too, stopped while the options
+    // play and started again from its beginning when they go back), never null
+    // while the menu is open. songStarts() counts every start, so a frontend
+    // restarts the song whenever it moves. Both loop forever at full volume on the
+    // music bus (C# `ui.Play(song, Bus.Music)`); leaving the menu stops them (C#
+    // Game.Show's StopAll), which is the frontend's close.
+    const char* song() const;
+    uint32_t songStarts() const { return songStarts_ + items_.songStarts(); }
     IntroSplash& splash() { return splash_; }
     VideoPlayer& video() { return video_; }
     const VideoPlayer& video() const { return video_; }
@@ -181,6 +193,8 @@ private:
     IntroSplash splash_;
     VideoPlayer video_;
     bool hasSplash_ = false;
+    bool mainSong_ = false;      // C# MainMenu._songVoice playing
+    uint32_t songStarts_ = 0;
     bool splashFrame_ = false;
     bool videoStarted_ = false;
     // The slideshow (C# _slideshow, Slideshow.cs): started by the video's Finished

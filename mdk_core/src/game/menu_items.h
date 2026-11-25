@@ -25,8 +25,11 @@
 // WHAT IS NOT PORTED, WITH CAUSE:
 //   * The pointer: Hover and the clicks (the C#'s mouse). The 3DS has none and
 //     the Linux frontend's mouse is the game's look; the keys are the menus'.
-//   * The sounds: SND_PUSH on a move, OPTSONG under the options, OPTBUTT on a
-//     change. The menus are silent here (docs/OPEN_ITEMS.md).
+//   * The sounds: SND_PUSH on a move and OPTBUTT on a change are silent here
+//     (docs/OPEN_ITEMS.md). OPTSONG under the options IS ported as STATE
+//     (optionsSong, songStarts below): the C#'s _songVoice -- started by the
+//     options page when it is not playing, stopped by clear() -- which a
+//     frontend plays on its music bus (the 3DS main menu: menu_screens_3ds.cpp).
 //   * The desktop's option pages whose settings no frontend of this port can
 //     apply: Display (window, resolution, VSync, GPU), 3D Stereo, Keyboard &
 //     mouse and Gamepad (bindings) and Mods. The C# filters its pages per host
@@ -123,8 +126,18 @@ public:
 
     // C# Describe: the texts of the page joined by " | ".
     std::string describe() const;
-    // C# Clear (the options' song stops; it is not ported) and ClearPage.
-    void clear() { clearPage(); }
+    // C# Clear: the options' song stops, and ClearPage.
+    void clear() {
+        optionsSong_ = false;
+        clearPage();
+    }
+
+    // C# MenuItems._songVoice: OPTSONG plays (the music bus, looping) from the
+    // options page's first showing until clear() -- across the options' own
+    // pages, which return through showOptions without starting it again.
+    // songStarts() counts the starts (each one plays the song from its start).
+    bool optionsSong() const { return optionsSong_; }
+    uint32_t songStarts() const { return songStarts_; }
 
     void addItem(const std::string& text, int32_t action);
     // An item that can't be chosen (shown greyed).
@@ -208,6 +221,8 @@ private:
     int32_t back_ = -1;
     // The owner's action the options page goes back to (C# ShowOptions' back).
     int32_t optionsBack_ = -1;
+    bool optionsSong_ = false;
+    uint32_t songStarts_ = 0;
     // The time to the next step of an option whose Left/Right is held.
     float repeat_ = 0.0f;
     const formats::Font* big_ = nullptr;
