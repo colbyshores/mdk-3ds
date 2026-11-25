@@ -69,7 +69,6 @@ int32_t channelRank(int32_t channel) {
         case AsyncFileReader::kChannelPack: return 0;
         case AsyncFileReader::kChannelFile: return 1;
         case AsyncFileReader::kChannelOrig: return 2;
-        case AsyncFileReader::kChannelMusic: return 3;
         default: return 4;   // kChannelHd
     }
 }

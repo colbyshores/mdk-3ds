@@ -27,6 +27,7 @@ COMMON_SOURCES := \
 	$(CORE)/audio/level_music.cpp \
 	$(CORE)/audio/voice_lifecycle.cpp \
 	$(CORE)/audio/voice_binding.cpp \
+	$(CORE)/audio/dsp_adpcm.cpp \
 	$(CORE)/util/math_lut.cpp \
 	$(CORE)/util/random.cpp \
 	$(CORE)/util/json.cpp \

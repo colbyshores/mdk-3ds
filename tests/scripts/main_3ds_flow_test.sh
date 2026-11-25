@@ -956,7 +956,7 @@ CHK = {
     "music-follows-kurts-arena":
         "the level's music is made on the runtime's mixer, dropped before the runtime is, "
         "entered and faded every step after the camera, and the loading arena's track is "
-        "prefetched after the views are synced to the pair (arena streaming Phase 5)",
+        "primed after the views are synced to the pair (arena streaming Phase 5; DSP-ADPCM)",
     "asset-gate": "the runtime is constructed under the asset gate",
     "pitch-from-runtime": "the pitch target is camera_track, then the scripts' arena",
     "objects-drawn-in-order":
@@ -1222,10 +1222,11 @@ def adjudicate(text, quiet=False):
     #       nothing mixes once there is a runtime.
     #     - The C# enters Kurt's arena and advances the fades EVERY STEP, after the
     #       camera and before SetSolid (Viewer.cs:521-525, :533): enter, then update.
-    #     - The bank's stepped prefetch of the loading arena's track runs once per
-    #       FRAME, after the views have been synced to the pair (it was "after the
-    #       stream" until the stream's retirement, 4fea3380) and before the frame
-    #       begins.
+    #     - The loading arena's track is PRIMED (the audio worker reads its start
+    #       ahead, audio_dsp_3ds.h) once per change of that arena, in the FRAME,
+    #       after the views have been synced to the pair and before the frame
+    #       begins. (It was the bank's stepped prefetch and a once-a-second release
+    #       until the music became DSP-ADPCM streamed by the worker, 2026-11-25.)
     music_ok = False
     if spawn_body is not None and loop is not None and frame is not None:
         drop = spawn_body.find("music.reset();")
@@ -1236,32 +1237,19 @@ def adjudicate(text, quiet=False):
         enter = call_line(loop, "music->enter")
         fade = call_line(loop, "music->update")
         solid = call_line(loop, "space.setSolid")
-        prefetch_at = text.find("bank.prefetch(track)")
-        step_at = text.find("bank.prefetchStep()")
-        # The tracks given back once a second are every one BUT the playing one,
-        # the fading one and the LOADING arena's: without the third the track a
-        # prefetch has just landed is released within the second, and Kurt walks
-        # into a stall the prefetch existed to prevent. (The list grew a fourth,
-        # the door bubble's track, review M2; the count handed to the release must
-        # be the list's own, or a kept track is read past or never read.)
-        keep = re.search(r"const std::string keep\[(\d+)\] = \{(.*?)\};", text, re.S)
-        keep_ok = (keep is not None
-                   and "music->playing()" in keep.group(2)
-                   and "music->fading()" in keep.group(2)
-                   and "music->trackOf(streamSecond)" in keep.group(2)
-                   and ("bank.releaseMusicExcept(keep, %s)" % keep.group(1))
-                   in text[frame[0]:begin_at])
+        second_at = text.find("const std::string track = music->trackOf(streamSecond);")
+        prime_at = text.find("mdk::audioDspPrimeMusic(track);", second_at) if second_at >= 0 else -1
+        keep_ok = second_at >= 0 and prime_at > second_at
         music_ok = (0 <= drop < kill and made is not None and keep_ok
                     and "music->enter(runtime->currentArena());" in loop
                     and "music->update(step);" in loop
                     and None not in (cam, enter, fade, solid) and cam < enter < fade < solid
-                    and frame[0] <= sync_at < prefetch_at < step_at < begin_at < frame[1])
+                    and frame[0] <= sync_at < second_at < prime_at < begin_at < frame[1])
     say(CHK["music-follows-kurts-arena"], music_ok,
         "music.reset() before runtime.reset(); LevelMusic(&runtime->mixer(), ...); in the "
         "step loop follow.update -> music->enter(currentArena) -> music->update(step) -> "
-        "setSolid; in the frame arenaViews.sync -> bank.prefetch -> bank.prefetchStep -> "
-        "begin_frame; releaseMusicExcept keeps the playing, the fading and the loading "
-        "arena's track")
+        "setSolid; in the frame arenaViews.sync -> the loading arena's track "
+        "(trackOf(streamSecond)) -> audioDspPrimeMusic -> begin_frame")
 
     # 13. the pass is gated on the runtime. `runtime->objects()` on a null runtime
     #     is a null dereference in the frame path, and the level runs without scripts
@@ -2077,18 +2065,20 @@ def arm_music_fades_before_it_enters(text):
 
 
 def arm_music_never_prefetched(text):
-    """The loading arena's track is asked for, and the bank is never stepped: every
-    arena's music is then read whole on the step Kurt walks in (a stall each)."""
-    return text.replace("const bool more = bank.prefetchStep();",
-                        "const bool more = false;", 1)
+    """The loading arena's track is named and never primed: every arena's music is
+    then read on the worker when Kurt walks in, after a gap."""
+    at = text.find("const std::string track = music->trackOf(streamSecond);")
+    prime = text.find("mdk::audioDspPrimeMusic(track);", at)
+    if at < 0 or prime < 0:
+        return text
+    return text[:prime] + "(void)track;" + text[prime + len("mdk::audioDspPrimeMusic(track);"):]
 
 
 def arm_loading_arenas_track_is_released(text):
-    """The once-a-second release keeps the playing and the fading track and forgets
-    the one that was prefetched for the arena Kurt is walking towards."""
-    return text.replace(
-        "streamSecond.empty() ? std::string() : music->trackOf(streamSecond),",
-        "std::string(),", 1)
+    """The track primed is the current arena's (already playing), not the one Kurt
+    is walking towards."""
+    return text.replace("const std::string track = music->trackOf(streamSecond);",
+                        "const std::string track = music->trackOf(streamCurrent);", 1)
 
 
 def arm_no_asset_gate(text):
@@ -2980,9 +2970,9 @@ ARMS = [
      CHK["music-follows-kurts-arena"]),
     ("the music fades before it enters", arm_music_fades_before_it_enters,
      CHK["music-follows-kurts-arena"]),
-    ("the loading arena's track is never stepped", arm_music_never_prefetched,
+    ("the loading arena's track is never primed", arm_music_never_prefetched,
      CHK["music-follows-kurts-arena"]),
-    ("the loading arena's track is released under Kurt",
+    ("the track primed is the current arena's, not the loading one's",
      arm_loading_arenas_track_is_released, CHK["music-follows-kurts-arena"]),
     ("runtime-built-without-the-asset-gate", arm_no_asset_gate, CHK["asset-gate"]),
     # The replacement form trips check 5 first: with the geometric block gone there

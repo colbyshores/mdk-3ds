@@ -149,6 +149,22 @@ else
     echo "stage_romfs:   (skip) kurt -- no compressed set; Kurt is expanded"
 fi
 
+# THE LEVELS' MUSIC AS DSP-ADPCM (audio_dsp_3ds.h): committed in mdk_3ds/music
+# (levelN/<name>.dsp, made from the soundtrack by music_dsp_convert.py; no
+# download, no dependency on the soundtrack at build time), hard-linked here as
+# music/levelN/. The audio worker streams them; the bank never reads a track.
+MUSIC_DIR="$HERE/../music"
+if [ -d "$MUSIC_DIR" ]; then
+    while IFS= read -r -d '' file; do
+        rel="${file#"$MUSIC_DIR"/}"
+        mkdir -p "$OUT/music/$(dirname "$rel")"
+        ln "$file" "$OUT/music/$rel" 2>/dev/null || cp "$file" "$OUT/music/$rel"
+    done < <(find "$MUSIC_DIR" -type f -name '*.dsp' -print0)
+    echo "stage_romfs:   music ($(find "$OUT/music" -name '*.dsp' | wc -l) tracks, $(du -sh "$OUT/music" | cut -f1))"
+else
+    echo "stage_romfs:   (skip) music -- mdk_3ds/music is missing; the levels are silent on the DSP"
+fi
+
 # THE ARENA TEXTURES AS ETC1/ETC1A4 (arena streaming): every arena and level
 # texture of levels 3-8, expanded through its arena's palette with the 3DS's
 # rule, RGB565-quantized, bled, padded and encoded with a gaussian mip chain by

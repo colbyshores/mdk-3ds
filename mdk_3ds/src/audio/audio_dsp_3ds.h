@@ -39,13 +39,14 @@
 // arena as signed PCM8 (half the bytes, the exact same values). A 16-bit sound
 // stays PCM16.
 //
-// THE MUSIC is streamed, not copied whole: a worker thread (Forsaken's shape:
-// 25 ms tick, four wave buffers per channel) copies the next buffer's worth of
-// the track's samples out of the bank into linear memory as each buffer comes back
-// DONE. The track's PCM is the bank's decoded store (SNI music is PCM; it is NOT
-// converted to DSP-ADPCM: that would be a second copy of every track in a new
-// format and a new staging step, for a saving the worker does not need). The
-// music bus's 6 kHz one-pole low-pass is the music channels' IIR biquad, loaded
+// THE MUSIC is DSP-ADPCM from the level's own files (mdk_3ds/music, made from
+// the soundtrack by mdk_3ds/tools/music_dsp_convert.py; audioDspMusicRegister),
+// streamed by the worker (Forsaken's and T2K's shape: six ADPCM wave buffers per
+// channel, two seconds queued, refilled as each comes back DONE, each handed its
+// predictor history) and decoded by the DSP. The bank never reads or decodes a
+// track. A start copies a PRIMED read-ahead (audioDspPrimeMusic), so it reads
+// nothing. The music bus's 6 kHz one-pole low-pass is the music channels' IIR
+// biquad, loaded
 // with the one-pole's own coefficients at the DSP's rate (b0 = 1-e, a1 = -e,
 // e = exp(-2 pi 6000 / 32728.5)): libctru's biquad custom filter takes RBJ-form
 // coefficients (its own LowPass helper passes a0 = 1+alpha, a1 = -2cos w0, ...;
@@ -67,6 +68,8 @@
 
 #include <stdint.h>
 
+#include <string>
+
 #include "audio/sound_bank.h"
 #include "audio/sound_mixer.h"
 
@@ -74,16 +77,28 @@ namespace mdk {
 
 // ndsp + the sample arena + the music buffers + the worker. FALSE with a logged
 // reason (no DSP firmware, ndspInit failed, no linear memory); the game then runs
-// muted with the lifecycle still advancing. `bank` is the level's: the music
-// streams from it, and the worker's tracks are pinned in it while they play.
-bool audioDspOpen(audio::SoundBank* bank);
+// muted with the lifecycle still advancing. The voices bring their own samples
+// (the binder's orders); the music its files (audioDspMusicRegister).
+bool audioDspOpen();
 
-// Stop and join the worker, silence every channel, ndspExit, free the linear
-// memory, and give back the bank pins. Safe when nothing opened. Call while the
+// Stop and join the worker, silence every channel, close the music files,
+// ndspExit, free the linear memory. Safe when nothing opened. Call while the
 // bank is still alive.
 void audioDspClose();
 
 bool audioDspIsOpen();
+
+// THE LEVEL'S MUSIC FILES (romfs:/music/levelN/<name>.dsp, mdk_3ds/music): the
+// folder listed, each track's header read, and each registered with `bank`
+// (SoundBank::addStreamedMusic) so LevelMusic's tracks are never read or decoded
+// by the bank. Cold: call once a level, before audioDspOpen. The count, logged.
+int32_t audioDspMusicRegister(audio::SoundBank* bank, int32_t level);
+
+// A track LevelMusic is about to start (the loading arena's, the door bubble's
+// nearest): the worker opens it and reads its first two seconds ahead, so the
+// start reads nothing. Main thread; cheap (a name under the lock). A no-op for a
+// track a music channel is playing or already primed.
+void audioDspPrimeMusic(const std::string& name);
 
 // ONCE A FRAME, between `mix->update(elapsed)` and `mix->device().update(elapsed)`
 // (voice_binding.h says why that slot): bind new voices, release ended and
@@ -110,6 +125,9 @@ struct AudioDspStats {
     uint32_t arenaBytes;
     uint32_t musicQueued;   // music wave buffers handed to ndsp
     uint32_t musicRestarts; // drained music channels restarted (an underrun)
+    uint32_t musicUnprimed; // music starts that read their track first (no prime)
+    uint32_t musicMissing;  // music tracks whose file did not open
+    uint32_t musicReadMaxUs; // the slowest music buffer read
     int32_t musicActive;    // music channels streaming now
     uint32_t dspFrames;
     uint32_t dspDropped;

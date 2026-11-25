@@ -259,7 +259,11 @@ int32_t SoundMixer::launch(const std::string& name, int32_t start, int32_t place
                            const Vec3& point, const Vec3* sourcePosition, const float* sourceYaw,
                            bool loopForever, int32_t bus) {
     SoundBank::Entry entry;
-    if (bank_ == nullptr || !bank_->get(name, &entry)) {
+    // The music bus asks the bank's music lookup: a track a frontend streams
+    // from its own files answers there without being read (sound_bank.h).
+    const bool found = bank_ != nullptr && (bus == SoundDevice::Music ? bank_->getMusic(name, &entry)
+                                                                      : bank_->get(name, &entry));
+    if (!found) {
         return 0;
     }
     if (start == Once && isPlaying(name)) {

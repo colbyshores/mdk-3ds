@@ -7,11 +7,14 @@
 #include <3ds.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 #include <unistd.h>
 
 #include <string>
 
+#include "audio/dsp_adpcm.h"
 #include "audio/voice_binding.h"
 #include "platform/log_3ds.h"
 #include "platform/vfp_fpscr.h"
@@ -59,45 +62,102 @@ struct EffectChannel {
 };
 
 // ---- the music streams ---------------------------------------------------------
-// Forsaken's shape: four wave buffers per channel, refilled by a worker on a
-// 25 ms tick. 4096 frames per buffer is 186 ms at 22050 Hz, so the queue holds
-// 0.74 s -- 30 worker ticks of slack. Sized for stereo (every MDK track is mono,
-// the store may not be): 4 x 4096 x 2 x 2 B = 64 KiB per channel, 128 KiB total.
-constexpr int32_t kMusicBuffers = 4;
-constexpr int32_t kMusicBufFrames = 4096;
-constexpr int32_t kMusicBufHalfwords = kMusicBufFrames * 2;
+// THE LEVEL'S MUSIC IS DSP-ADPCM FROM ITS OWN FILES (mdk_3ds/music/levelN/<name>.dsp,
+// romfs:/music/levelN on the console; mdk_3ds/tools/music_dsp_convert.py makes
+// them). The bank never reads or decodes a track (SoundBank::addStreamedMusic):
+// the worker reads it, a wave buffer at a time, and the DSP decodes it. Forsaken's
+// and T2K's shape (vault 10-projects/forsaken/findings/dsp-adpcm-music-and-sfx-audio.md):
+// a queue of ADPCM wave buffers per channel, each handed the predictor history
+// the previous one ended with (audio/dsp_adpcm.h).
+//
+// THE BUFFERING IS THE READ-AHEAD. Six buffers of 768 frames (10,752 samples,
+// 0.336 s at 32 kHz, 6,144 bytes) per channel: two seconds queued in the DSP,
+// so the worker can miss ~1.7 s of reads (an SD stall, an arena load holding the
+// card) before the channel runs dry. 2 x 6 x 6,144 = 72 KiB of linear memory in
+// all (the PCM16 queue it replaces was 128 KiB for 0.74 s).
+//
+// NO READ AT A TRACK'S START. A new track starts from its beginning the frame
+// LevelMusic asks for it, with no read on that frame: the arena that is loading
+// (and the door bubble's nearest) has its track PRIMED by the worker ahead of
+// time (audioDspPrimeMusic, from the frame's existing prefetch hints) -- the
+// file opened and its first two seconds read into main memory -- and a start
+// copies the prime into the channel's buffers. A start nobody primed reads on
+// the worker (said: "music: ... not primed").
+//
+// WHO TOUCHES WHAT. The worker alone opens, reads and closes the files and
+// fills the wave buffers, and it reads OUTSIDE g_lock, so a slow card never
+// blocks the main thread's frame. The main thread posts requests under g_lock
+// (start, stop, the mix) and signals the worker, which applies them at once.
+constexpr int32_t kMusicBuffers = 6;
+constexpr int32_t kMusicBufFrames = 768;
+constexpr int32_t kMusicBufSamples = kMusicBufFrames * audio::DspAdpcm::kFrameSamples;
+constexpr uint32_t kMusicBufBytes = (uint32_t)kMusicBufFrames * audio::DspAdpcm::kFrameBytes;
 constexpr uint32_t kMusicBytes =
-    (uint32_t)VoiceBinder::kMusicChannels * kMusicBuffers * kMusicBufHalfwords * sizeof(int16_t);
+    (uint32_t)VoiceBinder::kMusicChannels * kMusicBuffers * kMusicBufBytes;
+constexpr int32_t kMusicPrimes = 2;
+constexpr int32_t kMusicNameBytes = 16;
+constexpr int32_t kMusicPathBytes = 64;
 constexpr s64 kWorkerTickNs = 25 * 1000 * 1000;
 constexpr size_t kWorkerStackBytes = 16 * 1024;  // Forsaken's music worker's
 constexpr float kMusicCutoff = 6000.0f;          // AudioDevice.MusicCutoff
 
+// An open track: the worker's alone.
+struct MusicFile {
+    FILE* file = nullptr;
+    char path[kMusicPathBytes] = {0};
+    audio::DspAdpcmHeader head;
+    uint32_t next = 0;               // the next sample to queue
+    audio::DspAdpcmContext history;  // the predictor history at `next`
+};
+
+// A track's first two seconds read ahead (audioDspPrimeMusic).
+struct MusicPrime {
+    char name[kMusicNameBytes] = {0};  // guarded by g_lock: what is wanted (empty: nothing)
+    // ---- the worker's ----
+    char loaded[kMusicNameBytes] = {0};  // what `stream` and `data` hold
+    MusicFile stream;                  // positioned after the primed bytes
+    uint8_t* data = nullptr;           // kMusicBuffers x kMusicBufBytes (main memory)
+    uint32_t bufferSamples[kMusicBuffers] = {0};
+    audio::DspAdpcmContext bufferHistory[kMusicBuffers];
+    int32_t buffers = 0;
+};
+
 struct MusicSlot {
     ndspWaveBuf wave[kMusicBuffers];
-    int16_t* buf = nullptr;  // linear: kMusicBuffers x kMusicBufHalfwords
-    // ---- guarded by g_lock (the worker reads them) ----
-    bool active = false;     // the worker keeps this channel fed
-    const audio::Sound* sound = nullptr;
-    int32_t frames = 0;
-    int32_t channels = 1;
+    ndspAdpcmData history[kMusicBuffers];
+    uint8_t* buf = nullptr;  // linear: kMusicBuffers x kMusicBufBytes
+    // ---- guarded by g_lock: the request (main thread) ----
+    uint32_t serial = 0;     // bumped by every start and stop
+    bool want = false;       // a start (else a stop)
+    bool cut = false;        // a stop that silences what is queued
+    char name[kMusicNameBytes] = {0};
     bool looping = false;
-    int32_t cursor = 0;      // the next frame of the track to queue
-    int32_t silentTicks = 0; // worker ticks in a row the channel was not playing
+    int32_t startFrame = 0;
     float rate = 0.0f;
     float left = 0.0f;
     float right = 0.0f;
+    // ---- guarded by g_lock: the worker's state the main thread reads ----
+    uint32_t applied = 0;    // the serial the worker last carried out
+    bool active = false;     // the worker keeps this channel fed
+    int32_t silentTicks = 0; // worker ticks in a row the channel was not playing
+    // ---- the worker's ----
+    MusicFile stream;
+    bool startPrimed = false;  // the last start came from a prime
+    uint32_t startUs = 0;      // ... and took this long on the worker
     // ---- main thread only ----
     bool owned = false;      // a logical voice is (or was, until stopped) streaming here
-    std::string pin;         // the bank name this stream pins (empty: none)
+    uint32_t said = 0;       // the serial whose start the log has said
 };
 
 bool g_live = false;
-audio::SoundBank* g_bank = nullptr;
 VoiceBinder g_binder;
 EffectChannel g_effects[VoiceBinder::kEffectChannels];
 MusicSlot g_music[VoiceBinder::kMusicChannels];
 uint8_t* g_arena = nullptr;
-int16_t* g_musicPool = nullptr;
+uint8_t* g_musicPool = nullptr;
+MusicPrime g_primes[kMusicPrimes];
+int32_t g_primeNext = 0;  // guarded by g_lock: the prime the next wish takes
+char g_musicFolder[kMusicPathBytes] = {0};
 Entry g_entries[kMaxEntries];
 uint32_t g_useSerial = 0;
 uint32_t g_frame = 0;
@@ -116,6 +176,10 @@ uint32_t g_cacheEvictions = 0;
 uint32_t g_cacheMisses = 0;
 uint32_t g_musicQueued = 0;   // guarded by g_lock
 uint32_t g_musicRestarts = 0; // guarded by g_lock
+uint32_t g_musicUnprimed = 0; // guarded by g_lock: starts that had to read first
+uint32_t g_musicMissing = 0;  // guarded by g_lock: tracks whose file did not open
+uint32_t g_musicReadMax = 0;  // guarded by g_lock: the slowest buffer read, microseconds
+uint32_t g_musicRestartsSaid = 0;  // main thread
 
 // ---- the arena --------------------------------------------------------------
 
@@ -322,11 +386,12 @@ void effectStart(int32_t c, const VoiceBinder::Channel& order, const std::string
 
 // ---- the music channels ---------------------------------------------------------
 
-// Reset the channel and configure it for the slot's stream. Under g_lock.
+// Reset the channel and configure it for the slot's track. Under g_lock.
 void musicConfigure(int32_t ndsp, const MusicSlot& slot) {
     ndspChnReset(ndsp);
     ndspChnSetInterp(ndsp, NDSP_INTERP_LINEAR);
-    ndspChnSetFormat(ndsp, slot.channels == 2 ? NDSP_FORMAT_STEREO_PCM16 : NDSP_FORMAT_MONO_PCM16);
+    ndspChnSetFormat(ndsp, NDSP_FORMAT_MONO_ADPCM);
+    ndspChnSetAdpcmCoefs(ndsp, (u16*)slot.stream.head.coefs);
     ndspChnSetRate(ndsp, slot.rate);
     setMix(ndsp, slot.left, slot.right);
     // The music bus's one-pole low-pass (AudioDevice.AddMusic: y += (x - y) * a,
@@ -336,85 +401,344 @@ void musicConfigure(int32_t ndsp, const MusicSlot& slot) {
     ndspChnIirBiquadSetEnable(ndsp, true);
 }
 
-// Queue wave buffer i with the next stretch of the track. Under g_lock. False
-// when a one-shot track has nothing left.
-bool musicFill(int32_t ndsp, MusicSlot& slot, int32_t i) {
-    int16_t* dst = slot.buf + (size_t)i * kMusicBufHalfwords;
-    const int16_t* src = slot.sound->samples.data();
-    const int32_t ch = slot.channels;
-    int32_t got = 0;
-    // Each pass copies at least one frame or ends, so this is bounded by the
-    // buffer's frame count.
-    for (int32_t pass = 0; got < kMusicBufFrames && pass <= kMusicBufFrames; pass++) {
-        if (slot.cursor >= slot.frames) {
-            if (!slot.looping) {
-                break;
-            }
-            slot.cursor = 0;
-        }
-        int32_t n = slot.frames - slot.cursor;
-        if (n > kMusicBufFrames - got) {
-            n = kMusicBufFrames - got;
-        }
-        memcpy(dst + (size_t)got * (size_t)ch, src + (size_t)slot.cursor * (size_t)ch,
-               (size_t)n * (size_t)ch * sizeof(int16_t));
-        got += n;
-        slot.cursor += n;
+// ---- the worker's file side (no lock held) ---------------------------------------
+
+void musicClose(MusicFile& f) {
+    if (f.file != nullptr) {
+        fclose(f.file);
+        f.file = nullptr;
     }
-    if (got == 0) {
+}
+
+// Open `name`'s track (g_musicFolder/<name in lower case>.dsp) at its start.
+bool musicOpen(MusicFile& f, const char* name) {
+    musicClose(f);
+    int32_t n = snprintf(f.path, sizeof(f.path), "%s/", g_musicFolder);
+    for (int32_t i = 0; name[i] != '\0' && n < kMusicPathBytes - 5; i++, n++) {
+        const char c = name[i];
+        f.path[n] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    }
+    snprintf(f.path + n, sizeof(f.path) - (size_t)n, ".dsp");
+    f.file = fopen(f.path, "rb");
+    if (f.file == nullptr) {
         return false;
     }
-    DSP_FlushDataCache(dst, (u32)((size_t)got * (size_t)ch * sizeof(int16_t)));
+    uint8_t header[audio::DspAdpcm::kHeaderBytes];
+    if (fread(header, 1, sizeof(header), f.file) != sizeof(header) ||
+        !audio::DspAdpcm::parseHeader(header, (int32_t)sizeof(header), &f.head)) {
+        musicClose(f);
+        return false;
+    }
+    f.next = 0;
+    f.history.index = f.head.predScale;
+    f.history.history0 = f.head.history0;
+    f.history.history1 = f.head.history1;
+    return true;
+}
+
+// Move to the frame holding sample `at` (a voice rebound mid-track; the history
+// there is not known, so it restarts from silence: a click, never a crash).
+void musicSeek(MusicFile& f, int32_t at) {
+    if (f.file == nullptr || at <= 0 || (uint32_t)at >= f.head.samples) {
+        return;
+    }
+    const uint32_t frame = (uint32_t)at / (uint32_t)audio::DspAdpcm::kFrameSamples;
+    if (fseek(f.file, (long)(audio::DspAdpcm::kHeaderBytes + frame * audio::DspAdpcm::kFrameBytes),
+              SEEK_SET) == 0) {
+        f.next = frame * (uint32_t)audio::DspAdpcm::kFrameSamples;
+        f.history.history0 = 0;
+        f.history.history1 = 0;
+    }
+}
+
+// Read the track's next buffer into `dst`: its sample count (0: the track has
+// ended and does not loop, or the read failed) and the history it starts from.
+// A looping track that has ended starts again from its beginning (reopened, as
+// Forsaken does: libctru's romfs FILE* can latch EOF across a seek).
+uint32_t musicRead(MusicFile& f, bool looping, uint8_t* dst, audio::DspAdpcmContext* start) {
+    if (f.file == nullptr) {
+        return 0;
+    }
+    if (f.next >= f.head.samples) {
+        if (!looping) {
+            return 0;
+        }
+        char path[kMusicPathBytes];
+        memcpy(path, f.path, sizeof(path));
+        fclose(f.file);
+        f.file = fopen(path, "rb");
+        if (f.file == nullptr || fseek(f.file, audio::DspAdpcm::kHeaderBytes, SEEK_SET) != 0) {
+            musicClose(f);
+            return 0;
+        }
+        f.next = 0;
+        f.history.history0 = f.head.history0;
+        f.history.history1 = f.head.history1;
+    }
+    uint32_t samples = f.head.samples - f.next;
+    if (samples > (uint32_t)kMusicBufSamples) {
+        samples = (uint32_t)kMusicBufSamples;
+    }
+    const uint32_t frames = audio::DspAdpcm::framesFor(samples);
+    const uint32_t bytes = frames * audio::DspAdpcm::kFrameBytes;
+    const u64 t0 = svcGetSystemTick();
+    const size_t got = fread(dst, 1, bytes, f.file);
+    const uint32_t us = (uint32_t)((svcGetSystemTick() - t0) / (SYSCLOCK_ARM11 / 1000000ull));
+    if (got != bytes) {
+        return 0;
+    }
+    DSP_FlushDataCache(dst, bytes);
+    *start = f.history;
+    start->index = dst[0];
+    audio::DspAdpcm::advance(dst, (int32_t)frames, f.head.coefs, &f.history);
+    f.next += samples;
+    LightLock_Lock(&g_lock);
+    if (us > g_musicReadMax) {
+        g_musicReadMax = us;
+    }
+    LightLock_Unlock(&g_lock);
+    return samples;
+}
+
+// Hand buffer i to the DSP. Under g_lock.
+void musicQueue(int32_t ndsp, MusicSlot& slot, int32_t i, uint32_t samples,
+                const audio::DspAdpcmContext& start) {
+    slot.history[i].index = start.index;
+    slot.history[i].history0 = start.history0;
+    slot.history[i].history1 = start.history1;
     ndspWaveBuf& wb = slot.wave[i];
     memset(&wb, 0, sizeof(wb));
-    wb.data_pcm16 = dst;
-    wb.nsamples = (u32)got;
+    wb.data_adpcm = slot.buf + (size_t)i * kMusicBufBytes;
+    wb.nsamples = samples;
+    wb.adpcm_data = &slot.history[i];
     wb.looping = false;
     wb.status = NDSP_WBUF_FREE;
     ndspChnWaveBufAdd(ndsp, &wb);
     g_musicQueued++;
-    return true;
 }
 
-// The worker's tick for one music channel. Under g_lock.
-void musicService(int32_t ndsp, MusicSlot& slot) {
-    if (!slot.active) {
-        return;
+// A request the worker carries out (a copy taken under g_lock).
+struct MusicRequest {
+    uint32_t serial = 0;
+    bool want = false;
+    bool cut = false;
+    char name[kMusicNameBytes] = {0};
+    bool looping = false;
+    int32_t startFrame = 0;
+};
+
+// The prime holding `name`'s start, or -1. The worker's.
+int32_t musicPrimeOf(const char* name) {
+    for (int32_t p = 0; p < kMusicPrimes; p++) {
+        if (g_primes[p].buffers > 0 && strcmp(g_primes[p].loaded, name) == 0) {
+            return p;
+        }
     }
-    bool drained = true;
-    for (int32_t i = 0; i < kMusicBuffers; i++) {
-        const u8 st = slot.wave[i].status;
-        drained = drained && (st == NDSP_WBUF_DONE || st == NDSP_WBUF_FREE);
-    }
-    slot.silentTicks = ndspChnIsPlaying(ndsp) ? 0 : slot.silentTicks + 1;
-    if (drained && !slot.looping && slot.cursor >= slot.frames) {
-        slot.active = false;  // the track played out: nothing to restart
-        return;
-    }
-    // THE DRAINED-CHANNEL TRAP (Forsaken music_3ds.cpp, vault finding A): ndsp
-    // does not resume a channel that ran dry when buffers are added to it, so it
-    // is cleared, reset, re-configured and primed again. Two ways to be dry:
-    // every buffer is back (nothing left to play), or the channel has not been
-    // playing for two ticks in a row -- the last buffer finished between this
-    // tick's status read and its refills, so the refills sit QUEUED on a dry
-    // channel and never come back. NOT on one silent tick: a freshly primed
-    // channel has QUEUED buffers before ndsp's next frame (~5 ms) marks it
-    // playing, and restarting that would skip them. And not during a resume's
-    // grace ticks, while ndsp may still be restoring its channels.
-    if ((drained || slot.silentTicks >= 2) && g_resumeGrace == 0) {
-        slot.silentTicks = 0;
-        ndspChnWaveBufClear(ndsp);
-        musicConfigure(ndsp, slot);
-        g_musicRestarts++;
+    return -1;
+}
+
+// A start: the track opened (from its prime, or read now), the buffers filled
+// and queued. The worker's; takes g_lock only to hand the result over.
+void musicApplyStart(int32_t m, const MusicRequest& req) {
+    MusicSlot& slot = g_music[m];
+    const int32_t ndsp = kMusicNdsp[m];
+    uint32_t samples[kMusicBuffers] = {0};
+    audio::DspAdpcmContext starts[kMusicBuffers];
+    int32_t filled = 0;
+    const int32_t p = req.startFrame == 0 ? musicPrimeOf(req.name) : -1;
+    const u64 t0 = svcGetSystemTick();
+    if (p >= 0) {
+        // The prime becomes the stream: its file (positioned after the primed
+        // bytes) and its buffers, copied into the channel's.
+        MusicPrime& prime = g_primes[p];
+        musicClose(slot.stream);
+        slot.stream = prime.stream;
+        prime.stream.file = nullptr;
+        for (int32_t i = 0; i < prime.buffers; i++) {
+            memcpy(slot.buf + (size_t)i * kMusicBufBytes, prime.data + (size_t)i * kMusicBufBytes,
+                   kMusicBufBytes);
+            samples[i] = prime.bufferSamples[i];
+            starts[i] = prime.bufferHistory[i];
+        }
+        DSP_FlushDataCache(slot.buf, (u32)prime.buffers * kMusicBufBytes);
+        filled = prime.buffers;
+        prime.buffers = 0;
+        prime.loaded[0] = '\0';
+    } else if (musicOpen(slot.stream, req.name)) {
+        musicSeek(slot.stream, req.startFrame);
         for (int32_t i = 0; i < kMusicBuffers; i++) {
-            slot.wave[i].status = NDSP_WBUF_FREE;
-            musicFill(ndsp, slot, i);
+            samples[i] = musicRead(slot.stream, req.looping, slot.buf + (size_t)i * kMusicBufBytes,
+                                   &starts[i]);
+            if (samples[i] == 0) {
+                break;
+            }
+            filled++;
+        }
+    }
+    const uint32_t us = (uint32_t)((svcGetSystemTick() - t0) / (SYSCLOCK_ARM11 / 1000000ull));
+    LightLock_Lock(&g_lock);
+    if (p >= 0) {
+        // Primed once, played once: the wish is spent.
+        if (strcmp(g_primes[p].name, req.name) == 0) {
+            g_primes[p].name[0] = '\0';
+        }
+    } else {
+        g_musicUnprimed++;
+    }
+    slot.startPrimed = p >= 0;
+    slot.startUs = us;
+    if (filled == 0) {
+        g_musicMissing += slot.stream.file == nullptr ? 1u : 0u;
+    }
+    // A newer request, or the system suspended meanwhile: this start is not
+    // handed over (the next pass carries out the newer request, or this one again).
+    if (slot.serial == req.serial && !g_suspended) {
+        slot.applied = req.serial;
+        slot.active = filled > 0;
+        slot.silentTicks = 0;
+        if (slot.active) {
+            musicConfigure(ndsp, slot);
+            for (int32_t i = 0; i < kMusicBuffers; i++) {
+                slot.wave[i].status = NDSP_WBUF_FREE;
+            }
+            for (int32_t i = 0; i < filled; i++) {
+                musicQueue(ndsp, slot, i, samples[i], starts[i]);
+            }
+        }
+    }
+    LightLock_Unlock(&g_lock);
+}
+
+// One worker pass over one music channel.
+void musicWork(int32_t m) {
+    MusicSlot& slot = g_music[m];
+    const int32_t ndsp = kMusicNdsp[m];
+    MusicRequest req;
+    bool fresh = false;
+    bool refill[kMusicBuffers] = {false};
+    bool restart = false;
+    bool looping = false;
+    uint32_t serial = 0;
+    LightLock_Lock(&g_lock);
+    if (g_suspended) {
+        LightLock_Unlock(&g_lock);
+        return;
+    }
+    if (slot.serial != slot.applied) {
+        fresh = true;
+        req.serial = slot.serial;
+        req.want = slot.want;
+        req.cut = slot.cut;
+        memcpy(req.name, slot.name, sizeof(req.name));
+        req.looping = slot.looping;
+        req.startFrame = slot.startFrame;
+        if (req.cut) {
+            ndspChnWaveBufClear(ndsp);
+        }
+        slot.active = false;
+        if (!req.want) {
+            slot.applied = req.serial;
+        }
+    } else if (slot.active) {
+        bool drained = true;
+        for (int32_t i = 0; i < kMusicBuffers; i++) {
+            const u8 st = slot.wave[i].status;
+            drained = drained && (st == NDSP_WBUF_DONE || st == NDSP_WBUF_FREE);
+            refill[i] = st == NDSP_WBUF_DONE;
+        }
+        slot.silentTicks = ndspChnIsPlaying(ndsp) ? 0 : slot.silentTicks + 1;
+        // THE DRAINED-CHANNEL TRAP (Forsaken music_3ds.cpp, vault finding A): ndsp
+        // does not resume a channel that ran dry when buffers are added to it, so it
+        // is cleared, re-configured and primed again from where the stream is. Two
+        // ways to be dry: every buffer is back, or the channel has not been playing
+        // for two ticks in a row (the last buffer finished between this tick's
+        // status read and its refills). Not on one silent tick (a freshly queued
+        // channel is not yet marked playing) and not in a resume's grace ticks.
+        // Every restart is an UNDERRUN: the reads fell more than the queue behind.
+        restart = (drained || slot.silentTicks >= 2) && g_resumeGrace == 0;
+        if (restart) {
+            slot.silentTicks = 0;
+            ndspChnWaveBufClear(ndsp);
+            for (int32_t i = 0; i < kMusicBuffers; i++) {
+                slot.wave[i].status = NDSP_WBUF_FREE;
+                refill[i] = true;
+            }
+        }
+        looping = slot.looping;
+        serial = slot.serial;
+    }
+    LightLock_Unlock(&g_lock);
+
+    if (fresh) {
+        musicClose(slot.stream);
+        if (req.want) {
+            musicApplyStart(m, req);
         }
         return;
     }
+    uint32_t samples[kMusicBuffers] = {0};
+    audio::DspAdpcmContext starts[kMusicBuffers];
+    bool any = false;
     for (int32_t i = 0; i < kMusicBuffers; i++) {
-        if (slot.wave[i].status == NDSP_WBUF_DONE) {
-            musicFill(ndsp, slot, i);
+        if (refill[i]) {
+            samples[i] = musicRead(slot.stream, looping, slot.buf + (size_t)i * kMusicBufBytes,
+                                   &starts[i]);
+            any = any || samples[i] > 0;
+        }
+    }
+    if (!restart && !any) {
+        return;
+    }
+    LightLock_Lock(&g_lock);
+    if (slot.serial == serial && slot.active && !g_suspended) {
+        if (restart) {
+            g_musicRestarts++;
+            if (any) {
+                musicConfigure(ndsp, slot);
+            } else {
+                slot.active = false;  // a one-shot track played out
+            }
+        }
+        for (int32_t i = 0; i < kMusicBuffers; i++) {
+            if (samples[i] > 0) {
+                musicQueue(ndsp, slot, i, samples[i], starts[i]);
+            }
+        }
+    }
+    LightLock_Unlock(&g_lock);
+}
+
+// The primes: each one's wished-for track opened and its first buffers read.
+void musicPrimeWork() {
+    for (int32_t p = 0; p < kMusicPrimes; p++) {
+        MusicPrime& prime = g_primes[p];
+        char want[kMusicNameBytes];
+        LightLock_Lock(&g_lock);
+        memcpy(want, prime.name, sizeof(want));
+        LightLock_Unlock(&g_lock);
+        if (strcmp(want, prime.loaded) == 0) {
+            continue;
+        }
+        musicClose(prime.stream);
+        prime.buffers = 0;
+        memcpy(prime.loaded, want, sizeof(prime.loaded));
+        if (want[0] == '\0' || prime.data == nullptr) {
+            continue;
+        }
+        if (!musicOpen(prime.stream, want)) {
+            LightLock_Lock(&g_lock);
+            g_musicMissing++;
+            LightLock_Unlock(&g_lock);
+            continue;
+        }
+        for (int32_t i = 0; i < kMusicBuffers; i++) {
+            prime.bufferSamples[i] = musicRead(prime.stream, true,
+                                               prime.data + (size_t)i * kMusicBufBytes,
+                                               &prime.bufferHistory[i]);
+            if (prime.bufferSamples[i] == 0) {
+                break;
+            }
+            prime.buffers++;
         }
     }
 }
@@ -424,9 +748,9 @@ void musicService(int32_t ndsp, MusicSlot& slot) {
 void audioDspWorker(void*) {
     // R1, AT THE WORKER'S ENTRY. Flush-to-zero and default-NaN are MDK's chosen
     // numerical mode, and FPSCR is per thread: the main thread's state is not
-    // evidence of this one's. This worker does float work -- a drained channel's
-    // restart sets its rate, its mix and its filter coefficients -- and decaying
-    // values can reach subnormals in float code; modern libctru already
+    // evidence of this one's. This worker does float work -- a channel's
+    // (re)configuration sets its rate, its mix and its filter coefficients -- and
+    // decaying values can reach subnormals in float code; modern libctru already
     // initialises the mode on its supported thread entry, so this is the
     // defensive, read-back form the contract asks every float thread to carry.
     const bool fzdn = vfpThreadFzDn();
@@ -437,21 +761,21 @@ void audioDspWorker(void*) {
         LightEvent_WaitTimeout(&g_wake, kWorkerTickNs);
         LightLock_Lock(&g_lock);
         const bool exit = g_exit;
-        // Suspended (HOME, sleep): ndsp has parked its channels; touching one
-        // would fight its save and restore. The hook takes this lock, so a tick is
-        // never half-way through a channel while the suspend proceeds.
-        if (!exit && !g_suspended) {
-            for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
-                musicService(kMusicNdsp[m], g_music[m]);
-            }
-            if (g_resumeGrace > 0) {
-                g_resumeGrace--;
-            }
-        }
         LightLock_Unlock(&g_lock);
         if (exit) {
             break;
         }
+        // Suspended (HOME, sleep): each pass checks under g_lock and leaves the
+        // channels alone while ndsp saves and restores them (musicWork).
+        for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
+            musicWork(m);
+        }
+        musicPrimeWork();
+        LightLock_Lock(&g_lock);
+        if (!g_suspended && g_resumeGrace > 0) {
+            g_resumeGrace--;
+        }
+        LightLock_Unlock(&g_lock);
     }
 }
 
@@ -476,62 +800,35 @@ void onAptHook(APT_HookType hook, void*) {
     }
 }
 
-// Give back a music stream's bank pin (main thread: the bank is not thread-safe).
-void musicUnpin(MusicSlot& slot) {
-    if (!slot.pin.empty() && g_bank != nullptr) {
-        g_bank->release(slot.pin);
-    }
-    slot.pin.clear();
-}
+// ---- the main thread's side: requests ------------------------------------------
 
-// Stop feeding a music channel; `cut` also silences what is queued.
 void musicStop(int32_t m, bool cut) {
     MusicSlot& slot = g_music[m];
     LightLock_Lock(&g_lock);
-    slot.active = false;
-    slot.sound = nullptr;
-    if (cut) {
-        ndspChnWaveBufClear(kMusicNdsp[m]);
-    }
+    slot.serial++;
+    slot.want = false;
+    slot.cut = cut;
     LightLock_Unlock(&g_lock);
     slot.owned = false;
-    musicUnpin(slot);
+    LightEvent_Signal(&g_wake);
 }
 
 void musicStart(int32_t m, const VoiceBinder::Channel& order, const std::string& name) {
     MusicSlot& slot = g_music[m];
-    const int32_t ndsp = kMusicNdsp[m];
-    // The stream's own pin: the mixer releases its pin when the voice is
-    // forgotten, which can be before this file stops reading the samples.
-    if (g_bank != nullptr && !name.empty()) {
-        g_bank->retain(name);
-    }
-    const std::string old = slot.pin;
     LightLock_Lock(&g_lock);
-    ndspChnWaveBufClear(ndsp);
-    slot.sound = order.sound;
-    slot.channels = order.sound->channels == 2 ? 2 : 1;
-    slot.frames = order.frames < order.sound->frames() ? order.frames : order.sound->frames();
+    slot.serial++;
+    slot.want = true;
+    slot.cut = true;
+    snprintf(slot.name, sizeof(slot.name), "%s", name.c_str());
     slot.looping = order.looping;
-    slot.cursor = order.startFrame >= 0 && order.startFrame < slot.frames ? order.startFrame : 0;
-    slot.silentTicks = 0;
+    slot.startFrame = order.startFrame;
     slot.rate = order.rate;
     slot.left = order.left;
     slot.right = order.right;
-    slot.active = slot.frames > 0;
-    if (slot.active) {
-        musicConfigure(ndsp, slot);
-        for (int32_t i = 0; i < kMusicBuffers; i++) {
-            slot.wave[i].status = NDSP_WBUF_FREE;
-            musicFill(ndsp, slot, i);
-        }
-    }
     LightLock_Unlock(&g_lock);
     slot.owned = true;
-    slot.pin = name;
-    if (!old.empty() && g_bank != nullptr) {
-        g_bank->release(old);
-    }
+    // The worker (one priority above this thread) carries it out at once.
+    LightEvent_Signal(&g_wake);
 }
 
 void musicMix(int32_t m, const VoiceBinder::Channel& order) {
@@ -540,9 +837,42 @@ void musicMix(int32_t m, const VoiceBinder::Channel& order) {
     slot.rate = order.rate;
     slot.left = order.left;
     slot.right = order.right;
-    setMix(kMusicNdsp[m], order.left, order.right);
-    ndspChnSetRate(kMusicNdsp[m], order.rate);
+    if (slot.active && !g_suspended) {
+        setMix(kMusicNdsp[m], order.left, order.right);
+        ndspChnSetRate(kMusicNdsp[m], order.rate);
+    }
     LightLock_Unlock(&g_lock);
+}
+
+// The music lines the frame says (main thread): each start the worker carried
+// out, primed or read, and every underrun.
+void musicSay() {
+    for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
+        MusicSlot& slot = g_music[m];
+        LightLock_Lock(&g_lock);
+        const bool fresh = slot.applied != slot.said;
+        const bool want = slot.want;
+        const bool active = slot.active;
+        const bool primed = slot.startPrimed;
+        const uint32_t us = slot.startUs;
+        char name[kMusicNameBytes];
+        memcpy(name, slot.name, sizeof(name));
+        slot.said = slot.applied;
+        LightLock_Unlock(&g_lock);
+        if (fresh && want) {
+            log3dsPrintf("music: %s on ch%d: %s (%.1f ms on the worker)%s", name,
+                         (int)kMusicNdsp[m], primed ? "primed" : "NOT primed, read at the start",
+                         (double)us / 1000.0, active ? "" : " -- NO FILE, silent");
+        }
+    }
+    LightLock_Lock(&g_lock);
+    const uint32_t restarts = g_musicRestarts;
+    LightLock_Unlock(&g_lock);
+    if (restarts != g_musicRestartsSaid) {
+        log3dsPrintf("music: UNDERRUN -- %u drained channel restart(s) so far",
+                     (unsigned)restarts);
+        g_musicRestartsSaid = restarts;
+    }
 }
 
 // The mixer's name for a voice (the arena and the pins key on it), or a stand-in
@@ -570,7 +900,7 @@ void cutAll() {
 
 } // namespace
 
-bool audioDspOpen(audio::SoundBank* bank) {
+bool audioDspOpen() {
     // R1 on the main thread, which runs the binder and the channel calls: set at
     // the top of main already, so this is the idempotent read-back audioOpen()
     // also logs.
@@ -590,7 +920,13 @@ bool audioDspOpen(audio::SoundBank* bank) {
     }
     ndspSetMasterVol(1.0f);
     g_arena = (uint8_t*)linearAlloc(kSampleArenaBytes);
-    g_musicPool = (int16_t*)linearAlloc(kMusicBytes);
+    g_musicPool = (uint8_t*)linearAlloc(kMusicBytes);
+    // The primes' buffers: main memory (the worker copies them into the linear
+    // wave buffers at a start).
+    for (int32_t p = 0; p < kMusicPrimes; p++) {
+        g_primes[p] = MusicPrime();
+        g_primes[p].data = (uint8_t*)malloc((size_t)kMusicBuffers * kMusicBufBytes);
+    }
     if (g_arena == nullptr || g_musicPool == nullptr) {
         log3dsPrintf("audio: linearAlloc(%u + %u) failed — running muted",
                      (unsigned)kSampleArenaBytes, (unsigned)kMusicBytes);
@@ -602,10 +938,13 @@ bool audioDspOpen(audio::SoundBank* bank) {
             linearFree(g_musicPool);
             g_musicPool = nullptr;
         }
+        for (int32_t p = 0; p < kMusicPrimes; p++) {
+            free(g_primes[p].data);
+            g_primes[p].data = nullptr;
+        }
         ndspExit();
         return false;
     }
-    g_bank = bank;
     /* The music low-pass's pole at the DSP's own rate: one expf at open. */
     g_lowPassE = expf(-2.0f * 3.14159265f * kMusicCutoff / (float)NDSP_SAMPLE_RATE);
     for (int32_t i = 0; i < kMaxEntries; i++) {
@@ -617,13 +956,9 @@ bool audioDspOpen(audio::SoundBank* bank) {
         ndspChnReset(c);
     }
     for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
-        MusicSlot& slot = g_music[m];
-        memset(slot.wave, 0, sizeof(slot.wave));
-        slot.buf = g_musicPool + (size_t)m * kMusicBuffers * kMusicBufHalfwords;
-        slot.active = false;
-        slot.sound = nullptr;
-        slot.owned = false;
-        slot.pin.clear();
+        g_music[m] = MusicSlot();
+        memset(g_music[m].wave, 0, sizeof(g_music[m].wave));
+        g_music[m].buf = g_musicPool + (size_t)m * kMusicBuffers * kMusicBufBytes;
         ndspChnReset(kMusicNdsp[m]);
     }
     g_binder.reset();
@@ -644,14 +979,16 @@ bool audioDspOpen(audio::SoundBank* bank) {
     g_thread = threadCreate(audioDspWorker, nullptr, kWorkerStackBytes, workerPriority, -2, false);
     g_live = true;
     log3dsPrintf("audio: dsp voices=%d music=ch%d+ch%d (crossfade) effects=ndsp 0-%d; arena %u B "
-                 "linear (samples, PCM8 for 8-bit), music %d x %d x %d frames = %u B linear; "
+                 "linear (samples, PCM8 for 8-bit), music DSP-ADPCM from %s, %d x %d x %d "
+                 "ADPCM frames = %u B linear, %d primes; "
                  "worker %s prio 0x%X stack %u tick 25 ms; music low-pass biquad %.0f Hz "
                  "(e=%.6f at %.1f Hz); no limiter; linear free after %u B. The `audio: frame=` "
                  "sink ledger counts the software sink and reads 0 in this mode: read `audio: dsp`",
                  (int)VoiceBinder::kEffectChannels, (int)kMusicNdsp[0], (int)kMusicNdsp[1],
                  (int)VoiceBinder::kEffectChannels - 1, (unsigned)kSampleArenaBytes,
+                 g_musicFolder[0] ? g_musicFolder : "(no folder)",
                  (int)VoiceBinder::kMusicChannels, (int)kMusicBuffers, (int)kMusicBufFrames,
-                 (unsigned)kMusicBytes, g_thread ? "started" : "FAILED (music will stop)",
+                 (unsigned)kMusicBytes, (int)kMusicPrimes, g_thread ? "started" : "FAILED (music will stop)",
                  (unsigned)workerPriority, (unsigned)kWorkerStackBytes, (double)kMusicCutoff,
                  (double)g_lowPassE, (double)NDSP_SAMPLE_RATE, (unsigned)linearSpaceFree());
     return true;
@@ -672,7 +1009,21 @@ void audioDspClose() {
         threadFree(g_thread);
         g_thread = nullptr;
     }
-    cutAll();  // also gives back the bank pins (the bank outlives this call)
+    // The worker is gone: the channels are silenced and the files closed here.
+    for (int32_t c = 0; c < VoiceBinder::kEffectChannels; c++) {
+        effectCut(c);
+    }
+    for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
+        ndspChnWaveBufClear(kMusicNdsp[m]);
+        musicClose(g_music[m].stream);
+        g_music[m].active = false;
+        g_music[m].owned = false;
+    }
+    for (int32_t p = 0; p < kMusicPrimes; p++) {
+        musicClose(g_primes[p].stream);
+        free(g_primes[p].data);
+        g_primes[p] = MusicPrime();
+    }
     g_binder.reset();
     ndspExit();
     // The DSP has stopped: its memory can go.
@@ -686,11 +1037,88 @@ void audioDspClose() {
     for (int32_t i = 0; i < kMaxEntries; i++) {
         g_entries[i] = Entry();
     }
-    g_bank = nullptr;
     g_live = false;
 }
 
 bool audioDspIsOpen() { return g_live; }
+
+int32_t audioDspMusicRegister(audio::SoundBank* bank, int32_t level) {
+    // Cold (the level's load): the folder listed once, each track's header read.
+    snprintf(g_musicFolder, sizeof(g_musicFolder), "romfs:/music/level%d", (int)level);
+    DIR* dir = opendir(g_musicFolder);
+    if (dir == nullptr) {
+        log3dsPrintf("music: %s is missing -- the level's music plays from the bank, unstreamed "
+                     "and SILENT on the DSP", g_musicFolder);
+        return 0;
+    }
+    int32_t count = 0;
+    uint32_t bytes = 0;
+    while (struct dirent* e = readdir(dir)) {
+        const size_t len = strlen(e->d_name);
+        if (len < 5 || len - 4 >= (size_t)kMusicNameBytes || strcmp(e->d_name + len - 4, ".dsp") != 0) {
+            continue;
+        }
+        char path[kMusicPathBytes + kMusicNameBytes + 8];
+        snprintf(path, sizeof(path), "%.63s/%.20s", g_musicFolder, e->d_name);
+        FILE* f = fopen(path, "rb");
+        if (f == nullptr) {
+            continue;
+        }
+        uint8_t header[audio::DspAdpcm::kHeaderBytes];
+        audio::DspAdpcmHeader head;
+        const bool ok = fread(header, 1, sizeof(header), f) == sizeof(header) &&
+                        audio::DspAdpcm::parseHeader(header, (int32_t)sizeof(header), &head);
+        fseek(f, 0, SEEK_END);
+        bytes += (uint32_t)ftell(f);
+        fclose(f);
+        if (!ok) {
+            log3dsPrintf("music: %s is not a DSP-ADPCM track -- skipped", path);
+            continue;
+        }
+        // The CMI's spelling is upper case; the file names are lower case.
+        char name[kMusicNameBytes];
+        for (size_t i = 0; i < len - 4; i++) {
+            const char c = e->d_name[i];
+            name[i] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+        }
+        name[len - 4] = '\0';
+        if (bank != nullptr) {
+            bank->addStreamedMusic(name, (int32_t)head.sampleRate, (int32_t)head.samples);
+        }
+        count++;
+    }
+    closedir(dir);
+    log3dsPrintf("music: %d DSP-ADPCM tracks in %s (%u bytes), streamed by the audio worker",
+                 (int)count, g_musicFolder, (unsigned)bytes);
+    return count;
+}
+
+void audioDspPrimeMusic(const std::string& name) {
+    if (!g_live || name.empty()) {
+        return;
+    }
+    LightLock_Lock(&g_lock);
+    bool have = false;
+    for (int32_t p = 0; p < kMusicPrimes; p++) {
+        have = have || strcmp(g_primes[p].name, name.c_str()) == 0;
+    }
+    // Already being played on a channel: nothing to prime (LevelMusic does not
+    // restart a track it is playing or fading).
+    for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
+        have = have || (g_music[m].want && strcmp(g_music[m].name, name.c_str()) == 0);
+    }
+    if (!have) {
+        // The older wish gives way (two primes: the loading arena's and the door
+        // bubble's nearest).
+        MusicPrime& prime = g_primes[g_primeNext];
+        g_primeNext = (g_primeNext + 1) % kMusicPrimes;
+        snprintf(prime.name, sizeof(prime.name), "%s", name.c_str());
+    }
+    LightLock_Unlock(&g_lock);
+    if (!have) {
+        LightEvent_Signal(&g_wake);
+    }
+}
 
 void audioDspDetach() {
     if (!g_live) {
@@ -735,6 +1163,7 @@ void audioDspFrame(const audio::SoundMixer& mixer) {
             musicMix(m, ch);
         }
     }
+    musicSay();
 }
 
 AudioDspStats audioDspStats() {
@@ -755,6 +1184,9 @@ AudioDspStats audioDspStats() {
         LightLock_Lock(&g_lock);
         st.musicQueued = g_musicQueued;
         st.musicRestarts = g_musicRestarts;
+        st.musicUnprimed = g_musicUnprimed;
+        st.musicMissing = g_musicMissing;
+        st.musicReadMaxUs = g_musicReadMax;
         for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
             st.musicActive += g_music[m].active ? 1 : 0;
         }

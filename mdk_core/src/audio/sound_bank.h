@@ -67,8 +67,9 @@
 // 3DS, level 7's corridor crossing: a step's fopen + seek + 64 KiB read was 11-17
 // ms of the main thread for eight frames, and the last step's decode of the
 // whole track -- about half a million samples -- 74.9 ms in one frame).
-//   - THE READS: a frontend with a file thread lends it (setReader; the 3DS's
-//     kChannelMusic), and a streamed archive's step is then ASKED FOR on that
+//   - THE READS: a frontend with a file thread may lend it (setReader; the 3DS
+//     did until it streamed its music as DSP-ADPCM, addStreamedMusic below), and
+//     a streamed archive's step is then ASKED FOR on that
 //     thread and taken back by a later call: the frame only appends the landed
 //     bytes. One read in flight, one step long, so the thread is never held by a
 //     track for more than an ordinary read. Without a reader (the desktop, the
@@ -196,6 +197,25 @@ public:
     const std::string& prefetching() const { return staging_.name; }
     const Stats& stats() const { return stats_; }
 
+    // MUSIC STREAMED ELSEWHERE (the 3DS: mdk_3ds/music, DSP-ADPCM read by the
+    // audio worker, audio_dsp_3ds.h). A frontend that plays a level's music from
+    // its own files registers each track here -- its name, as the CMI spells it,
+    // and its rate and length in those files -- and the bank then answers the
+    // MUSIC bus's lookups (getMusic) with that geometry and NO samples: the
+    // track is never read out of LEVELnO.SNI, never decoded and never
+    // prefetched. A registered name the archives also carry keeps their
+    // script-visible half (volume, loop flag); one they lack (a soundtrack's
+    // extra track) plays looping at volume 0, as every retail music entry is
+    // flagged. A frontend that registers nothing (the desktop) gets get().
+    void addStreamedMusic(const std::string& name, int32_t sampleRate, int32_t frames);
+    bool streamsMusic(const std::string& name) const {
+        return streamed_.find(name) != streamed_.end();
+    }
+    // The music bus's lookup (SoundMixer::playMusic): a registered track's
+    // metadata, its `sound` a sample-less stand-in owned by the bank (so the
+    // voice table binds it like any sound); else get().
+    bool getMusic(const std::string& name, Entry* out);
+
     // Get(name): the sound, or false when the level has no such sound. The name
     // is matched exactly, as the C# does — a script that asks for a lower-case
     // name the archives do not carry gets nothing.
@@ -315,6 +335,10 @@ private:
     // it — which is the sharing the C# gets from Sound being a reference type.
     std::map<std::string, Sound> sounds_;
     std::set<std::string> missing_;
+    // The registered streamed tracks (addStreamedMusic) and their sample-less
+    // stand-ins (a map node never moves: the Entry's pointer stays good).
+    std::map<std::string, Entry> streamed_;
+    std::map<std::string, Sound> streamedSounds_;
     // Read failures per name, until kMaxReadFailures makes the name missing.
     std::map<std::string, int32_t> readFailures_;
     Staging staging_;

@@ -97,17 +97,6 @@ bool mdk_render_poll_file_read(MdkRenderer, int32_t, uint8_t**, uint32_t*, bool*
 
 void mdk_render_cancel_file_read(MdkRenderer, int32_t) {}
 
-// NOR FOR THE MUSIC PREFETCH: the desktop's bank reads its steps on the frame
-// (render.h).
-bool mdk_render_read_music_async(MdkRenderer, int32_t, const char*, uint32_t, uint32_t) {
-    return false;
-}
-
-bool mdk_render_poll_music_read(MdkRenderer, int32_t, uint8_t**, uint32_t*, bool*) {
-    return false;
-}
-
-void mdk_render_cancel_music_read(MdkRenderer, int32_t) {}
 
 // No per-texture answer here: callers fall back to mdk_render_index_texture_bytes,
 // which is the desktop's exact cost of an index texture (render.h).

@@ -694,47 +694,6 @@ void mdk_render_cancel_file_read(MdkRenderer r, int32_t tag) {
     }
 }
 
-// THE MUSIC PREFETCH'S RANGE READS through the same thread (render.h):
-// kChannelMusic, one in flight (a cancelled read still being read counts until
-// the worker ends it), taken by tag. Only the main thread calls these.
-bool mdk_render_read_music_async(MdkRenderer r, int32_t tag, const char* path, uint32_t offset,
-                                 uint32_t size) {
-    RendererC3D* renderer = asC3d(r);
-    if (!renderer || !path || !*path || size == 0 ||
-        renderer->hdReader.busy(mdk::AsyncFileReader::kChannelMusic) > 0) {
-        return false;
-    }
-    return renderer->hdReader.requestRange(mdk::AsyncFileReader::kChannelMusic, tag, path,
-                                           offset, size);
-}
-
-bool mdk_render_poll_music_read(MdkRenderer r, int32_t tag, uint8_t** bytes, uint32_t* size,
-                                bool* ok) {
-    RendererC3D* renderer = asC3d(r);
-    if (!renderer || !bytes || !size || !ok) {
-        return false;
-    }
-    size_t length = 0;
-    if (!renderer->hdReader.pollTag(mdk::AsyncFileReader::kChannelMusic, tag, bytes, &length,
-                                    ok)) {
-        return false;
-    }
-    *size = (uint32_t)length;
-    if (!*ok) {
-        free(*bytes);
-        *bytes = nullptr;
-        *size = 0;
-    }
-    return true;
-}
-
-void mdk_render_cancel_music_read(MdkRenderer r, int32_t tag) {
-    RendererC3D* renderer = asC3d(r);
-    if (renderer) {
-        renderer->hdReader.discard(mdk::AsyncFileReader::kChannelMusic, tag);
-    }
-}
-
 // The HD pack's compressed replacement for an index texture: recorded only.
 // The draw that first wants it queues it, and the frame-boundary pump imports
 // it under the HD budget (04_textures.inc, THE HD STREAM).

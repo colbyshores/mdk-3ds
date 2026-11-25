@@ -21,13 +21,6 @@
 
 namespace mdk {
 
-// The music prefetch's reads (audio/sound_bank.h's setReader): `user` is the
-// MdkRenderer whose file thread reads them.
-bool musicReadRequest(void* user, int32_t tag, const char* path, uint32_t offset,
-                      uint32_t length);
-bool musicReadPoll(void* user, int32_t tag, uint8_t** bytes, uint32_t* size, bool* ok);
-void musicReadCancel(void* user, int32_t tag);
-
 // The light rig for one arena, computed once and kept in `cache`.
 Lighting cachedLighting(std::vector<std::pair<const formats::Arena*, Lighting>>& cache,
                         const LevelData& level, const formats::Arena* arena);

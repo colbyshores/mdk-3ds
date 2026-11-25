@@ -245,7 +245,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             return false;
         }
         audio::SoundDevice& device = fall->mixer().device();
-        fallAudio = audioDspOpen(fall->bank());
+        fallAudio = audioDspOpen();
         device.setSampleMix(false);
         front->settings->applyAudio(&device);
         log3dsPrintf("flow: the fall before level %d (seed %d, audio %d)", (int)flow.state().level,

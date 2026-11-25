@@ -140,7 +140,7 @@ constexpr int32_t kTopWidth = 400;
 constexpr int32_t kTopHeight = 240;
 
 // The sound bank's decoded store, bounded (see where it is set).
-const size_t kDecodedSoundBudgetBytes = (size_t)6 << 20;
+const size_t kDecodedSoundBudgetBytes = (size_t)4 << 20;
 
 // THE TINY-ENEMY CULL (EnhancedToggles::tinyEnemyPixels), its per-object state:
 // one byte per slot of the runtime's object deque (slots never move: removed
@@ -746,9 +746,10 @@ int main(int argc, char** argv) {
     //
     // SINCE ARENA STREAMING PHASE 5 (2026-11-18) the two paragraphs above describe
     // the past in one respect: the music archive (LEVELnO.SNI, 3.3-4.5 MB) is no
-    // longer resident -- the bank opens it by its directory and reads a track when
-    // an arena loads -- and the decoded store IS bounded (the budget set below,
-    // and releaseMusicExcept in the frame loop). What stays resident is
+    // longer resident -- the bank opens it by its directory -- and the decoded
+    // store IS bounded (the budget set below). Since 2026-11-25 the bank reads no
+    // music at all: the tracks are DSP-ADPCM files the audio worker streams
+    // (audio_dsp_3ds.h, mdk_3ds/music). What stays resident is
     // TRAVERSE.SNI and LEVELnS.SNI, the effects: 0.83-0.98 MB on levels 3, 7, 8.
     // The figures are in docs/evidence/2026-11-18-arena-streaming-phase5.txt and
     // they are EMULATOR figures; the console's are still owed.
@@ -780,28 +781,14 @@ int main(int argc, char** argv) {
         mdk::audio::SoundBank::forLevel(&bank, data, flow.state().level)) {
         bankReady = true;
         // THE DECODED STORE IS BOUNDED (SoundBank::setDecodedBudgetBytes: least
-        // recently played first, never a sound a voice is playing). Until Phase 5
-        // nothing played music, so the store only ever held effects; a level's
-        // music is 5-9 tracks that decode to about a megabyte each, and a level
-        // played end to end would otherwise keep them all. 6 MiB is every effect
-        // of the largest level decoded at once (level 4: about 2.5 MB) plus three
-        // tracks -- the one playing, the one fading out and the one prefetched for
-        // the next arena -- so nothing that can be needed without warning is ever
-        // the victim. A hardware number, like the rest: it has to be confirmed on
-        // the console.
+        // recently played first, never a sound a voice is playing). It holds
+        // EFFECTS only: the level's music is streamed by the audio worker from its
+        // own DSP-ADPCM files (audio_dsp_3ds.h), registered here, and the bank
+        // never reads or decodes a track. 4 MiB is every effect of the largest
+        // level decoded at once (level 4: about 2.5 MB) with room to spare, so no
+        // effect is ever the victim.
         bank.setDecodedBudgetBytes(kDecodedSoundBudgetBytes);
-        // The prefetch's reads go to the renderer's file thread (above). The
-        // renderer outlives every level's bank, and the bank cancels its read in
-        // flight when it goes (the level's teardown). No thread (it failed to
-        // start): the bank reads its steps on the frame, as before.
-        if (mdk_render_has_file_reader(renderer)) {
-            mdk::AsyncRead musicReader;
-            musicReader.requestRange = mdk::musicReadRequest;
-            musicReader.poll = mdk::musicReadPoll;
-            musicReader.cancel = mdk::musicReadCancel;
-            musicReader.user = renderer;
-            bank.setReader(musicReader);
-        }
+        mdk::audioDspMusicRegister(&bank, flow.state().level);
         mdk::log3dsPrintf("audio: bank ready, %d archives (%d bytes resident; the music "
                           "archive is read by entry), decoded on demand, budget %d bytes",
                           (int)bank.archiveCount(), (int)bank.archiveBytes(),
@@ -837,7 +824,7 @@ int main(int argc, char** argv) {
     // ARM11 sums nothing and only advances the voices' lifecycle. The device keeps
     // the frame's own `owed` accounting (no queue query). When the DSP path does
     // not open the level runs muted, its voices' lifecycle still advancing.
-    const bool audioReady = mdk::audioDspOpen(bankReady ? &bank : nullptr);
+    const bool audioReady = mdk::audioDspOpen();
     mixer.device().setSampleMix(false);
 
     // The three assets the scripts need, all of them loaded above: the CMI is the
@@ -962,9 +949,9 @@ int main(int argc, char** argv) {
     // Kurt's arena, played through the runtime's mixer -- so it lives and dies
     // with the runtime, like everything else that holds a voice of that mixer.
     std::unique_ptr<mdk::audio::LevelMusic> music;
-    // The arena whose track the bank was last asked to prefetch (below).
+    // The loading (second) arena whose track was last primed (below).
     std::string musicPrefetchedFor;
-    // The bubble arena whose track was last prefetched ahead.
+    // The bubble arena whose track was last primed.
     std::string musicBubbleFor;
     // The second arenas whose first effects-warm step was already
     // deferred once (per name; see the frame's warm).
@@ -988,16 +975,12 @@ int main(int argc, char** argv) {
     std::vector<std::string> bubbleSticky;
     // THE BANK'S BLOCKING READS, ALL OF THEM SAID (spec Phase 3: "log every
     // stall"). A streamed sound that is asked for while it is not in memory is
-    // read whole, wherever the asker is -- the music's enter(), a script's play
-    // in the middle of its tick, a track the budget evicted. The ones the
-    // music's enter() makes are timed and said there; the frame says the rest.
+    // read whole, wherever the asker is -- a script's play of a LEVELnO.SNI
+    // entry in the middle of its tick, an effect the budget evicted. (The music
+    // never: it is streamed by the audio worker.) The frame says them.
     int32_t audioStallsSaid = 0;
     int32_t audioDemandSaid = 0;
     int64_t audioDemandBytesSaid = 0;
-    // The prefetch in flight: its steps' worst time, for the line that ends it.
-    double prefetchWorstMs = 0.0;
-    // The bank's counters when it began, for the same line.
-    mdk::audio::SoundBank::Stats prefetchStart;
     // The arena whose light rig the renderer holds (see the frame's light below).
     const mdk::formats::Arena* litArena = nullptr;
     // THE SCRIPT OPTION (C# ScriptRuntime.Option). It is a USER SETTING, not a
@@ -1182,12 +1165,10 @@ int main(int argc, char** argv) {
         if (runtime) {
             music.reset(new mdk::audio::LevelMusic(&runtime->mixer(), &cmi.arenaMusic(),
                                                    &cmi.arenaAmbience()));
-            const double music0 = mdk::nowSeconds();
             music->enter(startArenaName);
-            mdk::log3dsPrintf("music: %s for %s (read and decoded in %.1f ms)",
-                              music->playing().c_str(), startArenaName.c_str(),
-                              (mdk::nowSeconds() - music0) * 1000.0);
-            // That read is said (the line above): the frame's ledger starts here.
+            mdk::log3dsPrintf("music: %s for %s", music->playing().c_str(),
+                              startArenaName.c_str());
+            // The frame's ledger of the bank's blocking reads starts here.
             audioStallsSaid = bank.stats().prefetchStalls;
             audioDemandSaid = bank.stats().demandReads;
             audioDemandBytesSaid = bank.stats().demandBytes;
@@ -1718,33 +1699,19 @@ int main(int argc, char** argv) {
                 follow.update(&camera, &space, player, target, step, kAspect);
                 // The music follows Kurt's arena, which the scripts set (C#
                 // Viewer.cs:521-525: Enter, then Update(Step), every step, after
-                // the camera). A track that is not in memory yet is read HERE,
-                // inside enter(): the prefetch below is what makes that rare, and
-                // when it happens anyway it is said, with its time.
+                // the camera). A new track is a request to the audio worker,
+                // which starts it from its primed read-ahead (below): nothing is
+                // read or decoded here.
                 if (music) {
-                    const mdk::audio::SoundBank::Stats audioBefore = bank.stats();
-                    const double music0 = mdk::nowSeconds();
+                    const std::string was = music->playing();
                     music->enter(runtime->currentArena());
-                    const mdk::audio::SoundBank::Stats& audioAfter = bank.stats();
-                    if (audioAfter.prefetchStalls != audioBefore.prefetchStalls) {
-                        mdk::log3dsPrintf("music: STALL %s wanted before its prefetch was done: "
-                                          "%d bytes left to read, read and the whole track "
-                                          "decoded in %.1f ms",
-                                          music->playing().c_str(),
-                                          (int)(audioAfter.prefetchStallBytes -
-                                                audioBefore.prefetchStallBytes),
-                                          (mdk::nowSeconds() - music0) * 1000.0);
-                    } else if (audioAfter.demandReads != audioBefore.demandReads) {
-                        mdk::log3dsPrintf("music: STALL %s was not prefetched: %d bytes in "
-                                          "%.1f ms",
-                                          music->playing().c_str(),
-                                          (int)(audioAfter.demandBytes - audioBefore.demandBytes),
-                                          (mdk::nowSeconds() - music0) * 1000.0);
+                    if (music->playing() != was) {
+                        mdk::log3dsPrintf("music: %s for %s (was %s, fading %s)",
+                                          music->playing().empty() ? "-" : music->playing().c_str(),
+                                          runtime->currentArena().c_str(),
+                                          was.empty() ? "-" : was.c_str(),
+                                          music->fading().empty() ? "-" : music->fading().c_str());
                     }
-                    // Said here, with its time: the frame's own ledger (below)
-                    // reports only the blocking reads nobody else timed.
-                    audioStallsSaid += audioAfter.prefetchStalls - audioBefore.prefetchStalls;
-                    audioDemandSaid += audioAfter.demandReads - audioBefore.demandReads;
                     music->update(step);
                 }
                 // The cutscene's shot of this step (Viewer.cs:528-531, after the music).
@@ -2149,33 +2116,21 @@ int main(int argc, char** argv) {
 
             // THE MUSIC OF THE ARENA THAT IS LOADING (docs/ARENA_STREAMING_SPEC.md
             // Phase 5). The original starts an arena's music preload when the
-            // arena loads (arena_load -> 0x4192c4) and reads a step of it a frame
-            // (game_frame -> 0x4193a4), so the track is in memory when Kurt walks
-            // in. Here the arena that is loading is the pair's OTHER one: the
-            // second arena, which is where a door or a corridor leads. Asked once
-            // per change of that arena; the bank steps it once per frame: a read
-            // step asked of the file thread or taken back from it (the frame only
-            // appends the landed bytes), then the decode a bounded slice a frame
-            // (SoundBank::kDecodeStepSamples). No frame reads, and none decodes a
-            // whole track: those are the last resort, a track wanted before its
-            // prefetch is in (counted, and said below).
-            bool musicStartedHere = false;
+            // arena loads (arena_load -> 0x4192c4), so the track is in memory when
+            // Kurt walks in. Here the arena that is loading is the pair's OTHER
+            // one (the second arena, where a door or a corridor leads), and the
+            // door bubble's nearest arena is a second hint: each one's track is
+            // PRIMED by the audio worker (its file opened and its first two
+            // seconds read, off this thread), so the track starts at the door
+            // with no read. Asked once per change of either arena.
             if (music) {
-                // The bubble's nearest arena's track too, when no
-                // prefetch is in flight: it reads a step a frame like
-                // the second's, so the doorway's music is resident with
-                // its view. The second arena's own start below drops a
-                // bubble staging it no longer needs (prefetch replaces
-                // the staging), so there is no double read.
-                if (!bubbleHints.empty() && bank.prefetching().empty() &&
-                    bubbleHints[0] != streamSecond && bubbleHints[0] != musicBubbleFor) {
+                if (!bubbleHints.empty() && bubbleHints[0] != streamSecond &&
+                    bubbleHints[0] != musicBubbleFor) {
+                    musicBubbleFor = bubbleHints[0];
                     const std::string track = music->trackOf(bubbleHints[0]);
-                    prefetchStart = bank.stats();
-                    if (bank.prefetch(track)) {
-                        prefetchWorstMs = 0.0;
-                        musicBubbleFor = bubbleHints[0];
-                        musicStartedHere = true;
-                        mdk::log3dsPrintf("music: prefetch %s for %s (bubble)", track.c_str(),
+                    if (track != music->playing() && track != music->fading()) {
+                        mdk::audioDspPrimeMusic(track);
+                        mdk::log3dsPrintf("music: prime %s for %s (bubble)", track.c_str(),
                                           bubbleHints[0].c_str());
                     }
                 }
@@ -2183,90 +2138,11 @@ int main(int argc, char** argv) {
                     musicPrefetchedFor = streamSecond;
                     if (!streamSecond.empty()) {
                         const std::string track = music->trackOf(streamSecond);
-                        const mdk::audio::SoundBank::Stats before = bank.stats();
-                        if (bank.prefetch(track)) {
-                            prefetchStart = before;
-                            prefetchWorstMs = 0.0;
-                            musicStartedHere = true;
-                            // The second's prefetch replaces the staging:
-                            // a bubble prefetch it superseded may be
-                            // issued again while its arena stays nearest.
-                            if (musicBubbleFor != streamSecond) {
-                                musicBubbleFor.clear();
-                            }
-                            mdk::log3dsPrintf("music: prefetch %s for %s", track.c_str(),
+                        if (track != music->playing() && track != music->fading()) {
+                            mdk::audioDspPrimeMusic(track);
+                            mdk::log3dsPrintf("music: prime %s for %s", track.c_str(),
                                               streamSecond.c_str());
                         }
-                    }
-                }
-                // Not the change frame's own step: the arena-activation frame
-                // already carries the view build and the warm, and the track is
-                // wanted at the door, frames later -- registering here and
-                // stepping from the next frame loses nothing.
-                if (!bank.prefetching().empty() && !musicStartedHere) {
-                    const std::string reading = bank.prefetching();
-                    const int32_t failuresBefore = bank.stats().readFailures;
-                    // Every step is timed: a landed read's append (up to 64 KiB
-                    // copied) or a decode slice (32768 samples) -- both bounded,
-                    // and the line that ends the prefetch says the worst.
-                    const double step0 = mdk::nowSeconds();
-                    const bool more = bank.prefetchStep();
-                    const double stepMs = (mdk::nowSeconds() - step0) * 1000.0;
-                    if (stepMs > prefetchWorstMs) {
-                        prefetchWorstMs = stepMs;
-                    }
-                    if (!more && bank.prefetching().empty()) {
-                        const mdk::audio::SoundBank::Stats& now = bank.stats();
-                        if (now.readFailures != failuresBefore) {
-                            mdk::log3dsPrintf("music: prefetch of %s FAILED (%d read failures); "
-                                              "it is read when it is played",
-                                              reading.c_str(), (int)now.readFailures);
-                        } else {
-                            mdk::log3dsPrintf("music: %s in (%d read steps, %d of them on the "
-                                              "reader thread, %d decode slices; worst step "
-                                              "%.1f ms; %d bytes decoded in the bank, %d "
-                                              "evicted)",
-                                              reading.c_str(),
-                                              (int)(now.prefetchSteps - prefetchStart.prefetchSteps),
-                                              (int)(now.prefetchReads - prefetchStart.prefetchReads),
-                                              (int)(now.decodeSteps - prefetchStart.decodeSteps),
-                                              prefetchWorstMs, (int)bank.decodedBytes(),
-                                              (int)now.evictions);
-                        }
-                        prefetchWorstMs = 0.0;
-                    }
-                }
-                // AND THE MUSIC OF ARENAS THAT ARE GONE IS GIVEN BACK (the spec's
-                // "free the decoded samples of an arena when it is deactivated"):
-                // once a second, every decoded track but the one playing, the one
-                // fading out (both pinned by their voices) and the loading arena's.
-                // A level played end to end then holds three tracks, not all nine.
-                // Its cost is a walk of the decoded names (tens) against three; its
-                // lines are events (something was freed or re-asked), not periodic.
-                if ((frame % 60u) == 0u) {
-                    // The bubble's prefetched track is kept too: it is the
-                    // door ahead's music, and freeing it within the second
-                    // made the door read and decode it again (review M2).
-                    const std::string keep[4] = {
-                        music->playing(), music->fading(),
-                        streamSecond.empty() ? std::string() : music->trackOf(streamSecond),
-                        musicBubbleFor.empty() ? std::string() : music->trackOf(musicBubbleFor)};
-                    const size_t freed = bank.releaseMusicExcept(keep, 4);
-                    if (freed != 0) {
-                        mdk::log3dsPrintf("music: released %d bytes of tracks no arena in "
-                                          "memory plays (%d decoded bytes left)",
-                                          (int)freed, (int)bank.decodedBytes());
-                    }
-                    // And the loading arena's track is asked for AGAIN: nothing if
-                    // it is decoded or being read, a new prefetch if the budget
-                    // evicted it since (the budget does not know which track is
-                    // waiting for Kurt; this does).
-                    const mdk::audio::SoundBank::Stats before = bank.stats();
-                    if (!keep[2].empty() && bank.prefetch(keep[2])) {
-                        prefetchStart = before;
-                        prefetchWorstMs = 0.0;
-                        mdk::log3dsPrintf("music: prefetch %s for %s again (it was evicted)",
-                                          keep[2].c_str(), streamSecond.c_str());
                     }
                 }
             }

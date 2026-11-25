@@ -25,9 +25,9 @@
 // that closes with a read outstanding leaves nothing behind.
 //
 // A BYTE RANGE instead of a whole file: the music prefetch (audio/sound_bank.h's
-// setReader) asks for one step of a track at a time with requestRange, on the
-// 3DS's music channel (render.h's mdk_render_read_music_async), and takes it back
-// with poll and cancel exactly as a whole file. A user sets the requests it uses.
+// setReader) asks for one step of a track at a time with requestRange, and takes
+// it back with poll and cancel exactly as a whole file. (No frontend lends one
+// today: the 3DS streams its music as DSP-ADPCM, audio_dsp_3ds.h.) A user sets the requests it uses.
 //
 // No virtuals, no std::function (AGENTS.md §10): function pointers and a user.
 // ============================================================================

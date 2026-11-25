@@ -59,6 +59,39 @@ bool SoundBank::withArchives(SoundBank* out, std::vector<formats::Sni>&& archive
     return true;
 }
 
+void SoundBank::addStreamedMusic(const std::string& name, int32_t sampleRate, int32_t frames) {
+    Entry entry;
+    entry.volume = 0;
+    entry.looping = true;
+    entry.music = true;
+    size_t archive = 0;
+    const formats::Sni::Entry* found = nullptr;
+    if (find(name, &archive, &found)) {
+        entry.volume = found->volume;
+        entry.looping = (found->flags & formats::Sni::kFlagLoop) != 0;
+    }
+    entry.channels = 1;
+    entry.sampleRate = sampleRate;
+    entry.frames = frames;
+    Sound& stand = streamedSounds_[name];
+    stand = Sound();
+    stand.channels = 1;
+    stand.sampleRate = sampleRate;
+    entry.sound = &stand;
+    streamed_[name] = entry;
+}
+
+bool SoundBank::getMusic(const std::string& name, Entry* out) {
+    std::map<std::string, Entry>::const_iterator found = streamed_.find(name);
+    if (found == streamed_.end()) {
+        return get(name, out);
+    }
+    if (out != nullptr) {
+        *out = found->second;
+    }
+    return true;
+}
+
 bool SoundBank::get(const std::string& name, Entry* out) {
     std::map<std::string, Entry>::const_iterator found = cache_.find(name);
     if (found != cache_.end()) {
@@ -273,7 +306,7 @@ bool SoundBank::find(const std::string& name, size_t* archive,
 
 bool SoundBank::prefetch(const std::string& name) {
     if (name.empty() || name == staging_.name || cache_.find(name) != cache_.end() ||
-        missing_.find(name) != missing_.end()) {
+        missing_.find(name) != missing_.end() || streamsMusic(name)) {
         return false;
     }
     size_t archive = 0;

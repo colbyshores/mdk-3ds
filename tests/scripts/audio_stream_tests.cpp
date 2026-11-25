@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "audio/dsp_adpcm.h"
 #include "audio/level_music.h"
 #include "audio/sound_bank.h"
 #include "audio/sound_mixer.h"
@@ -1337,6 +1338,102 @@ void testTheAmbienceFollowsTheArena(const MdkData& data) {
     expect("retail: the music's voice and no other", (long long)plain.voices().size(), 1);
 }
 
+
+// THE 3DS'S STREAMED MUSIC (SoundBank::addStreamedMusic, getMusic): a registered
+// track answers the music bus with the files' geometry and no samples, is never
+// read, decoded or prefetched, keeps the archives' script-visible half, and a
+// name the archives lack (a soundtrack's extra track) exists for the music bus
+// only. The effects' lookup (get) is untouched, and LevelMusic plays the same.
+void testStreamedMusicIsNeverRead(const MdkData& data) {
+    SoundBank bank;
+    check(SoundBank::forLevel(&bank, data, 3), "the bank loads");
+    bank.addStreamedMusic("H1", 32000, 1383680);
+    bank.addStreamedMusic("AMB_DRIP", 32000, 2969920);
+    SoundBank::Entry entry;
+    check(bank.getMusic("H1", &entry), "a streamed track answers the music bus");
+    expect("at the files' rate", entry.sampleRate, 32000);
+    expect("and length", entry.frames, 1383680);
+    expect("mono", entry.channels, 1);
+    check(entry.looping && entry.music, "looping music, as LEVEL3O.SNI flags it");
+    check(entry.sound != nullptr && entry.sound->samples.empty(),
+          "with a sample-less stand-in the voice table can bind");
+    check(bank.getMusic("AMB_DRIP", &entry) && entry.looping && entry.volume == 0,
+          "a track the archives lack plays looping at volume 0");
+    check(!bank.get("AMB_DRIP", nullptr), "but is no sound of the archives for anything else");
+    check(!bank.prefetch("H1"), "a streamed track is never prefetched");
+    expect("nothing decoded", (long long)bank.decodedBytes(), 0);
+    expect("nothing read", bank.stats().demandReads, 0);
+    check(bank.getMusic("H10", &entry) && entry.sound != nullptr && !entry.sound->samples.empty(),
+          "an unregistered track is the bank's, decoded as before");
+    const long long decodedBefore = (long long)bank.decodedBytes();
+
+    SoundMixer mixer(&bank);
+    LevelMusic::NameMap tracks;
+    tracks.push_back(std::make_pair(std::string("HMO_1"), std::string("H1")));
+    tracks.push_back(std::make_pair(std::string("HMO_9"), std::string("AMB_DRIP")));
+    LevelMusic music(&mixer, &tracks);
+    music.enter("HMO_1");
+    check(music.playing() == "H1" && mixer.voices().size() == 1, "LevelMusic starts it");
+    music.enter("HMO_9");
+    check(music.playing() == "AMB_DRIP" && music.fading() == "H1" && mixer.voices().size() == 2,
+          "and crossfades into the extra track");
+    for (int i = 0; i < 600; i++) {
+        music.update(1.0f / 60.0f);
+        mixer.update(1.0f / 60.0f);
+    }
+    check(music.fading().empty() && mixer.voices().size() == 1, "the faded track stops");
+    expect("the streamed tracks decoded nothing", (long long)bank.decodedBytes(), decodedBefore);
+}
+
+// THE DSP-ADPCM HISTORY (audio/dsp_adpcm.h): decoding a track in pieces, each
+// piece started from the history the last one ended with, gives the samples a
+// decode in one piece gives -- the per-buffer context the 3DS hands the DSP.
+void testAdpcmHistoryCarriesAcrossBuffers() {
+    std::vector<uint8_t> header(96, 0);
+    const uint32_t samples = 14 * 50;
+    header[0] = 0; header[1] = 0; header[2] = (uint8_t)(samples >> 8); header[3] = (uint8_t)samples;
+    header[8] = 0; header[9] = 0; header[10] = 0x7D; header[11] = 0x00;  // 32000 Hz
+    const int16_t coefs[16] = {2048, 0, 3600, -1600, 1900, -800, 0, 0,
+                               4000, -2000, 1000, 500, -1000, 300, 2500, -1300};
+    for (int i = 0; i < 16; i++) {
+        header[0x1C + i * 2] = (uint8_t)((uint16_t)coefs[i] >> 8);
+        header[0x1D + i * 2] = (uint8_t)coefs[i];
+    }
+    mdk::audio::DspAdpcmHeader head;
+    check(mdk::audio::DspAdpcm::parseHeader(header.data(), 96, &head), "the header parses");
+    expect("its length", head.samples, samples);
+    expect("its rate", head.sampleRate, 32000);
+    expect("a coefficient", head.coefs[3], -1600);
+    std::vector<uint8_t> frames(50 * 8);
+    uint32_t seed = 12345;
+    for (size_t i = 0; i < frames.size(); i++) {
+        seed = seed * 1103515245u + 12345u;
+        frames[i] = (uint8_t)(seed >> 16);
+        if (i % 8 == 0) {
+            frames[i] &= 0x7B;  // a predictor pair 0-7, a scale 0-11
+        }
+    }
+    std::vector<int16_t> whole(samples), pieces(samples);
+    mdk::audio::DspAdpcmContext a, b;
+    mdk::audio::DspAdpcm::decode(frames.data(), 50, head.coefs, &a, whole.data());
+    const int cut[] = {0, 7, 8, 30, 50};
+    for (int k = 0; k + 1 < 5; k++) {
+        mdk::audio::DspAdpcmContext start = b;
+        mdk::audio::DspAdpcm::decode(frames.data() + cut[k] * 8, cut[k + 1] - cut[k], head.coefs,
+                                     &start, pieces.data() + cut[k] * 14);
+        mdk::audio::DspAdpcmContext carried = b;
+        mdk::audio::DspAdpcm::advance(frames.data() + cut[k] * 8, cut[k + 1] - cut[k], head.coefs,
+                                      &carried);
+        check(carried.history0 == start.history0 && carried.history1 == start.history1,
+              "advance carries the history decode does");
+        b = carried;
+    }
+    check(whole == pieces, "a track decoded in buffers is the track decoded whole");
+    std::vector<uint8_t> bad = header;
+    bad[0x0F] = 1;
+    check(!mdk::audio::DspAdpcm::parseHeader(bad.data(), 96, &head), "a PCM header is refused");
+}
+
 } // namespace
 
 namespace mdk {
@@ -1376,6 +1473,8 @@ int runAudioStreamTests(const formats::MdkData& data) {
     testTheMusicFollowsKurtsArena(data);
     testTheFadeStopsBelowZeroNotAtIt(data);
     testTheAmbienceFollowsTheArena(data);
+    testStreamedMusicIsNeverRead(data);
+    testAdpcmHistoryCarriesAcrossBuffers();
     if (failures == 0) {
         printf("  audio stream: %lld checks\n", checks);
     }

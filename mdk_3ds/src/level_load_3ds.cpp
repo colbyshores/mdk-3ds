@@ -15,25 +15,6 @@
 
 namespace mdk {
 
-// THE MUSIC PREFETCH'S READS, LENT (audio/sound_bank.h's setReader, game/
-// async_read.h): the renderer's file thread on its music channel (render.h's
-// mdk_render_read_music_async, platform/async_file_reader.h's kChannelMusic). On
-// the main thread a step of a track was an fopen, a seek and a read of up to 64
-// KiB -- 11-17 ms a frame for eight frames of level 7's corridor crossing on the
-// Old 3DS -- and the thread reads it while the main one waits for the frame end.
-bool musicReadRequest(void* user, int32_t tag, const char* path, uint32_t offset,
-                      uint32_t length) {
-    return mdk_render_read_music_async(static_cast<MdkRenderer>(user), tag, path, offset, length);
-}
-
-bool musicReadPoll(void* user, int32_t tag, uint8_t** bytes, uint32_t* size, bool* ok) {
-    return mdk_render_poll_music_read(static_cast<MdkRenderer>(user), tag, bytes, size, ok);
-}
-
-void musicReadCancel(void* user, int32_t tag) {
-    mdk_render_cancel_music_read(static_cast<MdkRenderer>(user), tag);
-}
-
 // The light rig for one arena, computed once and kept in `cache` (main's
 // lightCache). enhancedLighting scans the arena's faces -- ~113 ms per arena
 // on the Old 3DS -- and its answer depends on nothing but (dti, arena), both

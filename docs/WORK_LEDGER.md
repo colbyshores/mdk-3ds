@@ -1595,3 +1595,55 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   Unchanged originals get no gain (L3 H3 and L6 CORRIDOR clip 2 / 3,284 samples
   the resampler pushed past full scale, as a 16-bit output clips them).
 - **Commit:** this one.
+
+## 2026-11-25 -- the 3DS streams its music as DSP-ADPCM (branch perf/3ds-memory)
+
+- **Owner's words:** stream the music as DSP-ADPCM; behaviour indistinguishable
+  from now ("do it exactly how the game does it"): LevelMusic untouched, the same
+  fades, swap and loop, a new track from its beginning with no delay, the same
+  pause/menu behaviour, relative volume matched, Linux unaffected; adapt T2K's
+  player (small ndsp buffers, worker thread, two streams for the crossfade); no
+  dropout on SD stalls or arena loads; R1, stack limits, clean teardown,
+  HOME/sleep safe; remove the whole-track decode path that becomes unused.
+- **What:**
+  - `mdk_core/src/audio/dsp_adpcm.{h,cpp}`: the .dsp header and the predictor
+    history carried across wave buffers (T2K's openDsp/adpcmAdvance, Forsaken's
+    "broken record" fix), host-tested.
+  - `SoundBank::addStreamedMusic` / `getMusic`; `SoundMixer::launch` asks
+    getMusic for the MUSIC bus only. A registered track answers with the file's
+    geometry and a sample-less stand-in: never read out of LEVELnO.SNI, never
+    decoded, never prefetched. The archives' volume/loop flags are kept; an extra
+    soundtrack track plays looping at volume 0 like every retail music entry. A
+    frontend that registers nothing (Linux) is unchanged. LevelMusic unchanged.
+  - `audio_dsp_3ds.cpp`: the music channels (ndsp 23 and 22, the crossfade pair)
+    stream ADPCM from `romfs:/music/levelN/<name>.dsp`: 6 wave buffers x 768
+    frames (0.336 s) per channel = two seconds queued (72 KiB linear, was 128 KiB
+    of PCM16 for 0.74 s); the worker alone opens/reads/closes the files and reads
+    OUTSIDE the lock (the main thread posts start/stop/mix requests and signals);
+    loop = reopen at the end (Forsaken's romfs EOF latch), whole-track loop as the
+    game does (flag 1; the WAV cue chunks were never read). Two PRIMES: the loading
+    arena's and the door bubble's nearest track are opened and their first two
+    seconds read ahead by the worker (`audioDspPrimeMusic`, from the frame's old
+    prefetch hints), so a start copies the prime and reads nothing. The drained-
+    channel restart (Forsaken's trap) stays and is counted and logged as an
+    UNDERRUN. R1 at the worker entry; 16 KiB stack, no recursion, small locals;
+    aptHook parks ndsp calls while suspended; close joins the worker, then closes
+    the files. Music lines: `music: <name> on chN: primed|NOT primed (ms)`,
+    `music: <new> for <arena> (was, fading)`, `music: prime <name> for <arena>`.
+  - Removed (now unused on the 3DS): the bank's music prefetch/step/decode use in
+    main_3ds.cpp, `releaseMusicExcept` use, the lent music reader
+    (`musicRead*`, render.h's `mdk_render_*_music_*` seam on all backends, the
+    file thread's `kChannelMusic`; its reserved slot stays a spare so the texture
+    streams' share is unchanged). `audioDspOpen()` no longer takes a bank. The
+    bank's decoded budget 6 -> 4 MiB (effects only). The core prefetch itself
+    stays: the Linux frontend uses it.
+  - `stage_romfs.sh` links `mdk_3ds/music` into `romfs:/music`.
+- **Not converted / not played:** MISC/OPTIONS.BNI's MAINSONG (the menu song; the
+  mod's is 13.6 MB of 44.1 kHz stereo) is not played by this port on any target
+  (main_menu.cpp: "MAINSONG/OPTSONG are not ported"), so it is not converted.
+- **RomFS:** the music adds 64 MB; the GOG LEVELnO.SNI archives stay staged (the
+  bank still answers script-visible metadata and corridor geometry from them;
+  a script may play an O-archive entry as an effect), so the original music
+  samples ship twice in the .3dsx: about 23 MB. Not stripped.
+- **Evidence:** see the hardware entry of this branch.
+- **Commit:** this one.
