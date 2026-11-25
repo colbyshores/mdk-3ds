@@ -164,6 +164,23 @@ public:
     bool warmStep(const std::string& arena, SurfaceStartFn ask, SurfaceStartFn start,
                   void* user);
 
+    // THE EFFECTS CULL (the object cull's twin, ObjectView::setCullFrustum):
+    // when set, build() skips a debris piece, a sprite effect or a spawn_box
+    // sprite whose world sphere is wholly outside the frustum -- its corners
+    // would only be clipped by the GPU, after the CPU built them (two
+    // quaternion turns and a palette read per corner). `margin` inflates the
+    // sphere: a stereo frontend passes half the eye separation. Null (the
+    // default, and the Linux build) culls nothing, so the build is the
+    // oracle's. Drawing only: the pools, their RNG and their order are
+    // untouched; only which batches a frame queues changes.
+    void setCullFrustum(const Frustum* frustum, float margin) {
+        hasCullFrustum_ = frustum != nullptr;
+        if (frustum != nullptr) {
+            cullFrustum_ = *frustum;
+        }
+        cullMargin_ = margin;
+    }
+
     // Drops the cached looks and sprite surfaces (a level change).
     void clear() {
         looks_.clear();
@@ -248,6 +265,15 @@ private:
 
     std::vector<Batch> batches_;
     int32_t batchCount_ = 0;
+
+    // setCullFrustum's frustum, and whether one is set.
+    Frustum cullFrustum_;
+    bool hasCullFrustum_ = false;
+    float cullMargin_ = 0.0f;
+    // Whether a sprite `texel` world units a texel on its texture (and its
+    // halo, kGlowHaloScale times larger and nudged towards the camera) is
+    // wholly outside the cull. False with no cull set.
+    bool spriteCulled(const SpriteEntry& entry, const Vec3& position, float texel) const;
 };
 
 } // namespace mdk

@@ -466,6 +466,20 @@ void EffectsView::queueSprite(SpriteEntry& entry, const Vec3& position, float te
     }
 }
 
+bool EffectsView::spriteCulled(const SpriteEntry& entry, const Vec3& position,
+                               float texel) const {
+    if (!hasCullFrustum_) {
+        return false;
+    }
+    const int32_t w = entry.surface.texture->width();
+    const int32_t h = entry.surface.texture->height();
+    const float side = texel * (float)(w > h ? w : h);
+    // The halo's half-diagonal (0.7072 of its side, kGlowHaloScale sides) plus
+    // the half-side it is nudged by: a sphere around the quad and its halo.
+    const float radius = side * (0.7072f * kGlowHaloScale + 0.5f);
+    return frustumSphereOutside(cullFrustum_, position, radius + cullMargin_);
+}
+
 void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& camera,
                         EffectsFrame* frame) {
     frame->reset();
@@ -489,6 +503,19 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
     const std::vector<scripts::Debris::Piece*>& pieces = scripts.debris().pieces();
     for (size_t p = 0; p < pieces.size(); p++) {
         const scripts::Debris::Piece& piece = *pieces[p];
+        if (hasCullFrustum_) {
+            // The piece's reach: its corners are offsets from its centre, turned by
+            // its orientation, which keeps their lengths.
+            float reach2 = 0.0f;
+            for (size_t k = 0; k < piece.corners.size(); k++) {
+                const Vec3& v = piece.corners[k];
+                const float d2 = v.x * v.x + v.y * v.y + v.z * v.z;
+                reach2 = mathMax(reach2, d2);
+            }
+            if (frustumSphereOutside(cullFrustum_, piece.center, sqrtf(reach2) + cullMargin_)) {
+                continue;
+            }
+        }
         const ObjectLook& look = lookOf(piece.arena);
         const int32_t triangles = (int32_t)piece.corners.size() / 3;
         for (int32_t t = 0; t < triangles; t++) {
@@ -554,6 +581,9 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
             continue;
         }
         const float texel = effect.scale / scripts::Effects::kTexelsPerUnit;
+        if (spriteCulled(entry, effect.position, texel)) {
+            continue;
+        }
         queueSprite(entry, effect.position, texel, effect.frame(), right, up, forward, frame);
     }
 
@@ -573,6 +603,9 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
         const float sizeZ = box.model->bounds.max.z - box.model->bounds.min.z;
         const int32_t width = entry.surface.texture->width();
         const float texel = mathMax(sizeX, sizeZ) / (float)(width > 1 ? width : 1);
+        if (spriteCulled(entry, box.position, texel)) {
+            continue;
+        }
         const int32_t frames = entry.surface.frameCount > 0 ? entry.surface.frameCount : 1;
         /* @vfp-exempt R11 — the box sprite's frame, a 1:1 port of the C#'s
          * TickCount % FrameCount (EffectsView.cs:75); one modulo per live spawn_box box per

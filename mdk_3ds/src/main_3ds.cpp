@@ -2502,6 +2502,16 @@ int main(int argc, char** argv) {
             // and sniper scope the C# draws alongside are not ported.
             // A refusal is reported like the object pass's, edge-triggered
             // and re-armed, but on this pass's own latch.
+            // The effects cull (EffectsView::setCullFrustum): the object cull's
+            // centre frustum and stereo margin, so a piece or sprite behind the
+            // camera or off to the side is not built (the Linux build culls none).
+            mdk::Frustum effectsFrustum;
+            if (mdk::buildFrustum(sceneCamera, &effectsFrustum)) {
+                effectsView.setCullFrustum(&effectsFrustum,
+                                           mdk::g_gameSettings.stereoSeparation * 0.5f);
+            } else {
+                effectsView.setCullFrustum(nullptr, 0.0f);
+            }
             effectsView.build(*runtime, sceneCamera, &effectsFrame);
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
             if (effectsDraw.allocationFailed()) {
