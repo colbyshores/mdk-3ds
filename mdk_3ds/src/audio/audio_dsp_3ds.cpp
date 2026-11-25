@@ -108,6 +108,13 @@ struct MusicFile {
     audio::DspAdpcmHeader head;
     uint32_t next = 0;               // the next sample to queue
     audio::DspAdpcmContext history;  // the predictor history at `next`
+    // The ADPCM bytes the file holds after its header. gc-dspadpcm-encode writes
+    // the LAST frame only as far as its samples need (a 92,308-sample track ends
+    // 4 bytes short of whole frames), so the end is read to the file's end and
+    // the rest of that frame is zeros (silence the DSP never plays: nsamples
+    // stops at the track's length).
+    uint32_t dataBytes = 0;
+    uint32_t at = 0;  // the data byte the file is at (`next`'s frame)
 };
 
 // A track's first two seconds read ahead (audioDspPrimeMusic).
@@ -438,6 +445,19 @@ bool musicOpen(MusicFile& f, const char* name) {
         musicClose(f);
         return false;
     }
+    // The data's size from the file, never from the header (dsp_adpcm.h).
+    if (fseek(f.file, 0, SEEK_END) != 0) {
+        musicClose(f);
+        return false;
+    }
+    const long end = ftell(f.file);
+    if (end <= audio::DspAdpcm::kHeaderBytes ||
+        fseek(f.file, audio::DspAdpcm::kHeaderBytes, SEEK_SET) != 0) {
+        musicClose(f);
+        return false;
+    }
+    f.dataBytes = (uint32_t)(end - audio::DspAdpcm::kHeaderBytes);
+    f.at = 0;
     f.next = 0;
     f.history.index = f.head.predScale;
     f.history.history0 = f.head.history0;
@@ -455,6 +475,7 @@ void musicSeek(MusicFile& f, int32_t at) {
     if (fseek(f.file, (long)(audio::DspAdpcm::kHeaderBytes + frame * audio::DspAdpcm::kFrameBytes),
               SEEK_SET) == 0) {
         f.next = frame * (uint32_t)audio::DspAdpcm::kFrameSamples;
+        f.at = frame * (uint32_t)audio::DspAdpcm::kFrameBytes;
         f.history.history0 = 0;
         f.history.history1 = 0;
     }
@@ -481,6 +502,7 @@ uint32_t musicRead(MusicFile& f, bool looping, uint8_t* dst, audio::DspAdpcmCont
             return 0;
         }
         f.next = 0;
+        f.at = 0;
         f.history.history0 = f.head.history0;
         f.history.history1 = f.head.history1;
     }
@@ -491,10 +513,17 @@ uint32_t musicRead(MusicFile& f, bool looping, uint8_t* dst, audio::DspAdpcmCont
     const uint32_t frames = audio::DspAdpcm::framesFor(samples);
     const uint32_t bytes = frames * audio::DspAdpcm::kFrameBytes;
     const u64 t0 = svcGetSystemTick();
-    const size_t got = fread(dst, 1, bytes, f.file);
+    // What the file holds from here (the last frame may be short: dataBytes).
+    const uint32_t held = f.at < f.dataBytes ? f.dataBytes - f.at : 0u;
+    const uint32_t want = bytes < held ? bytes : held;
+    const size_t got = fread(dst, 1, want, f.file);
     const uint32_t us = (uint32_t)((svcGetSystemTick() - t0) / (SYSCLOCK_ARM11 / 1000000ull));
-    if (got != bytes) {
+    if (got != want || want == 0) {
         return 0;
+    }
+    f.at += want;
+    if (want < bytes) {
+        memset(dst + want, 0, bytes - want);
     }
     DSP_FlushDataCache(dst, bytes);
     *start = f.history;
@@ -565,9 +594,7 @@ void musicApplyStart(int32_t m, const MusicRequest& req) {
         slot.stream.file = fopen(slot.stream.path, "rb");
         if (slot.stream.file != nullptr &&
             fseek(slot.stream.file,
-                  (long)(audio::DspAdpcm::kHeaderBytes +
-                         audio::DspAdpcm::framesFor(slot.stream.next) * audio::DspAdpcm::kFrameBytes),
-                  SEEK_SET) != 0) {
+                  (long)(audio::DspAdpcm::kHeaderBytes + slot.stream.at), SEEK_SET) != 0) {
             musicClose(slot.stream);
         }
         for (int32_t i = 0; i < prime.buffers; i++) {

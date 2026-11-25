@@ -1803,3 +1803,20 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   does not fit (`DOES NOT FIT: streamed per surface`), and the HUD/bomber pictures
   in that case (pinned only with a set). Nothing else of it is provably dead.
 - **Commit:** this one.
+
+## 2026-11-25 -- the music reads a track's short last frame (branch perf/3ds-memory)
+
+- **Found on the console** (`hw-logs/2026-11-25-fw-8.log`, the walk of the DSP-ADPCM
+  stream): `music: UNDERRUN on ch23 (CORRIDOR): ... every buffer back, at sample
+  86016 of 92308`. Every committed .dsp is 1-7 bytes shorter than whole frames:
+  gc-dspadpcm-encode writes the last frame only as far as its samples need. The
+  reader asked for whole frames, the last read came back short and was treated as
+  a failure, and the track could neither finish nor loop: the channel drained,
+  restarted, read nothing again, and went silent for the rest of the level.
+  (The earlier commit's underrun line, which now says why and where, is what
+  showed it.)
+- **What:** the stream knows the file's data size (`ftell`, as T2K does) and its
+  byte position; the last read takes what the file holds and zero-fills the rest
+  of that frame (never played: the buffer's sample count stops at the track's
+  length); loop, seek and prime adoption keep the byte position.
+- **Commit:** this one.
