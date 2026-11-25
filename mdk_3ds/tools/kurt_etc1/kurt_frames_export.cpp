@@ -7,8 +7,12 @@
 // The data is the player's own copy, found the way the game finds it
 // (MDK_DATA_DIR, ../MDK, ...: formats::MdkData::find). Nothing is committed.
 //
-// FOR EVERY LEVEL, every frame of every K_* animation in TRAVERSE/TRAVSPRT.BNI
-// is expanded through THAT LEVEL'S palette (LevelData::load: the DTI's palette
+// FOR EVERY LEVEL, every frame of every K_* animation in TRAVERSE/TRAVSPRT.BNI --
+// and of KURT'S LEVEL ANIMATIONS, the ones the level's SNI archives carry (the
+// slides' K_SLIP/K_SLIDE/K_FSLIDE/K_BSLIDE on level 6, the board's K_SURF/K_SURFJ
+// on level 4: KurtSprite's kLevelAnimations, found as SoundBank::animation finds
+// them, TRAVERSE.SNI then LEVELnS.SNI then LEVELnO.SNI, the later archive
+// winning) -- is expanded through THAT LEVEL'S palette (LevelData::load: the DTI's palette
 // with the system colours, exactly what the 3DS hands KurtSprite::load) by the
 // 3DS's own rule (index 0 transparent, every other index the palette's RGB at
 // alpha 255), and written as raw RGBA8 rows to <out>/<NAME>_<frame>@<key>.rgba,
@@ -38,6 +42,7 @@
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
 #include "formats/palette.h"
+#include "formats/sni.h"
 #include "formats/sprite_animation.h"
 #include "formats/texture.h"
 #include "game/hd_key.h"
@@ -117,9 +122,36 @@ int main(int argc, char** argv) {
         }
         const mdk::formats::Palette& palette = level.dti().palette();
         const uint8_t* rgb = palette.rgba();
-        for (size_t n = 0; n < names.size(); n++) {
+        // The level's archives, for its own Kurt animations (later ones win).
+        std::vector<mdk::formats::Sni> archives;
+        char path[96];
+        const char* const kArchives[] = {"TRAVERSE/TRAVERSE.SNI", "TRAVERSE/LEVEL%d/LEVEL%dS.SNI",
+                                         "TRAVERSE/LEVEL%d/LEVEL%dO.SNI"};
+        for (size_t a = 0; a < sizeof(kArchives) / sizeof(kArchives[0]); a++) {
+            snprintf(path, sizeof(path), kArchives[a], (int)levels[l], (int)levels[l]);
+            mdk::formats::Sni sni;
+            if (mdk::formats::Sni::open(&sni, data, path)) {
+                archives.push_back(std::move(sni));
+            }
+        }
+        // KurtSprite's kLevelAnimations (mdk_core/src/game/kurt_sprite.cpp).
+        const char* const kLevelAnimations[] = {"K_SURF", "K_SURFJ", "K_SLIP", "K_SLIDE",
+                                                "K_FSLIDE", "K_BSLIDE"};
+        const size_t levelCount = sizeof(kLevelAnimations) / sizeof(kLevelAnimations[0]);
+        for (size_t n = 0; n < names.size() + levelCount; n++) {
+            const bool fromLevel = n >= names.size();
+            const std::string name = fromLevel ? std::string(kLevelAnimations[n - names.size()])
+                                               : names[n];
             mdk::formats::SpriteAnimation animation;
-            if (!sprites.animation(names[n], &animation)) {
+            bool found = false;
+            if (!fromLevel) {
+                found = sprites.animation(name, &animation);
+            } else {
+                for (size_t a = archives.size(); a > 0 && !found; a--) {
+                    found = archives[a - 1].animation(name, &animation);
+                }
+            }
+            if (!found) {
                 continue;
             }
             for (int32_t f = 0; f < animation.frameCount(); f++) {
@@ -135,13 +167,13 @@ int main(int argc, char** argv) {
                 }
                 // The key exactly as KurtSprite::ensureTexture builds it.
                 mdk::formats::Texture keyed;
-                keyed.setName(names[n]);
+                keyed.setName(name);
                 keyed.setWidth(w);
                 keyed.setHeight(h);
                 keyed.setFrameCount(1);
                 keyed.setIndices(image.indices(), w * h);
                 const std::string key = mdk::hdKeyOf(keyed, palette);
-                const std::string stem = names[n] + "_" + std::to_string(f);
+                const std::string stem = name + "_" + std::to_string(f);
                 fprintf(index, "%d\t%s\t%d\t%d\t%s\n", (int)levels[l], stem.c_str(), (int)w,
                         (int)h, key.c_str());
                 frames++;

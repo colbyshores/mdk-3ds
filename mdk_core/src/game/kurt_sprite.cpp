@@ -972,8 +972,13 @@ void KurtSprite::prefetchNext() {
     if (streamTag_ >= 0 || packPath_.empty()) {
         return;
     }
-    for (size_t i = 0; i < stateIndices_.size(); i++) {
-        const int32_t index = stateIndices_[i];
+    // His states' animations, then the level's own ones that are no state (the
+    // board's K_SURF and K_SURFJ; the slides are states already).
+    const size_t levelCount = sizeof(kLevelAnimations) / sizeof(kLevelAnimations[0]);
+    for (size_t i = 0; i < stateIndices_.size() + levelCount; i++) {
+        const int32_t index = i < stateIndices_.size()
+                                  ? stateIndices_[i]
+                                  : findAnimation(kLevelAnimations[i - stateIndices_.size()]);
         if (index < 0 || index >= (int32_t)animations_.size()) {
             continue;
         }

@@ -1707,3 +1707,31 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   primed (the start's own serial, not the newest request's) and each underrun's
   channel and track.
 - **Commit:** this one.
+
+## 2026-11-25 -- Kurt's level animations in kurt.pak; no HD lookup for Kurt (branch perf/3ds-memory)
+
+- **Owner's words:** "yes do all 3" (an Opus review's three items, relayed). This
+  is item 1: the base walk's only gate FAILs (hw-logs/base-walk-report.md: late
+  25 on level 6, late 8 on level 4) were Kurt's level animations -- K_SLIP,
+  K_SLIDE, K_FSLIDE (level 6), K_SURF (level 4) -- made as 16-bit index textures
+  with a 128 px HD copy streamed per frame, drawn SD until it landed.
+- **Review claims verified:** the level animations were added after
+  loadKurtFrames3ds (so no kurt.pak copy could be attached); the exporter read
+  TRAVSPRT.BNI only; the lookup prefers a level copy (`pack->find(name, level)`).
+- **What:**
+  - `kurt_frames_export.cpp` also exports KurtSprite's kLevelAnimations from the
+    level's SNI archives (TRAVERSE.SNI, LEVELnS.SNI, LEVELnO.SNI, the later one
+    winning, as SoundBank::animation does), through the level's palette, so the
+    converter packs them (original resolution, >256 fitted to 256, as every
+    frame). kurt.pak: 408 -> 455 frames, 1,196,849 -> 1,295,281 bytes (+98 KB
+    of romfs); they stream and rotate in the existing sprite budget, not pinned.
+  - main_3ds.cpp: loadKurtFrames3ds runs after the level-animation loop;
+    `kurtSprite.setMods(&hdPack)` is gone (the 3DS asks the HD pack for no Kurt
+    frame; the owner's SD pack keeps its K_* files, unused -- no re-upload).
+  - KurtSprite::prefetchNext reads ahead the level animations that are no state
+    (K_SURF, K_SURFJ) after the states' (Linux has no pack: no change there).
+  - HD spec 3.1/3.2/4 say so.
+- **Not in this commit:** the toggle-on re-request of "Kurt's non-pack frames"
+  (04_textures.inc) also serves the HUD's pictures; it goes with item 3.
+- **Evidence:** vm_tests, main_3ds_flow pass; hardware in the branch's walk.
+- **Commit:** this one.

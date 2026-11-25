@@ -104,8 +104,8 @@ expansion and not the packed original in `romfs:/orig`. It never blocks either.
   The older step -- an HD copy attached after the fact to a palette-expanded
   texture (`SurfaceCache::surfaceId` calling `mdk_render_replace_compressed`,
   counted as `hdAnsweredSd`) -- was removed on 2026-11-25: no lookup answered
-  for it any more, so it never ran. `mdk_render_replace_compressed` stays for
-  Kurt's HD frames (`game/kurt_sprite.cpp`).
+  for it any more, so it never ran. (Kurt's HD frames used `mdk_render_replace_compressed`
+  until 2026-11-25; the 3DS now gives Kurt no HD copy at all, below.)
 - **Not arrived yet:** the draw draws nothing (or an original already resident
   from before the toggle went on); the early asks (the pump's walk of resident
   views, hidden batches, the object and effects warms) make it rare. A draw's
@@ -118,8 +118,12 @@ expansion and not the packed original in `romfs:/orig`. It never blocks either.
   strip is resampled to a power of two, squeezing its frames); a texture the
   game writes into (a bullet hole: the HD image does not have it); a texture the
   name index does not know (over the PICA's 1024, or outside the arenas'
-  archives -- with an HD pack it is expanded, never hashed); Kurt's frames
-  (`kurt.pak`, owner 2026-11-19: the pack's 128x128 frames are fewer texels);
+  archives -- with an HD pack it is expanded, never hashed); Kurt's frames,
+  ALL of them (`kurt.pak`, owner 2026-11-19: the pack's 128x128 frames are fewer
+  texels; since 2026-11-25 his level animations -- the slides' K_SLIP/K_SLIDE/
+  K_FSLIDE/K_BSLIDE on level 6, the board's K_SURF/K_SURFJ on level 4 -- are in
+  kurt.pak too, and the 3DS asks the HD pack for no Kurt frame, so none streams
+  or pops in; the HD pack's K_* files go unused);
   the HUD's pictures (made at level load, cold); Original-shaded surfaces (the
   sky, glass) the PC never replaces. `hdrule:` lines at level teardown count it.
 
@@ -146,7 +150,7 @@ Old 3DS reads ~13 HD files a second in play -- so pop-in was luck. Since
 - **Measured (Old 3DS, romfs pack):** L7 tier 256, 143 files 4.18 MB, hold
   6.2 s; L8 tier 256/128, 281 files 5.16 MB (103 at 128), hold 13.0 s. The
   4.2 streaming design below remains only as the fallback for a set that does
-  not fit and for the legacy copies (HUD pictures, Kurt's non-pack frames).
+  not fit and for the legacy copies (HUD pictures).
 
 ## 4. Memory and streaming
 
@@ -155,8 +159,8 @@ pairs with an HD file, sections 3.1 and 3.2 replace what follows: the HD copy is
 the only copy drawn with the toggle on (never the original as a stand-in), and
 the level's whole set is read on the loading screen and kept, so nothing of it
 is streamed, budgeted or evicted in play. The per-surface stream below is still
-the design for what the set does not hold: the HUD's pictures, Kurt's HD
-frames, and a level whose set does not fit (logged `DOES NOT FIT: streamed per
+the design for what the set does not hold: the HUD's pictures and a level
+whose set does not fit (logged `DOES NOT FIT: streamed per
 surface`). Sections 4.1 and 4.2 are kept as the record of how it was sized.
 
 An HD pack does not fit the Old 3DS's linear heap all at once on every level, so

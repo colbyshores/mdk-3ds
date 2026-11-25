@@ -677,14 +677,11 @@ int main(int argc, char** argv) {
                 if (kurtSprite.load(renderer, sprites, level.dti().palette())) {
                     kurtSpriteReady = true;
                     kurtSprite.setShading(mdk::Shading::Sprite);  // see view.setShading
-                    // Kurt's frames from the HD pack (K_IDLE_0..., in the level's
-                    // folder), made as each frame is first made.
-                    if (hdSource.pack) {
-                        kurtSprite.setMods(&hdPack);
-                    }
+                    // NO HD FOR KURT on the 3DS: his frames are kurt.pak's ETC1A4
+                    // copies of the originals (loadKurtFrames3ds, after his level
+                    // animations below), as large as the HD pack's 128 px frames
+                    // (owner 2026-11-19); the HD pack's K_* files go unused.
                     mdk::log3dsPrintf("sprites: Kurt's animations loaded");
-                    // Kurt's compressed frames and the start set (packs_3ds.cpp).
-                    mdk::loadKurtFrames3ds(&kurtSprite, enhancedToggles, flow.state().level);
                 } else {
                     mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
                 }
@@ -817,6 +814,13 @@ int main(int argc, char** argv) {
         mdk::log3dsPrintf("sprites: %d level animations (%d frames) from the SNI archives",
                           added, frames);
         mdk::heapProbe("post-level-animations");
+    }
+    // Kurt's compressed frames and the start set (packs_3ds.cpp): AFTER his level
+    // animations, so the slides' and the board's frames find their kurt.pak copies
+    // too (textures/LEVELn/ or the shared folder, kurt_frames_export.cpp) instead of
+    // being made 16-bit.
+    if (kurtSpriteReady) {
+        mdk::loadKurtFrames3ds(&kurtSprite, enhancedToggles, flow.state().level);
     }
     mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
     // THE OUTPUT (SPEC.md 8). The level mixes on the DSP (audio_dsp_3ds.h): every
