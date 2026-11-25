@@ -327,4 +327,9 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     out->hdLateWorstFrame = cr->hdLateWorstFrame;
     memcpy(out->hdLateWorst, cr->hdLateWorst, sizeof(out->hdLateWorst));
     memcpy(out->hdLateRows, cr->hdLateRows, sizeof(out->hdLateRows));
+    out->hdSlackMin = cr->hdSlackMin;
+    out->hdSlackMinFrame = cr->hdSlackMinFrame;
+    out->hdSlackUnder30 = cr->hdSlackUnder30;
+    out->hdSlackFirsts = cr->hdSlackFirsts;
+    memcpy(out->hdSlackWorst, cr->hdSlackWorst, sizeof(out->hdSlackWorst));
  }

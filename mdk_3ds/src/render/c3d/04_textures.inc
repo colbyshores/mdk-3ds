@@ -1620,6 +1620,7 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         if (renderer->hdResidentBytes > renderer->hdResidentPeak) {
             renderer->hdResidentPeak = renderer->hdResidentBytes;
         }
+        copy.landedFrame = (int32_t)renderer->frame;
         if (copy.wantedFrame >= 0) {
             // A draw wanted it before it landed: how late (render_c3d_stats.h).
             const int32_t late = (int32_t)renderer->frame - copy.wantedFrame;

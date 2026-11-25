@@ -4643,6 +4643,10 @@ int main(int argc, char** argv) {
                           (int)made.hdLateLanded, (int)made.hdLateFramesSum,
                           (int)made.hdLateFramesMax, (int)made.hdLateWorstFrame,
                           made.hdLateWorst[0] ? made.hdLateWorst : "-", rows[0] ? rows : "-");
+        mdk::log3dsPrintf("hdrule: margin firsts=%d min=%d frames (at frame %d, %s) under30=%d",
+                          (int)made.hdSlackFirsts, (int)made.hdSlackMin, (int)made.hdSlackMinFrame,
+                          made.hdSlackWorst[0] ? made.hdSlackWorst : "-",
+                          (int)made.hdSlackUnder30);
         g_lookupHashes = 0;
         g_lookupHashMs = 0.0;
         g_lookupNameMisses = 0;

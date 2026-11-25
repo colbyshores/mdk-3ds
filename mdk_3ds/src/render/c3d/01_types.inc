@@ -435,6 +435,8 @@ struct HdCopy {
     // The frame a draw first wanted this copy while it was not resident (-1:
     // none since its last import): how late it landed (render_c3d_stats.h).
     int32_t wantedFrame = -1;
+    // The frame it was last imported (the margin, render_c3d_stats.h).
+    int32_t landedFrame = -1;
 };
 
 // One queue record resolved for the frame (STEREO-REPLAY analogue,
@@ -999,6 +1001,11 @@ struct RendererC3D {
     int32_t hdLateWorstFrame = -1;
     char hdLateWorst[64] = {0};
     int32_t hdLateRows[8][2] = {};
+    int32_t hdSlackMin = -1;
+    int32_t hdSlackMinFrame = -1;
+    int32_t hdSlackUnder30 = 0;
+    int32_t hdSlackFirsts = 0;
+    char hdSlackWorst[64] = {0};
 
     // THE ORIG PACK'S READS (04_textures.inc pumpPackOriginals): the packed
     // originals waiting for a reader slot (texture ids; an entry whose texture

@@ -267,6 +267,19 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
                     resource.hdWanted = true;
                     if (copy->state != HdCopy::Resident) {
                         r->hdLateTextures++;
+                    } else if (r->frame > 1 && copy->landedFrame >= 0) {
+                        // In time: by how many frames (the margin).
+                        const int32_t slack = (int32_t)r->frame - copy->landedFrame;
+                        r->hdSlackFirsts++;
+                        if (slack < 30) {
+                            r->hdSlackUnder30++;
+                        }
+                        if (r->hdSlackMin < 0 || slack < r->hdSlackMin) {
+                            r->hdSlackMin = slack;
+                            r->hdSlackMinFrame = (int32_t)r->frame;
+                            snprintf(r->hdSlackWorst, sizeof(r->hdSlackWorst), "%s",
+                                     copy->path.c_str());
+                        }
                     }
                 }
                 if (copy->state != HdCopy::Resident) {
