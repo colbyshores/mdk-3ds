@@ -1345,25 +1345,7 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     // frame boundary: C3D_FrameBegin has waited for the last frame (P3), and
     // from here every draw of the texture binds its HD copy instead.
     if (renderer->hdFreeOriginals && !renderer->gpuPending) {
-        bool waiting = false;
-        for (size_t i = 0; i < renderer->textures.size(); i++) {
-            C3dTexture& texture = renderer->textures[i];
-            if (!texture.hdOnly || !texture.valid || texture.releasePending ||
-                texture.hdCopy < 0 || (size_t)texture.hdCopy >= renderer->hdCopies.size()) {
-                continue;
-            }
-            const HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
-            if (!copy.pinned) {
-                continue;
-            }
-            if (copy.state != HdCopy::Resident) {
-                waiting = true;
-                continue;
-            }
-            C3D_TexDelete(&texture.tex);
-            texture.valid = false;
-        }
-        renderer->hdFreeOriginals = waiting;
+        renderer->hdFreeOriginals = freeHdOnlyOriginals(renderer, true);
     }
     // (0) NOBODY'S COPIES. A copy no texture links to any more (a level ended, a
     // sprite frame was trimmed) is cancelled if it was only asked for (a read in

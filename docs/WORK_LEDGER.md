@@ -1735,3 +1735,23 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   (04_textures.inc) also serves the HUD's pictures; it goes with item 3.
 - **Evidence:** vm_tests, main_3ds_flow pass; hardware in the branch's walk.
 - **Commit:** this one.
+
+## 2026-11-25 -- HD back on frees the originals before the set is read (branch perf/3ds-memory)
+
+- **Owner's words:** "yes do all 3" (item 2): the HD off->on dip, 269,952 bytes
+  of linear free on level 8 right after the hold (base walk).
+- **Cause (verified):** the HD-off stretch makes the HD-only textures' packed
+  originals; on toggle-on the boundary pass freed each only once its pinned copy
+  was resident (04_textures.inc), and during the menu's hold no frame begins, so
+  `gpuPending` stayed set and none went until the whole set had been read on top
+  of them.
+- **What:** in `mdk_render_set_enhanced_toggles`, HD going back on between frames
+  with a set pinned: wait for the GPU (`gxCmdQueueWait(nullptr, -1)`: libctru
+  2.7.0's implementation ignores the queue argument and waits on the running GX
+  queue -- the wait C3D_FrameBegin does -- read off libctru.a's gxqueue.o), then
+  free every HD-only texture's original whose pinned copy is not given up
+  (`freeHdOnlyOriginals`, shared with the boundary pass). A copy that fails later
+  leaves its texture to the packed original, read again like any evicted one.
+  The toggle-on peak is not counted into the tier decision.
+- **Evidence:** c3d_frame passes; hardware: the walk's toggle-on lines.
+- **Commit:** this one.
