@@ -2174,3 +2174,24 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   swapping two of the includes gives a different object (9e59d7c4), so the
   comparison does see a reorder.
 - **Commit:** this one.
+
+### formats/glb.cpp (1732 lines) split into a .cpp and two fragments
+- **What:** `glb.cpp` (587: constants, matrices, pack, Glb::read, Glb::write),
+  `glb_json.inc` (574: the JSON value, parser and writer) and `glb_reader.inc` (589: the
+  glTF Reader class), both pasted inside the anonymous namespace where they stood.
+- **Evidence:** glb.o byte-identical on the 3DS (md5 24f31e48); debug-stripped
+  objects identical for Linux, tests/scripts and tests/formats.
+- **Commit:** this one.
+
+### Not split: main_3ds.cpp, mdk_linux main.cpp, scripts/script_vm.cpp
+- **Why:** each is big because of ONE function, and the brief allows extracting a
+  function only where that is provably behaviour-preserving. `main()` in
+  main_3ds.cpp is lines 175-2898 of 2898 (the level loop alone 1427-2798, with
+  ~100 locals and [&] lambdas it shares); `main()` in mdk_linux/src/main.cpp is
+  371-3161 of 3161; `ScriptVm::execute` is 567-2490 of 2493 (one opcode switch,
+  261 case labels). Moving the few hundred lines around them would not bring
+  any of the three near the target, and cutting a function body across files
+  with mid-function #includes would be provably identical but harder to read.
+  Left for a deliberate refactor (a state struct for the frontends, opcode
+  groups for the VM), which is not code movement.
+- **Commit:** this one (ledger only, with the last split).
