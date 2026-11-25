@@ -138,6 +138,7 @@ bool loadPalettedImage(MdkRenderer renderer, const formats::Bni& bni, const char
         mdk_render_release_palette(renderer, paletteId);
         return false;
     }
+    mdk_render_mark_canvas(renderer, textureId);   // a screen picture: drawn on the canvas
     out->texture = textureId;
     out->palette = paletteId;
     out->width = texture.width();

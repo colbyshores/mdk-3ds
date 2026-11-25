@@ -16,6 +16,16 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
     if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !px) {
         return -1;
     }
+#ifdef MDK_HW_PROFILE
+    // WHO MADE IT (profile builds only): a large index texture's creator, by
+    // return address -- `addr2line -f -e mdk_3ds/mdk.elf <caller>` names the
+    // function. The menu's transition frames create pictures whose owners the
+    // texchunk lines alone cannot name.
+    if ((size_t)w * (size_t)h >= kChunkMinTexels) {
+        mdk::log3dsPrintf("texcreate %dx%d frame %d caller %p", (int)w, (int)h,
+                          (int)renderer->frame, __builtin_return_address(0));
+    }
+#endif
     if (!paletteRgba) {
         // Without a palette there is nothing to expand through. The Vulkan
         // backend binds the palette as a texture of its own and does not
@@ -691,6 +701,28 @@ void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId t, const char* pa
 
 // The same for a canvas picture (HUD, menus): drawn on the canvas's own
 // Original-shaded pass.
+// THE CANVAS PIN, SAID UP FRONT (render.h): the first Overlay draw pins a
+// texture RGBA8 (06_draw.inc) and re-makes a copy already made 16-bit -- for the
+// menu's font atlas and MDKOPT background that was a second whole expansion on
+// the splash-to-menu frame (measured on the Old 3DS: front frames 556-557,
+// 85-97 ms). Pinned at creation, an expansion still in flight picks the RGBA8
+// store at its pack stage, so the texture is expanded once; a copy already made
+// 16-bit is re-made exactly as the draw-time pin does.
+void mdk_render_mark_canvas(MdkRenderer r, MdkTextureId t) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || t < 0 || (size_t)t >= renderer->textures.size()) {
+        return;
+    }
+    C3dTexture& texture = renderer->textures[(size_t)t];
+    if (texture.keepRgba8 || texture.compressed || texture.streamed) {
+        return;
+    }
+    texture.keepRgba8 = true;
+    if (texture.valid && texture.format != mdk::pica::TexelFormat::Rgba8) {
+        texture.stale = true;
+    }
+}
+
 void mdk_render_replace_image_compressed(MdkRenderer r, MdkTextureId t, const char* path) {
     recordHdPath(r, t, path, true);
 }

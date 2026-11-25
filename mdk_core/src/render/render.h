@@ -331,6 +331,13 @@ void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId texture, const ch
 // (the PC's mods replace a canvas image through its own path, ReplaceImage).
 void mdk_render_replace_image_compressed(MdkRenderer r, MdkTextureId texture, const char* path);
 
+// A CANVAS texture (a menu picture, a font atlas), said at its creation: the
+// canvas keeps the palette's exact colours, so a backend that would otherwise
+// store an index texture in fewer bits (the 3DS's texture16) makes this one
+// full-colour from the start instead of re-making it at its first canvas draw.
+// Nothing changes on a backend that keeps every texture full-colour.
+void mdk_render_mark_canvas(MdkRenderer r, MdkTextureId texture);
+
 // Give a canvas image (an index texture through a palette) a whole colour
 // image (a mod's replacement for a HUD/menu picture: the C# Renderer's
 // ReplaceImage). Drawn by the enhanced look's canvas in place of the

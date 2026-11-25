@@ -82,6 +82,7 @@ bool FontView::load(MdkRenderer renderer, const formats::Font& font, int32_t pal
     if (texture_ < 0) {
         return false;
     }
+    mdk_render_mark_canvas(renderer, texture_);   // an atlas is only ever drawn on the canvas
     maxAscent_ = maxAscent;
     atlasWidth_ = (float)atlasWidth;
     atlasHeight_ = (float)atlasHeight;

@@ -1141,3 +1141,25 @@ explode() calls, the first parsing XFD); first-spawn model parses (XG 4.7 ms at
 model resident, which object_view.cpp's warm deliberately does not; findModel
 copies the parsed Model into its cache (~10% of a parse on the host) -- a move
 would be too small to measure.
+
+### MENU CANVAS PICTURES MADE ONCE (2026-11-24): the splash-to-menu double expansion
+
+**What.** New seam `mdk_render_mark_canvas(texture)`: FontView's atlas and
+loadPalettedImage's screen pictures say at creation that they are canvas
+textures, so the 3DS backend pins them RGBA8 before their expansion picks a
+store. PROFILE builds log each large index texture's creator
+(`texcreate WxH frame N caller 0x..`, named with addr2line on mdk.elf).
+
+**Why.** The menu's big font atlas (1024x256) and MDKOPT background (600x360)
+were expanded at startup into the 16-bit store, then re-expanded RGBA8 by the
+first canvas draw's pin (06_draw.inc) -- on the splash-to-menu frames
+(front 556-557, 85/97 ms). Callers named by addr2line: FontView::load,
+loadPalettedImage, movie_view's makeImage.
+
+**Evidence.** Old 3DS no-LEVEL menu run (.git/hw-logs/2026-11-24-menu4.log):
+the transition no longer re-expands either picture (only the video's
+600x360 starts there); the startup expansions finish sooner (frames 25/33/46
+vs 35/67/75: no 16-bit pack stage); menu p99 44.8 -> 33.5 ms. Still open: one
+96 ms frame at the transition (front 569) -- the video picture's create still
+starts a chunked expansion (a ~2.8 MB malloc and zero-fill) that
+update_paletted drops a call later, plus the first video frame.

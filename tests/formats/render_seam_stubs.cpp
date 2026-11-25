@@ -188,6 +188,8 @@ void mdk_render_replace_compressed(MdkRenderer, MdkTextureId texture, const char
     mdk_test_compressedPath = path ? path : "";
 }
 
+void mdk_render_mark_canvas(MdkRenderer, MdkTextureId) {}
+
 int mdk_test_compressedImageCalls = 0;
 std::string mdk_test_compressedImagePath;
 void mdk_render_replace_image_compressed(MdkRenderer, MdkTextureId, const char* path) {

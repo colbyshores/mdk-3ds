@@ -83,6 +83,9 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t, int32_t, cons
     return ++g_indexTextures;
 }
 
+// FontView says its atlas is a canvas texture (render.h); nothing to record.
+void mdk_render_mark_canvas(MdkRenderer, MdkTextureId) {}
+
 void mdk_render_canvas_quad(MdkRenderer, const CanvasQuad* quad) {
     if (g_canvasQuads != nullptr) {
         g_canvasQuads->push_back(*quad);

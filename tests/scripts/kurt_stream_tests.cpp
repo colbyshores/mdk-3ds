@@ -109,6 +109,8 @@ void mdk_render_canvas_quad(MdkRenderer, const mdk::CanvasQuad* quad) {
     }
 }
 
+void mdk_render_mark_canvas(MdkRenderer, MdkTextureId) {}
+
 MdkTextureId mdk_render_create_index_texture(MdkRenderer, int32_t w, int32_t h, const uint8_t*,
                                              const uint8_t*) {
     FakeTexture texture;
