@@ -1565,3 +1565,33 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   loop entered (`hw-logs/2026-11-25-emu-smoke-dead-attach.log`). Not run on the
   console (the owner tests it).
 - **Commit:** this one.
+
+## 2026-11-25 -- the levels' music as DSP-ADPCM, committed (branch perf/3ds-memory)
+
+- **Owner's words:** stream the music as DSP-ADPCM from the vini1264 high-quality
+  soundtrack mod (`../mdk_soundtrack`, drop-in SNI archives); the .dsp files are
+  COMMITTED (copyright risk raised and accepted), in their own commit, with the
+  conversion script; 32 kHz mono, a good resampler, loudness matched to the
+  originals; the build needs no download and no `../mdk_soundtrack`.
+- **What:** `mdk_3ds/music/levelN/<name>.dsp` (48 tracks, 67,996,303 bytes) and
+  `mdk_3ds/music/CONVERT_REPORT.txt` (per track: source format, loudness, gain,
+  peak, size, sha256 prefix); `mdk_3ds/tools/music_dsp_convert.py` (run with
+  `python3 -I`: ffmpeg soxr resample at 28 bits to 32 kHz, mono = the mean of the
+  channels, EBU R128 loudness matched to the GOG entry, a lookahead limiter
+  (alimiter, 5/50 ms, delay-compensated) where gain alone would clip, then the
+  vendored encoder); `mdk_3ds/tools/dspadpcm/` (gc-dspadpcm-encode, MIT, from
+  ../t2k's vendor copy, unchanged).
+- **Which tracks:** the music-flagged entries (SNI flag 2) the level's CMI names,
+  plus CORRIDOR (LEVELnS.SNI): exactly what LevelMusic can play. Never converted:
+  level 4's SONG_ACTIVE/MEDIUM/LIGHT, AMB1-3 and GOLD (music-flagged, named by no
+  CMI, never played). The soundtrack's three extra tracks are ASKED FOR by the
+  game today -- AMB_DRIP and H9WATER by LEVEL3.CMI's table, TRACK12 by
+  LEVEL7.CMI's -- and are silent with the GOG archives (the bank misses them); they
+  are converted and will play. MISC/OPTIONS.BNI in the mod (13.97 MB vs 1.16 MB)
+  is the front-end archive; see the music-stream entry for what the 3DS plays.
+- **Loudness:** gains -2.9 to +8.0 dB; 19 replaced tracks needed the limiter to
+  reach the original's loudness (the 8-bit originals are squashed flat: MUSIC1
+  -14.8 LUFS vs the mod's -22.5); the extra tracks take the median gain (+3.4 dB).
+  Unchanged originals get no gain (L3 H3 and L6 CORRIDOR clip 2 / 3,284 samples
+  the resampler pushed past full scale, as a 16-bit output clips them).
+- **Commit:** this one.
