@@ -197,6 +197,11 @@ public:
     struct SourceStats {
         int32_t mtoDemandReads = 0;
         int64_t mtoDemandBytes = 0;
+        // Pairs the lookup answered with an HD copy (a compressedPath that is not
+        // a compressedOriginal) that were made from their standard-definition
+        // pixels anyway: the copy attached to an expansion, or a Sprite's answer
+        // dropped for the index texture. The 3DS's HD rule wants 0.
+        int32_t hdAnsweredSd = 0;
     };
     const SourceStats& sourceStats() const { return sourceStats_; }
 

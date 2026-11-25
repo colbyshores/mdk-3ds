@@ -37,6 +37,20 @@ struct MdkC3dFirstUse {
     uint64_t packSyncTicks = 0;
     int32_t packLanded = 0;
     int32_t packFailed = 0;
+    // THE HD RULE'S PROOF (docs/HD_TEXTURES_3DS_SPEC.md 3.1): with
+    // enableHdTextures on, a surface the HD pack covers is drawn from its HD
+    // copy and nothing else. hdCoveredSdMade counts the standard-definition GPU
+    // copies made (an expansion or a packed original, any path) for a texture
+    // with an HD copy linked while the toggle is on -- the number that must stay
+    // 0. hdLateTextures: textures whose first draw that wanted their HD copy
+    // found it not resident; hdLateDraws every such draw; hdBlankDraws those of
+    // them that drew nothing (no original resident to stand in). hdResidentPeak:
+    // the most HD bytes resident at once.
+    int32_t hdCoveredSdMade = 0;
+    int32_t hdLateTextures = 0;
+    int32_t hdLateDraws = 0;
+    int32_t hdBlankDraws = 0;
+    uint32_t hdResidentPeak = 0;
 };
 
 void mdk_render_c3d_first_use(MdkRenderer r, MdkC3dFirstUse* out);

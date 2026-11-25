@@ -544,6 +544,14 @@ bool loadKurtPack(const char* path, KurtPackLoad* out) {
 // surfaceId), answered by the pair and its names, never by the shading. `pack`
 // is the HD pack (the SD card's upscale), `orig` the orig pack (the RomFS's
 // original-resolution pre-encode); either may be absent.
+// THE CONTENT HASHES the lookup ran (ModImages::resolve's hdKeyOf over the
+// texture's whole index array, after any MTO read-back of its pixels): how many,
+// their time, and the first texture's name. Said once per level (hdrule:, at
+// teardown) -- the HD rule's proof that play never hashes a covered surface.
+static int32_t g_lookupHashes = 0;
+static double g_lookupHashMs = 0.0;
+static char g_lookupHashFirst[40];
+
 struct HdPackSource {
     mdk::ModImages* pack = nullptr;
     mdk::ModImages* orig = nullptr;
@@ -608,13 +616,22 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // HD pack does not cover still skips the ARM11 expansion. Both resolve by
     // the same hdKeyOf key, so a texture the HD pack rekeys (a stamped texture,
     // 05_resources.inc) matches neither pack and takes the index path.
+    if (g_lookupHashes == 0) {
+        snprintf(g_lookupHashFirst, sizeof(g_lookupHashFirst), "%s", name.c_str());
+    }
+    g_lookupHashes++;
+    const double hashStart = nowSeconds();
     if (source->pack && source->pack->resolve(mdk::ModImages::Kind::Textures, name,
                                               *surface.texture, *palette, &source->path)) {
+        g_lookupHashMs += (nowSeconds() - hashStart) * 1000.0;
         out->compressedPath = source->path.c_str();
         return true;
     }
-    if (source->orig && source->orig->resolve(mdk::ModImages::Kind::Textures, name,
-                                              *surface.texture, *palette, &source->path)) {
+    const bool origHit =
+        source->orig && source->orig->resolve(mdk::ModImages::Kind::Textures, name,
+                                              *surface.texture, *palette, &source->path);
+    g_lookupHashMs += (nowSeconds() - hashStart) * 1000.0;
+    if (origHit) {
         out->compressedPath = source->path.c_str();
         // THE ORIG PACK'S HIT IS ASKED FOR UP FRONT, not attached after an
         // expansion: surfaceId's pre-creation consult (surface_cache.h) turns
@@ -4425,6 +4442,27 @@ int main(int argc, char** argv) {
         logScriptProbe(*runtime);
     }
 #endif
+    // THE HD RULE'S PROOF, once per level (docs/HD_TEXTURES_3DS_SPEC.md 3.1):
+    // the lookup's content hashes, the HD answers made from SD anyway, the SD
+    // copies made for a texture with a linked HD copy while the toggle was on
+    // (all three must be 0 with the toggle on), and the HD copies that were late.
+    {
+        MdkC3dFirstUse made;
+        mdk_render_c3d_first_use(renderer, &made);
+        mdk::log3dsPrintf("hdrule: level %d hd=%d pack=%d hashes=%d (%.1f ms, first %s) "
+                          "hdAnsweredSd=%d coveredSdMade=%d lateTextures=%d lateDraws=%d "
+                          "blankDraws=%d hdImported=%d hdEvicted=%d residentPeak=%u "
+                          "(backend counts since boot)",
+                          (int)flow.state().level, (int)enhancedToggles.enableHdTextures,
+                          hdSource.pack ? 1 : 0, (int)g_lookupHashes, g_lookupHashMs,
+                          g_lookupHashes > 0 ? g_lookupHashFirst : "-",
+                          (int)surfaces.sourceStats().hdAnsweredSd, (int)made.hdCoveredSdMade,
+                          (int)made.hdLateTextures, (int)made.hdLateDraws,
+                          (int)made.hdBlankDraws, (int)made.hdImported, (int)made.hdEvicted,
+                          (unsigned)made.hdResidentPeak);
+        g_lookupHashes = 0;
+        g_lookupHashMs = 0.0;
+    }
     runtime.reset();
     // 3. The pose caches key on the runtime's Model addresses, which the reset just
     //    freed (scripts/pose_cache.h; the C#'s next Viewer calls ForgetPoses).

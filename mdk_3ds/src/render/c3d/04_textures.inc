@@ -295,6 +295,11 @@ static int32_t texelStoreIndex(mdk::pica::TexelFormat format) {
 }
 
 static void classifyTextureMade(RendererC3D* renderer, C3dTexture& texture) {
+    // THE HD RULE'S PROOF (render_c3d_stats.h): an SD copy of a texture whose HD
+    // copy is linked, made while the toggle is on.
+    if (texture.hdCopy >= 0 && !texture.hdCanvas && renderer->toggles.enableHdTextures) {
+        renderer->hdCoveredSdMade++;
+    }
     if (texture.madeOnce) {
         renderer->texturesRemade++;
     } else {
@@ -1453,6 +1458,9 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         C3D_TexSetWrap(&copy.tex, fullU ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,
                        fullV ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
         renderer->hdResidentBytes += copy.bytes;
+        if (renderer->hdResidentBytes > renderer->hdResidentPeak) {
+            renderer->hdResidentPeak = renderer->hdResidentBytes;
+        }
         copy.state = HdCopy::Resident;
         copy.lastUsed = protectFrom;   // fresh: not the next eviction's victim
         renderer->hdImported++;

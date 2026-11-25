@@ -231,6 +231,10 @@ MdkTextureId SurfaceCache::requestPacked(const Surface& surface,
         }
         return -1;
     }
+    if (surface.shading == Shading::Sprite && !replacement.compressedOriginal &&
+        replacement.compressedPath && replacement.compressedPath[0]) {
+        sourceStats_.hdAnsweredSd++;
+    }
     return createPacked(key, surface, palette, replacement);
 }
 
@@ -302,6 +306,7 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
         if (replacement.compressedPath && replacement.compressedPath[0]) {
             mdk_render_replace_compressed(renderer_, id, replacement.compressedPath);
             replacementFound_++;
+            sourceStats_.hdAnsweredSd++;
         } else if (replacement.rgba && replacement.width > 0 && replacement.height > 0) {
             mdk_render_replace_colour(renderer_, id, paletteId(palette), surface.frameCount,
                                       replacement.width, replacement.height, replacement.rgba);

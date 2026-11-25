@@ -316,4 +316,9 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     out->packSyncTicks = cr->packSyncTicks;
     out->packLanded = cr->packLanded;
     out->packFailed = cr->packFailed;
+    out->hdCoveredSdMade = cr->hdCoveredSdMade;
+    out->hdLateTextures = cr->hdLateTextures;
+    out->hdLateDraws = cr->hdLateDraws;
+    out->hdBlankDraws = cr->hdBlankDraws;
+    out->hdResidentPeak = (uint32_t)cr->hdResidentPeak;
  }

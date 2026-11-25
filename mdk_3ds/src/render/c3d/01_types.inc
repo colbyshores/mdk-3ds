@@ -193,6 +193,9 @@ struct C3dTexture {
     // from SD again (measured before the table: 440 imports in 3000 frames on
     // level 3 with resident bytes flat, Kurt's idle loop re-read each cycle).
     int32_t hdCopy = -1;
+    // A draw has wanted this texture's HD copy (counted once per texture as late
+    // when the copy was not resident then: RendererC3D::hdLateTextures).
+    bool hdWanted = false;
     // A CANVAS picture's copy (mdk_render_replace_image_compressed): eligible on
     // the canvas's Original-shaded draws, where a world texture's never is.
     bool hdCanvas = false;
@@ -958,6 +961,14 @@ struct RendererC3D {
     int32_t hdImported = 0;
     int32_t hdEvicted = 0;
     int32_t hdFailedCount = 0;
+    // The HD rule's counters (render_c3d_stats.h): SD copies made for a texture
+    // with a linked HD copy while the toggle is on, and the draws that wanted an
+    // HD copy before it was resident.
+    int32_t hdCoveredSdMade = 0;
+    int32_t hdLateTextures = 0;
+    int32_t hdLateDraws = 0;
+    int32_t hdBlankDraws = 0;
+    size_t hdResidentPeak = 0;
 
     // THE ORIG PACK'S READS (04_textures.inc pumpPackOriginals): the packed
     // originals waiting for a reader slot (texture ids; an entry whose texture

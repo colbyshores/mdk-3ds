@@ -253,6 +253,19 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
                                  draw->material.frame_count <= 1 &&
                                  (draw->material.shading != mdk::Shading::Original ||
                                   resource.hdCanvas);
+            // THE HD RULE'S LATE COUNT (render_c3d_stats.h): a draw that wants
+            // the copy before it is resident, and the texture's first such draw.
+            if (wantsHd) {
+                if (!resource.hdWanted) {
+                    resource.hdWanted = true;
+                    if (copy->state != HdCopy::Resident) {
+                        r->hdLateTextures++;
+                    }
+                }
+                if (copy->state != HdCopy::Resident) {
+                    r->hdLateDraws++;
+                }
+            }
             if (wantsHd && copy->state == HdCopy::Resident) {
                 // Bound whether or not the original is resident: an evicted
                 // original must not take a resident HD copy's surface with it (F1).
@@ -306,6 +319,12 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
         }
     }
     if (!texture && !out->texPending) {
+        if (draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
+            const C3dTexture& resource = r->textures[(size_t)draw->material.texture];
+            if (r->toggles.enableHdTextures && resource.hdCopy >= 0 && !resource.releasePending) {
+                r->hdBlankDraws++;
+            }
+        }
         return false;
     }
     // THE FILTER (SPEC.md 7.9 enableFiltering): bilinear for every draw while
