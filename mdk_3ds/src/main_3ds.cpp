@@ -905,6 +905,8 @@ int main(int argc, char** argv) {
     // byte (ObjectView::addObject's tinyHidden), by deque slot.
     std::vector<uint8_t> tinyEnemyState;
     std::vector<uint8_t> tinyEnemyHidden;
+    // Whether the scope in 2D has the parallax barrier off (EnhancedToggles::scopeMono).
+    bool scopeMonoOn = false;
     std::map<std::string, mdk::ObjectLook> objectLooks;
 
     // An arena's palette and textures for its objects (C# Viewer.ObjectLook):
@@ -2320,6 +2322,17 @@ int main(int argc, char** argv) {
         // P2: the camera is handed to the renderer every frame, whether or not a
         // step ran, and every GPU state the frame needs is set inside
         // begin/end_frame by the backend.
+        // THE SCOPE IN 2D (EnhancedToggles::scopeMono): while the scope is up the
+        // parallax barrier goes off, so the renderer plans one eye (it reads
+        // gfxIs3D) and the panel shows it to both; back on when the scope drops.
+        {
+            const bool wantMono =
+                enhancedToggles.scopeMono && playerReady && player.sniping() && !strikeFrame;
+            if (wantMono != scopeMonoOn) {
+                gfxSet3D(!wantMono);
+                scopeMonoOn = wantMono;
+            }
+        }
         mdk_render_begin_frame(renderer, &params);
         mdk_render_set_camera(renderer, &sceneCamera);
 
@@ -2926,6 +2939,11 @@ int main(int argc, char** argv) {
     // 2. The sound: the music's voices, then the output (the DSP worker joined and
     //    its bank pins given back WHILE the bank is alive; the software sink's ndsp
     //    channel), then the runtime and its mixer. The next level opens them again.
+    // The scope in 2D does not outlive the level: the barrier back on.
+    if (scopeMonoOn) {
+        gfxSet3D(true);
+        scopeMonoOn = false;
+    }
     music.reset();
     mdk::audioDspClose();
     // The level's HD set goes with the level (its copies are nobody's from here

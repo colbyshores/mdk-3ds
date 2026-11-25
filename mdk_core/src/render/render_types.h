@@ -357,6 +357,12 @@ struct EnhancedToggles {
     // Drawing only: its script, motion, aim and hits run as before. The PC
     // ignores it.
     int32_t tinyEnemyPixels = 2;
+
+    // 3DS: the sniper scope drawn in 2D (one eye, the parallax barrier off)
+    // whatever the 3D slider says, while the scope is up: half the scene's
+    // draws and fill in the scope. Off by default, because it changes the
+    // look (the scope loses its depth). The PC ignores it.
+    bool scopeMono = false;
 };
 
 // ---------------------------------------------------------------------------

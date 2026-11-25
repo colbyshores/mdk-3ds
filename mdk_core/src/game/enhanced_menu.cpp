@@ -69,6 +69,8 @@ const Item kItems[EnhancedMenu::kItemCount] = {
      kTinyPixels, kTinyPixelLabels, 4},
     {"TINY ENEMIES", Kind::Choice, nullptr, nullptr, &EnhancedToggles::tinyEnemyPixels,
      kTinyPixels, kTinyPixelLabels, 4},
+    {"SCOPE IN 2D", Kind::Toggle, &EnhancedToggles::scopeMono, nullptr, nullptr, nullptr, nullptr,
+     0},
 };
 
 bool isItemRow(int32_t row) {

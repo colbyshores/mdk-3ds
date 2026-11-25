@@ -1276,7 +1276,10 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // billions of units and the screen went black. The clamp, the sign of each
     // eye and the mono skip are pica::eyePlan, which a host test pins.
 
-    const float slider = (float)osGet3DSliderState();
+    // With the parallax barrier off (gfxSet3D(false): the frontend's scope in
+    // 2D, EnhancedToggles::scopeMono) the panel shows the left buffer alone,
+    // so the frame is planned as with the slider closed: one eye, no offset.
+    const float slider = gfxIs3D() ? (float)osGet3DSliderState() : 0.0f;
     r->eyes = mdk::pica::eyePlan(slider, r->eyeSeparation);
 
     // Both eye buffers are cleared here, whether or not both get drawn: a buffer
