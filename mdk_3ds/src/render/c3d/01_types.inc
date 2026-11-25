@@ -120,9 +120,13 @@ struct GpuVertex {
 // (docs/HD_TEXTURES_3DS_SPEC.md 4.1), and the original textures stay resident
 // beside it, so the HD layer gets a fixed share and streams within it.
 static constexpr size_t kHdBudgetBytes = 6u * 1024u * 1024u;
-// How many .t3x a frame boundary imports at most: each is an SD read and an
-// upload, and they wait at the boundary, never inside a draw.
-static constexpr int32_t kHdImportsPerFrame = 2;
+// How many .t3x a frame boundary imports at most. The read and the LZ
+// decompress are the reader thread's (04_textures.inc hdUnpackWork), so an
+// import is a copy into the linear heap -- ~1 ms, the uncompressed orig pack's
+// measured figure (37 ms for 39 makes) -- and four keep the boundary's share
+// small while an arena's set lands in a few frames. They wait at the boundary,
+// never inside a draw.
+static constexpr int32_t kHdImportsPerFrame = 4;
 // The most one pack texture can need: the worst file of the LARGEST cap the
 // manifest gate accepts (main_3ds.cpp loadCompressedManifest). The HD pack is
 // capped at 512 -- 512x512 ETC1A4 with its chain is 349504 bytes -- and the

@@ -1235,6 +1235,59 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
 // THE HD STREAM (RendererC3D::hdCopies, docs/HD_TEXTURES_3DS_SPEC.md 4.2)
 // ---------------------------------------------------------------------------
 
+// THE HD FILE UNPACKED ON THE READER THREAD (platform/async_file_reader.h's
+// Work, run on the worker after its read). The HD pack's .t3x files are LZ11
+// (hd_pack_convert.py runs tex3ds with its default compression), and
+// Tex3DS_TextureImport decompresses inside the import -- at the frame boundary,
+// on the main thread: measured on the Old 3DS, 1-94 ms an import, up to 136 ms
+// of a frame's begin span at level start. So the worker rewrites the file into
+// the same .t3x with its texture data stored uncompressed (tex3ds' header and
+// subtextures as they are, then a "none" compression header -- type 0, the
+// 24-bit size -- and the raw blocks: the layout the orig pack's `-z none`
+// files have), and the boundary's import is a copy. The worker runs below the
+// main thread's priority, so the decompress fills the main thread's waits.
+// A file it does not understand (no subtexture, a size past 4 MiB, a failed
+// decompress) is handed back as it was read: the import then fails or
+// decompresses exactly as before. Thread-safe: libctru's decompress and malloc
+// only, nothing of the renderer's.
+static uint8_t* hdUnpackWork(const uint8_t* bytes, uint32_t size, uint32_t* outSize) {
+    size_t head = 0;
+    if (bytes && size >= 5) {
+        const uint32_t subtextures = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8);
+        head = subtextures >= 1 && subtextures <= 64 ? 5u + 12u * subtextures : 0u;
+    }
+    decompressType type = DECOMPRESS_DUMMY;
+    size_t raw = 0;
+    const ssize_t consumed =
+        head > 0 && size > head + 4
+            ? decompressHeader(&type, &raw, nullptr, (void*)(bytes + head), size - head)
+            : -1;
+    if (consumed > 0 && type != DECOMPRESS_DUMMY && raw > 0 && raw <= 4u * 1024u * 1024u) {
+        uint8_t* out = (uint8_t*)malloc(head + 4 + raw);
+        if (out) {
+            memcpy(out, bytes, head);
+            out[head] = 0x00;
+            out[head + 1] = (uint8_t)(raw & 0xFFu);
+            out[head + 2] = (uint8_t)((raw >> 8) & 0xFFu);
+            out[head + 3] = (uint8_t)((raw >> 16) & 0xFFu);
+            if (decompress(out + head + 4, raw, nullptr, (void*)(bytes + head), size - head)) {
+                *outSize = (uint32_t)(head + 4 + raw);
+                return out;
+            }
+            free(out);
+        }
+    }
+    uint8_t* copy = (uint8_t*)malloc(size > 0 ? size : 1);
+    if (!copy) {
+        return nullptr;
+    }
+    if (size > 0) {
+        memcpy(copy, bytes, size);
+    }
+    *outSize = size;
+    return copy;
+}
+
 // Frees one HD copy's texture. Only where the GPU cannot be reading it (P3): the
 // pump at the frame boundary (after C3D_FrameBegin's wait), or makeTexture's
 // fallback for a copy older than this frame's first draw (this frame's commands
@@ -1414,7 +1467,7 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         const int32_t id = renderer->hdQueue[pick];
         HdCopy& copy = renderer->hdCopies[(size_t)id];
         if (!renderer->hdReader.requestFile(mdk::AsyncFileReader::kChannelHd, id,
-                                            copy.path.c_str(), nullptr)) {
+                                            copy.path.c_str(), hdUnpackWork)) {
             break;   // every slot is busy: this one waits in the queue
         }
         copy.state = HdCopy::Reading;
@@ -1479,12 +1532,12 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             }
             continue;
         }
-        // THE IMPORT: an LZ decompress and a copy into the linear heap, the ETC
-        // blocks already tiled on the host -- at the frame boundary, after
-        // C3D_FrameBegin's wait (P3), at most kHdImportsPerFrame a frame. This
-        // is the HD pack's copy landing on its expansion (the profile timing
-        // below, hdImportTicks, counts it; the file read ran on the reader
-        // thread, off the frame). The ORIG pack's textures do NOT come through
+        // THE IMPORT: a copy into the linear heap, the ETC blocks already tiled
+        // on the host and already decompressed on the reader thread
+        // (hdUnpackWork) -- at the frame boundary, after C3D_FrameBegin's wait
+        // (P3), at most kHdImportsPerFrame a frame (the profile timing below,
+        // hdImportTicks, counts it; the read and the decompress ran on the
+        // reader thread, off the frame). The ORIG pack's textures do NOT come through
         // here: they have their own pump (pumpPackOriginals, below, run before
         // this one) and import through importCompressed, timed as texture-make
         // work. No sampler state
