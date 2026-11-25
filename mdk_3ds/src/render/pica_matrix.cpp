@@ -384,7 +384,7 @@ static const uint32_t kBleedReciprocal[9] = {0, 65536, 32768, 21846, 16384,
 // are read and only alpha-0 texels are written (their alpha untouched), so the
 // pass is order-independent: no written texel is ever read as a source -- and a
 // row of tiles is a place the walk can stop between pump steps and pick up again
-// with every byte the same (04_textures.inc, THE CHUNKED EXPANSION).
+// with every byte the same (04_expansion.inc, THE CHUNKED EXPANSION).
 //
 // TILE-STAGED. The per-texel form scattered up to nine Morton lookups and a
 // cache miss apiece over the whole buffer; measured 2026-11-22 on

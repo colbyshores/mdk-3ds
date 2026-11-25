@@ -39,7 +39,7 @@
 // A FOURTH CHANNEL, kChannelOrig: the orig pack's .t3x files (romfs:/orig, the
 // arena textures' ORIGINAL look pre-encoded), whole files, tagged by texture id.
 // The renderer asks for them at the frame boundary and imports them there
-// (04_textures.inc, pumpPackOriginals); a draw that cannot wait takes its read
+// (04_streams.inc, pumpPackOriginals); a draw that cannot wait takes its read
 // by tag (pollTag) or drops it (discard) and reads the file itself.
 //
 // (Until 2026-11-25 a fifth channel read the level's music prefetch. The music

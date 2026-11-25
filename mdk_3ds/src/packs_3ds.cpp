@@ -199,7 +199,7 @@ bool loadHdPack(int32_t level, mdk::ModImages* out,
 
 // THE BYTES AN HD FILE HOLDS IMPORTED (hdShapes' w, h, ETC1A4 bit) with its
 // levels wider or taller than `cap` dropped (0: none) -- the backend's own drop
-// rule (04_textures.inc hdUnpack) and tex3ds' chain, levels down to 8 texels on
+// rule (04_hd_stream.inc hdUnpack) and tex3ds' chain, levels down to 8 texels on
 // the shorter side: ETC1 4 bits a texel, ETC1A4 8.
 uint32_t hdChainBytes(uint32_t shape, int32_t cap) {
     uint32_t w = (shape >> 16) & 0x7FFFu;

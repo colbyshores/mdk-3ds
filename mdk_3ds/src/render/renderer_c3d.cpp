@@ -99,6 +99,10 @@ namespace {
 // ---------------------------------------------------------------------------
 
 #include "c3d/04_textures.inc"
+#include "c3d/04_expansion.inc"
+#include "c3d/04_make.inc"
+#include "c3d/04_hd_stream.inc"
+#include "c3d/04_streams.inc"
 #include "c3d/05_resources.inc"
 // ---------------------------------------------------------------------------
 // Drawing

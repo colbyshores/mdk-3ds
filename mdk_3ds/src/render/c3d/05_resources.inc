@@ -113,7 +113,7 @@ static MdkTextureId createIndexTexture(MdkRenderer r, int32_t w, int32_t h, cons
         return id;
     }
     // A large indexed texture expands in slices across frames instead of
-    // in one make (04_textures.inc, THE CHUNKED EXPANSION); the id is good
+    // in one make (04_expansion.inc, THE CHUNKED EXPANSION); the id is good
     // now, the GPU copy lands at a frame boundary or on first draw.
     if ((size_t)w * (size_t)h >= kChunkMinTexels) {
         const int32_t started = startExpansion(renderer, slot, false);
@@ -291,7 +291,7 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t w, int3
 }
 
 // Read a whole file into a vector, on the calling thread: ONLY the packed
-// original's last resort (04_textures.inc finishPackNow -- a draw in the eye's
+// original's last resort (04_make.inc finishPackNow -- a draw in the eye's
 // frustum whose file the reader thread has not delivered). Every other read of
 // the orig pack is the reader thread's. False when it cannot be opened or read;
 // an empty file is not an error here, the import rejects it.
@@ -328,7 +328,7 @@ static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool c
 // A PACKED ORIGINAL from its FILE (render.h): created with NO I/O and no
 // citro3d call -- safe mid-frame, where LevelView::draw asks for it -- as a
 // pending id (C3dTexture::packPath, PackQueued): the boundary pump has the
-// reader thread read the file and imports it (04_textures.inc
+// reader thread read the file and imports it (04_streams.inc
 // pumpPackOriginals), and a draw that cannot wait reads it itself, after the
 // eye's frustum cull (finishPackNow). The size is the image's; the import
 // sets the texture's. `paletteRgba` is the stamp the index fallback expands
@@ -587,7 +587,7 @@ void mdk_render_update_paletted(MdkRenderer r, MdkTextureId t, MdkPaletteId p,
 
 // Links a texture to the HD copy of `path` (RendererC3D::hdCopies, one per
 // file). Recorded only: the draw that first wants it queues it, and the
-// frame-boundary pump imports it under the HD budget (04_textures.inc, THE HD
+// frame-boundary pump imports it under the HD budget (04_hd_stream.inc, THE HD
 // STREAM).
 static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool canvas) {
     RendererC3D* renderer = asC3d(r);

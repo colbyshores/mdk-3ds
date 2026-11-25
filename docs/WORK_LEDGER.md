@@ -2127,3 +2127,14 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Evidence:** `renderer_c3d.o` (3DS release flags) byte-identical to main's (md5
   7eed41db); c3d_frame_test.sh passes.
 - **Commit:** this one.
+
+### c3d/04_textures.inc (1888 lines) split into five fragments
+- **What:** `04_textures.inc` (421: eviction, slots, the expansion helpers, the
+  compressed and streamed imports), `04_expansion.inc` (266: the chunked
+  expansion), `04_make.inc` (396: the orig pack's reads, the HD rule,
+  makeTextureNow), `04_hd_stream.inc` (532: the HD stream), `04_streams.inc` (289:
+  the orig pack's pump, the loading screen's settle, the resident HD set).
+- **Evidence:** `renderer_c3d.o` byte-identical to main's (md5 7eed41db);
+  c3d_frame_test.sh passes. renderer_c3d.cpp is still one translation unit, so
+  nothing about inlining, static state or initialisation order can have moved.
+- **Commit:** this one.

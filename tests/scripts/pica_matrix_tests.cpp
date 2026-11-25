@@ -1172,7 +1172,7 @@ void testTheMipChain() {
                mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, 32, 32, levels));
 }
 
-// THE SLICED FILTER AND CHAIN (04_textures.inc, THE CHUNKED EXPANSION). The
+// THE SLICED FILTER AND CHAIN (04_expansion.inc, THE CHUNKED EXPANSION). The
 // expansion runs prepareForFiltering and buildMipChain in rows of tiles across
 // frame boundaries; a slice boundary must change no byte. Two claims, both over
 // every byte of every level:

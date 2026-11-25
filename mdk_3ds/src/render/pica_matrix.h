@@ -830,7 +830,7 @@ void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t 
                          int32_t paddedHeight, bool realHasTransparent = true);
 
 // Where a SLICED prepareForFiltering or buildMipChain stands. The chunked
-// expansion (04_textures.inc) keeps one on the texture between frame-boundary
+// expansion (04_expansion.inc) keeps one on the texture between frame-boundary
 // pump steps; a default-constructed cursor is the start.
 struct FilterCursor {
     int32_t level = 0;     // buildMipChain: levels below level 0 already made
@@ -1032,7 +1032,7 @@ TexelFormat indexTexelFormatBound(bool texture16, int32_t paddedWidth, int32_t p
 void packTexels16(uint8_t* chain, size_t texels, TexelFormat format);
 
 // The same pack over texels [first, first + count) only: a chunked expansion
-// (04_textures.inc) packs a chain in slices across frames. In-place safety is
+// (04_expansion.inc) packs a chain in slices across frames. In-place safety is
 // per texel (read at 4i before the word lands at 2i), so any slice boundary
 // gives the whole-pack bytes; the host test pins that equivalence.
 void packTexels16Range(uint8_t* chain, size_t first, size_t count, TexelFormat format);

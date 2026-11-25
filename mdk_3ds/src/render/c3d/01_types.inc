@@ -108,7 +108,7 @@ struct GpuVertex {
 // the 3DS spends its VRAM on colour fidelity.
 // THE HD BUDGET: the linear-heap bytes the HD copies may hold at once -- a
 // CEILING, and below it whatever the linear heap has free above a reserve
-// (hdBudgetNow, 04_textures.inc). Under the HD rule (spec 3.1) a covered
+// (hdBudgetNow, 04_hd_stream.inc). Under the HD rule (spec 3.1) a covered
 // surface's original is never made while the toggle is on, so the HD copies ARE
 // those surfaces' textures, and the fixed 6 MB share the copies had beside the
 // originals (level 3's pack is 21.6 MB against ~14-16 MB free after a load,
@@ -121,7 +121,7 @@ struct GpuVertex {
 static constexpr size_t kHdBudgetBytes = 12u * 1024u * 1024u;
 static constexpr size_t kHdLinearReserveBytes = 2u * 1024u * 1024u;
 // How many .t3x a frame boundary imports at most. The read and the LZ
-// decompress are the reader thread's (04_textures.inc hdUnpackWork), so an
+// decompress are the reader thread's (04_hd_stream.inc hdUnpackWork), so an
 // import is a copy into the linear heap -- ~1 ms, the uncompressed orig pack's
 // measured figure (37 ms for 39 makes) -- and four keep the boundary's share
 // small while an arena's set lands in a few frames. They wait at the boundary,
@@ -147,7 +147,7 @@ static constexpr int32_t kHdRetryFrames = 120;
 static constexpr int32_t kHdMaxFailures = 3;
 // An unlinked copy is freed after this many frames (10 s at 60 fps).
 static constexpr int32_t kHdUnlinkedFrames = 600;
-// THE ORIG PACK'S READS (C3dTexture::packPath, 04_textures.inc pumpPackOriginals):
+// THE ORIG PACK'S READS (C3dTexture::packPath, 04_streams.inc pumpPackOriginals):
 // at most this many of its files are with the reader at once -- an unpolled
 // finished read still holds its slot, so the import budget below throttles the
 // reads as well -- and at most this many are imported per frame boundary. An
@@ -198,7 +198,7 @@ struct C3dTexture {
     // HD path; docs/HD_TEXTURES_3DS_SPEC.md 3.1): the packed original (packPath)
     // and the HD copy (hdCopy) of one texture. While enableHdTextures is on the
     // HD copy is the texture -- requested ahead, drawn when resident, and the
-    // packed original is never read for it (drawsHdOnly, 04_textures.inc) --
+    // packed original is never read for it (drawsHdOnly, 04_make.inc) --
     // and while it is off the packed original is, as for any other. Cleared when
     // the texture stops being a packed original (a stamp, its index pixels).
     bool hdOnly = false;
@@ -306,7 +306,7 @@ struct C3dTexture {
     // invalid to the caller.
     bool releasePending = false;
 
-    // A CHUNKED EXPANSION in progress (04_textures.inc): a large indexed
+    // A CHUNKED EXPANSION in progress (04_expansion.inc): a large indexed
     // texture is expanded in slices across frame boundaries instead of in
     // one ~40-80 ms make. `expandPixels` is the private RGBA8 chain buffer
     // (malloc, freed by dropExpansion or the finishing upload); the stage
@@ -918,7 +918,7 @@ struct RendererC3D {
     int32_t hdTopCap = 0;
     int32_t hdPinFailed = 0;
 
-    // THE ORIG PACK'S READS (04_textures.inc pumpPackOriginals): the packed
+    // THE ORIG PACK'S READS (04_streams.inc pumpPackOriginals): the packed
     // originals waiting for a reader slot (texture ids; an entry whose texture
     // is no longer PackQueued is dropped when the pump next scans), and what
     // happened.

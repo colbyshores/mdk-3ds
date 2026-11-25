@@ -66,10 +66,10 @@ static uint32_t renderDebugFlags() {
 
 static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnostics);
 // Starts a large stale texture's re-make in slices instead of whole
-// (04_textures.inc); false when the texture is not a chunked candidate.
+// (04_expansion.inc); false when the texture is not a chunked candidate.
 static bool startStaleExpansion(RendererC3D* renderer, C3dTexture& texture);
 
-// The HD stream's entry points (04_textures.inc, THE HD STREAM), declared here
+// The HD stream's entry points (04_hd_stream.inc, THE HD STREAM), declared here
 // because the frame boundary calls them before they are defined.
 static void dropHd(RendererC3D* renderer, HdCopy& copy);
 static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom);
