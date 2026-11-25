@@ -1536,30 +1536,7 @@ int main(int argc, char** argv) {
                     if (!hdWas && enhancedToggles.enableHdTextures && hdSetCap > 0) {
                         mdk::holdHdSet3ds(renderer, "toggled on");
                     }
-                    const bool saved = mdk::saveEnhancedConfig(enhancedToggles);
-                    mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
-                                      "glow=%d filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
-                                      "cap30=%d hazeDensity=%d glowStrength=%d shadowDarkness=%d "
-                                      "exposure=%d tintSaturation=%d shadowMapSize=%d "
-                                      "shadowMapRefresh=%d (saved=%d)",
-                                      (int)enhancedToggles.enableSkyShadows,
-                                      (int)enhancedToggles.enableFragmentLights,
-                                      (int)enhancedToggles.enableHaze,
-                                      (int)enhancedToggles.enableMirrors,
-                                      (int)enhancedToggles.enableGlowBillboards,
-                                      (int)enhancedToggles.enableFiltering,
-                                      (int)enhancedToggles.enableMipmaps,
-                                      (int)enhancedToggles.enableHdTextures,
-                                      (int)enhancedToggles.enableLighting,
-                                      (int)enhancedToggles.enableEdgeSmoothing,
-                                      (int)enhancedToggles.cap30Fps,
-                                      (int)enhancedToggles.hazeDensity,
-                                      (int)enhancedToggles.glowStrength,
-                                      (int)enhancedToggles.shadowDarkness,
-                                      (int)enhancedToggles.exposure,
-                                      (int)enhancedToggles.tintSaturation,
-                                      (int)enhancedToggles.shadowMapSize,
-                                      (int)enhancedToggles.shadowMapRefresh, (int)saved);
+                    mdk::saveToggles3ds(enhancedToggles);
                 } else if (action == mdk::EnhancedMenu::Action::Quit) {
                     menuQuit = true;
                     mdk::log3dsPrintf("menu: QUIT chosen");
@@ -1576,31 +1553,8 @@ int main(int argc, char** argv) {
                     mdk::menu::MenuItems& items = pauseOptions.items();
                     items.setFonts(&menuBig.font(), &menuSmall.font());
                     items.setHost(mdk::menu::Host::Console);
-                    struct Applied {
-                        static void changed(void* user) {
-                            mdk::audio::SoundMixer* const* live =
-                                static_cast<mdk::audio::SoundMixer* const*>(user);
-                            if (*live) {
-                                mdk::g_gameSettings.applyAudio(&(*live)->device());
-                            }
-                            const bool saved = mdk::saveConfigNow();
-                            mdk::log3dsPrintf("menu: options changed: master=%d music=%d "
-                                              "effects=%d filter=%d difficulty=%s gore=%d "
-                                              "(saved=%d)",
-                                              (int)mdk::g_gameSettings.masterVolume,
-                                              (int)mdk::g_gameSettings.musicVolume,
-                                              (int)mdk::g_gameSettings.effectsVolume,
-                                              (int)mdk::g_gameSettings.musicFilter,
-                                              mdk::GameSettings::difficultyName(
-                                                  mdk::g_gameSettings.difficulty),
-                                              (int)mdk::g_gameSettings.gore, (int)saved);
-                        }
-                        static void print(void*, const char* line) {
-                            mdk::log3dsPrintf("%s", line);
-                        }
-                    };
-                    items.setSettings(&mdk::g_gameSettings, Applied::changed, &mix);
-                    items.setPrint(Applied::print, nullptr);
+                    items.setSettings(&mdk::g_gameSettings, mdk::optionsChanged3ds, &mix);
+                    items.setPrint(mdk::printLine3ds, nullptr);
                     pauseOptions.openOptions();
                 }
                 if (!menu.open()) {

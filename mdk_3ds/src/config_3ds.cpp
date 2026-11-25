@@ -8,6 +8,7 @@
 
 #include <string>
 
+#include "audio/sound_mixer.h"
 #include "platform/controls_3ds.h"
 #include "platform/log_3ds.h"
 
@@ -114,6 +115,60 @@ void loadControls3ds(ControlBindings* controls) {
         mdk::log3dsPrintf("controls: the scope's zoom_in/zoom_out are unbound; sniper mode "
                           "stays at its entry zoom");
     }
+}
+
+// A pause-menu change: config.ini written at once, and the toggles in one line.
+void saveToggles3ds(const EnhancedToggles& toggles) {
+    const bool saved = mdk::saveEnhancedConfig(toggles);
+    mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
+                      "glow=%d filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
+                      "cap30=%d hazeDensity=%d glowStrength=%d shadowDarkness=%d "
+                      "exposure=%d tintSaturation=%d shadowMapSize=%d "
+                      "shadowMapRefresh=%d (saved=%d)",
+                      (int)toggles.enableSkyShadows,
+                      (int)toggles.enableFragmentLights,
+                      (int)toggles.enableHaze,
+                      (int)toggles.enableMirrors,
+                      (int)toggles.enableGlowBillboards,
+                      (int)toggles.enableFiltering,
+                      (int)toggles.enableMipmaps,
+                      (int)toggles.enableHdTextures,
+                      (int)toggles.enableLighting,
+                      (int)toggles.enableEdgeSmoothing,
+                      (int)toggles.cap30Fps,
+                      (int)toggles.hazeDensity,
+                      (int)toggles.glowStrength,
+                      (int)toggles.shadowDarkness,
+                      (int)toggles.exposure,
+                      (int)toggles.tintSaturation,
+                      (int)toggles.shadowMapSize,
+                      (int)toggles.shadowMapRefresh, (int)saved);
+}
+
+// The pause menu's options pages (pause_menu.h's MenuItems hooks): a change
+// applies the volumes to the live mixer (`user` is main's `mix`, a SoundMixer**)
+// and writes config.ini; the pages' own lines go to the log.
+void optionsChanged3ds(void* user) {
+    mdk::audio::SoundMixer* const* live =
+        static_cast<mdk::audio::SoundMixer* const*>(user);
+    if (*live) {
+        mdk::g_gameSettings.applyAudio(&(*live)->device());
+    }
+    const bool saved = mdk::saveConfigNow();
+    mdk::log3dsPrintf("menu: options changed: master=%d music=%d "
+                      "effects=%d filter=%d difficulty=%s gore=%d "
+                      "(saved=%d)",
+                      (int)mdk::g_gameSettings.masterVolume,
+                      (int)mdk::g_gameSettings.musicVolume,
+                      (int)mdk::g_gameSettings.effectsVolume,
+                      (int)mdk::g_gameSettings.musicFilter,
+                      mdk::GameSettings::difficultyName(
+                          mdk::g_gameSettings.difficulty),
+                      (int)mdk::g_gameSettings.gore, (int)saved);
+}
+
+void printLine3ds(void*, const char* line) {
+    mdk::log3dsPrintf("%s", line);
 }
 
 } // namespace mdk

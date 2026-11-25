@@ -26,5 +26,10 @@ bool saveConfigNow();
 void loadConfig3ds(EnhancedToggles* toggles);
 // Read controls.ini into `controls` at boot, or write the defaults. Logged.
 void loadControls3ds(ControlBindings* controls);
+// A pause-menu toggle change: config.ini written, the toggles logged.
+void saveToggles3ds(const EnhancedToggles& toggles);
+// The options pages' hooks: `user` is the frame's mixer pointer (SoundMixer**).
+void optionsChanged3ds(void* user);
+void printLine3ds(void* user, const char* line);
 
 } // namespace mdk
