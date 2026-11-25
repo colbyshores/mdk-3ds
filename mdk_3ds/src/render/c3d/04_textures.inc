@@ -1585,8 +1585,12 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         size_t pick = 0;
         bool demanded = false;
         bool pinned = false;
+        // (With a set resident, a LINKED copy -- the HUD's pictures, Kurt's
+        // non-pack frames, a few KB each -- is not gated either: the gate's
+        // 699 KB bound against a heap the set has filled would starve them.)
         for (size_t i = 0; i < renderer->hdQueue.size(); i++) {
-            if (renderer->hdCopies[(size_t)renderer->hdQueue[i]].pinned) {
+            const HdCopy& queued = renderer->hdCopies[(size_t)renderer->hdQueue[i]];
+            if (queued.pinned || (renderer->hdPinnedMode && queued.links > 0)) {
                 pick = i;
                 pinned = true;
                 break;
@@ -1664,9 +1668,10 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         // re-ask -- asks for it again.
         // A pinned copy (the level's set) is imported whatever the budget says:
         // its room was proved when the set was chosen.
-        const bool demanded = copy.lastUsed >= protectFrom || copy.pinned;
+        const bool ungated = copy.pinned || (renderer->hdPinnedMode && copy.links > 0);
+        const bool demanded = copy.lastUsed >= protectFrom || ungated;
         bool room = true;
-        while (!copy.pinned &&
+        while (!ungated &&
                renderer->hdResidentBytes + kHdLargestBytes > hdBudgetNow(renderer)) {
             if (!demanded || !evictHd(renderer, protectFrom, false)) {
                 // Nothing of the stream's own to give: a demanded copy takes the
