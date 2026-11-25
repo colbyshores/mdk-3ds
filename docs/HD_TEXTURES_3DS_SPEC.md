@@ -118,6 +118,31 @@ expansion and not the packed original in `romfs:/orig`. It never blocks either.
   the HUD's pictures (made at level load, cold); Original-shaded surfaces (the
   sky, glass) the PC never replaces. `hdrule:` lines at level teardown count it.
 
+### 3.2 The level's resident set (owner, 2026-11-24/25: "I dont want surface pop in")
+
+Per-surface streaming cannot promise a copy before its surface is seen -- the
+Old 3DS reads ~13 HD files a second in play -- so pop-in was luck. Since
+2026-11-25 the HD set is decided at level load and kept for the level:
+
+- **The set** is every HD file the name index (3.1) pairs with the level's rows,
+  sized exactly from the HD manifest's w/h/format.
+- **The tier**, by arithmetic against the free linear heap less a 7 MiB play
+  reserve (non-HD growth after load, measured: 6.27 MB on level 7, 6.06 MB on
+  level 8): 512 (as built) if it fits; else 256 (levels over 256 texels dropped
+  at the read: the reader thread rewrites the uncompressed .t3x with its size
+  fields, level count and subtexture sizes one level down -- a quarter of the
+  bytes per level, no re-encode, no pack change); else 256 with the files that
+  save the most at 128, one at a time, until it fits; else per-surface
+  streaming as before, logged `DOES NOT FIT`.
+- **The hold.** The first view is asked for and the loading screen stays up
+  (the applet loop served) until the whole set is resident; the same hold runs
+  when the toggle comes back on. In play nothing of the set is read, evicted or
+  late: harness builds print `hdrule: gate PASS|FAIL`.
+- **Measured (Old 3DS, romfs pack):** L7 tier 256, 143 files 4.18 MB, hold
+  6.2 s; L8 tier 256/128, 281 files 5.16 MB (103 at 128), hold 13.0 s. The
+  4.2 streaming design below remains only as the fallback for a set that does
+  not fit and for the legacy copies (HUD pictures, Kurt's non-pack frames).
+
 ## 4. Memory and streaming
 
 An HD pack does not fit the Old 3DS's linear heap all at once on every level, so

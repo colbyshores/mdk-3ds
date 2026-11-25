@@ -1258,3 +1258,94 @@ gates exist for.
 - `bash tools/check.sh`: ALL GATES PASSED.
 
 **Commit:** none. The task said not to commit.
+
+### HD TEXTURES: NO SD FOR A COVERED SURFACE, AND NO POP-IN (2026-11-24/25)
+**Owner's words.** "the point was to fix the hitching with the HD texture set";
+"these are fucking ETC1 and ETC1A4 and we should NOT be loading the SD textures
+AT ALL when HD is turned on"; "yeah I dont want surface pop in"; then (asleep)
+"work autonomously using whatever's fable's suggestions come back as".
+**What (branch fix/3ds-hd-only, one commit per change):**
+- a5c1109f probe: `hdrule:` line per level (hashes, HD answers made from SD,
+  SD copies of covered textures, late/blank HD draws).
+- c99b8e69 the HD rule: the orig pack's byname.txt rows carry each texture's
+  content key in their file names; the HD pack's files carry the same keys, so
+  (palette, name) -> HD file is joined by string at level load -- no hash on
+  the console, no pack rebuild. A covered pair is made from its two files
+  (mdk_render_create_compressed_file's hdPath, C3dTexture::hdOnly): HD on
+  reads only the HD file, HD off only the packed original. Sprites take HD too.
+- 5604dd1e the reader thread decompresses the HD .t3x (LZ11) into the
+  uncompressed layout; the boundary import is a copy (was 1-94 ms each).
+- 929ac555 / 786a7783 probes (lateness, margin) and `HDFLIP=` harness aid.
+- 5de2dae5 budget follows free linear (superseded by the set, kept).
+- aa6ecd04 first view settled on the loading screen (superseded by the set).
+- 877c9057 SurfaceCache::createPacked no longer overwrites (leaks) a pair's
+  existing texture.
+- b767bb75 THE LEVEL'S RESIDENT SET (the Fable review's design): every HD file
+  the level's rows name, sized exactly, tier 512 / 256 (levels over 256 dropped
+  by the reader's rewrite) by arithmetic against free linear less a 7 MiB play
+  reserve; pinned; the loading screen holds (applet loop served) until it is
+  resident; the same hold when the toggle comes back on.
+- 6df40918 per-file caps (tier 256/128 when 256 does not fit: level 8),
+  the old level's copies freed before the next set is chosen, harness gate line.
+- f8fb72d4 bullet-hole stamps skipped on HD-covered surfaces while HD is on
+  (VISIBLE CHANGE, counted `stampsSkipped`, owner may revisit).
+- ed7c09fa no name index -> HD refused loudly (never hashed).
+- b79e0b17 tools/hd_name_coverage.py: HD keys no name row reaches.
+- 000b9522 toggling HD back on gives the HD-only textures' originals back
+  once the set is resident (linear before the next toggle 1.86 -> 3.02 MB) and
+  holds for the HUD's copies too; the hold ends after 1 s without progress.
+- 35095fcf probe `linkedAfterSd` (HUD pictures made SD at load, then linked).
+- 2546e97d with a set resident, linked copies (HUD, Kurt's non-pack frames)
+  are not starved by the per-surface budget gate (toggle-on HUD lateness
+  2-5 frames -> 0).
+**Evidence (Old 3DS old3ds-lan167, model 0, 268 MHz, L2 off, stereo; PROFILE;
+romfs HD pack via HDROMFS=1; logs in this worktree's git dir hw-logs/):**
+
+| L7 walk (DANT_1->CDANT_1) | p99 ms | >33.3 | steady mean | late | blank | covered SD | hashes | lin min |
+|---|---|---|---|---|---|---|---|---|
+| base ea8cd744 | 60.7 | 212 | 19.11 | -- | -- | -- | -- | 29 KB |
+| probe a5c1109f | 55.9 | 193 | 19.13 | 31 | 0 | 20 (+38 answered SD) | 46 (1081 ms) | 29 KB |
+| HD rule c99b8e69 | 49.9 | 155 | 18.42 | 19 | 279 | 0 | 0 | 2.5 MB |
+| + unpack 5604dd1e | 42.8 | 144 | 18.36 | 19 | 436 | 0 | 0 | 2.5 MB |
+| + settle aa6ecd04 | 38.6 | 138 | 18.28 | 2 | 0 | 0 | 0 | 2.7 MB |
+| + set b767bb75 | 38.6 | 134 | 18.19 | 0 | 0 | 0 | 0 | 2.0 MB |
+| tip 2546e97d | 39.7 | 138 | 18.29 | 0 | 0 | 0 | 0 | 2.0 MB |
+
+Tip: `hdrule: gate PASS`, hold 6.1 s for 143 files (4.18 MB at cap 256), no
+HD read in play, linkedAfterSd 12 (the HUD's pictures, made SD at load, never
+drawn SD). Live toggle (HDFLIP=1500,2100,2700,3300 on the tip): no frame over
+50 ms at the off flips; each on flip holds 5.95-5.98 s (157 files) and then
+late 0, blank 0, gate PASS; no leak (linear free identical at each off flip,
+2.09 MB).
+
+Worst in-play frame: 596 ms (frame 807: the second arena's surfaces hashed in
+the view sync) -> gone; the remaining 90-120 ms frames at 764/784/804/814/844
+and every x99 are the PROFILE build's census/logger lines (`end` span).
+Set runs: L7 tier 256, 143 files 4.18 MB, hold 6.2 s; L8 tier 256/128, 281
+files 5.16 MB (103 at 128), hold 13.0 s, gate PASS, p99 52.0 (53.1 streamed),
+lin min 1.30 MB; L3 tier 256, 163 files 4.77 MB, hold 5.8 s, gate PASS, p99
+59.2, lin min 2.72 MB. HD imports in play: 0 on all three.
+**Where SD still loads with HD on (and why):** animated (stacked) textures --
+the pack resamples their strips, squeezing frames (0 met on these routes);
+name-index misses, expanded never hashed (L7: SL_BIG and the >1024 strips,
+which have no orig/HD file either; the coverage tool lists the 10 HD files no
+row reaches: EXPLODE, M_COMM x2, O3_BLAST/CORR/FLR1, XCARPIL/XCARTURR/XCA_BELL/
+XPIT); the HUD/canvas pictures (~19 a level: made and content-hashed at level
+load, cold, never drawn SD because their HD copies settle in the hold); Kurt
+(kurt.pak's original frames, owner 2026-11-19); Original-shaded sky/glass (the
+PC never replaces them).
+**Player build** (no harness, reads sdmc:/3ds/mdk/hd): this worktree's git
+dir `hw-logs/play-2546e97d.3dsx` (md5 1c1bed06066e7b9df7318fcd032e832a).
+**Suites at the tip (2546e97d):** `cmake --build build-linux`; `tools/check.sh` ALL
+GATES PASSED; `make -C tests/formats -j4 test` 200610 checks, 0 failures;
+`make -C tests/scripts test` exit 0 (C3dFrame 64 checks, 167 arms; Main3dsFlow
+22 checks, 64 arms).
+**Unverified:** the owner's SD-card pack (all runs read romfs:/hd; the
+appliance's card has no pack and the loop cannot write it) -- the hold time
+grows with SD latency, play does not read HD at all; the New 3DS (more linear
+heap would raise the tier; heap split not moved); levels 4-6; the toggle hold
+in the real pause menu (HDFLIP drives the same code path).
+**Not done from the review:** the HUD name-to-key table (needs a host
+exporter for the BNI sprites per level palette); extending the exporter to
+model archives (the 10 misses); removing the per-surface streaming code (it is
+the fallback when a set does not fit and serves the legacy HUD/Kurt copies).
