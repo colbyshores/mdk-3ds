@@ -1928,7 +1928,10 @@ def adjudicate(text, quiet=False):
             # are written there, so that is where the pins must read. A
             # helper with direct writes is caught by the same bypass scan
             # over the merged body.
-            for callee in re.findall(r"(?:^|[^.\w])([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(",
+            # (A lookbehind, not a consumed prefix character: `if (expandIndexRows(`
+            # shares its `(` between the two names, and a consuming findall saw only
+            # the `if`, so a call inside a condition was never followed -- 2026-11-24.)
+            for callee in re.findall(r"(?<![.\w])([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(",
                                      blank_comments(body)):
                 csp = fn_body_span(text, callee)
                 if csp is None or csp == sp:
@@ -2139,12 +2142,33 @@ def adjudicate(text, quiet=False):
             return (cls[i] == "write" or SUBSCRIPT_WRITE.search(s) is not None
                     or CAST_SUBSCRIPT_WRITE.search(s) is not None or deref_write(s))
 
+        # A CALL OF A FILLER IS A TEXEL WRITE TOO (2026-11-24). Since the chunked
+        # expansion (2026-11-21) expandIndices writes no texel itself: it zeroes the
+        # buffer and calls expandIndexRows, which `expansion` merges in AFTER the
+        # caller's own statements. Reading only the helper call, the merged body's
+        # first write was inside the callee, so a fill moved after the caller's call
+        # -- review-12 F1 exactly -- sat "before the first write" and was green, and
+        # the fill inside a row-at-a-time loop of calls was in a loop that "wrote
+        # nothing". A call of a function in this file that fills texels through the
+        # helper (`helper_writers`) writes texels where it is called. A definition
+        # header is not a call: the body is sliced from the header of the function
+        # (and of the merged callee), so those statements are skipped by offset.
+        writer_call = None
+        def_starts = set(m.start() for m in FN_DEF.finditer(blank))
+        writers = sorted(helper_writers(text))
+        if writers:
+            writer_call = re.compile(r"(?<![.\w>])(?:%s)[ \t]*\("
+                                     % "|".join(re.escape(w) for w in writers))
+
         def writes_texel(i):
             """True when statement i puts a byte into texel memory at all, including the
-            helper call. The padding fill is measured against THIS and not against
-            `direct_write`: a fill that follows the first helper call is a wipe, and the
-            helper call is the legal write it would wipe."""
-            return direct_write(i) or helper.search(stmts[i][1]) is not None
+            helper call and a call of a function that makes it. The padding fill is
+            measured against THIS and not against `direct_write`: a fill that follows
+            the first helper call is a wipe, and the helper call is the legal write it
+            would wipe."""
+            return (direct_write(i) or helper.search(stmts[i][1]) is not None
+                    or (writer_call is not None and stmts[i][0] not in def_starts
+                        and writer_call.search(stmts[i][1]) is not None))
 
         first = next((i for i in range(len(stmts)) if writes_texel(i)), None)
 
@@ -2857,14 +2881,43 @@ def adjudicate(text, quiet=False):
     chosen_ok = (len(chooser_args) == 6 and re.search(r"\btexture16\b", chooser_args[0])
                  is not None and re.search(r"\bkeepRgba8\b", chooser_args[1]) is not None
                  and chooser_args[4] == "pixels")
+    # THE CHUNKED EXPANSION CHOOSES TOO (2026-11-24). A texture expanded in slices
+    # (advanceExpansionSteps) picks its store at its own pack stage and packs there;
+    # makeTextureNow takes that `texture.expandFormat` as a preset (the ternary
+    # above). So that chooser is the store of every chunked texture, and it carries
+    # the same three obligations: the toggle, the canvas pin (which
+    # mdk_render_mark_canvas sets BEFORE the expansion so the font atlas is expanded
+    # once, in RGBA8) and the expanded texels -- the buffer it then packs -- and the
+    # pack must use the store it chose. Two arms that "ignored the toggle" and "ignored
+    # the pin" were silently landing on this chooser and being accepted, because only
+    # makeTextureNow's was read.
+    ck_sp = fn_body_span(text, "advanceExpansionSteps")
+    ck = text[ck_sp[0]:ck_sp[1]] if ck_sp else None
+    ck_code = blank_comments(ck) if ck else ""
+    ck_pick = re.search(r"\btexture\.expandFormat[ \t]*=[ \t]*(?:mdk::)?(?:pica::)?"
+                        r"expandedTexelFormat[ \t]*\(", ck_code)
+    ck_pack = re.search(r"\b(?:mdk::)?(?:pica::)?packTexels16Range[ \t]*\(", ck_code)
+    ck_args = [a.strip() for a in (call_args_at(ck, ck_pick.end() - 1) or [])] \
+        if ck_pick else []
+    ck_pack_args = [a.strip() for a in (call_args_at(ck, ck_pack.end() - 1) or [])] \
+        if ck_pack else []
+    chunked_ok = (len(ck_args) == 6 and len(ck_pack_args) == 4
+                  and re.search(r"\btexture16\b", ck_args[0]) is not None
+                  and re.search(r"\bkeepRgba8\b", ck_args[1]) is not None
+                  and ck_args[4] == ck_pack_args[0]
+                  and ck_pack_args[3] == "texture.expandFormat")
     rep.check("texel16-store-is-chosen-from-the-expanded-alpha",
-              chosen_ok,
-              "the store `%s` is `%s` (it must be pica::expandedTexelFormat over the "
-              "toggle, the canvas pin and the EXPANDED texels -- `pixels`: a store chosen "
-              "from anything else puts a cut-out into RGB565, which the PICA samples as "
-              "alpha 1.0, and the index-0 discard stops discarding)"
+              chosen_ok and chunked_ok,
+              "the store `%s` is `%s`; the chunked expansion's is `expandedTexelFormat(%s)` "
+              "packed as `%s` (each must be pica::expandedTexelFormat over the toggle, the "
+              "canvas pin and the EXPANDED texels -- the buffer that is then packed, in the "
+              "store chosen: a store chosen from anything else puts a cut-out into RGB565, "
+              "which the PICA samples as alpha 1.0, and the index-0 discard stops "
+              "discarding)"
               % (store or "(no pack)",
-                 (" ".join(chosen.split()) if chosen else "unbound")))
+                 (" ".join(chosen.split()) if chosen else "unbound"),
+                 ", ".join(" ".join(a.split()) for a in ck_args) if ck_args else "absent",
+                 ck_pack_args[3] if len(ck_pack_args) == 4 else "nothing"))
 
     sink_offsets = re.findall(
         r"\bC3D_TexLoadImage[ \t]*\([^,;]*,[ \t]*pixels[ \t]*\+[ \t]*([A-Za-z_][A-Za-z0-9_]*)",
@@ -2920,13 +2973,24 @@ def adjudicate(text, quiet=False):
     settles = re.search(r"\bif[ \t]*\([ \t]*!texture\.stale[ \t]*\)",
                         blank_cached(text)[slice(*(fn_body_span(text, "settleDeferredTextures")
                                                    or (0, 0)))])
+    # THE PIN AT CREATION (mdk_render_mark_canvas, 2026-11-24): the frontend marks a
+    # canvas picture when it makes it, so its expansion picks RGBA8 once instead of
+    # being made 16-bit and again at its first Overlay draw. It is the same pin with
+    # the same two writes: keepRgba8, and -- for a copy already made 16-bit -- stale,
+    # so the boundary re-makes it.
+    mark_sp = fn_body_span(text, "mdk_render_mark_canvas")
+    mark = blank_cached(text)[mark_sp[0]:mark_sp[1]] if mark_sp else ""
+    mark_ok = (re.search(r"\bkeepRgba8[ \t]*=[ \t]*true[ \t]*;", mark) is not None
+               and re.search(r"\bstale[ \t]*=[ \t]*true[ \t]*;", mark) is not None)
     rep.check("canvas-textures-are-kept-rgba8-at-the-frame-boundary",
-              canvas_ok and settles is not None,
+              canvas_ok and mark_ok and settles is not None,
               "an Overlay draw %s its texture RGBA8 and %s its 16-bit copy for the frame "
-              "boundary; settleDeferredTextures %s stale copies (the canvas keeps the "
-              "palette's exact colours -- and the copy this frame draws is in flight, so "
-              "it is re-made after C3D_FrameBegin's wait, never under the GPU: AGENTS.md P3)"
+              "boundary; mdk_render_mark_canvas %s; settleDeferredTextures %s stale copies "
+              "(the canvas keeps the palette's exact colours -- and the copy this frame "
+              "draws is in flight, so it is re-made after C3D_FrameBegin's wait, never "
+              "under the GPU: AGENTS.md P3)"
               % ("pins" if canvas_ok else "does NOT pin", "marks" if canvas_ok else "does not mark",
+                 "pins and marks" if mark_ok else "does NOT both pin and mark",
                  "re-makes" if settles else "does NOT re-make"))
     return rep
 
@@ -3693,21 +3757,31 @@ ARMS = [
     # reverts -- the exact code that painted the console red for the backend's whole
     # history -- left every gate green. They are written from the pre-batch file
     # (git 2624f5d), not invented, so each is a program a later batch could commit.
+    # (Re-anchored 2026-11-24: the row loop moved into expandIndexRows on 2026-11-21
+    # and writes `pixels + slot * 4u` directly, so the mutant names its texel pointer
+    # itself, as the pre-batch file did.)
     ("index-expansion-writes-the-palette-order-straight-through (review-6 F1)",
      lambda s: s.replace(
-         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],\n"
+         "            mdk::pica::texelBytes(pixels + slot * 4u, paletteRgba[index * 4 + 0],\n"
          "                                  paletteRgba[index * 4 + 1], "
          "paletteRgba[index * 4 + 2], 255u);",
+         "            uint8_t* pixel = pixels + slot * 4u;\n"
          "            pixel[0] = paletteRgba[index * 4 + 0];\n"
          "            pixel[1] = paletteRgba[index * 4 + 1];\n"
          "            pixel[2] = paletteRgba[index * 4 + 2];\n"
          "            pixel[3] = 255;", 1),
      "index-texels-are-rotated-for-the-pica"),
+    # (Re-anchored 2026-11-24: the loop now also notes a transparent texel for the
+    # filter stage; the memcpy mutant drops that with the rest of the loop, and the
+    # flag stays false, which is what the pre-batch file had none of.)
     ("rgba-expansion-restored-to-a-row-memcpy (review-6 F1)",
      lambda s: s.replace(
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* row = source + (size_t)y * (size_t)width * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
+         "            if (row[(size_t)x * 4 + 3] == 0) {\n"
+         "                sawTransparent = true;\n"
+         "            }\n"
          "            const size_t slot =\n"
          "                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, "
          "(uint32_t)paddedWidth);\n"
@@ -3739,14 +3813,17 @@ ARMS = [
          "(size_t)x) * 4u,\n"
          "                                  row[(size_t)x * 4 + 0],\n", 1),
      "rgba-texels-are-tiled-for-the-pica"),
+    # (Re-anchored 2026-11-24: expandIndexRows hands `pixels + slot * 4u` straight
+    # to the helper, so the mutant moves that destination, as the RGBA arm does.)
     ("index-expansion-writes-rows-instead-of-tiles-batch-173",
      lambda s: s.replace(
          "            const size_t slot =\n"
          "                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, "
          "(uint32_t)paddedWidth);\n"
-         "            uint8_t* pixel = pixels + slot * 4u;\n",
-         "            uint8_t* pixel = pixels + ((size_t)y * (size_t)paddedWidth + "
-         "(size_t)x) * 4u;\n", 1),
+         "            mdk::pica::texelBytes(pixels + slot * 4u, paletteRgba[index * 4 + 0],\n",
+         "            mdk::pica::texelBytes(pixels + ((size_t)y * (size_t)paddedWidth + "
+         "(size_t)x) * 4u,\n"
+         "                                  paletteRgba[index * 4 + 0],\n", 1),
      "index-texels-are-tiled-for-the-pica"),
     # The two alpha arms. Each keeps the rotation intact and moves ONLY the alpha, so
     # neither can be caught by the byte-order check: they isolate the alpha rows.
@@ -3773,10 +3850,10 @@ ARMS = [
     # could see it; the reviewer measured all four green on both sites.
     ("index-expansion-swaps-the-palette-red-and-blue-sources (review-7 F2)",
      lambda s: s.replace(
-         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],\n"
+         "            mdk::pica::texelBytes(pixels + slot * 4u, paletteRgba[index * 4 + 0],\n"
          "                                  paletteRgba[index * 4 + 1], "
          "paletteRgba[index * 4 + 2], 255u);",
-         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 2],\n"
+         "            mdk::pica::texelBytes(pixels + slot * 4u, paletteRgba[index * 4 + 2],\n"
          "                                  paletteRgba[index * 4 + 1], "
          "paletteRgba[index * 4 + 0], 255u);", 1),
      "index-texel-channels-are-in-source-order"),
@@ -4267,20 +4344,38 @@ ARMS = [
      "wrote (review-12 F1: the rule read the destination and the length, not the place)",
      # (Re-anchored 2026-11-17: since prepareForFiltering the loop is followed by
      # its comment, not by `return`; the wipe still lands right after the loop.)
-     lambda s: s.replace("        }\n    }\n    // Ready for Enhanced Mode filtering",
-                         "        }\n    }\n    memset(pixels, 0, texels * 4);\n"
-                         "    // Ready for Enhanced Mode filtering", 1),
+     # (Re-anchored 2026-11-24: the row loop is expandIndexRows now, called once by
+     # expandIndices, so "after the loop" is after that call -- and the rule reads a
+     # call of a function that fills texels through the helper as a texel write.)
+     lambda s: s.replace(
+         "        expandIndexRows(indices, width, 0, height, paletteRgba, paddedWidth, "
+         "pixels);\n",
+         "        expandIndexRows(indices, width, 0, height, paletteRgba, paddedWidth, "
+         "pixels);\n"
+         "    memset(pixels, 0, texels * 4);\n", 1),
      "index-texels-are-rotated-for-the-pica"),
     # Review-12 open question 2, answered as a defect rather than a limit: the same wipe
     # with the fill left where it was and the rows moved around it. Source order cannot
     # see this one -- the fill still precedes the call it erases -- so the rule reads the
     # loop nesting, and this arm is what proves the nesting is not decoration.
+    # (Re-anchored 2026-11-24: the rows are expandIndexRows' now, which never sees
+    # the buffer's size, so the same defect is written where it compiles -- a row
+    # at a time from expandIndices, the chunked expansion's own shape, with the
+    # whole-buffer fill inside that loop.)
     ("the padding fill sits inside the row loop, so every iteration wipes the rows "
      "before it (review-12 F1: the same defect one brace deeper)",
      lambda s: s.replace(
-         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],",
-         "            memset(pixels, 0, texels * 4);\n"
-         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],", 1),
+         "    const bool sawTransparent =\n"
+         "        expandIndexRows(indices, width, 0, height, paletteRgba, paddedWidth, "
+         "pixels);\n",
+         "    bool sawTransparent = false;\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        memset(pixels, 0, texels * 4);\n"
+         "        if (expandIndexRows(indices, width, y, y + 1, paletteRgba, paddedWidth, "
+         "pixels)) {\n"
+         "            sawTransparent = true;\n"
+         "        }\n"
+         "    }\n", 1),
      "index-texels-are-rotated-for-the-pica"),
     # Review-12 F2: the literal alternative `'(?:\\0|x0+|0)'` accepted NONZERO fills --
     # `'0'` is the character 0x30 and `'x0'` is a multi-character constant -- and both
@@ -4394,15 +4489,20 @@ ARMS = [
          "                                                      levels),\n"
          "                            format);\n", "", 1),
      "texel16-store-is-packed-by-the-host-tested-helper"),
+    # (Re-anchored 2026-11-24: the pack is guarded by `if (!prepacked)` -- a chunked
+    # expansion arrives packed -- and a PROFILE tick sits between it and the upload,
+    # so the guarded pack is moved whole to just after the level-0 upload.)
     ("the 16-bit pack runs after the level-0 upload (level 0 goes up unpacked)",
      lambda s: s.replace(
+         "    if (!prepacked)\n"
          "    mdk::pica::packTexels16(pixels,\n"
          "                            mdk::pica::mipChainTexels(texture.paddedWidth, "
          "texture.paddedHeight,\n"
          "                                                      levels),\n"
-         "                            format);\n"
+         "                            format);\n", "", 1).replace(
          "    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);\n",
          "    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);\n"
+         "    if (!prepacked)\n"
          "    mdk::pica::packTexels16(pixels,\n"
          "                            mdk::pica::mipChainTexels(texture.paddedWidth, "
          "texture.paddedHeight,\n"
@@ -4423,16 +4523,56 @@ ARMS = [
      lambda s: s.replace("        texture.paddedHeight, pixels,\n",
                          "        texture.paddedHeight, texture.source.data(),\n", 1),
      "texel16-store-is-chosen-from-the-expanded-alpha"),
+    # (Re-anchored 2026-11-24. There are TWO choosers since the chunked expansion
+    # (2026-11-21): makeTextureNow's, and the one at the chunked expansion's pack
+    # stage (advanceExpansionSteps), whose choice makeTextureNow takes as a preset.
+    # These two arms used to replace the FIRST occurrence of the argument line, which
+    # is now the chunked one -- a chooser the check did not read -- so both were
+    # accepted. They are pointed back at makeTextureNow's chooser, and the pair after
+    # them puts the same two defects into the chunked one, which the check now reads.)
     ("the store ignores the texture16 toggle (the owner's A/B stops switching it)",
-     lambda s: s.replace("        renderer->toggles.texture16, texture.keepRgba8, "
-                         "texture.paddedWidth,\n",
-                         "        true, texture.keepRgba8, texture.paddedWidth,\n", 1),
+     lambda s: s.replace("                  : mdk::pica::expandedTexelFormat(\n"
+                         "                        renderer->toggles.texture16, "
+                         "texture.keepRgba8, texture.paddedWidth,\n",
+                         "                  : mdk::pica::expandedTexelFormat(\n"
+                         "                        true, texture.keepRgba8, "
+                         "texture.paddedWidth,\n", 1),
      "texel16-store-is-chosen-from-the-expanded-alpha"),
     ("the store ignores the canvas pin (the HUD is made 16-bit again every frame)",
-     lambda s: s.replace("        renderer->toggles.texture16, texture.keepRgba8, "
-                         "texture.paddedWidth,\n",
-                         "        renderer->toggles.texture16, false, texture.paddedWidth,\n",
-                         1),
+     lambda s: s.replace("                  : mdk::pica::expandedTexelFormat(\n"
+                         "                        renderer->toggles.texture16, "
+                         "texture.keepRgba8, texture.paddedWidth,\n",
+                         "                  : mdk::pica::expandedTexelFormat(\n"
+                         "                        renderer->toggles.texture16, false, "
+                         "texture.paddedWidth,\n", 1),
+     "texel16-store-is-chosen-from-the-expanded-alpha"),
+    ("the chunked expansion's store ignores the texture16 toggle (the owner's A/B stops "
+     "switching every texture big enough to be made in slices)",
+     lambda s: s.replace("texture.expandFormat = mdk::pica::expandedTexelFormat(\n"
+                         "                        renderer->toggles.texture16, "
+                         "texture.keepRgba8, texture.paddedWidth,\n",
+                         "texture.expandFormat = mdk::pica::expandedTexelFormat(\n"
+                         "                        true, texture.keepRgba8, "
+                         "texture.paddedWidth,\n", 1),
+     "texel16-store-is-chosen-from-the-expanded-alpha"),
+    ("the chunked expansion's store ignores the canvas pin (mdk_render_mark_canvas "
+     "pins the menu's font atlas before its expansion, and the pin is lost)",
+     lambda s: s.replace("texture.expandFormat = mdk::pica::expandedTexelFormat(\n"
+                         "                        renderer->toggles.texture16, "
+                         "texture.keepRgba8, texture.paddedWidth,\n",
+                         "texture.expandFormat = mdk::pica::expandedTexelFormat(\n"
+                         "                        renderer->toggles.texture16, false, "
+                         "texture.paddedWidth,\n", 1),
+     "texel16-store-is-chosen-from-the-expanded-alpha"),
+    ("the chunked expansion's store is chosen from the unexpanded source",
+     lambda s: s.replace("                        texture.paddedHeight, texture.expandPixels,\n",
+                         "                        texture.paddedHeight, "
+                         "texture.source.data(),\n", 1),
+     "texel16-store-is-chosen-from-the-expanded-alpha"),
+    ("the chunked expansion packs in a store of its own, not the one it chose",
+     lambda s: s.replace("                                             texture.expandFormat);",
+                         "                                             "
+                         "mdk::pica::TexelFormat::Rgba4);", 1),
      "texel16-store-is-chosen-from-the-expanded-alpha"),
     ("a mip level is uploaded from its RGBA8 offset in a 2-byte chain",
      lambda s: s.replace("        const size_t offset = mdk::pica::textureBytes(format, "
@@ -4459,6 +4599,25 @@ ARMS = [
      "texel16-pack-covers-every-level-uploaded"),
     ("a canvas texture is pinned RGBA8 but its 16-bit copy is never re-made",
      lambda s: s.replace("                    resource.stale = true;\n", "", 1),
+     "canvas-textures-are-kept-rgba8-at-the-frame-boundary"),
+    # The creation-time pin (mdk_render_mark_canvas, 2026-11-24): the same two writes
+    # as the draw-time pin above, from the frontend instead of the first Overlay draw.
+    ("mdk_render_mark_canvas pins RGBA8 but never re-makes a copy already made 16-bit",
+     lambda s: s.replace("    texture.keepRgba8 = true;\n"
+                         "    if (texture.valid && texture.format != "
+                         "mdk::pica::TexelFormat::Rgba8) {\n"
+                         "        texture.stale = true;\n",
+                         "    texture.keepRgba8 = true;\n"
+                         "    if (texture.valid && texture.format != "
+                         "mdk::pica::TexelFormat::Rgba8) {\n", 1),
+     "canvas-textures-are-kept-rgba8-at-the-frame-boundary"),
+    ("mdk_render_mark_canvas never pins the texture (the menu's atlas is expanded "
+     "16-bit and made again at its first draw)",
+     lambda s: s.replace("    texture.keepRgba8 = true;\n"
+                         "    if (texture.valid && texture.format != "
+                         "mdk::pica::TexelFormat::Rgba8) {\n",
+                         "    if (texture.valid && texture.format != "
+                         "mdk::pica::TexelFormat::Rgba8) {\n", 1),
      "canvas-textures-are-kept-rgba8-at-the-frame-boundary"),
 ]
 
@@ -4555,11 +4714,12 @@ PROBES = [
     # outside it, which reddened a correct file -- the same defect as the arm above, on
     # the side that must stay green.
     ("a brace inside a comment does not truncate the resolved body (review-8 F3)",
+     # (Re-anchored 2026-11-24: the x loop now opens with the index-0 skip, so the
+     # comment goes right before the slot, still ahead of the helper call it must
+     # not cut off -- the first such site is expandIndexRows'.)
      lambda s: s.replace(
-         "        for (int32_t x = 0; x < width; x++) {\n"
          "            const size_t slot =\n",
-         "        // the PICA reads [A, B, G, R], so there is no } shortcut here\n"
-         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            // the PICA reads [A, B, G, R], so there is no } shortcut here\n"
          "            const size_t slot =\n", 1)),
     # Review-8 F4's green half: a commented-out sink is prose about a sink, not a sink.
     # The batch-122 skip removed only a line whose first characters were `//`, so a

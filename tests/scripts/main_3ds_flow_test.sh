@@ -956,14 +956,14 @@ CHK = {
     "music-follows-kurts-arena":
         "the level's music is made on the runtime's mixer, dropped before the runtime is, "
         "entered and faded every step after the camera, and the loading arena's track is "
-        "prefetched after the stream (arena streaming Phase 5)",
+        "prefetched after the views are synced to the pair (arena streaming Phase 5)",
     "asset-gate": "the runtime is constructed under the asset gate",
     "pitch-from-runtime": "the pitch target is camera_track, then the scripts' arena",
     "objects-drawn-in-order":
         "the object pass is drawn between the arena and Kurt's sprite (Viewer.cs:702-708)",
     "arenas-follow-the-scripts":
-        "the arena stream is stepped, then the views synced, before the frame; the drawn "
-        "arenas are the runtime's (arena streaming Phase 2)",
+        "the views are synced before the frame on the runtime's drawn arenas, and the same "
+        "list is drawn (arena streaming Phase 2)",
     "objects-gated-on-runtime":
         "the object pass runs only when there is a runtime to take its objects from",
     "objects-skip-invisible-and-removed":
@@ -1191,18 +1191,24 @@ def adjudicate(text, quiet=False):
     #      middle of their tick and the current/second pair is its end, so a stream
     #      or a view fed from the pair alone lets go of an arena the frame still
     #      draws after a scripted teleport (review, 2026-11-18).
-    update_at = text.find("stream.update(streamCurrent, streamSecond, streamActive, *frameDrawn);")
-    sync_at = text.find("arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);")
+    #      THE STREAM IS GONE (4fea3380, 2026-11-22, owner-directed): ArenaStream's
+    #      paced 32 KiB SD reads were the transition stutter, so it was retired for a
+    #      whole-MTO pixel fallback and the views' own surface pump. Its half of this
+    #      check (`stream.update` before the sync, and its `secondActive` flag) went
+    #      with it; what survives is the list, the sync before begin_frame (the sync
+    #      makes and releases GPU resources), and the draw on the same list. Repaired
+    #      2026-11-24 -- the check had been red on every correct build since the
+    #      retirement, which cascaded into every arm below reporting this check.
+    sync_at = text.find("arenaViews.sync(streamCurrent, streamSecond, *frameDrawn, bubbleHints);")
     begin_at = text.find("mdk_render_begin_frame(renderer, &params);")
     list_at = text.find("frameDrawn = scriptsDrew ? &runtime->drawnArenas() : &startDrawn;")
     say(CHK["arenas-follow-the-scripts"],
         frame is not None
-        and frame[0] <= list_at < update_at < sync_at < begin_at < arena_at < frame[1]
-        and "runtime->secondArena()" in text[frame[0]:update_at]
-        and "runtime->secondActive()" in text[frame[0]:update_at],
-        "frameDrawn (the runtime's drawnArenas) -> stream.update -> arenaViews.sync -> "
-        "begin_frame -> arenaViews.draw, all three on the one list; any other order or a "
-        "second list draws an arena whose textures are not in, or lets go of one that is drawn")
+        and frame[0] <= list_at < sync_at < begin_at < arena_at < frame[1]
+        and "runtime->secondArena()" in text[frame[0]:sync_at],
+        "frameDrawn (the runtime's drawnArenas) -> arenaViews.sync -> begin_frame -> "
+        "arenaViews.draw, both on the one list; any other order or a second list draws an "
+        "arena whose textures are not in, or lets go of one that is drawn")
 
     # 12c. THE LEVEL'S MUSIC (arena streaming Phase 5; audio/level_music.h).
     #     - It holds voices of the RUNTIME's mixer, so it is dropped BEFORE the
@@ -1213,7 +1219,8 @@ def adjudicate(text, quiet=False):
     #     - The C# enters Kurt's arena and advances the fades EVERY STEP, after the
     #       camera and before SetSolid (Viewer.cs:521-525, :533): enter, then update.
     #     - The bank's stepped prefetch of the loading arena's track runs once per
-    #       FRAME, after the stream has been told the pair and before the frame
+    #       FRAME, after the views have been synced to the pair (it was "after the
+    #       stream" until the stream's retirement, 4fea3380) and before the frame
     #       begins.
     music_ok = False
     if spawn_body is not None and loop is not None and frame is not None:
@@ -1230,22 +1237,25 @@ def adjudicate(text, quiet=False):
         # The tracks given back once a second are every one BUT the playing one,
         # the fading one and the LOADING arena's: without the third the track a
         # prefetch has just landed is released within the second, and Kurt walks
-        # into a stall the prefetch existed to prevent.
-        keep = re.search(r"const std::string keep\[3\] = \{(.*?)\};", text, re.S)
+        # into a stall the prefetch existed to prevent. (The list grew a fourth,
+        # the door bubble's track, review M2; the count handed to the release must
+        # be the list's own, or a kept track is read past or never read.)
+        keep = re.search(r"const std::string keep\[(\d+)\] = \{(.*?)\};", text, re.S)
         keep_ok = (keep is not None
-                   and "music->playing()" in keep.group(1)
-                   and "music->fading()" in keep.group(1)
-                   and "music->trackOf(streamSecond)" in keep.group(1)
-                   and "bank.releaseMusicExcept(keep, 3)" in text[frame[0]:begin_at])
+                   and "music->playing()" in keep.group(2)
+                   and "music->fading()" in keep.group(2)
+                   and "music->trackOf(streamSecond)" in keep.group(2)
+                   and ("bank.releaseMusicExcept(keep, %s)" % keep.group(1))
+                   in text[frame[0]:begin_at])
         music_ok = (0 <= drop < kill and made is not None and keep_ok
                     and "music->enter(runtime->currentArena());" in loop
                     and "music->update(step);" in loop
                     and None not in (cam, enter, fade, solid) and cam < enter < fade < solid
-                    and frame[0] <= update_at < prefetch_at < step_at < begin_at < frame[1])
+                    and frame[0] <= sync_at < prefetch_at < step_at < begin_at < frame[1])
     say(CHK["music-follows-kurts-arena"], music_ok,
         "music.reset() before runtime.reset(); LevelMusic(&runtime->mixer(), ...); in the "
         "step loop follow.update -> music->enter(currentArena) -> music->update(step) -> "
-        "setSolid; in the frame stream.update -> bank.prefetch -> bank.prefetchStep -> "
+        "setSolid; in the frame arenaViews.sync -> bank.prefetch -> bank.prefetchStep -> "
         "begin_frame; releaseMusicExcept keeps the playing, the fading and the loading "
         "arena's track")
 
@@ -2073,8 +2083,8 @@ def arm_loading_arenas_track_is_released(text):
     """The once-a-second release keeps the playing and the fading track and forgets
     the one that was prefetched for the arena Kurt is walking towards."""
     return text.replace(
-        "streamSecond.empty() ? std::string() : music->trackOf(streamSecond)};",
-        "std::string()};", 1)
+        "streamSecond.empty() ? std::string() : music->trackOf(streamSecond),",
+        "std::string(),", 1)
 
 
 def arm_no_asset_gate(text):
@@ -2143,18 +2153,44 @@ def arm_pitch_ignores_runtime(text):
 
 
 # --- the object pass's arms -------------------------------------------------
-def arm_views_synced_before_the_stream(text):
-    """The views are synced before the stream is stepped: a view built this frame
-    would ask for textures whose pixels are still away (a demand load per arena
-    instead of the stream's stall or preload)."""
-    update = "            stream.update(streamCurrent, streamSecond, streamActive, *frameDrawn);\n"
-    sync_at = text.find("arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);")
-    if update not in text or sync_at < 0:
+# RETIRED 2026-11-24: "views synced before the stream is stepped". ArenaStream was
+# removed by design (4fea3380, 2026-11-22: its paced SD reads were the transition
+# stutter), so there is no stream step left for the sync to precede. The two arms
+# below take its place on what the check still pins: the sync before the frame, and
+# the sync on the drawn list.
+def arm_views_synced_inside_the_frame(text):
+    """The views are synced after mdk_render_begin_frame: the sync makes and releases
+    GPU resources (a view's meshes, its textures), so inside the frame it frees what
+    the previous frame's commands may still read and builds under the GPU (AGENTS.md
+    P3). Written to compile: the pair is re-read in the moved block, and the counter
+    the frame logs is left at zero."""
+    old = ("            const int32_t builtViews =\n"
+           "                arenaViews.sync(streamCurrent, streamSecond, *frameDrawn, "
+           "bubbleHints);\n")
+    begin = "        mdk_render_begin_frame(renderer, &params);\n"
+    if old not in text or begin not in text:
         return text
-    text = text.replace(update, "", 1)
-    sync_at = text.find("arenaViews.sync(streamCurrent, streamSecond, *frameDrawn);")
-    line_end = text.find("\n", sync_at) + 1
-    return text[:line_end] + update + text[line_end:]
+    text = text.replace(old, "            const int32_t builtViews = 0;\n", 1)
+    return text.replace(
+        begin, begin +
+        "        if (arena) {\n"
+        "            const std::string& streamCurrent =\n"
+        "                (runtime && !runtime->currentArena().empty()) ? "
+        "runtime->currentArena()\n"
+        "                                                              : startArenaName;\n"
+        "            const std::string streamSecond = runtime ? runtime->secondArena() "
+        ": std::string();\n"
+        "            arenaViews.sync(streamCurrent, streamSecond, *frameDrawn, bubbleHints);\n"
+        "        }\n", 1)
+
+
+def arm_views_synced_on_a_second_list(text):
+    """The views are synced on the start arena's list while the frame draws the
+    scripts' list: a view the frame draws is released, or never built, after a
+    scripted teleport (the "second list" the check names)."""
+    return text.replace(
+        "arenaViews.sync(streamCurrent, streamSecond, *frameDrawn, bubbleHints);",
+        "arenaViews.sync(streamCurrent, streamSecond, startDrawn, bubbleHints);", 1)
 
 
 def arm_drawn_list_is_the_start_arena(text):
@@ -2955,7 +2991,9 @@ ARMS = [
     ("pitch-ignores-the-runtime", arm_pitch_ignores_runtime, CHK["pitch-from-runtime"]),
     ("object pass moved above the arena draw", arm_objects_before_arena,
      CHK["objects-drawn-in-order"]),
-    ("views synced before the stream is stepped", arm_views_synced_before_the_stream,
+    ("views synced inside the frame, after begin_frame", arm_views_synced_inside_the_frame,
+     CHK["arenas-follow-the-scripts"]),
+    ("views synced on a second list, not the drawn one", arm_views_synced_on_a_second_list,
      CHK["arenas-follow-the-scripts"]),
     ("the frame's drawn list is the start arena", arm_drawn_list_is_the_start_arena,
      CHK["arenas-follow-the-scripts"]),

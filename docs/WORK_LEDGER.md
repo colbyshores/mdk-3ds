@@ -1177,3 +1177,84 @@ splash-to-menu frame 96.1 -> 78.4 ms; only the atlases and MDKOPT expand.
 Tried first and REVERTED (menu5): deferring every large creation's start to
 the next frame boundary -- transition 79.0 ms but front frame 1 275 -> 332 ms
 (the startup pictures' starts moved out of load into the first frame).
+
+### TWO HALF-DEAD SOURCE GATES REPAIRED (2026-11-24): c3d_frame and main_3ds_flow
+
+**What.** Tests only (`tests/scripts/c3d_frame_test.sh`,
+`tests/scripts/main_3ds_flow_test.sh`); no product source changed.
+
+*c3d_frame* failed with "only 148 of 157 arms adjudicated red". Already red
+before 2026-11-24: the 2026-11-21 and 2026-11-24 renderer rewrites (the
+expansion split into `expandIndexRows`, the chunked expansion and its own
+store chooser, the `if (!prepacked)` pack, `mdk_render_mark_canvas`) moved the
+text the arms searched for.
+- Re-anchored to today's text, each still the defect its review named:
+  index straight-through (review-6 F1), RGBA row memcpy (review-6 F1),
+  index rows-not-tiles (batch 173), index red/blue swap (review-7 F2), and
+  the 16-bit pack after the level-0 upload.
+- The two padding-fill arms (review-12 F1) needed a fix to the check as well
+  as to the arm. `expandIndices` writes no texel itself now: it zeroes the
+  buffer and calls `expandIndexRows`. The bypass scan counted only the helper
+  call as a texel write, so a wipe after that call, or inside a loop of row
+  calls, was ACCEPTED. Measured: with the arms re-anchored and the check
+  unchanged, both arms were green. Two check fixes:
+  - a call of a function in the file that fills texels through the helper
+    (`helper_writers`) now counts as a texel write;
+  - the scan that follows an expansion's delegated callee was a consuming
+    regex, so it never followed the callee in `if (expandIndexRows(...))`. It
+    is now a lookbehind.
+- "The store ignores the texture16 toggle" and "...the canvas pin" were
+  accepted because they hit the first occurrence of the chooser's argument
+  line. That is now the chunked expansion's chooser
+  (`advanceExpansionSteps` stage 3), and the check never read it. The fixes:
+  - both arms are pointed back at `makeTextureNow`'s chooser;
+  - the check now also reads the chunked chooser: toggle, `keepRgba8`, the
+    buffer it then packs, and the pack store being `texture.expandFormat`;
+  - four arms put those defects into the chunked path.
+- The canvas check also reads `mdk_render_mark_canvas` now (it must write
+  `keepRgba8 = true` and `stale = true`). Two new arms drop each write.
+
+*main_3ds_flow* printed about 50 FAILs. Two were real check failures. The
+other ~48 were cascades: every arm reported the first already-red check
+instead of the one it is cut for.
+- `arenas-follow-the-scripts`: its `stream.update` half was **retired**.
+  ArenaStream was removed by design in 4fea3380 (2026-11-22, the owner's
+  redesign). The check now pins frameDrawn -> `arenaViews.sync(...,
+  *frameDrawn, bubbleHints)` -> begin_frame -> `arenaViews.draw(*frameDrawn)`.
+  The arm "views synced before the stream is stepped" is **retired** for the
+  same reason and replaced by two arms that compile: the sync moved inside the
+  frame, and the sync on a second list.
+- `music-follows-kurts-arena`: a **stale anchor**. "Prefetch after
+  stream.update" became "after arenaViews.sync". The keep list grew a fourth
+  entry, the bubble's track (review M2), so `keep[3]`/`releaseMusicExcept(keep,
+  3)` became "keep[N] and the release is handed the same N". The arm "the
+  loading arena's track is released under Kurt" is re-anchored.
+- No real product defect was found in either suite.
+
+*A stale c3d probe was also re-anchored.* "A brace inside a comment does not
+truncate the resolved body" (review-8 F3) had stopped changing anything.
+Nobody saw it, because the gate exits on its arm count before it runs the
+probes. Its comment now sits right before the first texel slot, in
+`expandIndexRows`.
+
+**Why.** `make -C tests/scripts test` stopped at c3d_frame, so every suite
+after it went unrun. A gate that prints FAIL on correct code teaches people to
+skip it. Non-vacuity (each arm turns its own named check red) is what the
+gates exist for.
+
+**Evidence.**
+- c3d_frame: PASS, 163 arms red, probes green.
+- main_3ds_flow: PASS, 22 checks, 64 arms, 24 probes.
+- Each repaired or new arm was run on its own and turns its named check red.
+- With the writer-call rule switched off, both padding arms are accepted, so
+  the rule is load-bearing.
+- Every changed or new mutant (15 c3d, 3 flow) and both parents pass a
+  `-fsyntax-only` compile with the 3DS flags (devkitARM).
+- `make -C tests/scripts test` gets past c3d_frame and main_3ds_flow. It
+  then stopped at LinuxBinaryFresh, because `build-linux/mdk` predated
+  0ee82043's render.h change. After `cmake --build build-linux`, every later
+  suite passed when run on its own, and tick1 passed 518 cases with 0 fails.
+- `make -C tests/formats -j4 test`: 200575 checks, 0 failures.
+- `bash tools/check.sh`: ALL GATES PASSED.
+
+**Commit:** none. The task said not to commit.
