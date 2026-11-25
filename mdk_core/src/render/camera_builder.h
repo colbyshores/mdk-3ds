@@ -50,6 +50,25 @@ bool buildFrustum(const Camera& camera, Frustum* out);
 // by at most that much, eyePlan's clamped symmetric split).
 bool frustumSphereOutside(const Frustum& frustum, const Vec3& center, float radius);
 
+// THE PROJECTED PIXEL SIZE: how many screen pixels `worldSize` world units
+// cover at view depth `zNear` on a `width` x `height` picture,
+//
+//     px = worldSize * max(P00 * width / 2, P11 * height / 2) / zNear
+//
+// (P00, P11 the projection's x and y scales, so the sniper scope's zoom is
+// in them). The larger axis is taken, so the answer never undersells a
+// thin object. A `zNear` at or in front of the near plane -- the size
+// reaching the camera -- answers the largest float: never "small". Callers
+// that want a sphere's FULL diameter pass 2 * radius and its nearest
+// depth (sphereNearDepth). A draw-side measure only: nothing that moves
+// gameplay may read it.
+float projectedPixelSize(const Camera& camera, float worldSize, float zNear, int32_t width,
+                         int32_t height);
+
+// A world sphere's nearest view depth: its centre's depth along the view
+// (the view matrix's -z) less its radius. Negative behind the camera.
+float sphereNearDepth(const Camera& camera, const Vec3& center, float radius);
+
 // A camera at `eye` looking along a heading in the XY plane.
 //
 // `headingDegrees` is the level's angle convention: 90 faces +Y, and 0

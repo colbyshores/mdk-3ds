@@ -4,6 +4,8 @@
 
 #include "render/camera_builder.h"
 
+#include <float.h>
+
 #include <cmath>
 
 #include <string.h>
@@ -168,6 +170,25 @@ bool frustumSphereOutside(const Frustum& frustum, const Vec3& center, float radi
         }
     }
     return false;
+}
+
+float projectedPixelSize(const Camera& camera, float worldSize, float zNear, int32_t width,
+                         int32_t height) {
+    if (!(zNear > camera.near_plane)) {
+        return FLT_MAX;
+    }
+    const float perUnitX = fabsf(camera.projection[0]) * (float)width * 0.5f;
+    const float perUnitY = fabsf(camera.projection[5]) * (float)height * 0.5f;
+    const float perUnit = perUnitX > perUnitY ? perUnitX : perUnitY;
+    return worldSize * perUnit / zNear;
+}
+
+float sphereNearDepth(const Camera& camera, const Vec3& center, float radius) {
+    // Row-vector view: z_view = p . (column 2) + view[14]; the camera looks
+    // down -z, so the depth in front of it is -z_view.
+    const float* v = camera.view;
+    const float zView = center.x * v[2] + center.y * v[6] + center.z * v[10] + v[14];
+    return -zView - radius;
 }
 
 bool buildHeadingCamera(Camera* camera, const Vec3& eye, float headingDegrees, float pitchDegrees,

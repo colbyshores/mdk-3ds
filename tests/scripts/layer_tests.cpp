@@ -15,6 +15,7 @@
 
 #include "layer_tests.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -327,6 +328,36 @@ void testFrustumSphere() {
     LAYER_CHECK(!frustumSphereOutside(frustum, inside, 0.5f));
 }
 
+// The projected pixel size (camera_builder.h): the formula's own numbers on
+// the test camera (fov 1.2 rad, 4:3), its zoom term, and the near-plane
+// guard -- a sphere reaching the camera is never small.
+void testProjectedPixelSize() {
+    const Camera camera = testCamera();
+    // Depth along the view: ahead(d) is d in front, so a radius-1 sphere's
+    // nearest point is d - 1.
+    LAYER_CHECK(fabsf(sphereNearDepth(camera, ahead(100.0f), 1.0f) - 99.0f) < 0.01f);
+    LAYER_CHECK(sphereNearDepth(camera, Vec3{kEye.x, kEye.y + 50.0f, kEye.z}, 1.0f) < 0.0f);
+    // P11 = 1 / tan(0.6), P00 = P11 / (4/3); on 400 x 240 the x axis wins:
+    // 400/2 * P00 = 219.26 pixels per unit at depth 1.
+    const float p11 = 1.0f / tanf(0.6f);
+    const float perUnit = 200.0f * p11 * 0.75f;
+    const float px = projectedPixelSize(camera, 2.0f, 99.0f, 400, 240);
+    LAYER_CHECK(fabsf(px - 2.0f * perUnit / 99.0f) < 0.01f);
+    // A taller picture takes the y axis: 400 x 800 -> 400 * P11.
+    LAYER_CHECK(fabsf(projectedPixelSize(camera, 1.0f, 1.0f, 400, 800) - 400.0f * p11) < 0.01f);
+    // Twice the resolution, twice the pixels.
+    LAYER_CHECK(fabsf(projectedPixelSize(camera, 2.0f, 99.0f, 800, 480) - 2.0f * px) < 0.01f);
+    // The zoom: a camera with half the field of view's tangent doubles it.
+    Camera zoomed;
+    const float zoomFov = 2.0f * atanf(tanf(0.6f) * 0.5f) * 180.0f / 3.14159265358979323846f;
+    buildLookAtCamera(&zoomed, kEye, Vec3{kEye.x, kEye.y - 1.0f, kEye.z}, Vec3{0.0f, 0.0f, 1.0f},
+                      zoomFov, 4.0f / 3.0f, 0.5f, 20000.0f);
+    LAYER_CHECK(fabsf(projectedPixelSize(zoomed, 2.0f, 99.0f, 400, 240) - 2.0f * px) < 0.02f);
+    // At or in front of the near plane (0.5): never small.
+    LAYER_CHECK(projectedPixelSize(camera, 0.001f, 0.5f, 400, 240) == FLT_MAX);
+    LAYER_CHECK(projectedPixelSize(camera, 0.001f, -3.0f, 400, 240) == FLT_MAX);
+}
+
 void testPlainTrianglesStayPut() {
     float pull[16];
     buildDepthPullMatrix(kEye, Primitive::Triangles, 0, pull);
@@ -402,6 +433,7 @@ int runDepthLayerTests(const formats::MdkData& data) {
     testLevel6Arenas(data);
     testPlainTrianglesStayPut();
     testFrustumSphere();
+    testProjectedPixelSize();
     testAnEdgeIsPulledTowardsTheEye();
     testALayerIsNearerThanItsWallInTheDepthBuffer();
 
