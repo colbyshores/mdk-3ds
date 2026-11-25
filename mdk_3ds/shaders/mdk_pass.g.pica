@@ -10,7 +10,7 @@
 ; geometry is fine, and geometry -> plain is fine once the list is split. So
 ; once an eye's scene has used the lit or shadow program, its unlit draws go
 ; through THIS program instead of the plain one, and the frame leaves geometry
-; mode once, with a split, where the scene ends (03_frame.inc bindProgram).
+; mode once, with a split, where the scene ends (03_frame_state.inc bindProgram).
 ;
 ; The vertex shader's outputs, three vertices of four registers:
 ;   v0-v3   position, colour, texcoord, world   (and v4-v7, v8-v11)

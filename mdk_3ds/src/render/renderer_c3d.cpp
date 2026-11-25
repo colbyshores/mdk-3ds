@@ -87,7 +87,12 @@ namespace {
 // ---------------------------------------------------------------------------
 
 #include "c3d/02_lifecycle.inc"
+#include "c3d/03_frame_state.inc"
+#include "c3d/03_eye.inc"
+#include "c3d/03_shadow_probe.inc"
 #include "c3d/03_frame.inc"
+#include "c3d/03_shadows.inc"
+#include "c3d/03_toggles.inc"
 // ---------------------------------------------------------------------------
 // Resources — the P1 scaffold allocates nothing yet. The texture path lands
 // with the palette expansion (SPEC.md 7.3).

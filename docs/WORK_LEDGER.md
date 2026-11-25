@@ -2113,3 +2113,17 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   to main's (md5 7eed41db, whole object and disassembly); tests/scripts
   c3d_frame_test.sh passes (it expands `c3d/*.inc` like the compiler).
 - **Commit:** this one.
+
+### c3d/03_frame.inc (2184 lines) split into six fragments
+- **What:** `03_frame_state.inc` (516: the render debug switches, the deferred-texture
+  settle, the forward declarations, the GPU state setters and their dedupe,
+  bindProgram), `03_eye.inc` (285: installEye, edge smoothing),
+  `03_shadow_probe.inc` (314: the GPU read-back and the sun shadow's ramp/native
+  tests), `03_frame.inc` (423: the dedupe's log line, mdk_render_begin_frame),
+  `03_shadows.inc` (539: the frame's light, the shadow map and caster pass),
+  `03_toggles.inc` (127: haze, the HD-only originals, the toggles' setter, the 30 fps
+  cap). Same include order as the original file; function-specific comment
+  references follow their function.
+- **Evidence:** `renderer_c3d.o` (3DS release flags) byte-identical to main's (md5
+  7eed41db); c3d_frame_test.sh passes.
+- **Commit:** this one.

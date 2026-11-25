@@ -307,7 +307,7 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     // THE LIGHT'S PROGRAM (decided with `lit` and `shadowLit` above), and
     // combiner stage 1 multiplies the texture by that light. Both switches are
     // cached.
-    // THE GEOMETRY-STAGE RULE (03_frame.inc bindProgram): once this command
+    // THE GEOMETRY-STAGE RULE (03_frame_state.inc bindProgram): once this command
     // list has used a geometry program, an unlit draw goes through the
     // pass-through one -- the same picture, and no split to leave geometry mode.
     shaderProgram_s* const wanted =

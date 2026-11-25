@@ -1,7 +1,7 @@
 // Defined in 03_frame.inc; called from mdk_render_destroy below, which the
 // translation unit reaches first.
 static void logDedupeWindow(RendererC3D* r);
-// Defined in 03_frame.inc beside mdk_render_set_enhanced_toggles; called from
+// Defined in 03_toggles.inc beside mdk_render_set_enhanced_toggles; called from
 // mdk_render_create below.
 static void applyFramePacing(RendererC3D* r);
 
@@ -344,7 +344,7 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     }
     // THE PASS-THROUGH PROGRAM: the vertex shader plus the DVLB's fifth DVLE,
     // mdk_pass.g.pica -- an unlit draw that keeps the PICA in geometry mode
-    // (03_frame.inc bindProgram has the hardware rule). Optional: without it
+    // (03_frame_state.inc bindProgram has the hardware rule). Optional: without it
     // every return from a geometry program to an unlit draw is a split.
     if (r->litReady && r->dvlb->numDVLE >= 5 && R_SUCCEEDED(shaderProgramInit(&r->programPass))) {
         r->passReady = R_SUCCEEDED(shaderProgramSetVsh(&r->programPass, &r->dvlb->DVLE[0])) &&
@@ -358,7 +358,7 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     r->vshUniformVecs = r->worldLocation + 4;
     mdk::log3dsPrintf("pass program: %s; vertex uniforms c0-c%d",
                       r->passReady ? "ready" : "UNAVAILABLE", (int)r->vshUniformVecs - 1);
-    // THE DEDUPE (03_frame.inc) reads citro3d's uniform array as the registers'
+    // THE DEDUPE (03_frame_state.inc) reads citro3d's uniform array as the registers'
     // value. A vertex shader's float CONSTANT is uploaded straight to its register
     // at a bind and bypasses that array, so the line says where the constants of
     // every vertex shader in the DVLB sit against the scene's uniforms: below

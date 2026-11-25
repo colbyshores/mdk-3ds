@@ -1253,7 +1253,7 @@ def adjudicate(text, quiet=False):
     # drawDiagnostic (the canvas) restores the base program, and drawGlow's shared
     # state (glowDrawState) does the same. Those are the only other binds allowed;
     # installEye keeps exactly one.
-    # Every bind goes through bindProgram (03_frame.inc: THE GEOMETRY-STAGE
+    # Every bind goes through bindProgram (03_frame_state.inc: THE GEOMETRY-STAGE
     # RULE), so the placement rule is about bindProgram's call sites, and the
     # one raw C3D_BindProgram must be the helper's own.
     raw_bind = call_sites(text, "C3D_BindProgram")
@@ -1287,7 +1287,7 @@ def adjudicate(text, quiet=False):
                  "none" if not raw_bind_stray else "; ".join(raw_bind_stray)))
 
     # THE GEOMETRY-STAGE RULE (HARDWARE, measured 2026-11-18 on the Old 3DS with
-    # mdk_3ds/tools/gstest; 03_frame.inc bindProgram). A program without a
+    # mdk_3ds/tools/gstest; 03_frame_state.inc bindProgram). A program without a
     # geometry shader drawing after one with a geometry shader in the same
     # command list locks the PICA up for good; the emulator does not model it, so
     # this pin is the only thing short of a console that can see the rule broken.
@@ -1426,7 +1426,7 @@ def adjudicate(text, quiet=False):
                  "yes" if "texture->maxLevel" in rec_b2 else "NO"))
 
     # THE SUN SHADOW: MADE ONCE A FRAME, TAKEN IN THE LIT DRAW ITSELF (Enhanced
-    # Mode enableSkyShadows; 03_frame.inc castShadows, 06_draw.inc
+    # Mode enableSkyShadows; 03_shadows.inc castShadows, 06_draw.inc
     # installShadowLitStages). Measured on the Old 3DS, 2026-11-18: the old
     # per-eye receive pass (every opaque Lit mesh drawn again, depth EQUAL, a
     # multiply blend) was ~24 ms of an 80 ms stereo frame; one pass is the fix.
@@ -1482,7 +1482,7 @@ def adjudicate(text, quiet=False):
                  "yes" if haze_guard else "NO", "yes" if units else "NO"))
 
     # HOW THE SUN'S MAP IS WRITTEN, AND WHY IT IS NOT ONE WAY (measured
-    # 2026-11-18; 03_frame.inc testNativeShadowWrites). The Old 3DS lands the
+    # 2026-11-18; 03_shadow_probe.inc testNativeShadowWrites). The Old 3DS lands the
     # PICA's own shadow writes in the caster pass and does NOT repeat the ramp's
     # t = 256 * depth (its map came back with the depth's middle byte 0, and the
     # floor shadowed itself); the emulator does the opposite. So:
@@ -1633,7 +1633,7 @@ def adjudicate(text, quiet=False):
               % (len(mipgen), len(high_units), "; ".join(high_text) or "none",
                  "; ".join(raw_high) or "none", ", ".join(leavers) or "none"))
 
-    # THE PER-DRAW STATE DEDUPE (03_frame.inc, THE DEDUPE). drawRecorded's
+    # THE PER-DRAW STATE DEDUPE (03_frame_state.inc, THE DEDUPE). drawRecorded's
     # per-draw writes -- combiner stage 0, the vertex buffer table, the uv/tint/
     # matrix uniforms, the texture bind -- are skipped when bit-identical to what
     # the GPU already holds. A skip is only picture-identical if "already holds"

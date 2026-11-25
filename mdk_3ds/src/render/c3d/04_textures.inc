@@ -625,7 +625,7 @@ static bool advanceExpansion(RendererC3D* renderer, C3dTexture& texture, bool fi
     return advanceExpansionSteps(renderer, texture, finishAll);
 }
 
-// The stale re-make's chunked start (03_frame.inc's settle): same
+// The stale re-make's chunked start (03_frame_state.inc's settle): same
 // candidate rule as a first make, forced past the pending cap -- the old
 // copy is already deleted, so deferring the start would leave the surface
 // untextured until a draw finishes it whole anyway.
@@ -820,7 +820,7 @@ static bool finishPackNow(RendererC3D* renderer, C3dTexture& texture) {
 static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diagnostics) {
     // Texel memory is about to be (re)filled, possibly at an address a bound
     // texture had: no unit's bind may be skipped on the strength of the old
-    // contents (03_frame.inc, THE DEDUPE).
+    // contents (03_frame_state.inc, THE DEDUPE).
     forgetTextureBinds(renderer);
     if (texture.compressed) {
         // Kurt's frames import the bytes they keep; a packed original has only

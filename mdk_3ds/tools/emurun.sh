@@ -371,7 +371,7 @@ if [ -n "$DSPFIRM_SRC" ] && [ -r "$DSPFIRM_SRC" ] && [ -s "$DSPFIRM_SRC" ]; then
 else
   EMURUN_DSPFIRM_SEEDED="none (the guest will report audio muted)"
 fi
-# The canvas canary is armed by a file (03_frame.inc canaryArmed): every HUD
+# The canvas canary is armed by a file (03_frame_state.inc canaryArmed): every HUD
 # verdict needs it, so an --expect hud* run seeds it; nothing else draws it.
 #
 # AND THE ORIGINAL LOOK. The HUD verdict's ink is the exact (0,255,0) the original

@@ -52,7 +52,7 @@ static constexpr size_t kGpuScratchSize = 256u * 1024u;
 // `ensureCanvasMesh` sizes from the quads actually queued and only clamps here.
 static constexpr int32_t kCanvasQuadCapacity = 4096;
 
-// THE PER-DRAW STATE DEDUPE's categories (03_frame.inc, THE DEDUPE).
+// THE PER-DRAW STATE DEDUPE's categories (03_frame_state.inc, THE DEDUPE).
 enum DedupeCategory {
     kDedupeTexEnv0 = 0,   // combiner stage 0
     kDedupeBufInfo,       // the vertex buffer table
@@ -539,7 +539,7 @@ struct RendererC3D {
     // The current eye's view frustum: six planes (a,b,c,d), a point inside a
     // plane when a*x+b*y+c*z+d >= 0, in the order left, right, bottom, top,
     // near, far. Extracted from the eye's pre-conversion view-projection when
-    // the eye is installed (03_frame.inc) and read by drawRecorded's per-eye
+    // the eye is installed (03_eye.inc) and read by drawRecorded's per-eye
     // cull (06_draw.inc). Valid only while `frustumValid`; a draw that does not
     // opt in (MeshDraw::cullable) is never tested.
     float frustum[6][4] = {{0}};
@@ -757,7 +757,7 @@ struct RendererC3D {
     bool litBound = false;     // the program bound is programLit (cache)
     bool lightStageOn = false; // combiner stage 1 multiplies by the light (cache)
     bool worldIsIdentity = true; // the world uniform holds the identity (cache)
-    // THE GEOMETRY-STAGE RULE (03_frame.inc bindProgram): the pass-through
+    // THE GEOMETRY-STAGE RULE (03_frame_state.inc bindProgram): the pass-through
     // program (VS + mdk_pass.g.pica, DVLE[4]) for unlit scene draws once the
     // command list is in geometry mode; the program bound; whether a program
     // with a geometry shader has been bound since the command list began; and
@@ -815,7 +815,7 @@ struct RendererC3D {
     bool shadowRampReady = false;
     int shadowRampOrder = -1;       // the pica::ShadowByteOrder its texels are in
     // THE PICA'S OWN SHADOW WRITES (GPU_FRAGOPMODE_SHADOW), measured once
-    // outside any frame (03_frame.inc testNativeShadowWrites): where they land
+    // outside any frame (03_shadow_probe.inc testNativeShadowWrites): where they land
     // the caster pass uses them (24-bit depth); where they do not (the emulator
     // on llvmpipe) it draws through the ramp.
     bool shadowNativeTested = false;
@@ -857,7 +857,7 @@ struct RendererC3D {
     // The alpha-test reference installed (installAlphaTest's cache).
     int alphaReference = 0;
 
-    // THE PER-DRAW STATE DEDUPE (03_frame.inc, THE DEDUPE). drawRecorded re-sent
+    // THE PER-DRAW STATE DEDUPE (03_frame_state.inc, THE DEDUPE). drawRecorded re-sent
     // combiner stage 0, the vertex buffer table, the uv/tint/matrix uniforms and
     // the texture bind on every draw whether or not they had changed; each is a
     // block of PICA register writes, twice per stereo frame (~490 draws). They

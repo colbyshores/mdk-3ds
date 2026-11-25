@@ -8,7 +8,7 @@
 ; hemisphere) -- and the hemisphere is a function of ONE number per triangle,
 ; t = n.z * 0.5 + 0.5 (sky, ground and exposure are uniforms). So F_shadow is a
 ; lookup: a small texture on unit 2, F_shadow(t) / 2 in rgb along u, built on
-; the CPU whenever the rig changes (03_frame.inc, the shadow tint). This shader
+; the CPU whenever the rig changes (03_shadows.inc, the shadow tint). This shader
 ; emits, per vertex:
 ;
 ;   colour      F_lit / 2 (rgb), the haze's kept fraction (w) -- as mdk_c3d.g

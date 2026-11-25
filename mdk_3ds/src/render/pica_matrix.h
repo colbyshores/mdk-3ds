@@ -669,7 +669,7 @@ inline void texelBytes(uint8_t* dst, uint32_t r, uint32_t g, uint32_t b, uint32_
 // fixture. It also explains why most of the arena went MISSING rather than
 // merely scrambled: a padded, power-of-two texture's unused region is
 // transparent (alpha 0), the frame-wide alpha test discards alpha 0
-// (`C3D_AlphaTest(true, GPU_GREATER, 0)` in `03_frame.inc`), and a scrambled
+// (`C3D_AlphaTest(true, GPU_GREATER, 0)` in `03_frame_state.inc`), and a scrambled
 // address lands in that padding.
 //
 // COLD-PATH COST, STATED SO IT IS NOT A SURPRISE. Texture expansion runs at
@@ -1091,7 +1091,7 @@ bool hdMayDispatch(size_t residentBytes, size_t readsInFlight, size_t largestByt
 // sun_shadow.h: world -> x, y in [-1, 1] across the map, depth in [0, 1] along
 // the light) into a 2048x2048 depth map and compares each lit pixel with it.
 // The PICA does the same with its own shadow texture, in two passes
-// (03_frame.inc castShadows, 06_draw.inc receiveShadows); these are the numbers
+// (03_shadows.inc castShadows, 06_draw.inc receiveShadows); these are the numbers
 // and the two matrices both passes are made of, here so a host test can hold
 // them to the PC's.
 // ---------------------------------------------------------------------------
@@ -1144,7 +1144,7 @@ constexpr int32_t kSunShadowRampHeight = 256;
 // B and G, the softness in R -- MEASURED in Mandarine r1.2.1 (2026-11-18) and,
 // the emulator decoding `pixel >> 8` as the depth, the format's own layout --
 // and the console's: the map it writes natively, read back, has the same bytes
-// (03_frame.inc shadowByteOrder; 2026-11-18).
+// (03_shadows.inc shadowByteOrder; 2026-11-18).
 // kShadowBytesPica is the other order, R, G, B the depth's high, middle and low
 // byte and A the softness: what the config's shadowMapFlipBytes writes.
 enum ShadowByteOrder { kShadowBytesPica = 0, kShadowBytesReversed = 1 };

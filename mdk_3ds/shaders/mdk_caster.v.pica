@@ -10,7 +10,7 @@
 ; 0 it still shadowed nothing, while an ORDINARY black draw into the same map
 ; shadowed everything (2026-11-18, the probes in docs/evidence). So the map is
 ; made by ordinary drawing: the depth is turned into the map's bytes by a ramp
-; texture (03_frame.inc ensureShadowMap) sampled at
+; texture (03_shadows.inc ensureShadowMap) sampled at
 ;
 ;     s = depth                  -> the texel column gives the depth's high byte
 ;     t = depth * 256 (repeats)  -> the texel row is its middle byte
