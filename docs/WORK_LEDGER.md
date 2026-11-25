@@ -1837,3 +1837,29 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **The underrun the walk showed was not a buffer size**: it was the short last
   frame (the commit before this one). The hardware entry gives the counts.
 - **Commit:** this one.
+
+## 2026-11-25 -- perf/3ds-memory on the Old 3DS: the walk, before and after
+
+- **Base walk (4d9264f3) and final walk (4bf1744c)**, every level 3-8 through door
+  crossings, one level transition (7 -> 6), the HD off/on toggle, the scope:
+  `.git/worktrees/memory/hw-logs/base-walk-report.md` (both tables), logs
+  `2026-11-25-bw-*` and `2026-11-25-fw-*`. Console old3ds-lan167 (CFGU model 0,
+  268 MHz, L2 off, stereo on), owner config, HD on, harness on throwaway branches
+  only (removed afterwards; logs kept).
+- **Results:** level 8's whole HD set resident at 256 (was 103 files at 128);
+  levels 4 and 5 now on the 512 tier (fits); every level gate PASS (the base's
+  level 4/6 late HD draws are gone), 0 standard copies beside an HD copy; linear
+  after HD back on 2.40 MB on level 8 (was 0.27); main cap 35.82 MB against an
+  in-play peak of 30.41 MB (level 4); music 0 underruns, 0 missing, effects 0
+  evictions/misses; frame means within +-0.3 ms of the base.
+- **Found on the console and fixed on the way:** the encoder's short last frame
+  (music went silent at a track's end), primes used up by one start.
+- **Host and builds:** tools/check.sh ALL GATES PASSED (gates_frames PASS);
+  tests/formats 200624 checks, 0 failures; tests/scripts all suites pass; clean
+  `make -C mdk_3ds` zero compiler warnings, no harness strings in the ELF.
+  Mandarine r1.2.1 (md5 0d2adab6) on DISPLAY=:99, one instance, `emurun.sh
+  --seed-sdmc` (HD pack, enableLighting=0), A by xdotool: menu -> briefing -> fall
+  -> level 7, HD set 169/169 resident, music started, main loop
+  (`hw-logs/2026-11-25-emu-smoke-play-4bf1744c.log`).
+- **Player build:** `.git/worktrees/memory/hw-logs/play-<hash>.3dsx` / `.elf`.
+- **Commit:** this one (ledger only).
