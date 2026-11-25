@@ -1755,3 +1755,35 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   The toggle-on peak is not counted into the tier decision.
 - **Evidence:** c3d_frame passes; hardware: the walk's toggle-on lines.
 - **Commit:** this one.
+
+## 2026-11-25 -- the HUD's and the bomber's HD pictures are their only copy with HD on (branch perf/3ds-memory)
+
+- **Owner's words:** "yes do all 3" (item 3). Rule: with HD on, covered pictures
+  load ONLY the HD file -- no standard read or expansion, no pop-in (resident
+  before the loading screen ends); HD off and the live toggle still work; Linux
+  unchanged.
+- **Review claims verified:** hud_view.cpp's loadImage and PICKUPS frames, and
+  bomber_overlay(_mods).cpp's BOMBTARG/CROSS, created the index texture (made at
+  once by createIndexTexture: makeTexture or the chunked expansion) and THEN linked
+  the HD file (`mdk_render_replace_image_compressed`), so the standard copy was
+  expanded and kept beside the HD one for the level. No other caller links a
+  canvas picture to the HD pack (menu screens, fonts, the sniper screen have
+  none).
+- **What:**
+  - New seam `mdk_render_create_hd_image(w, h, indices, palette, hdPath)`
+    (render.h): on the 3DS an index texture linked to its HD copy and HD-only --
+    nothing is made at creation; with HD on the copy is the picture (06_draw.inc's
+    HD-only path, the indices never expanded); with HD off the first draw makes it
+    from the indices kept. Linux and the test stubs: the index texture (no
+    compressed pack there; Linux's rgba replacement path is unchanged).
+  - `mdk_render_pin_hd_set` pins every such picture's copy with the level's set,
+    so the loading screen holds for it and the toggle brings it back; the
+    toggle-on re-request of "other linked copies" (HUD, Kurt's non-pack frames)
+    is gone -- the pictures are pinned and Kurt has no HD copy (item 1).
+  - hud_view.cpp: SC_STAT, SKULL, SNIP_TXT and the PICKUPS frames resolve their
+    HD file first and use the seam; bomber_overlay: `BomberOverlay::hdPaths`
+    (in the mods file, so the goldens' binary still links the overlay without
+    ModImages) resolves BOMBTARG_0/CROSS_0 and `load` takes them.
+  - HD spec 3.1/3.2/4 updated.
+- **Evidence:** host suites; hardware: the walk's covered-standard census.
+- **Commit:** this one.

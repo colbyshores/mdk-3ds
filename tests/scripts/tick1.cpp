@@ -88,6 +88,12 @@ MdkTextureId mdk_render_create_streamed_texture(MdkRenderer r, int32_t w, int32_
     return mdk_render_create_index_texture(r, w, h, px, paletteRgba);
 }
 
+// No compressed HD pack here: the index texture (render.h).
+MdkTextureId mdk_render_create_hd_image(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
+                                        const uint8_t* paletteRgba, const char*) {
+    return mdk_render_create_index_texture(r, w, h, px, paletteRgba);
+}
+
 // FontView says its atlas is a canvas texture (render.h); nothing to record.
 void mdk_render_mark_canvas(MdkRenderer, MdkTextureId) {}
 void mdk_render_mark_unmipped(MdkRenderer, MdkTextureId) {}

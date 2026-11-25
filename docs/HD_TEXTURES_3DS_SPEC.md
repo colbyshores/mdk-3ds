@@ -124,7 +124,7 @@ expansion and not the packed original in `romfs:/orig`. It never blocks either.
   K_FSLIDE/K_BSLIDE on level 6, the board's K_SURF/K_SURFJ on level 4 -- are in
   kurt.pak too, and the 3DS asks the HD pack for no Kurt frame, so none streams
   or pops in; the HD pack's K_* files go unused);
-  the HUD's pictures (made at level load, cold); Original-shaded surfaces (the
+  Original-shaded surfaces (the
   sky, glass) the PC never replaces. `hdrule:` lines at level teardown count it.
 
 ### 3.2 The level's resident set (owner, 2026-11-24/25: "I dont want surface pop in")
@@ -150,7 +150,11 @@ Old 3DS reads ~13 HD files a second in play -- so pop-in was luck. Since
 - **Measured (Old 3DS, romfs pack):** L7 tier 256, 143 files 4.18 MB, hold
   6.2 s; L8 tier 256/128, 281 files 5.16 MB (103 at 128), hold 13.0 s. The
   4.2 streaming design below remains only as the fallback for a set that does
-  not fit and for the legacy copies (HUD pictures).
+  not fit. The HUD's pictures (SC_STAT, SKULL, SNIP_TXT, the PICKUPS frames) and
+  the bomber's sight (BOMBTARG, CROSS) that the HD pack covers are part of the set
+  since 2026-11-25 (`mdk_render_create_hd_image`): with HD on their HD file is the
+  only copy -- the indices are never expanded -- pinned and held for with the
+  set; with HD off they are made from the indices at their first draw.
 
 ## 4. Memory and streaming
 
@@ -159,8 +163,7 @@ pairs with an HD file, sections 3.1 and 3.2 replace what follows: the HD copy is
 the only copy drawn with the toggle on (never the original as a stand-in), and
 the level's whole set is read on the loading screen and kept, so nothing of it
 is streamed, budgeted or evicted in play. The per-surface stream below is still
-the design for what the set does not hold: the HUD's pictures and a level
-whose set does not fit (logged `DOES NOT FIT: streamed per
+the design for what the set does not hold: a level whose set does not fit (logged `DOES NOT FIT: streamed per
 surface`). Sections 4.1 and 4.2 are kept as the record of how it was sized.
 
 An HD pack does not fit the Old 3DS's linear heap all at once on every level, so

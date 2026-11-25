@@ -16,6 +16,29 @@
 
 namespace mdk {
 
+void BomberOverlay::hdPaths(const formats::Bni& sprites, const formats::Palette& colours,
+                            ModImages* mods, std::string* target, std::string* cross) {
+    target->clear();
+    cross->clear();
+    if (mods == nullptr || !mods->compressed()) {
+        return;
+    }
+    const char* const names[2] = {kTarget, kCross};
+    std::string* const out[2] = {target, cross};
+    for (int32_t i = 0; i < 2; i++) {
+        formats::SpriteAnimation frames;
+        formats::SpriteAnimation::Frame frame;
+        if (!sprites.animation(names[i], &frames) || !frames.frame(0, &frame) ||
+            frame.image.frameCount() != 1) {
+            continue;
+        }
+        const std::string name = std::string(names[i]) + "_0";
+        if (!mods->resolve(ModImages::Kind::Images, name, frame.image, colours, out[i])) {
+            out[i]->clear();
+        }
+    }
+}
+
 void BomberOverlay::replaceWithMods(MdkRenderer renderer, const formats::Bni& sprites,
                                     const formats::Palette& colours, ModImages* mods) {
     replaceWithMod(renderer, sprites, kTarget, colours, mods, target_);
@@ -35,12 +58,7 @@ void BomberOverlay::replaceWithMod(MdkRenderer renderer, const formats::Bni& spr
     }
     const std::string name = std::string(animation) + "_0";
     if (mods->compressed()) {
-        // The 3DS HD pack: the picture's .t3x, imported by the backend.
-        std::string path;
-        if (mods->resolve(ModImages::Kind::Images, name, frame.image, colours, &path)) {
-            mdk_render_replace_image_compressed(renderer, image.texture, path.c_str());
-        }
-        return;
+        return;  // the 3DS HD pack's files were given to load (hdPaths)
     }
     HdImage hd;
     if (mods->image(name, frame.image, colours, &hd)) {

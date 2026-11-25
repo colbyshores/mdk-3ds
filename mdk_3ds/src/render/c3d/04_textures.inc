@@ -1325,15 +1325,13 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         return;
     }
     // THE SET COMES BACK WITH THE TOGGLE: a pinned copy the toggle-off freed is
-    // asked for again (the frontend holds until it is resident).
-    // So is every other linked copy the toggle freed (the HUD's pictures, Kurt's
-    // non-pack frames), once, so the same hold brings them back before their
-    // originals would stand in (measured without this: 3-6 frames of SD HUD).
+    // asked for again (the frontend holds until it is resident). The HUD's
+    // pictures are pinned with the set (mdk_render_create_hd_image) and Kurt has
+    // no HD copy (kurt.pak), so no other linked copy needs asking again.
     if (renderer->hdPinnedMode) {
         for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
             const HdCopy& copy = renderer->hdCopies[i];
-            if (copy.state == HdCopy::None &&
-                (copy.pinned || (renderer->hdFreeOriginals && copy.links > 0))) {
+            if (copy.state == HdCopy::None && copy.pinned) {
                 requestHdCopy(renderer, (int32_t)i);
             }
         }
@@ -1829,6 +1827,27 @@ int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, const in
             requestHdCopy(renderer, index);
         }
         pinned++;
+    }
+    // THE CANVAS PICTURES MADE HD-ONLY (mdk_render_create_hd_image: the HUD's, the
+    // pickups', the bomber's sight) are the set's too: pinned, asked for, and so
+    // held for on the loading screen and brought back by the toggle -- never
+    // drawn from their indices while the set is on.
+    if (pinned > 0) {
+        for (size_t t = 0; t < renderer->textures.size(); t++) {
+            const C3dTexture& texture = renderer->textures[t];
+            if (!texture.hdOnly || !texture.hdCanvas || texture.releasePending ||
+                texture.hdCopy < 0 || (size_t)texture.hdCopy >= renderer->hdCopies.size()) {
+                continue;
+            }
+            HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
+            if (!copy.pinned) {
+                copy.pinned = true;
+                if (renderer->toggles.enableHdTextures) {
+                    requestHdCopy(renderer, texture.hdCopy);
+                }
+                pinned++;
+            }
+        }
     }
     // THE OLD LEVEL'S COPIES GO NOW, not 600 frames on: a resident copy no
     // texture links to and no set holds is freed here -- between frames, its

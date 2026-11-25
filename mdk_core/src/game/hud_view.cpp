@@ -80,23 +80,26 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
                 continue;
             }
             Image icon;
-            icon.texture = mdk_render_create_index_texture(
-                renderer, frame.image.width(), frame.image.height() * frame.image.frameCount(),
-                frame.image.indices(), palette.rgba());
+            char name[32];
+            std::snprintf(name, sizeof(name), "PICKUPS_%d", (int)i);
+            // The 3DS HD pack's picture for this frame: with it, the HD file is the
+            // picture and the indices are not expanded (render.h).
+            std::string path;
+            if (mods_ && mods_->compressed() && frame.image.frameCount() == 1 &&
+                mods_->resolve(ModImages::Kind::Images, name, frame.image, palette, &path)) {
+                icon.texture = mdk_render_create_hd_image(
+                    renderer, frame.image.width(), frame.image.height(), frame.image.indices(),
+                    palette.rgba(), path.c_str());
+            } else {
+                icon.texture = mdk_render_create_index_texture(
+                    renderer, frame.image.width(), frame.image.height() * frame.image.frameCount(),
+                    frame.image.indices(), palette.rgba());
+            }
             // A mod's image for this pickup frame (CanvasImages.FrameName).
-            if (mods_ && icon.texture >= 0 && frame.image.frameCount() == 1) {
-                char name[32];
-                std::snprintf(name, sizeof(name), "PICKUPS_%d", (int)i);
+            if (mods_ && !mods_->compressed() && icon.texture >= 0 &&
+                frame.image.frameCount() == 1) {
                 HdImage image;
-                std::string path;
-                if (mods_->compressed()) {
-                    // The 3DS HD pack: the picture's .t3x, imported by the backend.
-                    if (mods_->resolve(ModImages::Kind::Images, name, frame.image, palette,
-                                       &path)) {
-                        mdk_render_replace_image_compressed(renderer, icon.texture,
-                                                            path.c_str());
-                    }
-                } else if (mods_->image(name, frame.image, palette, &image)) {
+                if (mods_->image(name, frame.image, palette, &image)) {
                     mdk_render_replace_image(renderer, icon.texture, palette_, image.width,
                                              image.height, image.rgba.data());
                 }
@@ -116,7 +119,11 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
 
     // The bomber's sight (C# HudView's `new BomberOverlay(renderer, sprites, _palette,
     // big, palette, mods)`). It degrades: without its sprites there is no sight.
-    if (bomber_.load(renderer, sprites, palette_, palette) && mods != nullptr) {
+    std::string targetHd;
+    std::string crossHd;
+    BomberOverlay::hdPaths(sprites, palette, mods, &targetHd, &crossHd);
+    if (bomber_.load(renderer, sprites, palette_, palette, targetHd.c_str(), crossHd.c_str()) &&
+        mods != nullptr) {
         bomber_.replaceWithMods(renderer, sprites, palette, mods);
     }
 
@@ -140,19 +147,24 @@ void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* ou
     // into texels. It is the SAME palette the draw names (`palette_` above and
     // `q.palette` in drawImage), so the two targets end up with one palette's
     // colours either way -- but only if the bytes are handed over here.
-    out->texture = mdk_render_create_index_texture(renderer_, texture.width(),
-                                                   texture.height() * texture.frameCount(),
-                                                   texture.indices(), palette.rgba());
+    // The 3DS HD pack's picture: with it, the HD file is the picture and the
+    // indices are not expanded (render.h, mdk_render_create_hd_image).
+    std::string path;
+    if (mods_ && mods_->compressed() && texture.frameCount() == 1 &&
+        mods_->resolve(ModImages::Kind::Images, name, texture, palette, &path)) {
+        out->texture = mdk_render_create_hd_image(renderer_, texture.width(), texture.height(),
+                                                  texture.indices(), palette.rgba(),
+                                                  path.c_str());
+    } else {
+        out->texture = mdk_render_create_index_texture(renderer_, texture.width(),
+                                                       texture.height() * texture.frameCount(),
+                                                       texture.indices(), palette.rgba());
+    }
     // A mod's image for this picture (CanvasImages.Create): the enhanced
     // canvas draws it instead of the filtered index texture.
-    if (mods_ && out->texture >= 0 && texture.frameCount() == 1) {
+    if (mods_ && !mods_->compressed() && out->texture >= 0 && texture.frameCount() == 1) {
         HdImage image;
-        std::string path;
-        if (mods_->compressed()) {
-            if (mods_->resolve(ModImages::Kind::Images, name, texture, palette, &path)) {
-                mdk_render_replace_image_compressed(renderer_, out->texture, path.c_str());
-            }
-        } else if (mods_->image(name, texture, palette, &image)) {
+        if (mods_->image(name, texture, palette, &image)) {
             mdk_render_replace_image(renderer_, out->texture, palette_, image.width, image.height,
                                      image.rgba.data());
         }

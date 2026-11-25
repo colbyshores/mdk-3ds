@@ -29,16 +29,17 @@ const char* const BomberOverlay::kTarget = "BOMBTARG";
 const char* const BomberOverlay::kCross = "CROSS";
 
 bool BomberOverlay::load(MdkRenderer renderer, const formats::Bni& sprites, int32_t palette,
-                         const formats::Palette& colours) {
+                         const formats::Palette& colours, const char* targetHd,
+                         const char* crossHd) {
     palette_ = palette;
-    const bool target = loadImage(renderer, sprites, kTarget, colours, &target_);
-    const bool cross = loadImage(renderer, sprites, kCross, colours, &cross_);
+    const bool target = loadImage(renderer, sprites, kTarget, colours, targetHd, &target_);
+    const bool cross = loadImage(renderer, sprites, kCross, colours, crossHd, &cross_);
     return target && cross;
 }
 
 bool BomberOverlay::loadImage(MdkRenderer renderer, const formats::Bni& sprites,
                               const char* animation, const formats::Palette& colours,
-                              Image* out) {
+                              const char* hdPath, Image* out) {
     // C# BomberOverlay.Load (BomberOverlay.cs:47-56): the animation's frame 0, its size
     // and hotspot. The palette's bytes go in with the indices, as HudView's images do
     // (the 3DS backend expands them on the CPU; see hud_view.h).
@@ -47,9 +48,15 @@ bool BomberOverlay::loadImage(MdkRenderer renderer, const formats::Bni& sprites,
     if (!sprites.animation(animation, &frames) || !frames.frame(0, &frame)) {
         return false;
     }
-    out->texture = mdk_render_create_index_texture(
-        renderer, frame.image.width(), frame.image.height() * frame.image.frameCount(),
-        frame.image.indices(), colours.rgba());
+    if (hdPath && hdPath[0] && frame.image.frameCount() == 1) {
+        out->texture = mdk_render_create_hd_image(renderer, frame.image.width(),
+                                                  frame.image.height(), frame.image.indices(),
+                                                  colours.rgba(), hdPath);
+    } else {
+        out->texture = mdk_render_create_index_texture(
+            renderer, frame.image.width(), frame.image.height() * frame.image.frameCount(),
+            frame.image.indices(), colours.rgba());
+    }
     if (out->texture < 0) {
         return false;
     }

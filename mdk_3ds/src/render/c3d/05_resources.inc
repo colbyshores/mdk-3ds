@@ -10,8 +10,11 @@ static void logCreation(RendererC3D* renderer, uint8_t kind, int32_t id) {
     renderer->creationLog.push_back(created);
 }
 
+static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool canvas);
+
 static MdkTextureId createIndexTexture(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
-                                       const uint8_t* paletteRgba, bool streamed) {
+                                       const uint8_t* paletteRgba, bool streamed,
+                                       const char* hdPath) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !px) {
         return -1;
@@ -82,6 +85,22 @@ static MdkTextureId createIndexTexture(MdkRenderer r, int32_t w, int32_t h, cons
     const int32_t id = acquireTextureSlot(renderer);
     C3dTexture& slot = renderer->textures[(size_t)id];
     slot = std::move(texture);
+    // A CANVAS PICTURE WITH AN HD IMAGE (mdk_render_create_hd_image): linked to its
+    // HD copy and HD-ONLY -- with enableHdTextures on its copy is the picture and
+    // the indices are never expanded (nothing is made here); the level's set pins
+    // the copy (mdk_render_pin_hd_set) so the loading screen holds for it. With
+    // the toggle off, its first draw makes it from the indices kept here.
+    if (hdPath && hdPath[0]) {
+        recordHdPath(r, id, hdPath, true);
+        C3dTexture& linked = renderer->textures[(size_t)id];
+        linked.hdOnly = linked.hdCopy >= 0;
+        linked.keepRgba8 = true;   // a canvas picture (mdk_render_mark_canvas's pins)
+        linked.noMips = true;
+        if (linked.hdOnly) {
+            logCreation(renderer, 0, id);
+            return id;
+        }
+    }
     if (streamed) {
         // A STREAMED picture from its creation (mdk_render_create_streamed_texture):
         // made by makeStreamed (RGB565, no mips) at its first draw, and never
@@ -122,12 +141,17 @@ static MdkTextureId createIndexTexture(MdkRenderer r, int32_t w, int32_t h, cons
 
 MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
                                               const uint8_t* paletteRgba) {
-    return createIndexTexture(r, w, h, px, paletteRgba, false);
+    return createIndexTexture(r, w, h, px, paletteRgba, false, nullptr);
 }
 
 MdkTextureId mdk_render_create_streamed_texture(MdkRenderer r, int32_t w, int32_t h,
                                                 const uint8_t* px, const uint8_t* paletteRgba) {
-    return createIndexTexture(r, w, h, px, paletteRgba, true);
+    return createIndexTexture(r, w, h, px, paletteRgba, true, nullptr);
+}
+
+MdkTextureId mdk_render_create_hd_image(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
+                                        const uint8_t* paletteRgba, const char* hdPath) {
+    return createIndexTexture(r, w, h, px, paletteRgba, false, hdPath);
 }
 
 void mdk_render_prepare_texture(MdkRenderer r, MdkTextureId t) {

@@ -356,6 +356,16 @@ void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId texture, const ch
 // (the PC's mods replace a canvas image through its own path, ReplaceImage).
 void mdk_render_replace_image_compressed(MdkRenderer r, MdkTextureId texture, const char* path);
 
+// A CANVAS PICTURE WITH AN HD IMAGE (the 3DS HD pack's .t3x at `hdPath`, resolved
+// by ModImages::resolve): an index texture as mdk_render_create_index_texture
+// makes it, except that with the backend's HD set on the HD file is its only
+// copy -- the indices are not expanded, and the copy is held for with the
+// level's set (owner, 2026-11-25: "covered pictures load ONLY the HD file").
+// With HD off it is made from the indices at its first draw. A backend with no
+// compressed HD pack (the desktop) never gets a path and makes the index texture.
+MdkTextureId mdk_render_create_hd_image(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
+                                        const uint8_t* paletteRgba, const char* hdPath);
+
 // A CANVAS texture (a menu picture, a font atlas), said at its creation: the
 // canvas keeps the palette's exact colours, so a backend that would otherwise
 // store an index texture in fewer bits (the 3DS's texture16) makes this one

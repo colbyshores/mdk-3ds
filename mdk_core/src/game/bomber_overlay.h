@@ -20,6 +20,8 @@
 
 #include <stdint.h>
 
+#include <string>
+
 #include "render/render.h"
 
 namespace mdk {
@@ -40,9 +42,16 @@ public:
 
     // C# BomberOverlay's constructor: BOMBTARG's and CROSS's frame 0 as index
     // textures through the HUD's palette (`palette`, its bytes `colours`). False when
-    // either sprite is missing.
+    // either sprite is missing. `targetHd` / `crossHd`: the 3DS HD pack's file for
+    // each picture (hdPaths below), which is then its only copy with HD on
+    // (render.h, mdk_render_create_hd_image); null or empty: none.
     bool load(MdkRenderer renderer, const formats::Bni& sprites, int32_t palette,
-              const formats::Palette& colours);
+              const formats::Palette& colours, const char* targetHd = nullptr,
+              const char* crossHd = nullptr);
+    // The 3DS HD pack's files for BOMBTARG_0 and CROSS_0 (a compressed ModImages),
+    // for load. Empty where there is none. In bomber_overlay_mods.cpp.
+    static void hdPaths(const formats::Bni& sprites, const formats::Palette& colours,
+                        ModImages* mods, std::string* target, std::string* cross);
     // The constructor's CanvasImages.Replace: a mod's image (CanvasImages.FrameName:
     // BOMBTARG_0, CROSS_0) replaces each picture. In game/bomber_overlay_mods.cpp, so
     // the goldens' binary (tests/scripts) links the overlay without the mods.
@@ -67,7 +76,7 @@ private:
     };
 
     bool loadImage(MdkRenderer renderer, const formats::Bni& sprites, const char* animation,
-                   const formats::Palette& colours, Image* out);
+                   const formats::Palette& colours, const char* hdPath, Image* out);
     void replaceWithMod(MdkRenderer renderer, const formats::Bni& sprites, const char* animation,
                         const formats::Palette& colours, ModImages* mods, const Image& image);
     void drawImage(MdkRenderer renderer, const Image& image, float atX, float atY) const;
