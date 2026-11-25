@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import re
-import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -35,7 +33,6 @@ PROTECTED = {
     "ralph/PROMPT.md",
     ".gitignore",
 }
-FRAME_DIR = "docs/frames/"
 
 
 def git(*args: str) -> list[str]:
@@ -43,29 +40,6 @@ def git(*args: str) -> list[str]:
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
     return result.stdout.splitlines()
-
-
-def validate_png_pair(frame: str, sidecar: str) -> list[str]:
-    errors: list[str] = []
-    image_path = ROOT / frame
-    note_path = ROOT / sidecar
-    try:
-        with image_path.open("rb") as handle:
-            header = handle.read(24)
-        if len(header) != 24 or header[:8] != bytes((137, 80, 78, 71, 13, 10, 26, 10)):
-            errors.append(f"{frame}: invalid PNG header")
-        else:
-            width, height = struct.unpack(">II", header[16:24])
-            if (width, height) != (320, 240):
-                errors.append(f"{frame}: expected pinned size 320x240, got {width}x{height}")
-        text = note_path.read_text(errors="replace")
-        if "frame: level 3, 320x240, seed 1, frame 1" not in text:
-            errors.append(f"{sidecar}: missing pinned-scene identity")
-        if "captured:" not in text or ("live C++ vs C# oracle:" not in text and "golden gap:" not in text and "live measurement: unavailable" not in text):
-            errors.append(f"{sidecar}: missing capture revision or oracle-gap measurement")
-    except OSError as exc:
-        errors.append(f"{frame}/{sidecar}: cannot validate frame pair: {exc}")
-    return errors
 
 
 def validate_range(base: str, head: str, owner_approved: bool) -> list[str]:
@@ -76,48 +50,8 @@ def validate_range(base: str, head: str, owner_approved: bool) -> list[str]:
     if not owner_approved:
         for path in sorted(changed & PROTECTED):
             errors.append(f"protected contract changed without owner approval: {path}")
-    range_adds = set(git("diff", "--name-only", "--diff-filter=A", f"{base}..{head}"))
-
-    # The frame rule is PER BUILDER COMMIT, not per range. The range form was a
-    # fail-closed trap for two legitimate shapes:
-    #   - an owner infrastructure commit ("loop:", "ledger:") landing inside the
-    #     loop's window: the commit hook makes it carry a frame too, so the range
-    #     saw two and the loop stopped on its own bookkeeping;
-    #   - a window that spans more than one batch commit.
-    # Per commit, each builder batch still has to ship exactly one pinned frame,
-    # which is the rule the owner directive actually states.
-    infra = re.compile(r"^(loop|ledger|owner)\b", re.IGNORECASE)
-    frames: set[str] = set()
-    for line in git("log", "--format=%H\t%s", f"{base}..{head}"):
-        sha, _, subject = line.partition("\t")
-        if not sha.strip():
-            continue
-        if infra.match(subject.strip()):
-            continue
-        adds = set(git("show", "--name-only", "--diff-filter=A", "--format=", sha))
-        commit_frames = {p for p in adds if p.startswith(FRAME_DIR) and p.endswith(".png")}
-        frames |= commit_frames
-        if len(commit_frames) != 1:
-            errors.append(
-                f"{sha[:8]} ({subject.strip()[:60]}): must add exactly one frame PNG "
-                f"in {FRAME_DIR}; found {len(commit_frames)}. A batch publishes ONE "
-                f"pinned frame; any additional capture belongs in docs/evidence/, "
-                f"which this rule does not police."
-            )
-    touched_frames = {p for p in changed if p.startswith(FRAME_DIR)}
-    for frame in touched_frames:
-        if frame.endswith(".png") and frame not in range_adds:
-            errors.append(f"batch modifies/removes historical frame {frame}; history is immutable")
-        if frame.endswith(".txt") and frame not in range_adds:
-            errors.append(f"batch modifies/removes historical measurement {frame}; history is immutable")
     if any(p.startswith("MDK/") or p.startswith("mdk_3ds/romfs/") for p in changed):
         errors.append("batch touches protected/local game bytes or staged RomFS")
-    for frame in frames:
-        sidecar = str(Path(frame).with_suffix(".txt"))
-        if sidecar not in range_adds:
-            errors.append(f"frame {frame} has no measurement sidecar {sidecar}")
-        else:
-            errors.extend(validate_png_pair(frame, sidecar))
     if not owner_approved and changed & {
         "tools/check.sh", "tools/runner/gates_frames.py", "tests/frames/reference.sha256"
     }:
@@ -152,16 +86,10 @@ def self_test() -> int:
     commits = ["commit-a", "commit-b"]
     parents = {"commit-a": ["commit-a", "base"], "commit-b": ["commit-b", "commit-a"]}
     changes = {
-        "base..commit-a": ["src/a.cpp", "docs/frames/a.png", "docs/frames/a.txt"],
-        "base..commit-b": ["src/a.cpp", "src/b.cpp", "docs/frames/a.png", "docs/frames/a.txt", "docs/frames/b.png", "docs/frames/b.txt"],
-        "commit-a..commit-a": ["src/a.cpp", "docs/frames/a.png", "docs/frames/a.txt"],
-        "commit-a..commit-b": ["src/b.cpp", "docs/frames/b.png", "docs/frames/b.txt"],
-    }
-    additions = {
-        "base..commit-a": ["docs/frames/a.png", "docs/frames/a.txt"],
-        "base..commit-b": ["docs/frames/a.png", "docs/frames/a.txt", "docs/frames/b.png", "docs/frames/b.txt"],
-        "commit-a..commit-a": ["docs/frames/a.png", "docs/frames/a.txt"],
-        "commit-a..commit-b": ["docs/frames/b.png", "docs/frames/b.txt"],
+        "base..commit-a": ["src/a.cpp"],
+        "base..commit-b": ["src/a.cpp", "AGENTS.md"],
+        "commit-a..commit-a": ["src/a.cpp"],
+        "commit-a..commit-b": ["AGENTS.md"],
     }
 
     def fake_git(*args: str) -> list[str]:
@@ -169,21 +97,19 @@ def self_test() -> int:
             return commits
         if args[:2] == ("rev-list", "--parents"):
             return [" ".join(parents[args[-1]])]
-        if args[:3] == ("diff", "--name-only", "--diff-filter=A"):
-            return additions.get(args[-1], [])
         if args[:2] == ("diff", "--name-only"):
             return changes.get(args[-1], [])
         raise AssertionError(f"unexpected git args: {args}")
 
-    with patch(__name__ + ".git", side_effect=fake_git), patch(__name__ + ".validate_png_pair", return_value=[]):
-        chain_errors = validate_commit_chain("base", "commit-b", False)
-        combined_errors = validate_range("base", "commit-b", False)
+    with patch(__name__ + ".git", side_effect=fake_git):
+        approved_errors = validate_commit_chain("base", "commit-b", True)
+        refused_errors = validate_commit_chain("base", "commit-b", False)
         failed_chain = validate_commit_chain("base", "commit-c", False)
-    if chain_errors:
-        print(f"BATCH INTEGRITY SELF-TEST: FAIL: valid independent commits rejected: {chain_errors}")
+    if approved_errors:
+        print(f"BATCH INTEGRITY SELF-TEST: FAIL: valid independent commits rejected: {approved_errors}")
         return 1
-    if not any("found 2" in error for error in combined_errors):
-        print("BATCH INTEGRITY SELF-TEST: FAIL: combined multi-frame range was not rejected")
+    if not any("protected contract" in error for error in refused_errors):
+        print("BATCH INTEGRITY SELF-TEST: FAIL: unapproved protected change was accepted")
         return 1
     if not failed_chain:
         print("BATCH INTEGRITY SELF-TEST: FAIL: malformed commit chain was accepted")
@@ -198,7 +124,7 @@ def main() -> int:
     parser.add_argument("--head", default="HEAD", help="batch commit to inspect")
     parser.add_argument("--staged", action="store_true", help="validate staged commit contents before git commit")
     parser.add_argument("--owner-approved", action="store_true", help="allow protected contract edits for an explicit owner-directed change")
-    parser.add_argument("--each-commit", action="store_true", help="validate each first-parent commit separately; preserves per-commit frame requirements")
+    parser.add_argument("--each-commit", action="store_true", help="validate each first-parent commit separately; preserves per-commit checks")
     parser.add_argument("--self-test", action="store_true", help="run isolated unit tests for integrity range accounting")
     args = parser.parse_args()
     if args.self_test:
@@ -214,7 +140,6 @@ def main() -> int:
         "tools/check.sh": ["tools/runner/gates_frames.py", "gates_vfp.py", "gates_core_parity.py", "gates_batch_integrity.py", "gates_completion.py"],
         "ralph/builder.md": ["READ-ONLY behavioural", "Never weaken a gate", "Phase 2", "EVERY COMMIT", "owner-protected"],
         "SPEC-COMPLETION.md": ["behavioural oracle", "post-process gap sweep", "frame-golden harness", "original `./MDK/MDKD3D.EXE`"],
-        "docs/frames/README.md": ["visual history", "publish_frame.sh", "oracle is never published"],
         "ralph-pi.sh": ["gates_batch_integrity.py", "publish_frame.sh", "--base", "REVIEWER FAILED", "--staged", "--each-commit"],
         "tools/hooks/pre-commit": ["gates_batch_integrity.py", "--staged", "MDK_OWNER_APPROVED"],
     }
@@ -233,31 +158,11 @@ def main() -> int:
 
     if args.staged:
         staged = set(git("diff", "--cached", "--name-only"))
-        staged_adds = set(git("diff", "--cached", "--name-only", "--diff-filter=A"))
-        frames = {p for p in staged_adds if p.startswith(FRAME_DIR) and p.endswith(".png")}
-        # The pinned-frame rule is for BUILDER batches. An owner-approved commit is
-        # infrastructure (the harness, a gate, the ledger): demanding a capture for
-        # it produced frames that record no code change and, worse, put a second
-        # frame in the loop's own batch window. Any frame that IS staged is still
-        # validated below, and the loop's per-batch frame is still enforced by the
-        # range check.
-        if not frames and not args.owner_approved:
-            errors.append("staged batch has no newly added docs/frames/*.png")
-        for frame in frames:
-            sidecar = str(Path(frame).with_suffix(".txt"))
-            if sidecar not in staged_adds:
-                errors.append(f"staged frame {frame} has no staged measurement sidecar {sidecar}")
-            else:
-                errors.extend(validate_png_pair(frame, sidecar))
         if not args.owner_approved:
             for path in sorted(staged & PROTECTED):
                 errors.append(f"staged change to protected contract requires owner approval: {path}")
         if any(p.startswith("MDK/") or p.startswith("mdk_3ds/romfs/") for p in staged):
             errors.append("staged changes include protected/local game bytes or RomFS")
-        changed_frames = {p for p in staged if p.startswith(FRAME_DIR)}
-        if any(p.endswith((".png", ".txt")) and p not in staged_adds for p in changed_frames):
-            errors.append("staged batch modifies a historical frame or measurement")
-
     if args.base:
         if args.each_commit:
             errors.extend(validate_commit_chain(args.base, args.head, args.owner_approved))

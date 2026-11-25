@@ -1,8 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-19T06:54:04Z at 60eead5
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: the 3DS shadow map's size as a config value (shadowMapSize), a TOGGLES
-harness flag, and the Old 3DS cost of each expensive enhancement (sun shadows
-~24 ms, edge smoothing 2x2 ~22 ms, glow ~10 ms of an 80 ms stereo frame; the map
-size costs nothing). 3DS-only; this Linux frame is byte-identical to the
-previous pin. Evidence: docs/evidence/2026-11-18-3ds-enhanced-cost-per-toggle.txt.

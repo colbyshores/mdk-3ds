@@ -1349,3 +1349,15 @@ in the real pause menu (HDFLIP drives the same code path).
 exporter for the BNI sprites per level palette); extending the exporter to
 model archives (the 10 misses); removing the per-surface streaming code (it is
 the fallback when a set does not fit and serves the legacy HUD/Kurt copies).
+
+## 2026-11-24 -- cleanup of main, step 1: prune evidence, frames and progress logs
+
+- **What:** removed tracked `.progress-log/`, `docs/frames/` and `docs/evidence/`
+  (tracked files 5,360 -> 1,551), keeping the seven evidence files the completion
+  ledger cites. Removed `mdk_3ds/tools/hud_panel_compare.py`, whose only inputs
+  were pruned PNGs. Retired the one-frame-per-commit rule in
+  `gates_batch_integrity.py`.
+- **Why:** owner direction, 2026-11-24: an immaculate main; the harness and its
+  history live on branch `harness/3ds-profiling` (ea8cd744).
+- **Evidence:** `tools/check.sh` ALL GATES PASSED; `make -C tests/scripts test`
+  exit 0; gate self-test PASS.

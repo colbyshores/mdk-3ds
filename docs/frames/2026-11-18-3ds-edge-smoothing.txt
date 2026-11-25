@@ -1,8 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-18T13:02:56Z at 60e2c71 + this batch's working tree
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: Enhanced Mode edge smoothing on the 3DS (2x2 supersampled eye targets,
-enableEdgeSmoothing). The Linux renderer is unchanged except a config log field;
-the live capture is pixel-identical (0 px differ) to the previous pin, so the
-pinned PNG is that pin's bytes ON PURPOSE. Evidence:
-docs/evidence/2026-11-18-3ds-edge-smoothing.txt.

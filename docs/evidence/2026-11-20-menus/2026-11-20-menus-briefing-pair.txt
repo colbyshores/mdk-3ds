@@ -1,5 +1,0 @@
-frame pair: the level-7 briefing mid-typing, left the C# oracle, right the Linux port (package #20a)
-oracle: mdk_sdl --mute --menu --original --press=Menu.Accept@0.5 --wait=4 --screenshot (New Game -> StatsScreen Briefing), MISC/FLIC hidden as for the menu pair
-port:   build-linux/mdk --headless --fixed-step --size=1280x960 --press=Menu.Accept@0.5 --capture-frame=240
-measured at 1280x960 (tests/frames/compare_frames.py --measure): bad_percent=0.000 max_delta=0 mean_delta=0.0000
-downscaled to 320x240 each for the record

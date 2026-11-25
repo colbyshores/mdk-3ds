@@ -1,8 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-19T07:49:24Z at 6bb2d5d
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: 3DS sun shadows taken in ONE pass inside the lit draw (the shadow map on
-unit 0 as GPU_TEX_SHADOW_2D, a shadow-tint lookup on unit 2, the surface on
-unit 1): the Old 3DS stereo frame 80.3 -> 63.7 ms p50 at the same picture
-(console within 2/255). 3DS-only; this Linux frame is byte-identical to the
-previous pin. Evidence: docs/evidence/2026-11-19-3ds-sun-shadows-single-pass.txt.

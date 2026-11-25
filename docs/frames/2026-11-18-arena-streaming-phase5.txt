@@ -1,8 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-18T20:37:40Z at f65ee3b
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: arena streaming Phase 5 (the music archive read by entry, the level's
-music playing, corridors read by entry, the arenas' embedded sounds not kept).
-Sound and loading changed, the picture did not: the live capture is
-byte-identical to the previous pin. Evidence:
-docs/evidence/2026-11-18-arena-streaming-phase5.txt.

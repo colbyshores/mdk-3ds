@@ -1,8 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-19T10:11:17Z at 9b12288
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: the 3DS sun shadow map kept across frames (redrawn every 2nd frame by
-default, config shadowMapRefresh 1-4, and at once when the camera, the sun or
-the rig moves on): the Old 3DS stereo frame 50.0 -> 43.2 ms p50 at the same
-picture (0 pixels differ). 3DS-only; this Linux frame is byte-identical to the
-previous pin. Evidence: docs/evidence/2026-11-19-3ds-shadow-map-cache.txt.

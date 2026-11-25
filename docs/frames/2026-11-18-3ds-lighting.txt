@@ -1,8 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-18T11:52:27Z at 4e90a28 + this batch's working tree
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: Enhanced Mode lighting on the 3DS (geometry shader, enableLighting). The
-Linux renderer is unchanged by this batch except a startup log line; the live
-capture is pixel-identical (0 px differ) to the previous pin, so the pinned PNG
-is that pin's bytes (md5 6769a13731983d65cee9df02da6cff37) ON PURPOSE. Evidence:
-docs/evidence/2026-11-18-3ds-lighting.txt.

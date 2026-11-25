@@ -1,8 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-19T09:31:01Z at 7e46bf6
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: the 3DS glow as additive billboards on bright sprite effects by default
-(the ported bloom behind config glowBloom); the core hands the 3DS a halo per
-bright effect and the PC ignores them -- this Linux frame is byte-identical to
-the previous pin. Old 3DS stereo frame 53.5 -> 49.9 ms p50. Evidence:
-docs/evidence/2026-11-19-3ds-glow-billboards.txt.

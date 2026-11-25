@@ -1,6 +1,0 @@
-frame pair: the main menu, left the C# oracle, right the Linux port (package #20a)
-oracle: mdk_sdl --mute --menu --original --wait=1 --screenshot (hidden 1280x960, SDL offscreen, lavapipe), MDK_DATA_DIR = the game data with MISC/FLIC hidden, so the C# draws its MDKOPT fallback (MDK12.FLC is package #20c)
-port:   build-linux/mdk --headless --fixed-step --size=1280x960 --capture-frame=60 (no --level: the menu)
-measured at 1280x960 (tests/frames/compare_frames.py --measure): bad_percent=0.000 max_delta=0 mean_delta=0.0000
-the Game options page (C# --press=Menu.Down x3,Accept,Down x6,Accept,Right; port Down x3,Accept,Down x2,Accept,Right, at the same times): also 0.000 / 0 / 0.0000
-downscaled to 320x240 each for the record

@@ -1,8 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-18T16:44:31Z at 16b9c0f + this batch's working tree
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: arena streaming Phase 1a (the MTO read by block, arenas keep only their
-models section). Core loading changed, the rendered frame did not: the live
-capture is pixel-identical (0 px differ) to the previous pin, so the pinned PNG
-is that pin's bytes ON PURPOSE. Evidence:
-docs/evidence/2026-11-18-arena-streaming-phase1a.txt.

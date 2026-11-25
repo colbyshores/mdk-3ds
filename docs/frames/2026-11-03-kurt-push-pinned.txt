@@ -1,5 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-03T12:53:05Z at 345250e
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-
-Why this pinned picture did not move: this batch changed no shipped behaviour. It re-pinned opcode 248's own arithmetic — the accepted mode-0 push in `golden/L3_kurt_push.txt` now carries `b=5` and `up=3` instead of `b=0` and `up=0`, so the oracle's asymmetric frame formula (`x = -a*c - b*s`, `y = -b*c - a*s`) and its `args[3]` lift are actually observed, and a new exact-float VM case (`PushKurtModeZeroFrameAndLiftAreExact`) pins the same operands bit-for-bit. The three edits to `player.h`/`player.cpp` are comments. The pinned instant is frame 1, before any script runs, so the image is byte-identical to its eleven predecessors (`6646adf1…`); the evidence for the change is the oracle golden and the mutation runs recorded in `docs/PROGRESS_LOG.md`, iteration 75. This capture was rendered from the changed working tree; the sidecar records its parent revision because the batch commit does not exist yet.

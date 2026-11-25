@@ -1,8 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-03T15:37:23Z at f521c76
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-why this picture cannot move: frame 1 is before any script has run, so no object
-has a movement command and no speed clamp has run; this batch's diff is the NaN arm
-of the speed clamps plus the dispatch->arm tests, none of which levels 3-8 reach.
-what shows the change instead: three vm_tests cases (opcode 6 to chase, opcode 4
-command 1 to the formation slot, and the NaN clamp), each killed by mutation.

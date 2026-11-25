@@ -1,3 +1,0 @@
-C# (left): mdk_sdl --hidden --original --gpu=vulkan --size=640x480 --mute --menu --wait=4
-port (right): build-linux/mdk --headless --fixed-step --size=640x480 --seed 1 --menu --capture-frame=240
-640x480 compared: 0 of 307200 pixels differ, max delta 0 (pair shown at half size)

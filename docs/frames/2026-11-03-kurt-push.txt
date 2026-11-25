@@ -1,5 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-03T10:35:44Z at e3f493d
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-
-Why this pinned picture did not move: push_kurt only acts when a script pushes Kurt, after gameplay has advanced beyond frame 1; the pin is intentionally frame 1. The independent oracle golden `tests/scripts/golden/L3_kurt_push.txt` shows the effect: the step-20 object-frame push, step-130 away push with lift, step-240 zero-distance fallback, plus the refusal while knocked down and dead. This capture was rendered from the changed working tree; the sidecar records its parent revision because the batch commit does not exist yet.

@@ -1,4 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-05T03:27:52Z at ca30d9d
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: this batch changes only FollowCamera's MathF.Min/MathF.Max edges (NaN and signed zero), which the pinned finite frame never reaches. The picture is byte-identical to the parent (md5 6769a13731983d65cee9df02da6cff37); build-linux rebuilt follow_camera.cpp.o before this capture. The new exact oracle bits are pinned by FollowCameraMathFMinMaxMatchTheOracle and FollowCameraArenaPitchUsesTheOraclesEaseRows in tests/scripts/vm_tests.cpp. Display: DISPLAY=:99 (Xvfb, lavapipe). Owner-gated item 16 still stands: the fixed frame cannot prove an edge-only behaviour change.

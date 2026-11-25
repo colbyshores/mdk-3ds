@@ -1,4 +1,0 @@
-frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
-captured: 2026-11-05T02:03:59Z at 79999cf
-live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
-note: this batch changes no arithmetic. It corrects two published claim-precision errors (the tolerance-headroom ratio, review-5 B1, and the arena-pitch pin's discrimination list, B2) and records a measurement of the powf/MathF.Pow leaf (review-5 oq3/oq1). The picture is byte-identical to the parent (md5 6769a13731983d65cee9df02da6cff37) because the only source edit is a comment in FollowCamera::update; build-linux did rebuild follow_camera.cpp.o and this capture came from that binary. Owner-gated item 16 still stands: a record-only batch cannot publish a picture that proves anything.

@@ -42,3 +42,9 @@ obj/
 # Kilo editor/recovery state.
 # .kilo/ is PROJECT CONFIG (agents + commands) and is tracked.
 logs/
+
+# Loop and measurement output stays out of the tree; the history of it is on
+# branch harness/3ds-profiling.
+.progress-log/
+docs/frames/
+# docs/evidence holds only the files the completion ledger cites.
