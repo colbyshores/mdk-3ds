@@ -122,6 +122,14 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         }
         return;
     }
+    // The tiny-debris cull (render_types.h): 0-3 pixels, else the default 2.
+    if (keyIs(begin, keyEnd, "tinyDebrisPixels")) {
+        int32_t pixels = 0;
+        if (readNumber(equals + 1, end, &pixels)) {
+            toggles->tinyDebrisPixels = (pixels >= 0 && pixels <= 3) ? pixels : 2;
+        }
+        return;
+    }
     // The look dials (render_types.h), clamped into their range.
     for (int32_t i = 0; i < kLookDialCount; i++) {
         if (keyIs(begin, keyEnd, kLookDials[i].key)) {
@@ -228,6 +236,9 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "cap30Fps", toggles.cap30Fps);
     // 3DS: the movies' uploads at half rate (render_types.h).
     appendToggle(&out, "movieHalfRate", toggles.movieHalfRate);
+    // 3DS: debris this many pixels or smaller is not drawn, 0 = off (render_types.h).
+    snprintf(size, sizeof(size), "tinyDebrisPixels=%d\n", (int)toggles.tinyDebrisPixels);
+    out.append(size);
     // The look dials, percent of the shipped value (render_types.h).
     for (int32_t i = 0; i < kLookDialCount; i++) {
         snprintf(size, sizeof(size), "%s=%d\n", kLookDials[i].key,

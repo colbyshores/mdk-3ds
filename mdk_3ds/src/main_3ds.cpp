@@ -132,6 +132,10 @@ static volatile bool g_resumePending = false;
 // same inversion). The projection built with the portrait ratio would squash the
 // level sideways.
 constexpr float kAspect = 400.0f / 240.0f;
+// The top screen's picture per eye, in pixels: the size the draw culls measure
+// on screen against (projectedPixelSize).
+constexpr int32_t kTopWidth = 400;
+constexpr int32_t kTopHeight = 240;
 
 // The sound bank's decoded store, bounded (see where it is set).
 const size_t kDecodedSoundBudgetBytes = (size_t)6 << 20;
@@ -2512,6 +2516,11 @@ int main(int argc, char** argv) {
             } else {
                 effectsView.setCullFrustum(nullptr, 0.0f);
             }
+            // Debris this small on the top screen is not drawn (EnhancedToggles::
+            // tinyDebrisPixels, 0 = off): one decision for both eyes, at the
+            // scene camera's zoom.
+            effectsView.setTinyPieceCull((float)enhancedToggles.tinyDebrisPixels, kTopWidth,
+                                         kTopHeight);
             effectsView.build(*runtime, sceneCamera, &effectsFrame);
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
             if (effectsDraw.allocationFailed()) {

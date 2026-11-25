@@ -339,6 +339,13 @@ struct EnhancedToggles {
     // decode keeps the C#'s 34 ms rate either way, so the movie keeps its length.
     // Off by default (the C#'s rate). The PC ignores it.
     bool movieHalfRate = false;
+
+    // 3DS: a debris piece (or spark) whose bounding sphere covers this many
+    // screen pixels or fewer across is not drawn (projectedPixelSize at the
+    // frame's camera and zoom, on the top screen's 400 x 240). 0 = off; 1, 2
+    // or 3 pixels; anything else reads as 2. Drawing only: the pieces still
+    // fly, bounce and expire as before. The PC ignores it.
+    int32_t tinyDebrisPixels = 2;
 };
 
 // ---------------------------------------------------------------------------

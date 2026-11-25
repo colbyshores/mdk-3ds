@@ -442,9 +442,9 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(10), "EDGE SMOOTHING");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kQuitRow), "QUIT");
     // + OPTIONS and MAIN MENU, the C# PauseMenu's rows (package #20a).
-    // 19 settings (MOVIES HALF RATE the last, package #20c), RESUME, CHEATS (gap
-    // package #21), OPTIONS, MAIN MENU, QUIT.
-    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 24);
+    // 20 settings (MOVIES HALF RATE, package #20c, then TINY DEBRIS), RESUME,
+    // CHEATS (gap package #21), OPTIONS, MAIN MENU, QUIT.
+    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 25);
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kCheatsRow), "CHEATS");
     // Left/right on RESUME flip nothing.
     mdk::EnhancedMenu::Input left;
@@ -585,7 +585,8 @@ std::string menuValue(int32_t row, const mdk::EnhancedToggles& toggles) {
 MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
     using Action = mdk::EnhancedMenu::Action;
     using Menu = mdk::EnhancedMenu;
-    MDK_CHECK_EQ(Menu::kItemCount, 19);   // + MOVIES HALF RATE (package #20c), row 19
+    MDK_CHECK_EQ(Menu::kItemCount, 20);   // + MOVIES HALF RATE (package #20c), row 19
+                                          // + TINY DEBRIS, row 20
     MDK_CHECK_EQ(Menu::kQuitRow, Menu::kRowCount - 1);
     // The rows after the ten toggles, in order.
     MDK_CHECK_EQ(menuRowOf("30 FPS CAP"), 11);
@@ -740,6 +741,32 @@ MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
         mdk::EnhancedToggles back;
         MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
         MDK_CHECK(back.movieHalfRate);
+    }
+    // THE TINY-DEBRIS CULL: 2 px by default, row 20 cycles OFF/1/2/3, the config
+    // line reads back, an old file without it keeps the default, and a value
+    // off the list reads as 2.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        MDK_CHECK_EQ(toggles.tinyDebrisPixels, 2);
+        menuSelect(&menu, &toggles, 20);
+        MDK_CHECK(menuValue(20, toggles) == "2 PX");
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.tinyDebrisPixels, 3);
+        MDK_CHECK(menu.handle(right, &toggles) == Action::Changed);
+        MDK_CHECK_EQ(toggles.tinyDebrisPixels, 0);
+        MDK_CHECK(menuValue(20, toggles) == "OFF");
+        const std::string text = mdk::writeEnhancedConfig(toggles);
+        MDK_CHECK(text.find("tinyDebrisPixels=0\n") != std::string::npos);
+        mdk::EnhancedToggles back;
+        MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
+        MDK_CHECK_EQ(back.tinyDebrisPixels, 0);
+        mdk::EnhancedToggles old;
+        MDK_CHECK(mdk::parseEnhancedConfig("enableHaze=1\ncap30Fps=1\n", &old));
+        MDK_CHECK_EQ(old.tinyDebrisPixels, 2);
+        mdk::EnhancedToggles wide;
+        MDK_CHECK(mdk::parseEnhancedConfig("tinyDebrisPixels=9\n", &wide));
+        MDK_CHECK_EQ(wide.tinyDebrisPixels, 2);
     }
 }
 

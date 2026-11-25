@@ -181,6 +181,17 @@ public:
         cullMargin_ = margin;
     }
 
+    // THE TINY-DEBRIS CULL: when `pixels` > 0, build() skips a debris piece
+    // whose bounding sphere's full diameter projects to `pixels` or fewer on
+    // a `width` x `height` picture (projectedPixelSize, through build()'s
+    // camera, so the scope's zoom counts). 0 (the default, and the Linux
+    // build) culls nothing. Drawing only, as setCullFrustum.
+    void setTinyPieceCull(float pixels, int32_t width, int32_t height) {
+        tinyPixels_ = pixels;
+        tinyWidth_ = width;
+        tinyHeight_ = height;
+    }
+
     // Drops the cached looks and sprite surfaces (a level change).
     void clear() {
         looks_.clear();
@@ -270,6 +281,10 @@ private:
     Frustum cullFrustum_;
     bool hasCullFrustum_ = false;
     float cullMargin_ = 0.0f;
+    // setTinyPieceCull's size and picture.
+    float tinyPixels_ = 0.0f;
+    int32_t tinyWidth_ = 0;
+    int32_t tinyHeight_ = 0;
     // Whether a sprite `texel` world units a texel on its texture (and its
     // halo, kGlowHaloScale times larger and nudged towards the camera) is
     // wholly outside the cull. False with no cull set.
