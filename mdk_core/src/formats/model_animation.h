@@ -98,6 +98,47 @@ public:
     // of the model (a level's load bakes these pairs).
     bool animates(const Model& model) const;
 
+    // One part's track for a model, DECODED AS FAR AS ASKED: `frames` whole
+    // frames of `vertexCount` vertices so far, one after another in ONE buffer
+    // (not one vector a frame -- on the Old 3DS the allocations were the bake's
+    // cost). A track decodes in frame order (a delta track's frame is the one
+    // before it plus its deltas), and decodeTo() goes on from where the last
+    // call stopped, so frames nobody asks for are never decoded. `ended` once
+    // there is no further frame: the animation's last, or the track's data ran
+    // out -- the frames past `frames` then keep the model's own vertices, as a
+    // part with no track (frames 0, ended) does.
+    struct DecodedTrack {
+        int32_t vertexCount = 0;
+        int32_t frames = 0;
+        std::vector<Vec3f> vertices;
+        bool ended = true;
+        // Where decoding stands: the kind, the reader's place for the next
+        // frame's record, and what the next frame is made from.
+        enum Kind { Delta, Beta, Matrix };
+        Kind kind = Delta;
+        int32_t at = 0;
+        int32_t next = 0;                // a delta track's next frame with a record
+        float scale = 0.0f;              // a delta or demo track's delta scale
+        float rotationScale = 0.0f;      // a matrix track's two precisions
+        float positionScale = 0.0f;
+        std::vector<Vec3f> current;      // a delta or demo track's last frame
+        std::vector<Vec3f> base;         // a matrix track's base vertices
+    };
+
+    // Every part's track for `model`, in the model's part order, with its
+    // header read and nothing past what the header holds decoded.
+    std::vector<DecodedTrack> beginTracks(const Model& model) const;
+
+    // Decode `track` until it holds frame `frame` or has ended.
+    void decodeTo(DecodedTrack* track, int32_t frame) const;
+
+    // One frame of the bake: every part's vertices -- its track's frame
+    // (decoded as far as that first), or the model's vertices past the
+    // track's end or without one. bake() is every frame of this in order, so
+    // a frame built alone is the same frame the whole bake holds.
+    void bakeFrame(const Model& model, std::vector<DecodedTrack>* tracks, int32_t frame,
+                   std::vector<std::vector<Vec3f>>* out) const;
+
     // Per frame, every part's vertices: frames[frame][part][vertex]. Parts
     // without a track keep their model vertices.
     std::vector<std::vector<std::vector<Vec3f>>> bake(const Model& model) const;
@@ -117,11 +158,11 @@ private:
     // The layout: the retail one, or the 1996 demo's.
     bool beta_ = false;
 
-    // The frames of one track, decoded.
-    std::vector<std::vector<Vec3f>> decodeTrack(int32_t offset, int32_t vertexCount) const;
-    std::vector<std::vector<Vec3f>> decodeDeltaTrack(int32_t offset, int32_t vertexCount, float scale) const;
-    std::vector<std::vector<Vec3f>> decodeBetaTrack(int32_t offset, int32_t vertexCount, float scale) const;
-    std::vector<std::vector<Vec3f>> decodeMatrixTrack(int32_t offset, int32_t vertexCount) const;
+    // A track's header at `offset` (its vertexCount set): its kind, its base
+    // vertices, and -- for a delta or demo track -- frame 0.
+    void beginTrack(int32_t offset, DecodedTrack* track) const;
+    // The track's next frame, or `ended` when there is none.
+    void decodeNext(DecodedTrack* track) const;
 };
 
 } // namespace formats

@@ -263,132 +263,109 @@ bool ModelAnimation::animates(const Model& model) const {
     return false;
 }
 
-std::vector<std::vector<std::vector<Vec3f>>> ModelAnimation::bake(const Model& model) const {
-    // The decoded tracks, one per part, empty for the parts without one.
-    std::vector<std::vector<std::vector<Vec3f>>> perPart;
-    perPart.reserve(model.partList.size());
+std::vector<ModelAnimation::DecodedTrack> ModelAnimation::beginTracks(const Model& model) const {
+    std::vector<DecodedTrack> tracks(model.partList.size());
     for (size_t i = 0; i < model.partList.size(); i++) {
+        tracks[i].vertexCount = (int32_t)model.partList[i].vertices.size();
         const std::map<std::string, int32_t>::const_iterator found =
             tracks_.find(toLowerAscii(model.partList[i].nameString()));
-        if (found == tracks_.end()) {
-            perPart.push_back(std::vector<std::vector<Vec3f>>());
+        if (found != tracks_.end()) {
+            beginTrack(found->second, &tracks[i]);
+        }
+    }
+    return tracks;
+}
+
+void ModelAnimation::decodeTo(DecodedTrack* track, int32_t frame) const {
+    while (!track->ended && track->frames <= frame) {
+        decodeNext(track);
+    }
+}
+
+void ModelAnimation::bakeFrame(const Model& model, std::vector<DecodedTrack>* tracks, int32_t frame,
+                               std::vector<std::vector<Vec3f>>* out) const {
+    out->clear();
+    out->reserve(model.partList.size());
+    for (size_t p = 0; p < model.partList.size(); p++) {
+        DecodedTrack* track = p < tracks->size() ? &(*tracks)[p] : nullptr;
+        if (track != nullptr) {
+            decodeTo(track, frame);
+        }
+        if (track != nullptr && frame < track->frames) {
+            const size_t first = (size_t)frame * (size_t)track->vertexCount;
+            out->push_back(std::vector<Vec3f>(track->vertices.begin() + (long)first,
+                                              track->vertices.begin() +
+                                                  (long)(first + (size_t)track->vertexCount)));
         } else {
-            perPart.push_back(decodeTrack(found->second, (int32_t)model.partList[i].vertices.size()));
+            // The part has no track, or its track ran out: it keeps its model vertices.
+            out->push_back(model.partList[p].vertices);
         }
     }
+}
 
-    std::vector<std::vector<std::vector<Vec3f>>> frames;
-    frames.reserve((size_t)frameCount);
+std::vector<std::vector<std::vector<Vec3f>>> ModelAnimation::bake(const Model& model) const {
+    std::vector<DecodedTrack> tracks = beginTracks(model);
+    std::vector<std::vector<std::vector<Vec3f>>> frames((size_t)frameCount);
     for (int32_t f = 0; f < frameCount; f++) {
-        std::vector<std::vector<Vec3f>> frame;
-        frame.reserve(model.partList.size());
-        for (size_t p = 0; p < model.partList.size(); p++) {
-            if (f < (int32_t)perPart[p].size()) {
-                frame.push_back(perPart[p][(size_t)f]);
-            } else {
-                // The part has no track: it keeps its model vertices.
-                frame.push_back(model.partList[p].vertices);
-            }
-        }
-        frames.push_back(frame);
+        bakeFrame(model, &tracks, f, &frames[(size_t)f]);
     }
     return frames;
 }
 
-std::vector<std::vector<Vec3f>> ModelAnimation::decodeTrack(int32_t offset, int32_t vertexCount) const {
+namespace {
+
+// One decoded frame onto the end of a track's buffer.
+void appendFrame(const std::vector<Vec3f>& vertices, ModelAnimation::DecodedTrack* track) {
+    track->vertices.insert(track->vertices.end(), vertices.begin(), vertices.end());
+    track->frames++;
+}
+
+} // namespace
+
+// THE THREE TRACK LAYOUTS, read a frame at a time (decodeNext); each early end
+// below is where the whole-track decode used to return with the frames it had.
+//
+// A delta track: the base vertices, then records of `s16 frame, s8 delta[n][3]`
+// (ending with frame -1) adding `delta * scale` to the previous frame.
+//
+// A 1996 demo track: the base vertices, then `s8 delta[n][3]` for every next
+// frame. There is no frame number: the deltas are in step.
+//
+// A matrix track (rigid parts): shifts, the base vertices, then a 3x4 s16 matrix
+// per frame.
+void ModelAnimation::beginTrack(int32_t offset, DecodedTrack* track) const {
     if (!bytes_ || offset < 0 || offset + 20 > byteCount_) {
-        return std::vector<std::vector<Vec3f>>();
+        return;
     }
+    const int32_t vertexCount = track->vertexCount;
     const uint32_t scaleBits = binU32(bytes_, offset + 16);
-    if (beta_) {
-        return decodeBetaTrack(offset, vertexCount, binF32(bytes_, offset + 16));
-    }
-    if ((scaleBits & kSignMask) == 0) {
-        return decodeMatrixTrack(offset, vertexCount);
-    }
-    return decodeDeltaTrack(offset, vertexCount, binF32(bytes_, offset + 16));
-}
-
-// The base vertices, then records of `s16 frame, s8 delta[n][3]` (ending
-// with frame -1) adding `delta * scale` to the previous frame.
-std::vector<std::vector<Vec3f>> ModelAnimation::decodeDeltaTrack(int32_t offset, int32_t vertexCount,
-                                                                 float scale) const {
-    std::vector<std::vector<Vec3f>> frames;
-    BinReader reader(bytes_, byteCount_, offset + 20);
-    if (!fits(reader, vertexCount * 12)) {
-        return frames;
-    }
-
-    std::vector<Vec3f> vertices;
-    vertices.reserve((size_t)vertexCount);
-    for (int32_t v = 0; v < vertexCount; v++) {
-        vertices.push_back(readVec3(&reader));
-    }
-    frames.push_back(vertices);
-
-    if (!fits(reader, 2)) {
-        return frames;
-    }
-    int32_t next = reader.s16();
-    for (int32_t f = 1; f < frameCount; f++) {
-        if (next == f) {
-            if (!fits(reader, vertexCount * 3 + 2)) {
-                return frames;
-            }
-            for (int32_t v = 0; v < vertexCount; v++) {
-                const float dx = (float)signedByte(reader.u8());
-                const float dy = (float)signedByte(reader.u8());
-                const float dz = (float)signedByte(reader.u8());
-                vertices[(size_t)v].x += dx * scale;
-                vertices[(size_t)v].y += dy * scale;
-                vertices[(size_t)v].z += dz * scale;
-            }
-            next = reader.s16();
+    if (beta_ || (scaleBits & kSignMask) != 0) {
+        track->kind = beta_ ? DecodedTrack::Beta : DecodedTrack::Delta;
+        track->scale = binF32(bytes_, offset + 16);
+        BinReader reader(bytes_, byteCount_, offset + 20);
+        if (!fits(reader, vertexCount * 12)) {
+            return;
         }
-        frames.push_back(vertices);
-    }
-    return frames;
-}
-
-// The 1996 demo's tracks: the base vertices, then `s8 delta[n][3]` for every
-// next frame. There is no frame number: the deltas are in step.
-std::vector<std::vector<Vec3f>> ModelAnimation::decodeBetaTrack(int32_t offset, int32_t vertexCount,
-                                                                float scale) const {
-    std::vector<std::vector<Vec3f>> frames;
-    BinReader reader(bytes_, byteCount_, offset + 20);
-    if (!fits(reader, vertexCount * 12)) {
-        return frames;
-    }
-
-    std::vector<Vec3f> vertices;
-    vertices.reserve((size_t)vertexCount);
-    for (int32_t v = 0; v < vertexCount; v++) {
-        vertices.push_back(readVec3(&reader));
-    }
-    frames.push_back(vertices);
-
-    for (int32_t f = 1; f < frameCount; f++) {
-        if (!fits(reader, vertexCount * 3)) {
-            return frames;
-        }
+        track->current.reserve((size_t)vertexCount);
         for (int32_t v = 0; v < vertexCount; v++) {
-            const float dx = (float)signedByte(reader.u8());
-            const float dy = (float)signedByte(reader.u8());
-            const float dz = (float)signedByte(reader.u8());
-            vertices[(size_t)v].x += dx * scale;
-            vertices[(size_t)v].y += dy * scale;
-            vertices[(size_t)v].z += dz * scale;
+            track->current.push_back(readVec3(&reader));
         }
-        frames.push_back(vertices);
+        track->vertices.reserve((size_t)vertexCount * (size_t)(frameCount > 0 ? frameCount : 1));
+        appendFrame(track->current, track);
+        if (track->kind == DecodedTrack::Delta) {
+            if (!fits(reader, 2)) {
+                return;
+            }
+            track->next = reader.s16();
+        }
+        track->at = reader.pos();
+        track->ended = false;
+        return;
     }
-    return frames;
-}
 
-// Rigid parts: shifts, the base vertices, then a 3x4 s16 matrix per frame.
-std::vector<std::vector<Vec3f>> ModelAnimation::decodeMatrixTrack(int32_t offset, int32_t vertexCount) const {
-    std::vector<std::vector<Vec3f>> frames;
+    track->kind = DecodedTrack::Matrix;
     if (offset + 22 > byteCount_) {
-        return frames;
+        return;
     }
     // The two bytes after the scale are the rotation and the position
     // precisions: the matrix values are scaled by 0x8000 shifted right by
@@ -400,41 +377,81 @@ std::vector<std::vector<Vec3f>> ModelAnimation::decodeMatrixTrack(int32_t offset
     // plain shift of zero.
     const int32_t rotationBits = bytes_[offset + 20] & 31;
     const int32_t positionBits = bytes_[offset + 21] & 31;
-    const float rotationScale = 1.0f / (float)(0x8000 >> rotationBits);
-    const float positionScale = 1.0f / (float)(0x8000 >> positionBits);
+    track->rotationScale = 1.0f / (float)(0x8000 >> rotationBits);
+    track->positionScale = 1.0f / (float)(0x8000 >> positionBits);
 
     BinReader reader(bytes_, byteCount_, offset + 22);
     if (!fits(reader, vertexCount * 12)) {
-        return frames;
+        return;
     }
-    std::vector<Vec3f> base;
-    base.reserve((size_t)vertexCount);
+    track->base.reserve((size_t)vertexCount);
     for (int32_t v = 0; v < vertexCount; v++) {
-        base.push_back(readVec3(&reader));
+        track->base.push_back(readVec3(&reader));
     }
+    track->vertices.reserve((size_t)vertexCount * (size_t)(frameCount > 0 ? frameCount : 1));
+    track->at = reader.pos();
+    track->ended = false;
+}
 
-    for (int32_t f = 0; f < frameCount; f++) {
+void ModelAnimation::decodeNext(DecodedTrack* track) const {
+    const int32_t vertexCount = track->vertexCount;
+    const int32_t f = track->frames;
+    if (f >= frameCount) {
+        track->ended = true;
+        return;
+    }
+    BinReader reader(bytes_, byteCount_, track->at);
+
+    if (track->kind == DecodedTrack::Matrix) {
         if (!fits(reader, kMatrixValues * 2)) {
-            return frames;
+            track->ended = true;
+            return;
         }
         float m[kMatrixValues];
         for (int32_t i = 0; i < kMatrixValues; i++) {
             m[i] = (float)reader.s16();
         }
-
-        std::vector<Vec3f> vertices;
-        vertices.reserve((size_t)vertexCount);
+        const float rotationScale = track->rotationScale;
+        const float positionScale = track->positionScale;
         for (int32_t v = 0; v < vertexCount; v++) {
-            const Vec3f b = base[(size_t)v];
-            vertices.push_back(Vec3f{
+            const Vec3f b = track->base[(size_t)v];
+            track->vertices.push_back(Vec3f{
                 (m[0] * b.x + m[1] * b.y + m[2] * b.z) * rotationScale + m[3] * positionScale,
                 (m[4] * b.x + m[5] * b.y + m[6] * b.z) * rotationScale + m[7] * positionScale,
                 (m[8] * b.x + m[9] * b.y + m[10] * b.z) * rotationScale + m[11] * positionScale,
             });
         }
-        frames.push_back(vertices);
+        track->frames++;
+        track->at = reader.pos();
+        return;
     }
-    return frames;
+
+    // A delta track's frame without a record repeats the one before it; a demo
+    // track has a record for every frame.
+    const bool record = track->kind == DecodedTrack::Beta || track->next == f;
+    if (record) {
+        const int32_t recordBytes =
+            track->kind == DecodedTrack::Beta ? vertexCount * 3 : vertexCount * 3 + 2;
+        if (!fits(reader, recordBytes)) {
+            track->ended = true;
+            return;
+        }
+        const float scale = track->scale;
+        std::vector<Vec3f>& vertices = track->current;
+        for (int32_t v = 0; v < vertexCount; v++) {
+            const float dx = (float)signedByte(reader.u8());
+            const float dy = (float)signedByte(reader.u8());
+            const float dz = (float)signedByte(reader.u8());
+            vertices[(size_t)v].x += dx * scale;
+            vertices[(size_t)v].y += dy * scale;
+            vertices[(size_t)v].z += dz * scale;
+        }
+        if (track->kind == DecodedTrack::Delta) {
+            track->next = reader.s16();
+        }
+        track->at = reader.pos();
+    }
+    appendFrame(track->current, track);
 }
 
 } // namespace formats

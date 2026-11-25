@@ -687,6 +687,39 @@ static float g_hwStartMs = 0.0f;
 static char g_hwStarted[32];
 #endif
 
+#ifdef MDK_HW_PROFILE
+// THE SCRIPTS' SLOW TICKS (ScriptRuntime's tick probe, script_runtime.h), said at
+// the level's teardown in frame order: the runtime keeps its slowest ticks in fixed
+// storage while the level plays, so no SD line lands in the frames it names.
+static void logScriptProbe(const mdk::scripts::ScriptRuntime& runtime) {
+    const double perMs = (double)SYSCLOCK_ARM11 / 1000.0;
+    bool done[mdk::scripts::ScriptRuntime::kProbeRows] = {};
+    for (int32_t n = 0; n < runtime.probeRowCount; n++) {
+        int32_t pick = -1;
+        for (int32_t i = 0; i < runtime.probeRowCount; i++) {
+            if (!done[i] && (pick < 0 || runtime.probeRows[i].frame < runtime.probeRows[pick].frame)) {
+                pick = i;
+            }
+        }
+        done[pick] = true;
+        const mdk::scripts::ScriptRuntime::ProbeRow& r = runtime.probeRows[pick];
+        mdk::log3dsPrintf("scripttick: frame %d tick %d %.2f ms: remember %.2f head %.2f "
+                          "triggers %.2f kurt %.2f systems %.2f objects %.2f (%d) "
+                          "controllers %.2f; slowest %s script %.2f motion %.2f ops %d "
+                          "opcode %d %.2f; spawns %d %.2f (slowest %s %.2f, model %.2f)",
+                          (int)r.frame, (int)r.tick, (double)r.total / perMs,
+                          (double)r.remember / perMs, (double)r.head / perMs,
+                          (double)r.triggers / perMs, (double)r.kurtSide / perMs,
+                          (double)r.systems / perMs, (double)r.objects / perMs,
+                          (int)r.objectsRun, (double)r.controllers / perMs, r.slowType,
+                          (double)r.slowVm / perMs, (double)r.slowMotion / perMs,
+                          (int)r.slowOps, (int)r.slowOpcode, (double)r.slowOpcodeTime / perMs,
+                          (int)r.spawns, (double)r.spawnTime / perMs, r.spawnType,
+                          (double)r.spawnSlow / perMs, (double)r.spawnModel / perMs);
+    }
+}
+#endif
+
 static void requestPackedSurface(void* user, const mdk::Surface& surface,
                                  const mdk::formats::Palette* palette) {
 #ifdef MDK_HW_PROFILE
@@ -2827,9 +2860,29 @@ int main(int argc, char** argv) {
                 // camera (Viewer.cs:505-535). ScriptRuntime keeps its own 1/30 s
                 // clock, so a 1/60 s call completes a script tick every second step
                 // while Kurt's physics stay at 60 Hz.
+#ifdef MDK_HW_PROFILE
+                // The scripts' tick probe (script_runtime.h): its clock, and the
+                // frame its rows are named by. Said at the level's teardown.
+                if (runtime) {
+                    runtime->probeClock = mdk::harnessProfileTick;
+                    runtime->probeFrame = (int32_t)frame;
+                }
+#endif
                 if (runtime) {
                     runtime->update(step);
                 }
+#ifdef MDK_HW_PROFILE
+                // The scripts' step and the stamps' refresh, split (the profile's
+                // simsub line sums them): only a slow one is named, after its timing.
+                const uint64_t tpStamps = mdk::harnessProfileTick();
+                if ((double)(tpStamps - tp1) * 1000.0 / (double)SYSCLOCK_ARM11 > 10.0) {
+                    mdk::log3dsPrintf("scriptstep frame %lu %.1f ms (arena %s)",
+                                      (unsigned long)frame,
+                                      (double)(tpStamps - tp1) * 1000.0 / (double)SYSCLOCK_ARM11,
+                                      runtime ? runtime->currentArena().c_str() : "-");
+                }
+                const size_t stampCount = runtime ? runtime->stampedTextures().size() : 0;
+#endif
                 if (runtime) {
                     // The bullet holes the step stamped (special_130, package #16): the C#'s
                     // TextureStamped -> MaterialResolver.Refresh (Viewer.cs:263), each changed
@@ -2844,6 +2897,14 @@ int main(int argc, char** argv) {
                     runtime->clearStampedTextures();
                 }
                 const uint64_t tp2 = mdk::harnessProfileTick();
+#ifdef MDK_HW_PROFILE
+                if (stampCount > 0 &&
+                    (double)(tp2 - tpStamps) * 1000.0 / (double)SYSCLOCK_ARM11 > 5.0) {
+                    mdk::log3dsPrintf("stamprefresh frame %lu %u texture(s) %.1f ms",
+                                      (unsigned long)frame, (unsigned)stampCount,
+                                      (double)(tp2 - tpStamps) * 1000.0 / (double)SYSCLOCK_ARM11);
+                }
+#endif
                 // The pitch the camera eases to (Viewer.cs:746-747). The oracle's
                 // sources are a live camera_track request first and the scripts'
                 // current arena's rest pitch after it.
@@ -4359,6 +4420,11 @@ int main(int argc, char** argv) {
     } else {
         mdk::audioClose();
     }
+#ifdef MDK_HW_PROFILE
+    if (runtime) {
+        logScriptProbe(*runtime);
+    }
+#endif
     runtime.reset();
     // 3. The pose caches key on the runtime's Model addresses, which the reset just
     //    freed (scripts/pose_cache.h; the C#'s next Viewer calls ForgetPoses).

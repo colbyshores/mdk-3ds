@@ -242,7 +242,20 @@ void ScriptVm::run(MdkObject* obj) {
             return;
         }
 
-        pc = execute(obj, ins);
+        if (runtime_.probeClock != nullptr) {
+            // The tick probe (script_runtime.h): time each opcode, keep the slowest.
+            const int32_t opcode = ins.opcode;
+            const uint64_t t0 = runtime_.probeClock();
+            pc = execute(obj, ins);
+            const uint64_t spent = runtime_.probeClock() - t0;
+            probeOps++;
+            if (spent > probeOpcodeTime) {
+                probeOpcodeTime = spent;
+                probeOpcode = opcode;
+            }
+        } else {
+            pc = execute(obj, ins);
+        }
         if (pc == kYield || obj->dead) {
             return;
         }

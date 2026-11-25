@@ -387,6 +387,15 @@ void ScriptRuntime::update(float delta) {
     tickAccumulator_ += delta;
     while (tickAccumulator_ >= kTick) {
         tickAccumulator_ -= kTick;
+        // The tick probe (script_runtime.h): a fresh row per tick, kept at its end
+        // when it is among the slowest.
+        uint64_t probeStart = 0;
+        if (probeClock != nullptr) {
+            probeNow_ = ProbeRow();
+            probeNow_.frame = probeFrame;
+            probeNow_.tick = tickCount_;
+            probeStart = probeClock();
+        }
         // The C# snapshots every object's pose before the tick runs
         // (ScriptRuntime.cs:383-386), because the frames until the next tick are
         // drawn from here to there. It walks its live Objects list; the port keeps
@@ -396,13 +405,50 @@ void ScriptRuntime::update(float delta) {
         for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
             it->remember();
         }
+        if (probeClock != nullptr) {
+            probeNow_.remember = probeClock() - probeStart;
+        }
         runTick();
         tickCount_++;
+        if (probeClock != nullptr) {
+            probeNow_.total = probeClock() - probeStart;
+            probeKeep();
+        }
     }
     // Rides.Follow (ScriptRuntime.cs:392, package #9): each step, after the ticks, the
     // XD2 is where Kurt is.
     rides_.follow();
 }
+
+// The tick probe's keep: the slowest kProbeRows ticks, in fixed storage. A full
+// table replaces its fastest row when this tick was slower.
+void ScriptRuntime::probeKeep() {
+    if (probeRowCount < kProbeRows) {
+        probeRows[probeRowCount++] = probeNow_;
+        return;
+    }
+    int32_t fastest = 0;
+    for (int32_t i = 1; i < kProbeRows; i++) {
+        if (probeRows[i].total < probeRows[fastest].total) {
+            fastest = i;
+        }
+    }
+    if (probeNow_.total > probeRows[fastest].total) {
+        probeRows[fastest] = probeNow_;
+    }
+}
+
+namespace {
+
+// A type name into a probe row's fixed field, cut to fit.
+void probeName(char* out, const std::string& name) {
+    const size_t room = (size_t)ScriptRuntime::kProbeName - 1;
+    const size_t n = name.size() < room ? name.size() : room;
+    memcpy(out, name.data(), n);
+    out[n] = '\0';
+}
+
+} // namespace
 
 float ScriptRuntime::tick_blend(float ahead) const {
     // Math.Clamp((time + ahead) / Tick, 0f, 1f) — the C#'s TickBlend, with the
@@ -702,6 +748,16 @@ void ScriptRuntime::findConnections() {
 }
 
 void ScriptRuntime::runTick() {
+    // The tick probe's laps (script_runtime.h): each adds the time since the last
+    // lap to one part of the row. Nothing when no clock is set.
+    uint64_t probeMark = probeClock != nullptr ? probeClock() : 0;
+    const auto probeLap = [&](uint64_t* part) {
+        if (probeClock != nullptr) {
+            const uint64_t now = probeClock();
+            *part += now - probeMark;
+            probeMark = now;
+        }
+    };
     // The C# copies Kurt's live feet and yaw into the script runtime at the
     // start of every tick (ScriptRuntime.cs:886-889). A bound Player is the
     // live source; with no Player, the level-start state remains in place.
@@ -802,8 +858,10 @@ void ScriptRuntime::runTick() {
     // oracle's own order is `CheckTriggers(); UpdateArenas();` (:934-935), so the arena a
     // trigger box shows or preloads belongs to THIS tick's pin, while a door or an arena_show
     // that runs in the object loop below belongs to the next one's.
+    probeLap(&probeNow_.head);
     checkTriggers();
     updateDrawnArenas();
+    probeLap(&probeNow_.triggers);
     // KurtTouchesGroups (ScriptRuntime.cs:936), after UpdateArenas and before
     // Rides.Update and CollectPickups (package #3).
     kurtTouchesGroups();
@@ -838,6 +896,7 @@ void ScriptRuntime::runTick() {
     if (kurt().firing()) {
         fireChainGun();
     }
+    probeLap(&probeNow_.kurtSide);
 
     // Items.UpdateTwisters (ScriptRuntime.cs:952), then Effects.Update(1f),
     // Fans.Update(), Debris.Update(1f) (ScriptRuntime.cs:953-955): the twisters,
@@ -860,6 +919,7 @@ void ScriptRuntime::runTick() {
     }
     // UpdateSniperTarget (ScriptRuntime.cs:959): the scope's lock and zoom limit.
     updateSniperTarget();
+    probeLap(&probeNow_.systems);
 
     // Only Kurt's arena and the active second one update. On the first tick
     // nothing has spawned yet, so this loop is empty; the controller below is
@@ -886,7 +946,13 @@ void ScriptRuntime::runTick() {
         // platform carry below moves Kurt by the difference (package #3).
         const Vec3 carriedFrom = obj->position;
         const float carriedYaw = obj->yaw;
+        uint64_t probeObject = 0;
+        if (probeClock != nullptr) {
+            vm_.probeReset();
+            probeObject = probeClock();
+        }
         vm_.run(obj);
+        const uint64_t probeScript = probeClock != nullptr ? probeClock() : 0;
         // ObjectMotion.Update (ScriptRuntime.cs:976-979: `if (!obj.Dead) Motion.Update(obj)`),
         // shared with the cutscene tick (motionUpdate below).
         if (!obj->dead) {
@@ -896,9 +962,36 @@ void ScriptRuntime::runTick() {
         // after Motion.Update), for an effect too. Where motionUpdate returned early the
         // object is dead (a removed thrown item, a cow on its fuse), which the carry skips.
         carryKurt(obj, carriedFrom, carriedYaw);
+        if (probeClock != nullptr) {
+            const uint64_t now = probeClock();
+            probeNow_.objectsRun++;
+            if (now - probeObject > probeNow_.slowVm + probeNow_.slowMotion) {
+                probeName(probeNow_.slowType, obj->type_name);
+                probeNow_.slowVm = probeScript - probeObject;
+                probeNow_.slowMotion = now - probeScript;
+                probeNow_.slowOps = vm_.probeOps;
+                probeNow_.slowOpcode = vm_.probeOpcode;
+                probeNow_.slowOpcodeTime = vm_.probeOpcodeTime;
+            }
+        }
     }
+    probeLap(&probeNow_.objects);
 
+    if (probeClock != nullptr) {
+        vm_.probeReset();
+    }
     runControllers();
+    probeLap(&probeNow_.controllers);
+    // The controllers are one candidate for the slowest, typed "@ctl".
+    if (probeClock != nullptr &&
+        probeNow_.controllers > probeNow_.slowVm + probeNow_.slowMotion) {
+        probeName(probeNow_.slowType, "@ctl");
+        probeNow_.slowVm = probeNow_.controllers;
+        probeNow_.slowMotion = 0;
+        probeNow_.slowOps = vm_.probeOps;
+        probeNow_.slowOpcode = vm_.probeOpcode;
+        probeNow_.slowOpcodeTime = vm_.probeOpcodeTime;
+    }
 }
 
 // C# ObjectMotion.Update, as RunTick's object loop and CutsceneTick (ScriptRuntime.cs:1398-1402)
@@ -1458,10 +1551,12 @@ void ScriptRuntime::spawnDtiAliens(const std::string& arena) {
 
 MdkObject* ScriptRuntime::spawn(MdkObject* parent, const std::string& type, const Vec3& position,
                                 float yaw, int32_t instance, int32_t script, bool flagged) {
+    const uint64_t probeStart = probeClock != nullptr ? probeClock() : 0;
     const Model* model = findModel(parent->arena, type);
     if (model == nullptr) {
         return nullptr;
     }
+    const uint64_t probeModel = probeClock != nullptr ? probeClock() - probeStart : 0;
 
     MdkObject obj;
     obj.arena = parent->arena;
@@ -1495,6 +1590,18 @@ MdkObject* ScriptRuntime::spawn(MdkObject* parent, const std::string& type, cons
     }
 
     created->restart = script;
+    // The tick probe: spawns counted and timed (a spawn inside a spawn's init
+    // script counts in both).
+    if (probeClock != nullptr) {
+        const uint64_t spent = probeClock() - probeStart;
+        probeNow_.spawns++;
+        probeNow_.spawnTime += spent;
+        if (spent > probeNow_.spawnSlow) {
+            probeName(probeNow_.spawnType, type);
+            probeNow_.spawnSlow = spent;
+            probeNow_.spawnModel = probeModel;
+        }
+    }
     return created;
 }
 

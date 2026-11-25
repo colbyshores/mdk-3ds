@@ -154,6 +154,47 @@ public:
     // which is what transform_at(1.0f) gives.
     float tick_blend(float ahead) const;
 
+    // ---- THE TICK PROBE (a profile build's attribution; nothing reads it) ----
+    // A frontend's profile build sets probeClock to its tick counter. Null -- every
+    // other build and every test -- measures nothing: one pointer test a tick, an
+    // object and a spawn. The probe never logs: it keeps the slowest kProbeRows
+    // ticks in fixed storage and the frontend says them at exit, because an SD log
+    // line inside the measured frames costs more than most of what it would name.
+    // Times are in the clock's own units; the frontend converts them.
+    typedef uint64_t (*ProbeClock)();
+    static const int32_t kProbeRows = 40;
+    static const int32_t kProbeName = 12;
+    struct ProbeRow {
+        int32_t frame = 0;          // probeFrame when the tick ran (the frontend's frame)
+        int32_t tick = 0;           // tickCount_ of the tick
+        uint64_t total = 0;         // the tick, remember() included
+        // The tick's parts, in runTick's order: remember + head (arena change,
+        // showArena), triggers + drawn arenas, touches + rides + pickups + chain gun,
+        // the systems (twisters, effects, fans, debris, rounds, strike, end, scope),
+        // the object loop, the controllers.
+        uint64_t remember = 0, head = 0, triggers = 0, kurtSide = 0, systems = 0,
+                 objects = 0, controllers = 0;
+        int32_t objectsRun = 0;     // objects whose script ran this tick
+        // The slowest object of the loop (or the controller, typed "@ctl"), its
+        // script and motion halves, its opcode count, and the slowest opcode it
+        // executed (a spawn's init script counts inside its spawn opcode).
+        char slowType[kProbeName] = {};
+        uint64_t slowVm = 0, slowMotion = 0;
+        int32_t slowOps = 0;
+        int32_t slowOpcode = -1;
+        uint64_t slowOpcodeTime = 0;
+        // Spawns in the tick: how many, their total, the slowest one's type, its
+        // whole time and its model lookup (findModel: a first spawn parses the model).
+        int32_t spawns = 0;
+        uint64_t spawnTime = 0;
+        char spawnType[kProbeName] = {};
+        uint64_t spawnSlow = 0, spawnModel = 0;
+    };
+    ProbeClock probeClock = nullptr;
+    int32_t probeFrame = 0;
+    ProbeRow probeRows[kProbeRows];
+    int32_t probeRowCount = 0;
+
     // ---- The seam the VM calls ----
     Random& rng() { return rng_; }
     const std::deque<MdkObject>& objects() const { return objects_; }
@@ -1387,6 +1428,10 @@ private:
     void motionUpdate(MdkObject* obj);
     bool gameFinished_ = false;           // the C#'s GameFinished, latched
     int32_t tickCount_ = 0;
+    // The tick probe's row being filled (probeClock set) and the step that keeps it
+    // when it is among the slowest kProbeRows.
+    ProbeRow probeNow_;
+    void probeKeep();
     float tickAccumulator_ = 0.0f;  // C# ScriptRuntime._time
     // spawn_box (hazards.cpp): C# _boxModels and _boxes. A deque so a model's address
     // (the pose caches' key, MdkObject::model) never moves; the keys are parallel.

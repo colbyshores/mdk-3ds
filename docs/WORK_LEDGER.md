@@ -1071,3 +1071,73 @@ zero-fill nor a per-frame warm cap was changed.
 **Still open:** the activation frame 791 (draw 44 ms, the second arena's first
 draw); the mesh step (8.4 ms at frame 801); the object warm's per-model parse
 of a CMI model (X_STRIKB 5-6 ms).
+
+### SCRIPT TICKS ATTRIBUTED (2026-11-24): the slow steps were XG's animation bakes
+
+**What.** A PROFILE-only tick probe in ScriptRuntime (script_runtime.h
+`probeClock`/`probeRows`): with a clock set, each 1/30 s tick is split into its
+parts (remember, head, triggers, Kurt's side, systems, objects, controllers),
+the slowest object is named with its script and motion halves, its opcode count
+and its slowest opcode (ScriptVm times each opcode), and spawns are counted with
+the slowest one's model lookup. The slowest 40 ticks are kept in fixed storage
+and main_3ds.cpp says them as `scripttick:` lines at the level's teardown (no SD
+line in the measured frames). Null clock (every other build, every test) costs
+one pointer test a tick, an object and a spawn. The Linux frontend reproduced
+the same five slow ticks headless (`--fixed-step --level=7 --walk=... --unlock=...`,
+x86 ratio ~130-190x); that host wiring was a throwaway and is not in the tree.
+
+**Measured (Old 3DS model 0, 268 MHz, L2 off, stereo; L7 FIXED walk;
+.git/hw-logs/2026-11-24-script1.log):** frames 493/621/665/691 were XG's
+OBJECT MOTION (13.5/18.6/12.6/56.5 ms of 15.8/21.4/17.2/60.6 ms ticks): the
+footing sweep's poseBounds -> pose_parts() baking a whole CMI animation at its
+first use (CMI_bf029 22 frames, CMI_b3351 33, CMI_b0a19 18, CMI_e028d 101; 23
+parts, 135 vertices). The bake's cost was ~2300 frame-part vectors made, copied
+twice and freed for the 101-frame one, not the arithmetic. Frame 649 is three
+XF explosions (XF's set_health 0 -> kill -> explode 6.5 ms, the first one
+parsing XFD's debris model); frame 433 is the XG spawn's model parse (4.7 ms of a
+6.1 ms spawn opcode). Probe overhead: none measurable (script3 p99 39.6 with it,
+script4 39.9 without, same code).
+
+### POSE BAKE ONE FRAME AT A TIME (2026-11-24): kept
+
+**What.** ModelAnimation's tracks decode into one buffer per part
+(`DecodedTrack`) and resume where they stopped (`beginTracks`/`decodeTo`/
+`bakeFrame`); bake() is every bakeFrame in order. scripts/pose_cache.cpp keeps
+per (model, animation) the tracks and a frameCount-sized frame table, and makes
+a frame (decoding only as far as it) the first time pose_parts() asks for it;
+the tracks are dropped once every frame is built. The C# bakes the whole
+animation at first use; the frames are the same bytes.
+
+**Attempts (hardware A/B against script1, same probe build):**
+- v1, whole decode into flat buffers at first use, frames made on demand
+  (script2): 691 60.6 -> 12.1 ms (motion 56.5 -> 8.0, the decode), 493 15.8 ->
+  4.5, 621 21.4 -> 5.8, 665 17.2 -> 6.3; p99 46.5 -> 41.8; >33.3 147 -> 139.
+  Superseded by v2 (the remaining 8 ms was decoding 101 frames nobody needed).
+- v2, the decode resumes per frame (script3): 691 4.7 ms (motion 0.77), 493
+  3.25, 621 3.7, 665 5.3; frame-692 spike (91.4 ms) gone; p99 46.5 -> 39.6;
+  >33.3 147 -> 135; mean 18.645 -> 18.570.
+
+**Result without the probe (script4 vs sim2, both no-probe builds):** p99 42.7
+-> 39.9; >33.3 145 -> 135; mean 18.611 -> 18.559; scriptstep >10 ms lines
+493/621/649/665/691 -> 649 only; the 107 ms frame 692 gone. (script1-4 also
+carry the coordinator's mdk_render_mark_canvas change; sim2 does not. The clean
+A/B is script1 -> script3.)
+
+**Parity.** Old whole bake vs new bake, every arena animation x every arena
+model of levels 3-8: 9128 pairs, 470,531 frames, 0 differing (a scratch build of
+the pre-change model_animation.cpp beside the new one; three mutations of the new
+decoder turned it red: 294 / 721 / 125 pairs). New test
+PoseCacheBuildsEachFrameAsTheWholeBake (tests/formats): 721 animated pairs asked
+0,1,3,2,last then last..0 against bake(), reference stability, clamps; red under
+a shifted-frame mutation (33969 failures), an early track drop (36906) and a
+clamp change (683). StreamedArenasBakeExactlyAsTheWholeFile still 721 pairs.
+tests/scripts: vm_tests "All VM unit tests match the oracle", tick1 "All cases
+match the oracle", level_chain/harness_aids/stream_screen/fall/menu PASS;
+c3d_frame 148/157 and main_3ds_flow's 50 FAIL lines identical to the baseline.
+
+**Still open (measured, not changed):** frame 649's explosions (12.4 ms: three
+explode() calls, the first parsing XFD); first-spawn model parses (XG 4.7 ms at
+433, SW_KEY/SW_CHUTE/SW_H25 0.5-0.7 ms) -- prewarming them would keep every CMI
+model resident, which object_view.cpp's warm deliberately does not; findModel
+copies the parsed Model into its cache (~10% of a parse on the host) -- a move
+would be too small to measure.

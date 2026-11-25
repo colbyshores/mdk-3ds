@@ -26,6 +26,8 @@
 
 #include "scripts/pose_cache.h"
 
+#include <stdint.h>
+
 #include <map>
 #include <utility>
 #include <vector>
@@ -46,21 +48,74 @@ typedef std::vector<std::vector<mdk::formats::Vec3f> > ObjectPose;
 // data. Single-threaded: the C#'s lock guards its parallel test runner, and the
 // port ticks one world at a time.
 std::map<const mdk::formats::Model*, ObjectPose> g_restPoses;
+
+// One (model, animation) pair's bake, BUILT A FRAME AT A TIME. The C# bakes the
+// whole animation at its first use; the port decodes each part's track only as
+// far as the frames asked for (ModelAnimation::decodeTo, into one buffer per
+// part) and makes a frame's part lists only when that frame is first asked for.
+// Measured on the Old 3DS (L7 walk, 2026-11-24): the whole bake of XG's
+// 101-frame CMI_e028d was 56.5 ms of one step's object motion -- ~2300
+// frame-part vectors made, copied twice and freed -- for an object that stood
+// in its frame 0 that tick. A frame built alone is the same frame
+// (ModelAnimation::bakeFrame is what bake() runs per frame).
+//
+// THE TRACKS READ THE ANIMATION'S BYTES AFTER THE FIRST ASK, where the whole
+// bake read them once. The bytes live as long as the animation (the CMI's for a
+// script animation, the parsed arena's for an arena one -- both until the
+// level goes), and the caches are dropped with the level (pose_cache.h), so an
+// entry never outlives the animation it decodes.
+//
+// `frames` is sized once, at frameCount, and never resized, so the reference
+// pose_parts() hands out stays valid as later frames are built. The tracks are
+// dropped once every frame is built.
+struct BakedAnimation {
+    std::vector<mdk::formats::ModelAnimation::DecodedTrack> tracks;
+    std::vector<ObjectPose> frames;
+    std::vector<uint8_t> built;
+    int32_t builtCount = 0;
+};
 std::map<std::pair<const mdk::formats::Model*, const mdk::formats::ModelAnimation*>,
-         std::vector<ObjectPose> > g_baked;
+         BakedAnimation> g_baked;
 const ObjectPose g_noPose;
 
-const std::vector<ObjectPose>& baked(const mdk::formats::Model* model,
-                                     const mdk::formats::ModelAnimation* animation)
+// The frame `frame` of the pair's bake, clamped into the animation as the C#'s
+// index cannot leave it; g_noPose for an animation with no frames.
+const ObjectPose& bakedFrame(const mdk::formats::Model* model,
+                             const mdk::formats::ModelAnimation* animation, int32_t frame)
 {
     const std::pair<const mdk::formats::Model*, const mdk::formats::ModelAnimation*> key(model, animation);
-    std::map<decltype(key), std::vector<ObjectPose> >::iterator found = g_baked.find(key);
-    if (found != g_baked.end()) {
-        return found->second;
+    std::map<decltype(key), BakedAnimation>::iterator found = g_baked.find(key);
+    if (found == g_baked.end()) {
+        found = g_baked.emplace(key, BakedAnimation()).first;
+        BakedAnimation& made = found->second;
+        const int32_t count = animation->frameCount > 0 ? animation->frameCount : 0;
+        made.tracks = animation->beginTracks(*model);
+        made.frames.resize((size_t)count);
+        made.built.assign((size_t)count, 0);
     }
-    // The C# bakes the whole animation once per (model, animation) and keeps
-    // every frame, so nothing is baked while the game plays.
-    return g_baked.emplace(key, animation->bake(*model)).first->second;
+    BakedAnimation& baked = found->second;
+    if (baked.frames.empty()) {
+        return g_noPose;
+    }
+    // The C# indexes with AnimationFrame and would throw out of range; the
+    // clamp is the same guard ScriptRuntime::poseBounds already uses, and it
+    // cannot be reached from a real animation (the frame counter is taken
+    // modulo the frame count).
+    if (frame < 0) {
+        frame = 0;
+    }
+    if (frame >= static_cast<int32_t>(baked.frames.size())) {
+        frame = static_cast<int32_t>(baked.frames.size()) - 1;
+    }
+    if (baked.built[(size_t)frame] == 0) {
+        animation->bakeFrame(*model, &baked.tracks, frame, &baked.frames[(size_t)frame]);
+        baked.built[(size_t)frame] = 1;
+        baked.builtCount++;
+        if (baked.builtCount == static_cast<int32_t>(baked.frames.size())) {
+            std::vector<mdk::formats::ModelAnimation::DecodedTrack>().swap(baked.tracks);
+        }
+    }
+    return baked.frames[(size_t)frame];
 }
 
 } // namespace
@@ -76,22 +131,7 @@ const std::vector<std::vector<mdk::formats::Vec3f> >& mdk::scripts::MdkObject::p
         }
         return g_restPoses.emplace(model, model->restPose()).first->second;
     }
-    const std::vector<ObjectPose>& frames = baked(model, animation);
-    if (frames.empty()) {
-        return g_noPose;
-    }
-    // The C# indexes with AnimationFrame and would throw out of range; the
-    // clamp is the same guard ScriptRuntime::poseBounds already uses, and it
-    // cannot be reached from a real animation (the frame counter is taken
-    // modulo the frame count).
-    int32_t frame = animation_frame;
-    if (frame < 0) {
-        frame = 0;
-    }
-    if (frame >= static_cast<int32_t>(frames.size())) {
-        frame = static_cast<int32_t>(frames.size()) - 1;
-    }
-    return frames[static_cast<size_t>(frame)];
+    return bakedFrame(model, animation, animation_frame);
 }
 
 void mdk::scripts::forgetPoseCaches() {

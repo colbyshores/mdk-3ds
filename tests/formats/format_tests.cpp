@@ -30,6 +30,8 @@
 #include "formats/mto.h"
 #include "formats/texture_archive.h"
 #include "game/level_data.h"
+#include "scripts/object.h"
+#include "scripts/pose_cache.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -367,6 +369,20 @@ MDK_TEST(MtoKeepsTheArenasItWasGiven) {
 }
 
 // Two bakes, frame by frame, part by part, vertex by vertex, bit for bit.
+static bool samePose(const std::vector<std::vector<Vec3f>>& a,
+                     const std::vector<std::vector<Vec3f>>& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t p = 0; p < a.size(); p++) {
+        if (a[p].size() != b[p].size() ||
+            (!a[p].empty() && memcmp(a[p].data(), b[p].data(), a[p].size() * sizeof(Vec3f)) != 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool sameBake(const std::vector<std::vector<std::vector<Vec3f>>>& a,
                      const std::vector<std::vector<std::vector<Vec3f>>>& b) {
     if (a.size() != b.size()) {
@@ -488,6 +504,80 @@ MDK_TEST(StreamedArenasBakeExactlyAsTheWholeFile) {
     }
     MDK_CHECK(pairs > 0);
     printf("  streamed arenas: %d (model, animation) pairs baked identically\n", (int)pairs);
+}
+
+// THE POSE CACHE BUILDS A FRAME AT A TIME (scripts/pose_cache.cpp, 2026-11-24): an
+// object's pose_parts() decodes each part's track only as far as the frame asked
+// for and makes only that frame, where it used to bake the whole animation at the
+// first ask (56.5 ms of one Old 3DS step for XG's 101-frame CMI_e028d). Every
+// (model, animation) pair of every arena of levels 3-8 -- each arena animation
+// against every model of the level it moves -- is asked in an order that makes
+// the decode resume (0, 1, 3, 2: frame 3 decodes past a frame not yet built), then
+// the last frame, then every frame from the last down; each must be exactly the
+// whole bake's frame. The first frame built must keep its address and bytes while
+// the rest are built (pose_parts hands out a reference), and the clamp must answer
+// frame 0 below the range and the last frame above it.
+MDK_TEST(PoseCacheBuildsEachFrameAsTheWholeBake) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    int32_t pairs = 0;
+    int64_t frames = 0;
+    for (int32_t number = 3; number <= 8; number++) {
+        mdk::LevelData level;
+        MDK_CHECK(mdk::LevelData::load(&level, &game, number));
+        for (size_t a = 0; a < level.arenas().size(); a++) {
+            const Arena* arena = level.arenas()[a];
+            for (int32_t i = 0; i < arena->animationCount(); i++) {
+                const ModelAnimation* animation = arena->animation(arena->animationName(i));
+                if (animation == nullptr || animation->frameCount <= 0) {
+                    continue;
+                }
+                for (size_t o = 0; o < level.arenas().size(); o++) {
+                    const Arena* owner = level.arenas()[o];
+                    for (int32_t m = 0; m < owner->modelCount(); m++) {
+                        const Model* model = owner->model(owner->modelName(m));
+                        if (model == nullptr || !animation->animates(*model)) {
+                            continue;
+                        }
+                        pairs++;
+                        const std::vector<std::vector<std::vector<Vec3f>>> whole = animation->bake(*model);
+                        const int32_t last = animation->frameCount - 1;
+                        mdk::scripts::MdkObject obj;
+                        obj.model = model;
+                        obj.animation = animation;
+                        obj.animation_frame = 0;
+                        const std::vector<std::vector<Vec3f>>* first = &obj.pose_parts();
+                        MDK_CHECK(samePose(*first, whole[0]));
+                        const int32_t opening[4] = {1, 3, 2, last};
+                        for (int32_t k = 0; k < 4; k++) {
+                            obj.animation_frame = opening[k] < last ? opening[k] : last;
+                            MDK_CHECK(samePose(obj.pose_parts(),
+                                               whole[(size_t)obj.animation_frame]));
+                        }
+                        for (int32_t f = last; f >= 0; f--) {
+                            obj.animation_frame = f;
+                            MDK_CHECK(samePose(obj.pose_parts(), whole[(size_t)f]));
+                            frames++;
+                        }
+                        obj.animation_frame = 0;
+                        MDK_CHECK(&obj.pose_parts() == first);
+                        MDK_CHECK(samePose(*first, whole[0]));
+                        obj.animation_frame = -3;
+                        MDK_CHECK(samePose(obj.pose_parts(), whole[0]));
+                        obj.animation_frame = last + 5;
+                        MDK_CHECK(samePose(obj.pose_parts(), whole[(size_t)last]));
+                    }
+                }
+            }
+        }
+        // The caches key on this level's addresses (scripts/pose_cache.h).
+        mdk::scripts::forgetPoseCaches();
+    }
+    MDK_CHECK(pairs > 0);
+    printf("  pose cache: %d (model, animation) pairs, %lld frames built one at a time "
+           "as the whole bake\n", (int)pairs, (long long)frames);
 }
 
 // A short range read is a failure, not a truncated success (AGENTS.md P5).

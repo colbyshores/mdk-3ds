@@ -180,6 +180,11 @@ uint64_t g_simT = 0, g_beginT = 0, g_drawT = 0, g_endT = 0, g_audioT = 0;
 uint64_t g_simSteps = 0;
 uint32_t g_spanFrames = 0;
 uint64_t g_playerT = 0, g_runtimeT = 0, g_cameraT = 0, g_solidT = 0;
+// The same four spans for the frame being run, summed over its steps, and the
+// last finished frame's copy: a spike line names which part of a slow sim it
+// was (player / scripts+stamps / camera / music+cutscene+solid).
+uint64_t g_framePlayerT = 0, g_frameRuntimeT = 0, g_frameCameraT = 0, g_frameSolidT = 0;
+uint64_t g_lastPlayerT = 0, g_lastRuntimeT = 0, g_lastCameraT = 0, g_lastSolidT = 0;
 
 // THE ARENA-ENTRY TABLE (harness_3ds.h, HarnessArenaFrame). Fixed storage: the
 // last kArenaBefore+1 frames in a ring, and the kept windows' rows in a flat
@@ -347,6 +352,15 @@ void harnessProfileFrame(double periodSeconds) {
                           (double)g_lastDrawT * usPerTick / 1000.0,
                           (double)g_lastEndT * usPerTick / 1000.0,
                           (double)g_lastAudioT * usPerTick / 1000.0);
+        if ((double)g_lastSimT * usPerTick > 20000.0) {
+            mdk::log3dsPrintf("profile: simsub frame %lu: player %.2f scripts+stamps %.2f "
+                              "camera %.2f music+cutscene+solid %.2f ms",
+                              (unsigned long)g_count,
+                              (double)g_lastPlayerT * usPerTick / 1000.0,
+                              (double)g_lastRuntimeT * usPerTick / 1000.0,
+                              (double)g_lastCameraT * usPerTick / 1000.0,
+                              (double)g_lastSolidT * usPerTick / 1000.0);
+        }
     }
     if (us > 500000u) {
         // The full breakdown, not just the length: these are the stalls the
@@ -438,6 +452,10 @@ void harnessProfileStepSpans(uint64_t playerTicks, uint64_t runtimeTicks,
     g_runtimeT += runtimeTicks;
     g_cameraT += cameraTicks;
     g_solidT += solidTicks;
+    g_framePlayerT += playerTicks;
+    g_frameRuntimeT += runtimeTicks;
+    g_frameCameraT += cameraTicks;
+    g_frameSolidT += solidTicks;
 #else
     (void)playerTicks; (void)runtimeTicks; (void)cameraTicks; (void)solidTicks;
 #endif
@@ -459,6 +477,11 @@ void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTic
     g_lastDrawT = drawTicks;
     g_lastEndT = endTicks;
     g_lastAudioT = audioTicks;
+    g_lastPlayerT = g_framePlayerT;
+    g_lastRuntimeT = g_frameRuntimeT;
+    g_lastCameraT = g_frameCameraT;
+    g_lastSolidT = g_frameSolidT;
+    g_framePlayerT = g_frameRuntimeT = g_frameCameraT = g_frameSolidT = 0;
 #else
     (void)simTicks; (void)simSteps; (void)beginTicks; (void)drawTicks; (void)endTicks;
     (void)audioTicks;

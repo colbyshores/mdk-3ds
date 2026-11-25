@@ -51,6 +51,14 @@ public:
     // The opcodes seen that this slice does not implement (opcode to count).
     const std::vector<std::pair<int32_t, int32_t>>& unimplemented() const { return unimplemented_; }
 
+    // The tick probe (ScriptRuntime::probeClock set): the slowest opcode executed
+    // since probeReset(), its time, and the opcodes run. Nested runs (a spawn's init
+    // script) count inside the opcode that started them.
+    void probeReset() { probeOpcode = -1; probeOpcodeTime = 0; probeOps = 0; }
+    int32_t probeOpcode = -1;
+    uint64_t probeOpcodeTime = 0;
+    int32_t probeOps = 0;
+
 private:
     // The value a handler returns to stop running this object this frame.
     static const int32_t kYield = -1;
