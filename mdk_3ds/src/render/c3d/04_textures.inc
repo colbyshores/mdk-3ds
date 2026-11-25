@@ -1288,6 +1288,16 @@ static uint8_t* hdUnpackWork(const uint8_t* bytes, uint32_t size, uint32_t* outS
     return copy;
 }
 
+// The HD budget NOW: kHdBudgetBytes, or less when the linear heap has less free
+// than kHdLinearReserveBytes above what the copies already hold -- the copies
+// grow into free memory and give way to everything else.
+static size_t hdBudgetNow(const RendererC3D* renderer) {
+    const size_t free = (size_t)linearSpaceFree();
+    const size_t room = free > kHdLinearReserveBytes ? free - kHdLinearReserveBytes : 0u;
+    const size_t budget = renderer->hdResidentBytes + room;
+    return budget < kHdBudgetBytes ? budget : kHdBudgetBytes;
+}
+
 // Frees one HD copy's texture. Only where the GPU cannot be reading it (P3): the
 // pump at the frame boundary (after C3D_FrameBegin's wait), or makeTexture's
 // fallback for a copy older than this frame's first draw (this frame's commands
@@ -1441,6 +1451,7 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         renderer->hdQueue.resize(kept);
     }
     const bool evictable = !renderer->hdQueue.empty() && hdHasEvictable(renderer, protectFrom);
+    const size_t budget = renderer->hdQueue.empty() ? kHdBudgetBytes : hdBudgetNow(renderer);
     while (!renderer->hdQueue.empty()) {
         // One slot stays free for Kurt's read and the menus' (kStreamSlots); the
         // orig pack's reads, handed out first this boundary, count against it.
@@ -1461,7 +1472,7 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         const size_t reading =
             (size_t)renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd);
         if (!mdk::pica::hdMayDispatch(renderer->hdResidentBytes, reading, kHdLargestBytes,
-                                      kHdBudgetBytes, demanded && evictable)) {
+                                      budget, demanded && evictable)) {
             break;
         }
         const int32_t id = renderer->hdQueue[pick];
@@ -1513,8 +1524,15 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         // re-ask -- asks for it again.
         const bool demanded = copy.lastUsed >= protectFrom;
         bool room = true;
-        while (renderer->hdResidentBytes + kHdLargestBytes > kHdBudgetBytes) {
+        while (renderer->hdResidentBytes + kHdLargestBytes > hdBudgetNow(renderer)) {
             if (!demanded || !evictHd(renderer, protectFrom, false)) {
+                // Nothing of the stream's own to give: a demanded copy takes the
+                // room of the least recently used texture the last frame did not
+                // draw (an original that stood in before the toggle went on is
+                // the first such), as its import would (the ladder below).
+                if (demanded && evictTextures(renderer, protectFrom)) {
+                    continue;
+                }
                 room = false;
                 break;
             }

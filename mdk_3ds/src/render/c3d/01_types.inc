@@ -115,11 +115,20 @@ struct GpuVertex {
 // RGBA4 round-trips 0 of the 926 textures exactly, because the palettes
 // are dithered ramps and 8->4 bits only round-trips multiples of 17. So
 // the 3DS spends its VRAM on colour fidelity.
-// THE HD BUDGET: the linear-heap bytes the HD replacements may hold at once.
-// Level 3's pack is 21.6 MB against ~14-16 MB free after a load
-// (docs/HD_TEXTURES_3DS_SPEC.md 4.1), and the original textures stay resident
-// beside it, so the HD layer gets a fixed share and streams within it.
-static constexpr size_t kHdBudgetBytes = 6u * 1024u * 1024u;
+// THE HD BUDGET: the linear-heap bytes the HD copies may hold at once -- a
+// CEILING, and below it whatever the linear heap has free above a reserve
+// (hdBudgetNow, 04_textures.inc). Under the HD rule (spec 3.1) a covered
+// surface's original is never made while the toggle is on, so the HD copies ARE
+// those surfaces' textures, and the fixed 6 MB share the copies had beside the
+// originals (level 3's pack is 21.6 MB against ~14-16 MB free after a load,
+// spec 4.1) left the heap the originals no longer use idle while the copies
+// evicted each other. The ceiling covers level 7's whole set (12.1 MB with its
+// chains); the reserve is kept for what is not an HD copy -- meshes, the
+// expansions of the uncovered textures, Kurt's frames, the glow -- which also
+// evict HD copies first when they find the heap full (makeTexture, the mesh
+// allocator).
+static constexpr size_t kHdBudgetBytes = 12u * 1024u * 1024u;
+static constexpr size_t kHdLinearReserveBytes = 2u * 1024u * 1024u;
 // How many .t3x a frame boundary imports at most. The read and the LZ
 // decompress are the reader thread's (04_textures.inc hdUnpackWork), so an
 // import is a copy into the linear heap -- ~1 ms, the uncompressed orig pack's
