@@ -1017,6 +1017,8 @@ struct RendererC3D {
     bool hdFreeOriginals = false;
     // Stamps (bullet holes) not drawn on an HD-only surface (05_resources.inc).
     int32_t hdStampsSkipped = 0;
+    // HD copies linked to a texture already made from SD (the HUD's pictures).
+    int32_t hdLinkedAfterSd = 0;
     int32_t hdTopCap = 0;
     int32_t hdPinFailed = 0;
     // The renderer's frame when the loading screen's wait ended

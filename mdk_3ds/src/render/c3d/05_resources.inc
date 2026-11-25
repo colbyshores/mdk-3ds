@@ -609,6 +609,12 @@ static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool c
         }
         renderer->hdCopies[(size_t)index].links++;
     }
+    // A picture linked after its standard-definition copy was made (the HUD's,
+    // at level load: hud_view.cpp makes the index texture, then hashes it to
+    // find its file) -- an SD load of a covered picture, counted for the proof.
+    if (texture.hdCopy != index && texture.valid && renderer->toggles.enableHdTextures) {
+        renderer->hdLinkedAfterSd++;
+    }
     texture.hdCopy = index;
     texture.hdCanvas = canvas;
     // A fresh link is a fresh chance for a copy that failed for a passing reason

@@ -4870,10 +4870,10 @@ int main(int argc, char** argv) {
                           (int)made.hdLateFramesMax, (int)made.hdLateWorstFrame,
                           made.hdLateWorst[0] ? made.hdLateWorst : "-", rows[0] ? rows : "-");
         mdk::log3dsPrintf("hdrule: set cap=%d pinned=%d resident=%d bytes=%u givenUp=%d "
-                          "stampsSkipped=%d",
+                          "stampsSkipped=%d linkedAfterSd=%d",
                           (int)made.hdTopCap, (int)made.hdPinned, (int)made.hdPinnedResident,
                           (unsigned)made.hdPinnedBytes, (int)made.hdPinFailed,
-                          (int)made.hdStampsSkipped);
+                          (int)made.hdStampsSkipped, (int)made.hdLinkedAfterSd);
 #ifdef MDK_AUTOQUIT
         // THE HARNESS GATE (spec 3.2): with the set on and resident, no surface
         // may have been late or blank and no covered surface may have been made

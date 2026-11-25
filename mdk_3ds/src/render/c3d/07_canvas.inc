@@ -345,4 +345,5 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     out->hdPinFailed = cr->hdPinFailed;
     out->hdTopCap = cr->hdTopCap;
     out->hdStampsSkipped = cr->hdStampsSkipped;
+    out->hdLinkedAfterSd = cr->hdLinkedAfterSd;
  }

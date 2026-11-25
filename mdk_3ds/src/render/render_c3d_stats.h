@@ -80,6 +80,9 @@ struct MdkC3dFirstUse {
     int32_t hdTopCap = 0;
     // Stamps (bullet holes) skipped on HD-only surfaces (the HD rule).
     int32_t hdStampsSkipped = 0;
+    // HD copies linked to a texture already made from its SD pixels (the HUD's
+    // pictures at level load, each also content-hashed by hud_view.cpp).
+    int32_t hdLinkedAfterSd = 0;
 };
 
 void mdk_render_c3d_first_use(MdkRenderer r, MdkC3dFirstUse* out);
