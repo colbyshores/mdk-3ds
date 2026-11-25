@@ -1,50 +1,52 @@
 # music_dsp_convert.py report: level name | source | loudness orig/mod (LUFS) | gain dB | peak after gain | .dsp bytes
 # median gain of the replaced tracks: +3.40 dB
-L3 AMB_DRIP     | 2ch 44100Hz 16b 92.81s | new (median gain) | +3.40 | 0.402 | 1697192 0914e97308117fe6
-L3 CORRIDOR     | 1ch 11025Hz 8b 2.77s | original | +0.00 | 0.995 | 50675 fd44e70bf13fae61
-L3 H1           | 2ch 44100Hz 16b 43.24s | replaced -18.3/-22.0, limited (-18.3 LUFS) | +3.70 | 0.950 | 790710 ecb287e8c6068999
-L3 H10          | 2ch 44100Hz 16b 61.73s | replaced -18.0/-21.5, limited (-18.0 LUFS) | +3.50 | 0.950 | 1128867 e84826b443dae193
-L3 H3           | 1ch 22000Hz 16b 11.62s | original, 2 samples clipped | +0.00 | 1.000 | 212661 8aece073a6ba5dbf
-L3 H4           | 2ch 44100Hz 16b 94.37s | replaced -27.5/-27.6 | +0.10 | 0.420 | 1725683 213a6c51d15734ef
-L3 H5           | 2ch 44100Hz 16b 107.78s | replaced -20.3/-19.5 | -0.80 | 0.783 | 1971007 9aa16a0cb0bfb7ea
-L3 H6           | 1ch 32000Hz 16b 5.80s | original | +0.00 | 0.460 | 106204 a9b158c97f06683a
-L3 H9WATER      | 2ch 44100Hz 16b 88.01s | new (median gain) | +3.40 | 0.582 | 1609366 61c15afce2b415f2
-L3 SIREN        | 1ch 32000Hz 16b 6.40s | original | +0.00 | 0.458 | 117087 1d5687bcef1d5936
-L4 BOND         | 2ch 44100Hz 16b 59.71s | replaced -13.6/-19.7, limited (-13.6 LUFS) | +6.30 | 0.950 | 1091930 3be67d15e248051b
-L4 CORRIDOR     | 2ch 44100Hz 16b 59.71s | replaced -13.6/-19.7, limited (-13.6 LUFS) | +6.30 | 0.950 | 1091930 3be67d15e248051b
-L4 SWIND        | 2ch 44100Hz 16b 92.41s | replaced -25.7/-23.7 | -2.00 | 0.301 | 1689909 1a439a3a118a783c
-L5 ARENA_1      | 2ch 44100Hz 16b 181.87s | replaced -23.1/-20.2 | -2.90 | 0.592 | 3325669 e0ebc482a0b72862
-L5 CORRIDOR     | 1ch 15000Hz 8b 2.67s | original | +0.00 | 0.414 | 49008 d0ffbeb423472d21
-L5 GHOST1       | 2ch 44100Hz 16b 109.21s | replaced -15.4/-20.3, limited (-15.5 LUFS) | +4.90 | 0.950 | 1997052 a7b4edb27d9f08c2
-L5 HUNT4        | 2ch 44100Hz 16b 117.44s | replaced -16.6/-18.6 | +2.00 | 0.997 | 2147530 0a5569bfffd4d11c
-L5 MISSB3       | 2ch 44100Hz 16b 104.68s | replaced -16.3/-18.5 | +2.20 | 0.941 | 1914252 99e328015b501262
-L5 RECALLQ      | 2ch 44100Hz 16b 39.20s | replaced -18.0/-21.6 | +3.60 | 0.998 | 716839 c7fb94316addd3dc
-L6 CORRIDOR     | 1ch 8000Hz 8b 7.64s | original, 3284 samples clipped | +0.00 | 1.000 | 139879 52ded99e03aa0968
-L6 DEEP_HUM     | 1ch 8000Hz 8b 20.01s | original | +0.00 | 0.763 | 366037 49446a0368cf751a
-L6 DUNE_M       | 2ch 44100Hz 16b 97.06s | replaced -19.6/-21.1, limited (-19.6 LUFS) | +1.50 | 0.950 | 1774840 040383f404b98b31
-L6 DUNE_M2      | 2ch 44100Hz 16b 95.95s | replaced -17.8/-21.2, limited (-17.8 LUFS) | +3.40 | 0.950 | 1754650 52fde2a3b7926b38
-L6 GNTMOD1      | 2ch 44100Hz 16b 105.06s | replaced -16.8/-21.7 | +4.90 | 0.960 | 1921135 fdde5f7fdb92be1c
-L6 MISSION      | 2ch 44100Hz 16b 115.93s | replaced -18.8/-22.0 | +3.20 | 0.952 | 2119891 a9a6f2cf9b6e095d
-L6 RECALL1      | 2ch 44100Hz 16b 41.32s | replaced -17.5/-22.8, limited (-17.5 LUFS) | +5.30 | 0.950 | 755586 fdb2459825fdb4d4
-L6 RECALLQ2     | 2ch 44100Hz 16b 77.47s | replaced -17.7/-22.3 | +4.60 | 0.790 | 1416613 0e6c698b88704280
-L6 ROCK_FS      | 2ch 44100Hz 16b 76.74s | replaced -19.3/-21.2, limited (-19.3 LUFS) | +1.90 | 0.950 | 1403388 ff4fbc1124b6263d
-L7 AMB02        | 2ch 44100Hz 16b 88.24s | replaced -19.8/-19.6 | -0.20 | 0.599 | 1613624 33d542c445271e6e
-L7 ARENA_1      | 1ch 11025Hz 16b 9.08s | original | +0.00 | 0.657 | 166207 9c951e1cc9eb2f6c
-L7 CORRIDOR     | 1ch 8000Hz 8b 2.56s | original | +0.00 | 0.774 | 46899 708a3aff44aaf422
-L7 MISS2        | 2ch 44100Hz 16b 99.30s | replaced -17.0/-18.6 | +1.60 | 0.968 | 1815854 c87bea41922398b1
-L7 MUSIC3       | 2ch 44100Hz 16b 110.20s | replaced -15.1/-22.0, limited (-15.2 LUFS) | +6.90 | 0.950 | 2015158 152dede86b069e82
-L7 TRACK1       | 2ch 44100Hz 16b 117.42s | replaced -17.5/-23.6, limited (-17.5 LUFS) | +6.10 | 0.950 | 2147188 4327f0e85779064e
-L7 TRACK11      | 2ch 44100Hz 16b 181.99s | replaced -18.8/-22.1 | +3.30 | 0.971 | 3327853 2dac0e7cc6faae52
-L7 TRACK12      | 2ch 44100Hz 16b 127.37s | new (median gain), limited (-19.1 LUFS) | +3.40 | 0.950 | 2329103 0c696c6e21cc940a
-L7 TRACK15      | 2ch 44100Hz 16b 117.22s | replaced -17.0/-21.1, limited (-17.0 LUFS) | +4.10 | 0.950 | 2143599 4b4dad4a87702b13
-L7 TRACK9       | 2ch 44100Hz 16b 76.74s | replaced -19.3/-21.2, limited (-19.3 LUFS) | +1.90 | 0.950 | 1403388 ff4fbc1124b6263d
-L8 CORRIDOR     | 1ch 11000Hz 8b 2.88s | original | +0.00 | 0.346 | 52844 3b1a67c8b280329e
-L8 DUNE_M2      | 2ch 44100Hz 16b 95.95s | replaced -17.8/-21.2, limited (-17.8 LUFS) | +3.40 | 0.950 | 1754650 52fde2a3b7926b38
-L8 MISS2        | 2ch 44100Hz 16b 99.30s | replaced -17.0/-18.6 | +1.60 | 0.968 | 1815854 c87bea41922398b1
-L8 MISSB3       | 2ch 44100Hz 16b 104.68s | replaced -16.3/-18.5 | +2.20 | 0.941 | 1914252 99e328015b501262
-L8 MUSIC1       | 2ch 44100Hz 16b 127.37s | replaced -14.8/-22.5, limited (-14.9 LUFS) | +8.00 | 0.950 | 2329100 10f8a654d0cc9fc1
-L8 MUSIC3       | 2ch 44100Hz 16b 110.20s | replaced -15.1/-22.0, limited (-15.2 LUFS) | +6.90 | 0.950 | 2015158 152dede86b069e82
-L8 RECALL1      | 2ch 44100Hz 16b 117.42s | replaced -17.5/-23.6, limited (-17.5 LUFS) | +6.10 | 0.950 | 2147188 4327f0e85779064e
-L8 RECALLQ      | 2ch 44100Hz 16b 39.20s | replaced -18.0/-21.6 | +3.60 | 0.998 | 716839 c7fb94316addd3dc
-L8 TREK         | 2ch 44100Hz 16b 94.37s | replaced -27.5/-27.6 | +0.10 | 0.420 | 1725683 213a6c51d15734ef
-L8 TREK2        | 2ch 44100Hz 16b 77.91s | replaced -17.3/-20.4, limited (-17.3 LUFS) | +3.10 | 0.950 | 1424659 8e9dae00dd6bc7e7
+level3 AMB_DRIP     | 2ch 44100Hz 16b 92.81s | new (median gain) | +3.40 | 0.402 | 1697192 0914e97308117fe6
+level3 CORRIDOR     | 1ch 11025Hz 8b 2.77s | original | +0.00 | 0.995 | 50675 fd44e70bf13fae61
+level3 H1           | 2ch 44100Hz 16b 43.24s | replaced -18.3/-22.0, limited (-18.3 LUFS) | +3.70 | 0.950 | 790710 ecb287e8c6068999
+level3 H10          | 2ch 44100Hz 16b 61.73s | replaced -18.0/-21.5, limited (-18.0 LUFS) | +3.50 | 0.950 | 1128867 e84826b443dae193
+level3 H3           | 1ch 22000Hz 16b 11.62s | original, 2 samples clipped | +0.00 | 1.000 | 212661 8aece073a6ba5dbf
+level3 H4           | 2ch 44100Hz 16b 94.37s | replaced -27.5/-27.6 | +0.10 | 0.420 | 1725683 213a6c51d15734ef
+level3 H5           | 2ch 44100Hz 16b 107.78s | replaced -20.3/-19.5 | -0.80 | 0.783 | 1971007 9aa16a0cb0bfb7ea
+level3 H6           | 1ch 32000Hz 16b 5.80s | original | +0.00 | 0.460 | 106204 a9b158c97f06683a
+level3 H9WATER      | 2ch 44100Hz 16b 88.01s | new (median gain) | +3.40 | 0.582 | 1609366 61c15afce2b415f2
+level3 SIREN        | 1ch 32000Hz 16b 6.40s | original | +0.00 | 0.458 | 117087 1d5687bcef1d5936
+level4 BOND         | 2ch 44100Hz 16b 59.71s | replaced -13.6/-19.7, limited (-13.6 LUFS) | +6.30 | 0.950 | 1091930 3be67d15e248051b
+level4 CORRIDOR     | 2ch 44100Hz 16b 59.71s | replaced -13.6/-19.7, limited (-13.6 LUFS) | +6.30 | 0.950 | 1091930 3be67d15e248051b
+level4 SWIND        | 2ch 44100Hz 16b 92.41s | replaced -25.7/-23.7 | -2.00 | 0.301 | 1689909 1a439a3a118a783c
+level5 ARENA_1      | 2ch 44100Hz 16b 181.87s | replaced -23.1/-20.2 | -2.90 | 0.592 | 3325669 e0ebc482a0b72862
+level5 CORRIDOR     | 1ch 15000Hz 8b 2.67s | original | +0.00 | 0.414 | 49008 d0ffbeb423472d21
+level5 GHOST1       | 2ch 44100Hz 16b 109.21s | replaced -15.4/-20.3, limited (-15.5 LUFS) | +4.90 | 0.950 | 1997052 a7b4edb27d9f08c2
+level5 HUNT4        | 2ch 44100Hz 16b 117.44s | replaced -16.6/-18.6 | +2.00 | 0.997 | 2147530 0a5569bfffd4d11c
+level5 MISSB3       | 2ch 44100Hz 16b 104.68s | replaced -16.3/-18.5 | +2.20 | 0.941 | 1914252 99e328015b501262
+level5 RECALLQ      | 2ch 44100Hz 16b 39.20s | replaced -18.0/-21.6 | +3.60 | 0.998 | 716839 c7fb94316addd3dc
+level6 CORRIDOR     | 1ch 8000Hz 8b 7.64s | original, 3284 samples clipped | +0.00 | 1.000 | 139879 52ded99e03aa0968
+level6 DEEP_HUM     | 1ch 8000Hz 8b 20.01s | original | +0.00 | 0.763 | 366037 49446a0368cf751a
+level6 DUNE_M       | 2ch 44100Hz 16b 97.06s | replaced -19.6/-21.1, limited (-19.6 LUFS) | +1.50 | 0.950 | 1774840 040383f404b98b31
+level6 DUNE_M2      | 2ch 44100Hz 16b 95.95s | replaced -17.8/-21.2, limited (-17.8 LUFS) | +3.40 | 0.950 | 1754650 52fde2a3b7926b38
+level6 GNTMOD1      | 2ch 44100Hz 16b 105.06s | replaced -16.8/-21.7 | +4.90 | 0.960 | 1921135 fdde5f7fdb92be1c
+level6 MISSION      | 2ch 44100Hz 16b 115.93s | replaced -18.8/-22.0 | +3.20 | 0.952 | 2119891 a9a6f2cf9b6e095d
+level6 RECALL1      | 2ch 44100Hz 16b 41.32s | replaced -17.5/-22.8, limited (-17.5 LUFS) | +5.30 | 0.950 | 755586 fdb2459825fdb4d4
+level6 RECALLQ2     | 2ch 44100Hz 16b 77.47s | replaced -17.7/-22.3 | +4.60 | 0.790 | 1416613 0e6c698b88704280
+level6 ROCK_FS      | 2ch 44100Hz 16b 76.74s | replaced -19.3/-21.2, limited (-19.3 LUFS) | +1.90 | 0.950 | 1403388 ff4fbc1124b6263d
+level7 AMB02        | 2ch 44100Hz 16b 88.24s | replaced -19.8/-19.6 | -0.20 | 0.599 | 1613624 33d542c445271e6e
+level7 ARENA_1      | 1ch 11025Hz 16b 9.08s | original | +0.00 | 0.657 | 166207 9c951e1cc9eb2f6c
+level7 CORRIDOR     | 1ch 8000Hz 8b 2.56s | original | +0.00 | 0.774 | 46899 708a3aff44aaf422
+level7 MISS2        | 2ch 44100Hz 16b 99.30s | replaced -17.0/-18.6 | +1.60 | 0.968 | 1815854 c87bea41922398b1
+level7 MUSIC3       | 2ch 44100Hz 16b 110.20s | replaced -15.1/-22.0, limited (-15.2 LUFS) | +6.90 | 0.950 | 2015158 152dede86b069e82
+level7 TRACK1       | 2ch 44100Hz 16b 117.42s | replaced -17.5/-23.6, limited (-17.5 LUFS) | +6.10 | 0.950 | 2147188 4327f0e85779064e
+level7 TRACK11      | 2ch 44100Hz 16b 181.99s | replaced -18.8/-22.1 | +3.30 | 0.971 | 3327853 2dac0e7cc6faae52
+level7 TRACK12      | 2ch 44100Hz 16b 127.37s | new (median gain), limited (-19.1 LUFS) | +3.40 | 0.950 | 2329103 0c696c6e21cc940a
+level7 TRACK15      | 2ch 44100Hz 16b 117.22s | replaced -17.0/-21.1, limited (-17.0 LUFS) | +4.10 | 0.950 | 2143599 4b4dad4a87702b13
+level7 TRACK9       | 2ch 44100Hz 16b 76.74s | replaced -19.3/-21.2, limited (-19.3 LUFS) | +1.90 | 0.950 | 1403388 ff4fbc1124b6263d
+level8 CORRIDOR     | 1ch 11000Hz 8b 2.88s | original | +0.00 | 0.346 | 52844 3b1a67c8b280329e
+level8 DUNE_M2      | 2ch 44100Hz 16b 95.95s | replaced -17.8/-21.2, limited (-17.8 LUFS) | +3.40 | 0.950 | 1754650 52fde2a3b7926b38
+level8 MISS2        | 2ch 44100Hz 16b 99.30s | replaced -17.0/-18.6 | +1.60 | 0.968 | 1815854 c87bea41922398b1
+level8 MISSB3       | 2ch 44100Hz 16b 104.68s | replaced -16.3/-18.5 | +2.20 | 0.941 | 1914252 99e328015b501262
+level8 MUSIC1       | 2ch 44100Hz 16b 127.37s | replaced -14.8/-22.5, limited (-14.9 LUFS) | +8.00 | 0.950 | 2329100 10f8a654d0cc9fc1
+level8 MUSIC3       | 2ch 44100Hz 16b 110.20s | replaced -15.1/-22.0, limited (-15.2 LUFS) | +6.90 | 0.950 | 2015158 152dede86b069e82
+level8 RECALL1      | 2ch 44100Hz 16b 117.42s | replaced -17.5/-23.6, limited (-17.5 LUFS) | +6.10 | 0.950 | 2147188 4327f0e85779064e
+level8 RECALLQ      | 2ch 44100Hz 16b 39.20s | replaced -18.0/-21.6 | +3.60 | 0.998 | 716839 c7fb94316addd3dc
+level8 TREK         | 2ch 44100Hz 16b 94.37s | replaced -27.5/-27.6 | +0.10 | 0.420 | 1725683 213a6c51d15734ef
+level8 TREK2        | 2ch 44100Hz 16b 77.91s | replaced -17.3/-20.4, limited (-17.3 LUFS) | +3.10 | 0.950 | 1424659 8e9dae00dd6bc7e7
+menu   MAINSONG     | 2ch 44100Hz 16b 77.47s | replaced -15.4/-22.3, limited (-15.4 LUFS) | +6.90 | 0.950 | 1416613 936513401984f158
+menu   OPTSONG      | 1ch 11025Hz 8b 3.01s | original | +0.00 | 0.992 | 55099 61d45e8c2607a33c

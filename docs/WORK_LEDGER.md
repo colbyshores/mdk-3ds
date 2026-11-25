@@ -1995,4 +1995,19 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   another shape, zero-size and NaN-size sparks, halos measured late (pixels away at the
   entry's making), a cleared view, and the other arenas' palettes (identical on level 8).
   Non-vacuity: without the reset in `Piece::reset` it fails at s=100.
+## 2026-11-25 -- the main menu's songs as DSP-ADPCM (branch perf/3ds-memory)
+
+- **Owner's words (relayed):** the title screen needs its music -- MAINSONG on the main
+  menu, OPTSONG under the options -- behaving exactly as the game does; the soundtrack
+  mod where it replaces them, 32 kHz mono .dsp, committed, same converter and loudness.
+- **Verified first:** the C++ port never played either song (4d9264f3's main_menu.h
+  and menu_items.h list them as not ported; no frontend plays a menu song). The owner's
+  memory of title music is the C# build's, not this port's.
+- **What:** `music_dsp_convert.py` also converts the front end's two songs into
+  `mdk_3ds/music/menu/`: MAINSONG from MISC/OPTIONS.BNI (the soundtrack's 77.5 s
+  44.1 kHz stereo replaces the GOG 39 s 22 kHz 8-bit; loudness matched to the GOG
+  song, +6.9 dB through the limiter, 1,416,613 bytes) and OPTSONG from MISC/MDKSOUND.SNI
+  (the soundtrack has none: the original's 3 s loop, no gain, 55,099 bytes). The
+  levels' median gain ignores the menu, so every level track is byte-identical
+  (re-run checked: no level .dsp changed); CONVERT_REPORT's rows now name the folder.
 - **Commit:** this one.

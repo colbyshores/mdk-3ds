@@ -9,7 +9,8 @@
 #                     entry names). A level the soundtrack does not replace is
 #                     read from <original-dir>.
 #   <original-dir>    the GOG data (MDK/): the loudness reference.
-#   <out-dir>         mdk_3ds/music: levelN/<name>.dsp, lower case, committed.
+#   <out-dir>         mdk_3ds/music: levelN/<name>.dsp and menu/<name>.dsp (the
+#                     front end's MAINSONG and OPTSONG), lower case, committed.
 #
 # Run it with `python3 -I` (the soundtrack is downloaded data). It needs ffmpeg
 # (with soxr), numpy and a C compiler (for the vendored encoder, dspadpcm/).
@@ -160,6 +161,38 @@ def loudness(samples, work):
     return float(hits[-1]) if hits and hits[-1] != '-inf' else None
 
 
+def bni_wav(path, wanted):
+    """The RIFF WAV entry `wanted` of a BNI archive (u32 size, u32 count, then
+    12-byte names with u32 offsets from 4), or None."""
+    data = open(path, 'rb').read()
+    count = struct.unpack_from('<I', data, 4)[0]
+    at = 8
+    for _ in range(count):
+        name = data[at:at + 12].split(b'\0')[0].decode('latin1').upper()
+        offset = struct.unpack_from('<I', data, at + 12)[0] + 4
+        at += 16
+        if name == wanted and data[offset:offset + 4] == b'RIFF':
+            size = struct.unpack_from('<I', data, offset + 4)[0]
+            return data[offset:offset + 8 + size]
+    return None
+
+
+def menu_entries(root):
+    """{MAINSONG, OPTSONG: wav bytes} of a tree, where it has them."""
+    found = {}
+    bni = find_ci(root, 'MISC', 'OPTIONS.BNI')
+    if bni is not None:
+        wav = bni_wav(bni, 'MAINSONG')
+        if wav is not None:
+            found['MAINSONG'] = wav
+    sni = find_ci(root, 'MISC', 'MDKSOUND.SNI')
+    if sni is not None:
+        entries = sni_entries(sni)
+        if 'OPTSONG' in entries:
+            found['OPTSONG'] = entries['OPTSONG'][1]
+    return found
+
+
 def cmi_names(root, level):
     path = find_ci(root, 'TRAVERSE', 'LEVEL%d' % level, 'LEVEL%d.CMI' % level)
     return open(path, 'rb').read() if path else b''
@@ -220,7 +253,16 @@ def main():
             for name in sorted(mod):
                 if name != 'CORRIDOR' and name.encode('latin1') not in cmi:
                     continue
-                plan.append((level, name, mod[name], orig.get(name)))
+                plan.append(('level%d' % level, name, mod[name], orig.get(name)))
+        # THE FRONT END'S TWO SONGS (the main menu's MAINSONG in MISC/OPTIONS.BNI,
+        # the options' OPTSONG in MISC/MDKSOUND.SNI): what the original plays on
+        # the music bus before a level (C# MainMenu, MenuItems). The soundtrack
+        # replaces MAINSONG; OPTSONG is the original's.
+        menu_orig = menu_entries(orig_root)
+        menu_mod = dict(menu_orig)
+        menu_mod.update(menu_entries(mod_root))
+        for name in sorted(menu_mod):
+            plan.append(('menu', name, menu_mod[name], menu_orig.get(name)))
         # Pass 1: the gains of the replaced tracks.
         gains = {}
         signals = {}
@@ -231,7 +273,8 @@ def main():
                 lm = loudness(sig, work)
                 lo = loudness(decode_mono(orig_bytes, work), work)
                 gains[(level, name)] = (lo - lm, lo, lm)
-        replaced = sorted(g[0] for g in gains.values())
+        # The levels' replaced tracks only (the menu's MAINSONG does not move it).
+        replaced = sorted(g[0] for k, g in gains.items() if k[0] != 'menu')
         median = replaced[len(replaced) // 2] if replaced else 0.0
         # Pass 2: gain, peak, PCM16, encode.
         report = ['# music_dsp_convert.py report: level name | source | loudness orig/mod '
@@ -275,7 +318,7 @@ def main():
                 peak = float(np.max(np.abs(scaled)))
                 note += ', limited (%.1f LUFS)' % (loudness(scaled, work) or 0.0)
             pcm = np.clip(np.round(scaled * 32768.0), -32768, 32767)
-            folder = os.path.join(out_root, 'level%d' % level)
+            folder = os.path.join(out_root, level)
             os.makedirs(folder, exist_ok=True)
             wav = os.path.join(work, 'enc.wav')
             write_wav16(wav, pcm)
@@ -285,7 +328,7 @@ def main():
                 os.remove(out + '.wav')
             size = os.path.getsize(out)
             sha = hashlib.sha256(open(out, 'rb').read()).hexdigest()[:16]
-            report.append('L%d %-12s | %s | %s | %+.2f | %.3f | %d %s' %
+            report.append('%-6s %-12s | %s | %s | %+.2f | %.3f | %d %s' %
                           (level, name, describe(mod_bytes), note, gain_db, peak, size, sha))
             print(report[-1], flush=True)
         with open(os.path.join(out_root, 'CONVERT_REPORT.txt'), 'w') as f:
