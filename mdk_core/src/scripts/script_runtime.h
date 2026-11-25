@@ -743,6 +743,10 @@ public:
         formats::Box box;
     };
     std::vector<PartBox> partBounds(const MdkObject* obj);
+    // The same boxes into `out` (resized to the part count, its capacity kept):
+    // the per-tick callers (the platforms' footing and blocking scans, the
+    // hazards' touch) reuse one vector each instead of allocating per object.
+    void partBoundsInto(const MdkObject* obj, std::vector<PartBox>* out);
     // C# GetWorldBounds(obj, bounds): the worldBounds transform applied to a
     // caller-supplied box (a part's box) instead of the object's pose bounds.
     formats::Box worldBounds(const MdkObject* obj, const formats::Box& bounds);
@@ -1331,6 +1335,14 @@ private:
     // The chain followers of the last updateChain call (the C#'s _links list),
     // reused so the per-tick chain does not grow a container.
     std::vector<MdkObject*> chainLinks_;
+    // runTick's snapshot of the objects (the C#'s ListCopy), reused every tick
+    // so the tick does not allocate it; runTick is never re-entered.
+    std::vector<MdkObject*> tickObjects_;
+    // partBoundsInto's per-call-site scratch (each site reads its parts before
+    // anything could reach the same site again).
+    std::vector<PartBox> footingParts_;
+    std::vector<PartBox> blockingParts_;
+    std::vector<PartBox> hazardParts_;
 
     std::deque<MdkObject> objects_;
     // The removed (C# Objects.Remove) objects, still in their deque slots.

@@ -105,7 +105,8 @@ const std::vector<solids::Solid>& ScriptRuntime::solidsWithin(const formats::Box
             continue;
         }
 
-        const std::vector<PartBox> parts = partBounds(obj);
+        partBoundsInto(obj, &footingParts_);
+        const std::vector<PartBox>& parts = footingParts_;
         for (size_t i = 0; i < parts.size(); i++) {
             if (((obj->hidden_parts | obj->lock_parts) & (1 << i)) != 0 || !parts[i].valid) {
                 continue;
@@ -179,7 +180,8 @@ Vec3 ScriptRuntime::clipView(const Vec3& from, const Vec3& to) {
             (obj->flags & kBlocks) == 0 || (obj->flags & kIgnored) != 0) {
             continue;
         }
-        const std::vector<PartBox> parts = partBounds(obj);
+        partBoundsInto(obj, &blockingParts_);
+        const std::vector<PartBox>& parts = blockingParts_;
         for (size_t i = 0; i < parts.size(); i++) {
             if (!parts[i].valid) {
                 continue;

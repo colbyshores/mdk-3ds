@@ -924,7 +924,8 @@ void ScriptRuntime::runTick() {
     // Only Kurt's arena and the active second one update. On the first tick
     // nothing has spawned yet, so this loop is empty; the controller below is
     // what creates the level's objects.
-    std::vector<MdkObject*> snapshot;
+    std::vector<MdkObject*>& snapshot = tickObjects_;
+    snapshot.clear();
     for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
         snapshot.push_back(&(*it));
     }
@@ -3909,8 +3910,15 @@ formats::Box ScriptRuntime::worldBounds(const MdkObject* obj, const formats::Box
 // PartBounds has no HiddenParts filter; callers apply the hidden_parts bit.
 std::vector<ScriptRuntime::PartBox> ScriptRuntime::partBounds(const MdkObject* obj) {
     std::vector<PartBox> result;
+    partBoundsInto(obj, &result);
+    return result;
+}
+
+void ScriptRuntime::partBoundsInto(const MdkObject* obj, std::vector<PartBox>* out) {
+    std::vector<PartBox>& result = *out;
+    result.clear();
     if (obj->model == nullptr) {
-        return result;  // C# PartBounds returns [] with no model
+        return;  // C# PartBounds returns [] with no model
     }
     const std::vector<std::vector<Vec3f> >& pose = obj->pose_parts();
     result.resize(pose.size());
@@ -3934,7 +3942,6 @@ std::vector<ScriptRuntime::PartBox> ScriptRuntime::partBounds(const MdkObject* o
         result[i].box.min = mn;
         result[i].box.max = mx;
     }
-    return result;
 }
 
 // IsWeakPart: the part name's character at weak_prefix_length is an ASCII digit and

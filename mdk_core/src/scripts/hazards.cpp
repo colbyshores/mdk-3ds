@@ -83,7 +83,8 @@ bool ScriptRuntime::touchDamage(MdkObject* obj, int32_t targets, int32_t damage,
         const formats::Box kurtBounds = kurtBox();
         if (touchIntersect(box, kurtBounds)) {
             // Once per visible part touching him.
-            const std::vector<PartBox> parts = partBounds(obj);
+            partBoundsInto(obj, &hazardParts_);
+            const std::vector<PartBox>& parts = hazardParts_;
             for (size_t i = 0; i < parts.size(); i++) {
                 if ((obj->hidden_parts & (1 << (i & 31))) != 0 || !parts[i].valid ||
                     !touchIntersect(worldBounds(obj, parts[i].box), kurtBounds)) {
