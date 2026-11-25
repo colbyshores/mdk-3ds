@@ -50,6 +50,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <memory>
@@ -2684,6 +2685,9 @@ int main(int argc, char** argv) {
                           (int)state.hdPinFailed, (int)made, (nowSeconds() - hold0) * 1000.0,
                           (unsigned)linearSpaceFree());
     };
+    // The last level's copies are given back first, so the heap read below is
+    // this level's (mdk_render_pin_hd_set frees what nothing links any more).
+    mdk_render_pin_hd_set(renderer, nullptr, nullptr, 0);
     if (hdSource.pack && hdSource.byname) {
         static const uint32_t kHdPlayReserve = 7u * 1024u * 1024u;
         std::set<std::string> unique;
@@ -2692,36 +2696,79 @@ int main(int argc, char** argv) {
              it != origByName.hdPaths.end(); ++it) {
             unique.insert(it->second);
         }
+        // Each file's bytes at the three caps, in the set's (sorted) order.
+        hdSetPaths.assign(unique.begin(), unique.end());
+        std::vector<uint32_t> at512(hdSetPaths.size()), at256(hdSetPaths.size()),
+            at128(hdSetPaths.size());
         uint32_t bytes512 = 0;
         uint32_t bytes256 = 0;
+        uint32_t bytes128 = 0;
         int32_t unsized = 0;
-        for (std::set<std::string>::const_iterator it = unique.begin(); it != unique.end(); ++it) {
-            const std::map<std::string, uint32_t>::const_iterator shape = hdShapes.find(*it);
+        for (size_t f = 0; f < hdSetPaths.size(); f++) {
+            const std::map<std::string, uint32_t>::const_iterator shape =
+                hdShapes.find(hdSetPaths[f]);
             if (shape == hdShapes.end()) {
                 unsized++;
                 continue;
             }
-            bytes512 += hdChainBytes(shape->second, 0);
-            bytes256 += hdChainBytes(shape->second, 256);
+            at512[f] = hdChainBytes(shape->second, 0);
+            at256[f] = hdChainBytes(shape->second, 256);
+            at128[f] = hdChainBytes(shape->second, 128);
+            bytes512 += at512[f];
+            bytes256 += at256[f];
+            bytes128 += at128[f];
         }
         const uint32_t freeNow = (uint32_t)linearSpaceFree();
         const uint32_t room = freeNow > kHdPlayReserve ? freeNow - kHdPlayReserve : 0u;
-        hdSetCap = bytes512 <= room ? 512 : (bytes256 <= room ? 256 : 0);
-        mdk::log3dsPrintf("hd: level %d set %d files: %u bytes at 512, %u at 256 (%d unsized); "
-                          "linear free %u, room %u above the %u reserve: %s",
+        // The tier. 512 or 256 for the whole set when it fits; else the set at
+        // 256 with the files that save the most taken down to 128, one at a
+        // time, until it fits (the level's largest textures lose a level, the
+        // rest keep 256); else the stream per surface.
+        std::vector<int32_t> caps(hdSetPaths.size(), 0);
+        int32_t at128Count = 0;
+        uint32_t total = bytes512;
+        if (unsized == 0 && bytes512 <= room) {
+            hdSetCap = 512;
+        } else if (unsized == 0 && bytes256 <= room) {
+            hdSetCap = 256;
+            std::fill(caps.begin(), caps.end(), 256);
+            total = bytes256;
+        } else if (unsized == 0 && bytes128 <= room) {
+            hdSetCap = 128;
+            std::fill(caps.begin(), caps.end(), 256);
+            total = bytes256;
+            std::vector<std::pair<uint32_t, size_t> > savings;
+            for (size_t f = 0; f < hdSetPaths.size(); f++) {
+                savings.push_back(std::make_pair(at256[f] - at128[f], f));
+            }
+            std::sort(savings.begin(), savings.end());
+            for (size_t k = savings.size(); k > 0 && total > room; k--) {
+                const size_t f = savings[k - 1].second;
+                total -= savings[k - 1].first;
+                caps[f] = 128;
+                at128Count++;
+            }
+        } else {
+            hdSetCap = 0;
+            hdSetPaths.clear();
+        }
+        mdk::log3dsPrintf("hd: level %d set %d files: %u bytes at 512, %u at 256, %u at 128 "
+                          "(%d unsized); linear free %u, room %u above the %u reserve: %s, "
+                          "%u bytes, %d files at 128",
                           (int)flow.state().level, (int)unique.size(), (unsigned)bytes512,
-                          (unsigned)bytes256, (int)unsized, (unsigned)freeNow, (unsigned)room,
-                          (unsigned)kHdPlayReserve,
+                          (unsigned)bytes256, (unsigned)bytes128, (int)unsized,
+                          (unsigned)freeNow, (unsigned)room, (unsigned)kHdPlayReserve,
                           hdSetCap == 512   ? "tier 512, the whole set"
                           : hdSetCap == 256 ? "tier 256, the whole set, levels over 256 dropped"
-                                            : "DOES NOT FIT: streamed per surface");
-        if (hdSetCap > 0 && unsized == 0) {
-            hdSetPaths.assign(unique.begin(), unique.end());
+                          : hdSetCap == 128 ? "tier 256/128, the largest files down to 128"
+                                            : "DOES NOT FIT: streamed per surface",
+                          (unsigned)(hdSetCap > 0 ? total : 0u), (int)at128Count);
+        if (hdSetCap > 0) {
             for (size_t p = 0; p < hdSetPaths.size(); p++) {
                 hdSetArgs.push_back(hdSetPaths[p].c_str());
             }
-            mdk_render_pin_hd_set(renderer, hdSetArgs.data(), (int32_t)hdSetArgs.size(),
-                                  hdSetCap == 512 ? 0 : hdSetCap);
+            mdk_render_pin_hd_set(renderer, hdSetArgs.data(), caps.data(),
+                                  (int32_t)hdSetArgs.size());
         }
     }
     std::map<std::string, uint32_t>().swap(hdShapes);
@@ -4815,6 +4862,22 @@ int main(int argc, char** argv) {
                           (int)made.hdTopCap, (int)made.hdPinned, (int)made.hdPinnedResident,
                           (unsigned)made.hdPinnedBytes, (int)made.hdPinFailed,
                           (int)made.hdStampsSkipped);
+#ifdef MDK_AUTOQUIT
+        // THE HARNESS GATE (spec 3.2): with the set on and resident, no surface
+        // may have been late or blank and no covered surface may have been made
+        // from SD -- a run that breaks it says FAIL in its log.
+        if (enhancedToggles.enableHdTextures && made.hdPinned > 0) {
+            const bool pass = made.hdLateTextures == 0 && made.hdBlankDraws == 0 &&
+                              made.hdCoveredSdMade == 0 && made.hdPinFailed == 0 &&
+                              surfaces.sourceStats().hdAnsweredSd == 0 && g_lookupHashes == 0;
+            mdk::log3dsPrintf("hdrule: gate %s (late %d, blank %d, covered SD %d, given up %d, "
+                              "answered SD %d, hashes %d)",
+                              pass ? "PASS" : "FAIL", (int)made.hdLateTextures,
+                              (int)made.hdBlankDraws, (int)made.hdCoveredSdMade,
+                              (int)made.hdPinFailed, (int)surfaces.sourceStats().hdAnsweredSd,
+                              (int)g_lookupHashes);
+        }
+#endif
         mdk::log3dsPrintf("hdrule: margin firsts=%d min=%d frames (at frame %d, %s) under30=%d",
                           (int)made.hdSlackFirsts, (int)made.hdSlackMin, (int)made.hdSlackMinFrame,
                           made.hdSlackWorst[0] ? made.hdSlackWorst : "-",
@@ -4827,7 +4890,7 @@ int main(int argc, char** argv) {
     }
     // The level's HD set goes with the level (its copies are nobody's from here
     // and the pump frees them).
-    mdk_render_pin_hd_set(renderer, nullptr, 0, 0);
+    mdk_render_pin_hd_set(renderer, nullptr, nullptr, 0);
     runtime.reset();
     // 3. The pose caches key on the runtime's Model addresses, which the reset just
     //    freed (scripts/pose_cache.h; the C#'s next Viewer calls ForgetPoses).

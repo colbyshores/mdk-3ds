@@ -440,6 +440,8 @@ struct HdCopy {
     // IN THE LEVEL'S RESIDENT SET (mdk_render_pin_hd_set): read on the loading
     // screen, never evicted, never freed as nobody's, while the set stands.
     bool pinned = false;
+    // The pinned copy's level cap (hdUnpack: 0 none, 256, 128), the set's choice.
+    int32_t topCap = 0;
 };
 
 // One queue record resolved for the frame (STEREO-REPLAY analogue,
@@ -1006,8 +1008,9 @@ struct RendererC3D {
     int32_t hdLateRows[8][2] = {};
     // THE LEVEL'S RESIDENT HD SET (mdk_render_pin_hd_set, spec 3.2): while
     // hdPinnedMode, an HD-only texture is drawn only from a pinned copy, the set
-    // is read on the loading screen with its levels over hdTopCap dropped
-    // (hdUnpack; 0: none), and no copy of it is evicted in play.
+    // is read on the loading screen with each copy's levels over its topCap
+    // dropped (hdUnpack), and no copy of it is evicted in play. hdTopCap: the
+    // smallest cap in the set, for the log (0: none dropped).
     bool hdPinnedMode = false;
     // Stamps (bullet holes) not drawn on an HD-only surface (05_resources.inc).
     int32_t hdStampsSkipped = 0;

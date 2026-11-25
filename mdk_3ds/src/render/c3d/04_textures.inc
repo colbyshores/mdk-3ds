@@ -1354,7 +1354,7 @@ static uint8_t* hdUnpackWork(const uint8_t* bytes, uint32_t size, uint32_t* outS
     return hdUnpack(bytes, size, outSize, 0);
 }
 
-// The residency tiers' unpacks (RendererC3D::hdTopCap): the chain from the
+// The residency tiers' unpacks (HdCopy::topCap): the chain from the
 // level at or under 256, or 128, texels on its longer side.
 static uint8_t* hdUnpackWork256(const uint8_t* bytes, uint32_t size, uint32_t* outSize) {
     return hdUnpack(bytes, size, outSize, 256);
@@ -1576,9 +1576,9 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         const int32_t id = renderer->hdQueue[pick];
         HdCopy& copy = renderer->hdCopies[(size_t)id];
         const mdk::AsyncFileReader::Work work =
-            !copy.pinned || renderer->hdTopCap <= 0
+            !copy.pinned || copy.topCap <= 0
                 ? hdUnpackWork
-                : (renderer->hdTopCap <= 128 ? hdUnpackWork128 : hdUnpackWork256);
+                : (copy.topCap <= 128 ? hdUnpackWork128 : hdUnpackWork256);
         if (!renderer->hdReader.requestFile(mdk::AsyncFileReader::kChannelHd, id,
                                             copy.path.c_str(), work)) {
             break;   // every slot is busy: this one waits in the queue
@@ -1963,8 +1963,8 @@ int32_t mdk_render_settle_streams(MdkRenderer rr, int32_t maxMs) {
 // (made for a file not yet seen), pinned and asked for; the copies of the old
 // set are unpinned (nobody's copies are then freed by the pump as before). With
 // `count` 0 the set is dropped and the stream is per-surface again.
-int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, int32_t count,
-                              int32_t topCap) {
+int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, const int32_t* caps,
+                              int32_t count) {
     RendererC3D* renderer = asC3d(rr);
     if (!renderer) {
         return 0;
@@ -1973,7 +1973,7 @@ int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, int32_t 
         renderer->hdCopies[i].pinned = false;
     }
     renderer->hdPinnedMode = false;
-    renderer->hdTopCap = topCap;
+    renderer->hdTopCap = 0;
     int32_t pinned = 0;
     for (int32_t p = 0; paths && p < count; p++) {
         if (!paths[p] || !paths[p][0] || strlen(paths[p]) >= mdk::AsyncFileReader::kPathMax) {
@@ -1993,15 +1993,34 @@ int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, int32_t 
         }
         HdCopy& copy = renderer->hdCopies[(size_t)index];
         copy.pinned = true;
+        const int32_t cap = caps ? caps[p] : 0;
+        if (copy.topCap != cap && copy.state == HdCopy::Resident) {
+            dropHd(renderer, copy);   // read again at this set's cap (between frames)
+        }
+        copy.topCap = cap;
+        if (cap > 0 && (renderer->hdTopCap == 0 || cap < renderer->hdTopCap)) {
+            renderer->hdTopCap = cap;
+        }
         if (copy.state == HdCopy::Failed && !copy.broken) {
             copy.state = HdCopy::None;
             copy.failures = 0;
         }
-        // A copy already resident from another cap is kept as it is.
         if (renderer->toggles.enableHdTextures) {
             requestHdCopy(renderer, index);
         }
         pinned++;
+    }
+    // THE OLD LEVEL'S COPIES GO NOW, not 600 frames on: a resident copy no
+    // texture links to and no set holds is freed here -- between frames, its
+    // last draw long finished (a loading screen has been drawn since) -- so the
+    // next set's arithmetic (main_3ds.cpp) reads a heap without them, and a
+    // streamed picture (makeStreamed, which never evicts HD) finds its room.
+    for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
+        HdCopy& copy = renderer->hdCopies[i];
+        if (!copy.pinned && copy.links <= 0 && copy.state == HdCopy::Resident &&
+            !renderer->inFrame) {
+            dropHd(renderer, copy);
+        }
     }
     renderer->hdPinnedMode = pinned > 0;
     return pinned;

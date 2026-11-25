@@ -63,7 +63,7 @@ int32_t mdk_render_settle_streams(MdkRenderer, int32_t) {
     return 0;
 }
 
-int32_t mdk_render_pin_hd_set(MdkRenderer, const char* const*, int32_t, int32_t) {
+int32_t mdk_render_pin_hd_set(MdkRenderer, const char* const*, const int32_t*, int32_t) {
     return 0;
 }
 

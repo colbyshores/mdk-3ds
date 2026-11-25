@@ -172,14 +172,15 @@ int32_t mdk_render_settle_streams(MdkRenderer r, int32_t maxMs);
 
 // THE LEVEL'S RESIDENT HD SET (the 3DS, docs/HD_TEXTURES_3DS_SPEC.md 3.2): the
 // HD files the frontend chose for this level -- by arithmetic, to fit -- read
-// (with levels wider or taller than `topCap` dropped; 0 keeps them all), kept
+// (each with its levels wider or taller than its `caps` entry dropped; 0 keeps
+// them all), kept
 // resident and never evicted while the set stands; an HD-only texture is then
 // drawn from its file's copy only. The frontend holds the loading screen
 // (mdk_render_settle_streams) until mdk_render_hd_set_pending is 0, and again
 // when the HD toggle comes back on. `count` 0 drops the set. Returns the files
 // pinned; 0 on a backend with no HD stream.
-int32_t mdk_render_pin_hd_set(MdkRenderer r, const char* const* paths, int32_t count,
-                              int32_t topCap);
+int32_t mdk_render_pin_hd_set(MdkRenderer r, const char* const* paths, const int32_t* caps,
+                              int32_t count);
 int32_t mdk_render_hd_set_pending(MdkRenderer r);
 
 // Create an RGBA8 texture (the enhanced look's expanded colour textures, the
