@@ -249,10 +249,17 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
             HdCopy* copy = resource.hdCopy >= 0 && (size_t)resource.hdCopy < r->hdCopies.size()
                                ? &r->hdCopies[(size_t)resource.hdCopy]
                                : nullptr;
+            // AN HD-ONLY TEXTURE (drawsHdOnly, the HD rule): its HD copy is the
+            // texture whatever the draw's shading -- the original is never read
+            // for it while the toggle is on, so there is no other copy to take.
+            // (Its pair was asked for by a Lit or Sprite draw, and never for a
+            // stacked texture: main_3ds.cpp hdPackLookup.)
+            const bool hdOnlyNow = drawsHdOnly(r, resource);
             const bool wantsHd = r->toggles.enableHdTextures && copy &&
-                                 draw->material.frame_count <= 1 &&
-                                 (draw->material.shading != mdk::Shading::Original ||
-                                  resource.hdCanvas);
+                                 ((draw->material.frame_count <= 1 &&
+                                   (draw->material.shading != mdk::Shading::Original ||
+                                    resource.hdCanvas)) ||
+                                  hdOnlyNow);
             // THE HD RULE'S LATE COUNT (render_c3d_stats.h): a draw that wants
             // the copy before it is resident, and the texture's first such draw.
             if (wantsHd) {
@@ -274,6 +281,39 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
                 out->texIndex = resource.hdCopy;
                 mipLevels = copy->levels;
                 resource.lastUsed = ++r->drawCounter;
+                copy->lastUsed = r->drawCounter;
+                hd = copy;
+            } else if (hdOnlyNow) {
+                // NOT RESIDENT YET: asked for (the pump reads it on the reader
+                // thread and imports it at a boundary), stamped -- the pump's sign
+                // that a draw wants it, which reads it before any hint -- and the
+                // standard-definition copy is NOT made. An original already
+                // resident (made before the toggle went on) stands in, costing
+                // nothing; otherwise this draw draws nothing (hdBlankDraws), which
+                // the early asks (the pump, the warms) keep rare.
+                requestHdCopy(r, resource.hdCopy);
+                copy->lastUsed = ++r->drawCounter;
+                if (resource.valid) {
+                    texture = &resource.tex;
+                    out->texHd = false;
+                    out->texIndex = draw->material.texture;
+                    mipLevels = resource.mipLevels;
+                    resource.lastUsed = ++r->drawCounter;
+                }
+            } else if (!resource.valid && !resource.packPath.empty() &&
+                       resource.packState != C3dTexture::PackFailed &&
+                       resource.hdOnly && copy && copy->state == HdCopy::Resident) {
+                // THE TOGGLE JUST WENT OFF: an HD-only texture's original is not
+                // made yet, and its HD copy -- still resident, kept by the HD pump
+                // while a draw uses it -- stands in until the boundary pump has
+                // read and imported the original. Nothing is read on this thread,
+                // so switching the set off is no freeze.
+                queuePackRead(r, draw->material.texture);
+                resource.lastUsed = ++r->drawCounter;
+                texture = &copy->tex;
+                out->texHd = true;
+                out->texIndex = resource.hdCopy;
+                mipLevels = copy->levels;
                 copy->lastUsed = r->drawCounter;
                 hd = copy;
             } else if (!resource.valid && !resource.packPath.empty() &&
@@ -307,13 +347,11 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
                     resource.lastUsed = ++r->drawCounter;
                 }
                 // Not resident: this draw takes the original and the copy is asked
-                // for -- or asked again once a failure's pause has passed (F4).
-                if (wantsHd &&
-                    (copy->state == HdCopy::None ||
-                     (copy->state == HdCopy::Failed && copy->failures < kHdMaxFailures &&
-                      r->frame >= copy->retryFrame))) {
-                    copy->state = HdCopy::Queued;
-                    r->hdQueue.push_back(resource.hdCopy);
+                // for -- or asked again once a failure's pause has passed (F4) --
+                // and stamped, so the pump reads it before the hints.
+                if (wantsHd) {
+                    requestHdCopy(r, resource.hdCopy);
+                    copy->lastUsed = ++r->drawCounter;
                 }
             }
         }

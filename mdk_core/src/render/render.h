@@ -217,8 +217,15 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t width, 
 // the index texture as always) or the path is unusable. A file that turns out
 // unreadable, or not a .t3x of this size, is reported later through
 // mdk_render_texture_needs_pixels.
+//
+// `hdPath` (null or empty: none) is the HD pack's copy of the SAME texture (the
+// 3DS's HD rule, docs/HD_TEXTURES_3DS_SPEC.md 3.1): the texture is then made
+// from the two files alone. While the HD toggle is on only the HD file is read
+// and drawn -- `path` is never read, nothing is expanded -- and while it is off
+// only `path`, exactly as without one; the toggle stays live per draw.
 MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t width, int32_t height,
-                                               const char* path, const uint8_t* paletteRgba);
+                                               const char* path, const char* hdPath,
+                                               const uint8_t* paletteRgba);
 
 // A texture made from a FILE could not be (unreadable, or not this set's .t3x):
 // the backend wants its index pixels through mdk_render_update_texture to draw

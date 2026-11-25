@@ -791,12 +791,50 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
 // resort's read below, and nothing else.
 static bool readWholeFile(const char* path, std::vector<uint8_t>* out);
 
+// THE HD RULE (docs/HD_TEXTURES_3DS_SPEC.md 3.1): whether this texture is drawn
+// from its HD copy and nothing else right now -- made from the packs' files
+// (C3dTexture::hdOnly), the toggle on, and the copy not given up on (a file
+// that failed for good, or past its retries, leaves the texture to its packed
+// original: an unusable HD file must not leave a surface blank for the level).
+static bool drawsHdOnly(const RendererC3D* renderer, const C3dTexture& texture) {
+    if (!texture.hdOnly || !renderer->toggles.enableHdTextures || texture.hdCopy < 0 ||
+        (size_t)texture.hdCopy >= renderer->hdCopies.size()) {
+        return false;
+    }
+    const HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
+    return !(copy.state == HdCopy::Failed && (copy.broken || copy.failures >= kHdMaxFailures));
+}
+
+// Asks for an HD copy: queued for the boundary pump (pumpHdTextures) -- once
+// per wait, and a failed one again only after its pause (review F4).
+static void requestHdCopy(RendererC3D* renderer, int32_t index) {
+    if (index < 0 || (size_t)index >= renderer->hdCopies.size()) {
+        return;
+    }
+    HdCopy& copy = renderer->hdCopies[(size_t)index];
+    if (copy.state == HdCopy::None ||
+        (copy.state == HdCopy::Failed && copy.failures < kHdMaxFailures &&
+         renderer->frame >= copy.retryFrame)) {
+        copy.state = HdCopy::Queued;
+        renderer->hdQueue.push_back(index);
+    }
+}
+
 // Asks for a packed original's file: queued for the boundary pump. Only an
 // idle one -- made textures are idle too, so the caller checks `valid` -- and
 // once per wait (a queued or reading one is already asked for, a failed one
 // waits for its index pixels).
+//
+// AN HD-ONLY TEXTURE ASKS FOR ITS HD COPY INSTEAD (drawsHdOnly): every ask --
+// the creation's, a draw's, the pump's re-ask of an evicted one, a hint's --
+// comes through here, so none of them reads the original while the HD copy is
+// the texture.
 static void queuePackRead(RendererC3D* renderer, int32_t id) {
     C3dTexture& texture = renderer->textures[(size_t)id];
+    if (drawsHdOnly(renderer, texture)) {
+        requestHdCopy(renderer, texture.hdCopy);
+        return;
+    }
     if (texture.packPath.empty() || texture.packState != C3dTexture::PackIdle) {
         return;
     }
@@ -837,7 +875,9 @@ static bool packMakeableNow(const RendererC3D* renderer, const C3dTexture& textu
 // profile line (`packsync`) is makeTexture's, after its timed window. A failure
 // draws nothing this frame, and nothing later this frame reads the file again.
 static bool finishPackNow(RendererC3D* renderer, C3dTexture& texture) {
-    if (!packMakeableNow(renderer, texture)) {
+    // Never for a texture its HD copy stands for (the HD rule): no draw path
+    // asks, and this is the one place a read would happen on the main thread.
+    if (!packMakeableNow(renderer, texture) || drawsHdOnly(renderer, texture)) {
         return false;
     }
     const int32_t id = (int32_t)(&texture - renderer->textures.data());
@@ -1273,11 +1313,20 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     // progress when the worker ends it), and anything already finished is taken
     // and freed. Only while there is something to drop: off costs a frame two
     // slot counts, not a walk of the table.
+    //
+    // EXCEPT A STAND-IN. An HD-only texture (C3dTexture::hdOnly) has no original
+    // made while the toggle is on, so when it goes off its resident copy is drawn
+    // until the boundary pump has read the original (06_draw.inc): a copy the
+    // frame that just ended drew is kept, and freed at the first boundary after
+    // the draws stop taking it -- the original has landed by then.
     if (!renderer->toggles.enableHdTextures) {
         if (renderer->hdResidentBytes > 0 || !renderer->hdQueue.empty() ||
             renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd) > 0) {
             for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
                 HdCopy& copy = renderer->hdCopies[i];
+                if (copy.state == HdCopy::Resident && copy.lastUsed >= protectFrom) {
+                    continue;
+                }
                 if (copy.state == HdCopy::Reading) {
                     renderer->hdReader.discard(mdk::AsyncFileReader::kChannelHd, (int32_t)i);
                 }
@@ -1315,12 +1364,31 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     }
     // (1) Hand out reads while the reader has free slots -- and only while each
     // could be imported (pica::hdMayDispatch, host-tested). Otherwise the queue
-    // waits (the view's working set fills the budget; the originals draw
-    // meanwhile), and nothing is read from SD only to be thrown away (F3). The
-    // evictable scan only runs when something waits.
+    // waits (the view's working set fills the budget), and nothing is read from
+    // SD only to be thrown away (F3). The evictable scan only runs when
+    // something waits.
+    //
+    // A DEMANDED COPY GOES FIRST: one a draw of the frame that just ended wanted
+    // (its stamp at or after `protectFrom`: 06_draw.inc stamps a copy it asks
+    // for), else the queue's head, in the order the copies were asked for (the
+    // creations, the pump's walk of the resident views, the warms). A HINT -- no
+    // draw wanted it -- is read only while the budget has room for it without
+    // evicting anything (hdMayDispatch with nothing evictable): an HD-only
+    // texture's copy IS its surface, so a hint must never push out a copy the
+    // player may still be looking at.
+    {
+        size_t kept = 0;
+        for (size_t i = 0; i < renderer->hdQueue.size(); i++) {
+            const int32_t id = renderer->hdQueue[i];
+            if (id >= 0 && (size_t)id < renderer->hdCopies.size() &&
+                renderer->hdCopies[(size_t)id].state == HdCopy::Queued) {
+                renderer->hdQueue[kept++] = id;
+            }
+        }
+        renderer->hdQueue.resize(kept);
+    }
     const bool evictable = !renderer->hdQueue.empty() && hdHasEvictable(renderer, protectFrom);
-    size_t next = 0;
-    for (; next < renderer->hdQueue.size(); next++) {
+    while (!renderer->hdQueue.empty()) {
         // One slot stays free for Kurt's read and the menus' (kStreamSlots); the
         // orig pack's reads, handed out first this boundary, count against it.
         if (renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd) +
@@ -1328,27 +1396,30 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             mdk::AsyncFileReader::kStreamSlots) {
             break;
         }
+        size_t pick = 0;
+        bool demanded = false;
+        for (size_t i = 0; i < renderer->hdQueue.size(); i++) {
+            if (renderer->hdCopies[(size_t)renderer->hdQueue[i]].lastUsed >= protectFrom) {
+                pick = i;
+                demanded = true;
+                break;
+            }
+        }
         const size_t reading =
             (size_t)renderer->hdReader.busy(mdk::AsyncFileReader::kChannelHd);
         if (!mdk::pica::hdMayDispatch(renderer->hdResidentBytes, reading, kHdLargestBytes,
-                                      kHdBudgetBytes, evictable)) {
+                                      kHdBudgetBytes, demanded && evictable)) {
             break;
         }
-        const int32_t id = renderer->hdQueue[next];
-        if (id < 0 || (size_t)id >= renderer->hdCopies.size()) {
-            continue;
-        }
+        const int32_t id = renderer->hdQueue[pick];
         HdCopy& copy = renderer->hdCopies[(size_t)id];
-        if (copy.state != HdCopy::Queued) {
-            continue;
-        }
-        if (!renderer->hdReader.request(id, copy.path.c_str())) {
-            break;   // every slot is busy: this one waits at the queue's head
+        if (!renderer->hdReader.requestFile(mdk::AsyncFileReader::kChannelHd, id,
+                                            copy.path.c_str(), nullptr)) {
+            break;   // every slot is busy: this one waits in the queue
         }
         copy.state = HdCopy::Reading;
+        renderer->hdQueue.erase(renderer->hdQueue.begin() + (long)pick);
     }
-    renderer->hdQueue.erase(renderer->hdQueue.begin(),
-                            renderer->hdQueue.begin() + (long)next);
 
     // (2) Import finished reads.
     int32_t imported = 0;
@@ -1384,19 +1455,28 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         // Tex3DS allocates the expanded ETC chain inside the import, so
         // admitting against `size` can overshoot the budget before the exact
         // total is booked below. Dispatch already plans around this bound.
+        // A HINT (no draw of the last frame wanted it) evicts nothing: with no
+        // room it is dropped (None), and the next ask -- a draw's, or the pump's
+        // re-ask -- asks for it again.
+        const bool demanded = copy.lastUsed >= protectFrom;
         bool room = true;
         while (renderer->hdResidentBytes + kHdLargestBytes > kHdBudgetBytes) {
-            if (!evictHd(renderer, protectFrom, false)) {
+            if (!demanded || !evictHd(renderer, protectFrom, false)) {
                 room = false;
                 break;
             }
         }
         if (!room) {
             // Everything resident was drawn last frame: the budget is the view's
-            // working set. Back to the queue; it is asked for again later.
+            // working set. A demanded copy goes back to the queue; it is asked
+            // for again later.
             free(bytes);
-            copy.state = HdCopy::Queued;
-            renderer->hdQueue.push_back(id);
+            if (demanded) {
+                copy.state = HdCopy::Queued;
+                renderer->hdQueue.push_back(id);
+            } else {
+                copy.state = HdCopy::None;
+            }
             continue;
         }
         // THE IMPORT: an LZ decompress and a copy into the linear heap, the ETC
@@ -1412,21 +1492,29 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         // full mip chain holds at NEAREST level 0 in the original look; only
         // the wrap, which the draw does not rewrite, is set below from the
         // image's own rectangle.
+        // A FULL LINEAR HEAP is made room in by the import ladder's order
+        // (importCompressed): a nobody's HD copy, then the least recently used
+        // texture -- an HD-only texture's original, not drawn while the toggle
+        // is on, is the first such -- then any HD copy, each only from what the
+        // last frame did not draw. A hint takes free memory only.
         forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)
 #ifdef MDK_HW_PROFILE
         const uint64_t importStart = svcGetSystemTick();
+#endif
         Tex3DS_Texture t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
-        if (!t3x && evictHd(renderer, protectFrom, false)) {
+        while (!t3x && demanded &&
+               (evictHd(renderer, protectFrom, true) || evictTextures(renderer, protectFrom) ||
+                evictHd(renderer, protectFrom, false))) {
             t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
         }
+#ifdef MDK_HW_PROFILE
         renderer->hdImportTicks += svcGetSystemTick() - importStart;
-#else
-        Tex3DS_Texture t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
-        if (!t3x && evictHd(renderer, protectFrom, false)) {
-            t3x = Tex3DS_TextureImport(bytes, size, &copy.tex, nullptr, false);
-        }
 #endif
         free(bytes);
+        if (!t3x && !demanded) {
+            copy.state = HdCopy::None;   // a hint with no free room: asked for again later
+            continue;
+        }
         if (!t3x) {
             hdFailed(renderer, copy, "import FAILED");
             continue;
@@ -1462,7 +1550,13 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
             renderer->hdResidentPeak = renderer->hdResidentBytes;
         }
         copy.state = HdCopy::Resident;
-        copy.lastUsed = protectFrom;   // fresh: not the next eviction's victim
+        // A demanded copy is fresh: not the next eviction's victim. A HINT keeps
+        // the stamp its last draw left (0 if none), so the LRU takes it before
+        // anything the player has seen since -- a copy read ahead of time never
+        // outranks one on screen (pumpPackOriginals' rule).
+        if (demanded) {
+            copy.lastUsed = protectFrom;
+        }
         renderer->hdImported++;
         imported++;
         if (renderer->hdImported <= 3 || (renderer->hdImported % 50) == 0) {

@@ -45,6 +45,7 @@ extern std::string mdk_test_compressedPath;
 extern MdkTextureId mdk_test_compressedFileId;
 extern int mdk_test_compressedFileCalls;
 extern MdkTextureId mdk_test_needsPixels;
+extern std::string mdk_test_compressedFileHd;
 extern int mdk_test_updateCalls;
 extern MdkTextureId mdk_test_updateTexture;
 extern int32_t mdk_test_updateWidth;
@@ -696,6 +697,60 @@ MDK_TEST(surfaceCacheGivesASpriteItsPackedOriginal) {
     mdk_test_compressedFileId = -1;
 }
 
+namespace {
+
+// THE HD RULE'S ANSWER (main_3ds.cpp hdPackLookup's name index): the packed
+// original AND the HD copy of the same pair, found by name.
+const char* const kHdPath = "sdmc:/3ds/mdk/hd/textures/LEVEL3/WALL@0123456789abcdef.t3x";
+
+bool hdOnlyLookup(void*, const mdk::Surface& surface, const mdk::formats::Palette*,
+                  mdk::ColourReplacement* out) {
+    if (surface.name != "WALL") {
+        return false;
+    }
+    out->compressedPath = kOrigPath;
+    out->compressedOriginal = true;
+    out->hdPath = kHdPath;
+    return true;
+}
+
+} // namespace
+
+// AN HD-ONLY PAIR IS MADE FROM THE TWO FILES ALONE: one create_compressed_file
+// carrying the HD path -- no index texture, no HD copy attached to an expansion,
+// nothing counted as made from SD -- for a Lit draw, a Sprite draw, and a warm's
+// hint alike, once per pair. The backend decides per draw which file it reads.
+MDK_TEST(surfaceCacheMakesAnHdOnlyPairFromItsFilesAlone) {
+    mdk::formats::Texture texture = keyTexture();
+    mdk::formats::Palette palette = keyPalette();
+    mdk::Surface lit;
+    lit.texture = &texture;
+    lit.name = "WALL";
+    lit.shading = mdk::Shading::Lit;
+    lit.frameCount = 1;
+    const mdk::Surface sprite = spriteOf(lit);
+    const mdk::Surface* firsts[3] = {&lit, &sprite, &lit};
+    for (int way = 0; way < 3; way++) {
+        resetPackedStubs();
+        mdk_test_compressedFileHd.clear();
+        mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+        cache.setColourReplacementLookup(hdOnlyLookup, nullptr);
+        // way 2: the warm's hint (requestPacked) first, then the draw.
+        const MdkTextureId first = way == 2 ? cache.requestPacked(lit, &palette)
+                                            : cache.surfaceId(*firsts[way], &palette);
+        MDK_CHECK_EQ(first, kPendingId);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);
+        MDK_CHECK_STR_EQ(mdk_test_compressedFileHd, kHdPath);
+        MDK_CHECK_EQ(cache.surfaceId(lit, &palette), kPendingId);
+        MDK_CHECK_EQ(cache.surfaceId(sprite, &palette), kPendingId);
+        MDK_CHECK_EQ(mdk_test_compressedFileCalls, 1);   // once per pair
+        MDK_CHECK_EQ(mdk_test_indexTextures, 0);         // never expanded
+        MDK_CHECK_EQ(mdk_test_compressedCalls, 0);       // never attached to one
+        MDK_CHECK_EQ(cache.sourceStats().hdAnsweredSd, 0);
+    }
+    mdk_test_compressedFileId = -1;
+}
+
 // AND NOTHING ELSE. An HD-pack upscale or a decoded image is not a Sprite's: the
 // Sprite gets the plain expansion with nothing attached, and the pair's Lit draw
 // still asks and attaches its replacement to that same texture -- as when a
@@ -725,6 +780,9 @@ MDK_TEST(surfaceCacheKeepsHdAndDecodedReplacementsLitOnly) {
         MDK_CHECK_EQ(mdk_test_compressedCalls, 1);   // the Lit draw's HD copy
         MDK_CHECK_EQ(mdk_test_compressedTexture, 0);
         MDK_CHECK_EQ(cache.replacementFound(), 1);
+        // Both made the pair from its standard-definition pixels though an HD
+        // copy was the answer: what the 3DS's hdrule: line counts.
+        MDK_CHECK_EQ(cache.sourceStats().hdAnsweredSd, 2);
     }
     {
         mdk_test_replaceCalls = 0;

@@ -2992,6 +2992,60 @@ def adjudicate(text, quiet=False):
               % ("pins" if canvas_ok else "does NOT pin", "marks" if canvas_ok else "does not mark",
                  "pins and marks" if mark_ok else "does NOT both pin and mark",
                  "re-makes" if settles else "does NOT re-make"))
+
+    # THE HD RULE (docs/HD_TEXTURES_3DS_SPEC.md 3.1, owner 2026-11-24): with the HD
+    # set on, a texture made from the packs' files alone (C3dTexture::hdOnly) is
+    # drawn from its HD copy and NOTHING ELSE -- its packed original is never read,
+    # on the reader thread or on this one. Four places make that true, and each is
+    # one line a tidy-up could drop:
+    #   * queuePackRead -- every ask of a packed original (creation, draw, the
+    #     pump's re-ask, a hint) -- routes an HD-only texture to its HD copy FIRST;
+    #   * finishPackNow, the one main-thread read, refuses an HD-only texture;
+    #   * prepareDraw takes the HD-only branch BEFORE the packed-pending one, and
+    #     that branch neither asks for nor makes the original;
+    #   * an HD import no draw demanded never evicts (a hint must not push out a
+    #     copy that IS a surface on screen).
+    code = blank_cached(text)
+    qp_sp = fn_body_span(text, "queuePackRead")
+    qp = code[qp_sp[0]:qp_sp[1]] if qp_sp else ""
+    qp_route = re.search(r"\bif[ \t]*\([ \t]*drawsHdOnly\(renderer,[ \t]*texture\)[ \t]*\)"
+                         r"[ \t]*\{\s*requestHdCopy\(renderer,[ \t]*texture\.hdCopy\);\s*"
+                         r"return;\s*\}", qp)
+    qp_pack = qp.find("texture.packPath.empty()")
+    routed_first = qp_route is not None and qp_pack > qp_route.start()
+    fp_sp = fn_body_span(text, "finishPackNow")
+    fp = code[fp_sp[0]:fp_sp[1]] if fp_sp else ""
+    fp_guard = re.search(r"if[ \t]*\([ \t]*!packMakeableNow\(renderer,[ \t]*texture\)[ \t]*\|\|"
+                         r"[ \t]*drawsHdOnly\(renderer,[ \t]*texture\)[ \t]*\)[ \t]*\{\s*"
+                         r"return false;", fp) is not None
+    pd_sp = fn_body_span(text, "prepareDraw")
+    pd = code[pd_sp[0]:pd_sp[1]] if pd_sp else ""
+    hd_branch = re.search(r"\}[ \t]*else[ \t]+if[ \t]*\([ \t]*hdOnlyNow[ \t]*\)[ \t]*\{", pd)
+    pack_branch = re.search(r"\}[ \t]*else[ \t]+if[ \t]*\([ \t]*!resource\.valid[ \t]*&&"
+                            r"[ \t]*!resource\.packPath\.empty\(\)", pd)
+    hd_block = ""
+    if hd_branch is not None and pd_sp:
+        sp = block_span_from(text, pd_sp[0] + hd_branch.end() - 1)
+        hd_block = code[sp[0]:sp[1]] if sp else ""
+    branch_ok = (hd_branch is not None and pack_branch is not None
+                 and hd_branch.start() < pack_branch.start() and hd_block != ""
+                 and "requestHdCopy(r, resource.hdCopy);" in hd_block
+                 and "queuePackRead" not in hd_block and "makeTexture" not in hd_block
+                 and "finishPackNow" not in hd_block)
+    ph_sp = body_span(text, "pumpHdTextures")
+    ph = code[ph_sp[0]:ph_sp[1]] if ph_sp else ""
+    hint_ok = re.search(r"if[ \t]*\([ \t]*!demanded[ \t]*\|\|[ \t]*!evictHd\(", ph) is not None \
+        and re.search(r"while[ \t]*\([ \t]*!t3x[ \t]*&&[ \t]*demanded[ \t]*&&", ph) is not None
+    rep.check("hd-only-textures-never-read-their-original",
+              routed_first and fp_guard and branch_ok and hint_ok,
+              "queuePackRead %s an HD-only texture to its HD copy before the pack path; "
+              "finishPackNow %s one; prepareDraw's HD-only branch %s (before the "
+              "packed-pending one, asking only for the HD copy); an undemanded HD import "
+              "%s"
+              % ("routes" if routed_first else "does NOT route",
+                 "refuses" if fp_guard else "does NOT refuse",
+                 "is in place" if branch_ok else "is MISSING, misplaced or reads the original",
+                 "evicts nothing" if hint_ok else "MAY EVICT"))
     return rep
 
 
@@ -3266,6 +3320,24 @@ SHADER_OK_LINE = ('    mdk::log3dsPrintf("shaderProgramSetVsh ok result=0x%08lx"
                   '(unsigned long)spVsh);')
 
 ARMS = [
+    ("hd-only-ask-reads-the-original",
+     lambda s: s.replace("    if (drawsHdOnly(renderer, texture)) {\n        requestHdCopy(renderer, "
+                         "texture.hdCopy);\n        return;\n    }\n", "", 1),
+     "hd-only-textures-never-read-their-original"),
+    ("hd-only-last-resort-reads-the-original",
+     lambda s: s.replace("if (!packMakeableNow(renderer, texture) || drawsHdOnly(renderer, texture)) {",
+                         "if (!packMakeableNow(renderer, texture)) {", 1),
+     "hd-only-textures-never-read-their-original"),
+    ("hd-only-draw-asks-for-the-original",
+     lambda s: s.replace("                requestHdCopy(r, resource.hdCopy);\n                copy->lastUsed",
+                         "                requestHdCopy(r, resource.hdCopy);\n"
+                         "                queuePackRead(r, draw->material.texture);\n"
+                         "                copy->lastUsed", 1),
+     "hd-only-textures-never-read-their-original"),
+    ("hd-hint-import-evicts",
+     lambda s: s.replace("if (!demanded || !evictHd(renderer, protectFrom, false)) {",
+                         "if (!evictHd(renderer, protectFrom, false)) {", 1),
+     "hd-only-textures-never-read-their-original"),
     ("diagnostic-back-in-the-per-draw-path",
      # The splice has to match what the check counts, so it emits the QUAD's six
      # vertices. Splicing `0, 3` here would leave this arm a mutant of nothing:

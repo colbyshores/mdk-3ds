@@ -309,6 +309,8 @@ static bool readWholeFile(const char* path, std::vector<uint8_t>* out) {
     return true;
 }
 
+static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool canvas);
+
 // A PACKED ORIGINAL from its FILE (render.h): created with NO I/O and no
 // citro3d call -- safe mid-frame, where LevelView::draw asks for it -- as a
 // pending id (C3dTexture::packPath, PackQueued): the boundary pump has the
@@ -320,8 +322,14 @@ static bool readWholeFile(const char* path, std::vector<uint8_t>* out) {
 // the bytes are the palette the texture stands in for, so the fallback is
 // bit-exact. -1 only when the renderer is not ready or the path is empty or
 // longer than the reader's slots hold (the same rule as recordHdPath's).
+//
+// WITH AN HD PATH (the HD rule, render.h): the texture is linked to that HD copy
+// and is hdOnly -- while enableHdTextures is on its ask below goes to the HD
+// stream (queuePackRead's routing), so the packed original is read only if the
+// toggle goes off or the HD file proves unusable.
 MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t w, int32_t h,
-                                               const char* path, const uint8_t* paletteRgba) {
+                                               const char* path, const char* hdPath,
+                                               const uint8_t* paletteRgba) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !path ||
         !path[0] || strlen(path) >= mdk::AsyncFileReader::kPathMax) {
@@ -341,6 +349,10 @@ MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t w, int32_t
     }
     const int32_t id = acquireTextureSlot(renderer);
     renderer->textures[(size_t)id] = std::move(texture);
+    if (hdPath && hdPath[0]) {
+        recordHdPath(r, id, hdPath, false);
+        renderer->textures[(size_t)id].hdOnly = renderer->textures[(size_t)id].hdCopy >= 0;
+    }
     queuePackRead(renderer, id);
     logCreation(renderer, 0, id);
     return id;
@@ -440,6 +452,9 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
             std::string().swap(texture.packPath);
             texture.packState = C3dTexture::PackIdle;
         }
+        // An index texture from now on: its HD copy goes below, and it is no
+        // longer made from the packs' files.
+        texture.hdOnly = false;
         texture.compressed = false;
         texture.indexed = true;
         texture.paddedWidth = nextPowerOfTwo(texture.realWidth);
@@ -776,6 +791,7 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     }
     texture.hdCopy = -1;
     texture.hdCanvas = false;
+    texture.hdOnly = false;
     // A PACKED ORIGINAL's read is the reader's, not this texture's: dropped (a
     // finished one freed now, one in progress when it ends), and the path goes,
     // which is what frees the slot (acquireTextureSlot). A queue entry for it is

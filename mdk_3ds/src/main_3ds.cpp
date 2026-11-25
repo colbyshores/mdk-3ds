@@ -227,9 +227,11 @@ static void heapProbe(const char* tag) {
 // THE HD PACK (docs/HD_TEXTURES_3DS_SPEC.md): built on the host by
 // mdk_3ds/tools/build_hd_pack.sh and copied to the SD card. Its manifest lists
 // every .t3x by key, so the pack is indexed by ModImages' own rule
-// (ModImages::fromList) without scanning the card; the surface cache then hands
-// each Lit surface's match to the backend (mdk_render_replace_compressed), which
-// streams it under the HD budget.
+// (ModImages::fromList) without scanning the card. In play a surface's HD file is
+// found BY NAME through the orig pack's name index (loadOrigByName, spec 3.1:
+// no content hash on the console), and the pair is made from its two files
+// (mdk_render_create_compressed_file): the backend streams the HD copy under the
+// HD budget while the toggle is on and never reads the original for it.
 #ifdef MDK_HW_HDROMFS
 // The harness's RomFS copy of one level's pack (`make HDROMFS=1`, stage_romfs.sh):
 // the appliance's SD card has no pack and the hardware loop only pushes a .3dsx.
@@ -288,8 +290,16 @@ void musicReadCancel(void* user, int32_t tag) {
 // False when there is none. `tag` names the pack in its log lines ("hd",
 // "orig"); `maxCap` is the largest build cap the backend budgets for it (see
 // the column-8 gate below).
+//
+// `dims` (may be null) gets each file's SOURCE size, columns 3 and 4, keyed by
+// the file's key (column 1, no .t3x): for the orig pack that is the original
+// texture's width and stacked height (arena_etc1_convert.py), which the name
+// index checks a texture against (loadOrigByName). `files` (may be null) gets
+// the manifest's file list.
 bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out,
-                            int32_t* count, const char* tag, int32_t maxCap) {
+                            int32_t* count, const char* tag, int32_t maxCap,
+                            std::map<std::string, uint32_t>* dims = nullptr,
+                            std::vector<std::string>* filesOut = nullptr) {
     const std::string manifest = std::string(root) + "/manifest.txt";
     FILE* file = fopen(manifest.c_str(), "r");
     if (!file) {
@@ -336,6 +346,17 @@ bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out
             continue;
         }
         *tab = '\0';
+        if (dims) {
+            // key \t format \t src_w \t src_h ...
+            const char* format = tab + 1;
+            const char* srcW = strchr(format, '\t');
+            const char* srcH = srcW ? strchr(srcW + 1, '\t') : nullptr;
+            if (srcW && srcH) {
+                const uint32_t w = (uint32_t)atoi(srcW + 1);
+                const uint32_t h = (uint32_t)atoi(srcH + 1);
+                (*dims)[std::string(line)] = (w << 16) | (h & 0xFFFFu);
+            }
+        }
         files.push_back(std::string(line) + ".t3x");
     }
     fclose(file);
@@ -346,15 +367,47 @@ bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out
     }
     *out = mdk::ModImages::fromList(root, files, true, level);
     *count = (int32_t)files.size();
+    if (filesOut) {
+        filesOut->swap(files);
+        return !filesOut->empty();
+    }
     return !files.empty();
 }
 
-bool loadHdPack(int32_t level, mdk::ModImages* out) {
+static std::string lowerName3ds(const std::string& s);
+
+// THE HD PACK BY CONTENT KEY, for the name index (loadOrigByName): every
+// texture file of the pack, keyed by the hdKeyOf in its name
+// (textures/LEVELn/NAME@<key>.t3x -- hd_pack_convert.py keeps the PC mod's
+// names). The key is the texture seen through a palette (game/hd_key.h), the
+// same key the orig pack's file names carry, so an orig file and an HD file with
+// one key are the same texture through the same palette -- matched here by
+// STRING, with no hash computed on the console. Only exact-view files (`@`):
+// the pack has no other kind (hd_pack_convert.py writes the PC mod's tree, and
+// the C# port's --upscale-textures names every texture by its view).
+bool loadHdPack(int32_t level, mdk::ModImages* out,
+                std::map<std::string, std::string>* byKey) {
     int32_t count = 0;
-    if (!loadCompressedManifest(kHdPackRoot, level, out, &count, "hd", 512)) {
+    std::vector<std::string> files;
+    if (!loadCompressedManifest(kHdPackRoot, level, out, &count, "hd", 512, nullptr, &files)) {
         return false;
     }
-    mdk::log3dsPrintf("hd: pack manifest %d textures (%s)", (int)count, kHdPackRoot);
+    for (size_t i = 0; i < files.size(); i++) {
+        const std::string& file = files[i];
+        if (file.compare(0, 9, "textures/") != 0) {
+            continue;
+        }
+        const size_t slash = file.rfind('/');
+        const size_t mark = file.find('@', slash == std::string::npos ? 0 : slash);
+        const size_t dot = file.rfind('.');
+        if (mark == std::string::npos || dot == std::string::npos || dot <= mark + 1) {
+            continue;
+        }
+        (*byKey)[lowerName3ds(file.substr(mark + 1, dot - mark - 1))] =
+            std::string(kHdPackRoot) + "/" + file;
+    }
+    mdk::log3dsPrintf("hd: pack manifest %d textures, %d keyed (%s)", (int)count,
+                      (int)byKey->size(), kHdPackRoot);
     return true;
 }
 
@@ -365,9 +418,9 @@ bool loadHdPack(int32_t level, mdk::ModImages* out) {
 // -- so with the pack staged the ARM11 expands nothing for the arenas that
 // have a key, and the original look is the ETC1 copy sampled NEAREST at level 0
 // rather than the palette expansion.
-bool loadOrigPack(int32_t level, mdk::ModImages* out) {
+bool loadOrigPack(int32_t level, mdk::ModImages* out, std::map<std::string, uint32_t>* dims) {
     int32_t count = 0;
-    if (!loadCompressedManifest(kOrigPackRoot, level, out, &count, "orig", 1024)) {
+    if (!loadCompressedManifest(kOrigPackRoot, level, out, &count, "orig", 1024, dims)) {
         return false;
     }
     mdk::log3dsPrintf("orig: pack manifest %d textures (%s)", (int)count, kOrigPackRoot);
@@ -387,8 +440,20 @@ bool loadOrigPack(int32_t level, mdk::ModImages* out) {
 // so the two collide here on purpose: their rows name the same file (checked
 // for all 3156 corridor rows of the shipped pack, 2026-11-23), and a row that
 // ever disagrees is logged rather than silently kept.
+//
+// AND THE HD PACK BY NAME, from the same rows (docs/HD_TEXTURES_3DS_SPEC.md
+// 3.1): a row's file is named by its content key (textures/name@<key>), and the
+// HD pack's file of that key (loadHdPack's byKey) is the upscale of exactly that
+// texture through exactly that palette -- so the HD file is found by (palette,
+// name) too, and play never hashes a texture to find it. No pack has to be
+// rebuilt: the owner's SD pack is keyed this way already. `dims` is the original
+// texture's width and stacked height from the orig manifest: a texture asked for
+// under a row's name but of another size is not that row's (no file is answered,
+// and the texture keeps the path a miss takes).
 struct OrigByName {
     std::map<std::pair<const void*, std::string>, std::string> paths;
+    std::map<std::pair<const void*, std::string>, std::string> hdPaths;
+    std::map<std::pair<const void*, std::string>, uint32_t> dims;
 };
 
 static std::string lowerName3ds(const std::string& s) {
@@ -401,7 +466,9 @@ static std::string lowerName3ds(const std::string& s) {
     return out;
 }
 
-bool loadOrigByName(int32_t level, mdk::LevelData& levelData, OrigByName* out) {
+bool loadOrigByName(int32_t level, mdk::LevelData& levelData,
+                    const std::map<std::string, std::string>& hdByKey,
+                    const std::map<std::string, uint32_t>& origDims, OrigByName* out) {
     FILE* file = fopen((std::string(kOrigPackRoot) + "/byname.txt").c_str(), "r");
     if (!file) {
         return false;
@@ -455,6 +522,21 @@ bool loadOrigByName(int32_t level, mdk::LevelData& levelData, OrigByName* out) {
             }
         }
         out->paths[key] = path;
+        const std::map<std::string, uint32_t>::const_iterator dims = origDims.find(fields[3]);
+        if (dims != origDims.end()) {
+            out->dims[key] = dims->second;
+        } else {
+            out->dims.erase(key);
+        }
+        const size_t mark = fields[3].find('@');
+        const std::map<std::string, std::string>::const_iterator hd =
+            mark == std::string::npos ? hdByKey.end()
+                                      : hdByKey.find(lowerName3ds(fields[3].substr(mark + 1)));
+        if (hd != hdByKey.end()) {
+            out->hdPaths[key] = hd->second;
+        } else {
+            out->hdPaths.erase(key);
+        }
     }
     fclose(file);
     return !out->paths.empty();
@@ -551,12 +633,20 @@ bool loadKurtPack(const char* path, KurtPackLoad* out) {
 static int32_t g_lookupHashes = 0;
 static double g_lookupHashMs = 0.0;
 static char g_lookupHashFirst[40];
+// The name index's other outcomes: misses with an HD pack installed (never
+// hashed: expanded), rows refused for their size, and HD files not taken for an
+// animated texture.
+static int32_t g_lookupNameMisses = 0;
+static char g_lookupNameMissFirst[48];
+static int32_t g_lookupSizeRefused = 0;
+static int32_t g_lookupHdAnimated = 0;
 
 struct HdPackSource {
     mdk::ModImages* pack = nullptr;
     mdk::ModImages* orig = nullptr;
     OrigByName* byname = nullptr;
     std::string path;
+    std::string hdPath;
     // Set by the warms around their ask (requestPackedSurface): the ask is
     // a HINT, and a hint never brings a texture's pixels back (below).
     bool hint = false;
@@ -569,23 +659,55 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
         return false;
     }
     const std::string& name = surface.name.empty() ? surface.texture->name() : surface.name;
-    // THE NAME INDEX FIRST, when no HD pack is in play: the build knows this
+    // THE NAME INDEX FIRST, with or without an HD pack: the build knows this
     // texture by name, so the content hash is the fallback, not the rule. Both
     // names it could be keyed by are tried -- the material's and the texture's
     // own -- because an archive can hold a texture under a different name than
-    // its own. With an HD pack present the hash runs anyway (it must, to match
-    // the HD key), and the orig hash path below still answers this case.
-    if (!source->pack && source->byname && !source->byname->paths.empty()) {
+    // its own. A row whose original size is not this texture's is not this
+    // texture's file: it is skipped (counted), never answered.
+    //
+    // THE HD RULE (docs/HD_TEXTURES_3DS_SPEC.md 3.1): a row with an HD file
+    // answers BOTH files -- the packed original (compressedPath) and the HD copy
+    // (hdPath) -- and the backend makes the texture from them alone
+    // (mdk_render_create_compressed_file): with enableHdTextures on only the HD
+    // file is read, with it off only the original, and the toggle stays live per
+    // draw. No standard-definition pixel is read, expanded or hashed for it. An
+    // ANIMATED texture (stacked frames) takes no HD copy: the pack's strip is
+    // resampled to a power of two (hd_pack_convert.py), which squeezes its
+    // frames -- EXPLODE's 26 frames of 128 rows become 19.7 rows each -- and the
+    // backend never draws an HD copy for a stacked texture (06_draw.inc).
+    if (source->byname && !source->byname->paths.empty()) {
         std::string keys[2] = {lowerName3ds(name), lowerName3ds(surface.texture->name())};
+        const uint32_t size =
+            ((uint32_t)surface.texture->width() << 16) |
+            ((uint32_t)(surface.texture->height() * surface.texture->frameCount()) & 0xFFFFu);
         for (int k = 0; k < 2; k++) {
+            const std::pair<const void*, std::string> key((const void*)palette, keys[k]);
             std::map<std::pair<const void*, std::string>, std::string>::const_iterator hit =
-                source->byname->paths.find(std::make_pair((const void*)palette, keys[k]));
-            if (hit != source->byname->paths.end()) {
-                source->path = hit->second;
-                out->compressedPath = source->path.c_str();
-                out->compressedOriginal = true;
-                return true;
+                source->byname->paths.find(key);
+            if (hit == source->byname->paths.end()) {
+                continue;
             }
+            std::map<std::pair<const void*, std::string>, uint32_t>::const_iterator dims =
+                source->byname->dims.find(key);
+            if (dims != source->byname->dims.end() && dims->second != size) {
+                g_lookupSizeRefused++;
+                continue;
+            }
+            source->path = hit->second;
+            out->compressedPath = source->path.c_str();
+            out->compressedOriginal = true;
+            std::map<std::pair<const void*, std::string>, std::string>::const_iterator hd =
+                source->byname->hdPaths.find(key);
+            if (hd != source->byname->hdPaths.end()) {
+                if (surface.texture->frameCount() <= 1) {
+                    source->hdPath = hd->second;
+                    out->hdPath = source->hdPath.c_str();
+                } else {
+                    g_lookupHdAnimated++;
+                }
+            }
+            return true;
         }
     }
     // A HINT ANSWERS FROM THE NAME INDEX ONLY. The content hash below reads
@@ -600,6 +722,22 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // draw asks the full lookup, exactly as without the warm.
     if (source->hint) {
         return true;
+    }
+    // WITH AN HD PACK, A NAME MISS IS NOT HASHED. The hash is what finds a
+    // texture in either pack by content, and it is the cost the HD rule forbids
+    // in play: 60-150 ms per texture on the Old 3DS, plus the MTO read-back of
+    // its pixels. A texture the name index does not know -- one over the PICA's
+    // 1024 (refused from both packs by the builds), a model's texture outside
+    // the arenas' archives -- is drawn the way it would be with no pack at all:
+    // expanded from its indices. Counted and named (hdrule:, at teardown).
+    if (source->pack && source->byname) {
+        if (g_lookupNameMisses == 0) {
+            snprintf(g_lookupNameMissFirst, sizeof(g_lookupNameMissFirst), "%s %dx%d",
+                     name.c_str(), (int)surface.texture->width(),
+                     (int)(surface.texture->height() * surface.texture->frameCount()));
+        }
+        g_lookupNameMisses++;
+        return false;
     }
     // NOTHING OVER THE PICA'S 1024 IS IN THE ORIG PACK (arena_etc1_convert.py
     // refuses such a strip by name: sl_big 64x1920, fire 64x2628, explode
@@ -1339,10 +1477,14 @@ int main(int argc, char** argv) {
     mdk::ModImages origPack;
     OrigByName origByName;
     HdPackSource hdSource;
-    if (loadHdPack(flow.state().level, &hdPack)) {
+    // The two packs' side tables for the name index (loadOrigByName): the HD
+    // files by content key, the orig files' original sizes. Level-load only.
+    std::map<std::string, std::string> hdByKey;
+    std::map<std::string, uint32_t> origDims;
+    if (loadHdPack(flow.state().level, &hdPack, &hdByKey)) {
         hdSource.pack = &hdPack;
     }
-    if (loadOrigPack(flow.state().level, &origPack)) {
+    if (loadOrigPack(flow.state().level, &origPack, &origDims)) {
         hdSource.orig = &origPack;
     }
     if (hdSource.pack || hdSource.orig) {
@@ -1414,10 +1556,14 @@ int main(int argc, char** argv) {
             heapProbe("level-data");
             // The name-keyed orig index needs the loaded level (arena name ->
             // palette), so it is built here, not with the pack itself.
-            if (hdSource.orig && loadOrigByName(flow.state().level, level, &origByName)) {
+            if (hdSource.orig &&
+                loadOrigByName(flow.state().level, level, hdByKey, origDims, &origByName)) {
                 hdSource.byname = &origByName;
-                mdk::log3dsPrintf("orig: byname index %d textures", (int)origByName.paths.size());
+                mdk::log3dsPrintf("orig: byname index %d textures, %d with an HD copy",
+                                  (int)origByName.paths.size(), (int)origByName.hdPaths.size());
             }
+            std::map<std::string, std::string>().swap(hdByKey);
+            std::map<std::string, uint32_t>().swap(origDims);
             if (level.corridorReadFailures() != 0) {
                 mdk::log3dsPrintf("level: %d corridor read(s) FAILED -- the level has holes "
                                   "where those corridors are",
@@ -4449,6 +4595,12 @@ int main(int argc, char** argv) {
     {
         MdkC3dFirstUse made;
         mdk_render_c3d_first_use(renderer, &made);
+        mdk::log3dsPrintf("hdrule: level %d hd=%d pack=%d nameMisses=%d (first %s) "
+                          "sizeRefused=%d hdAnimated=%d",
+                          (int)flow.state().level, (int)enhancedToggles.enableHdTextures,
+                          hdSource.pack ? 1 : 0, (int)g_lookupNameMisses,
+                          g_lookupNameMisses > 0 ? g_lookupNameMissFirst : "-",
+                          (int)g_lookupSizeRefused, (int)g_lookupHdAnimated);
         mdk::log3dsPrintf("hdrule: level %d hd=%d pack=%d hashes=%d (%.1f ms, first %s) "
                           "hdAnsweredSd=%d coveredSdMade=%d lateTextures=%d lateDraws=%d "
                           "blankDraws=%d hdImported=%d hdEvicted=%d residentPeak=%u "
@@ -4462,6 +4614,9 @@ int main(int argc, char** argv) {
                           (unsigned)made.hdResidentPeak);
         g_lookupHashes = 0;
         g_lookupHashMs = 0.0;
+        g_lookupNameMisses = 0;
+        g_lookupSizeRefused = 0;
+        g_lookupHdAnimated = 0;
     }
     runtime.reset();
     // 3. The pose caches key on the runtime's Model addresses, which the reset just

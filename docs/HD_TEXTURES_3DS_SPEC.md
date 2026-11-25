@@ -79,6 +79,45 @@ For every PNG under the mod tree:
   the stacking (or be per-frame); decided when the first such pack texture is
   met, not guessed.
 
+### 3.1 The HD rule (owner, 2026-11-24)
+
+"These are ETC1 and ETC1A4 and we should NOT be loading the SD textures AT ALL
+when HD is turned on." With `enableHdTextures` on, a surface the HD pack covers
+is drawn from its HD `.t3x` and nothing else: its standard-definition texture is
+never read, palette-expanded, filtered, mipped or content-hashed -- not the CPU
+expansion and not the packed original in `romfs:/orig`. It never blocks either.
+
+- **Found by name, not by hash.** The orig pack's `byname.txt` row (level, arena,
+  name -> `textures/name@<key>`) carries the texture's content key in its file
+  name; the HD pack's files carry the same key (`textures/LEVELn/NAME@<key>`, the
+  PC mod's names). `main_3ds.cpp` joins the two at level load, by string, so the
+  lookup answers (palette, name) -> HD file with no hash on the console. The key
+  is the texture through that palette (game/hd_key.h), so a name drawn through
+  two palettes is two rows with two keys: a name never maps to another palette's
+  texture. A row is also checked against the orig manifest's original size; a
+  texture of another size under that name is not answered. No pack is rebuilt:
+  the owner's SD pack (1382 textures) is keyed this way already.
+- **Made from the files alone.** The pair is created with both files
+  (`mdk_render_create_compressed_file`'s `hdPath`; `C3dTexture::hdOnly`). Toggle
+  on: every ask (creation, the pump, the warms, a draw) goes to the HD stream;
+  the packed original is not read. Toggle off: the packed original, as before.
+- **Not arrived yet:** the draw draws nothing (or an original already resident
+  from before the toggle went on); the early asks (the pump's walk of resident
+  views, hidden batches, the object and effects warms) make it rare. A draw's
+  ask is read before any hint's; a hint is read and imported only into budget
+  room and never evicts.
+- **Live toggle.** Off: the HD copies a draw still uses stand in until the
+  packed original is imported (no main-thread read); the rest are freed. On:
+  originals already resident stand in until the HD copy lands.
+- **Where SD still loads, and why:** an animated (stacked) texture (the pack's
+  strip is resampled to a power of two, squeezing its frames); a texture the
+  game writes into (a bullet hole: the HD image does not have it); a texture the
+  name index does not know (over the PICA's 1024, or outside the arenas'
+  archives -- with an HD pack it is expanded, never hashed); Kurt's frames
+  (`kurt.pak`, owner 2026-11-19: the pack's 128x128 frames are fewer texels);
+  the HUD's pictures (made at level load, cold); Original-shaded surfaces (the
+  sky, glass) the PC never replaces. `hdrule:` lines at level teardown count it.
+
 ## 4. Memory and streaming
 
 An HD pack does not fit the Old 3DS's linear heap all at once on every level, so

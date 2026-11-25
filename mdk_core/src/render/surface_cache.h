@@ -60,6 +60,12 @@ struct ColourReplacement {
     // for an HD-pack upscale, which keeps the expansion as its fallback and the
     // toggle's per-draw choice.
     bool compressedOriginal = false;
+    // With a compressedOriginal: the HD pack's copy of the same pair, found
+    // without reading the texture (the 3DS's name index). The pair is made from
+    // the two files alone (mdk_render_create_compressed_file's hdPath): the
+    // backend draws the HD copy while its toggle is on and never touches the
+    // original's pixels for it. Borrowed for the call only.
+    const char* hdPath = nullptr;
 };
 
 // Asks for a Lit surface's colour replacement, or returns false. Called
@@ -71,7 +77,8 @@ struct ColourReplacement {
 // replacement kinds).
 //
 // A Sprite surface asks it too (SurfaceCache::surfaceId) and takes ONLY a
-// compressedOriginal answer. So the answer must be the pair's, never the
+// compressedOriginal answer (with its hdPath, if any: the backend draws a
+// Sprite's HD copy as it draws a Lit one's). So the answer must be the pair's, never the
 // shading's: a Sprite's packed original is the texture a later Lit draw of the
 // same pair is handed, and it must be the one that Lit draw would have asked for.
 typedef bool (*ColourReplacementLookup)(void* user, const Surface& surface,
@@ -120,10 +127,13 @@ public:
     //
     // A Lit surface's replacement is asked for here (the lookup above). A
     // SPRITE (an effect, an object's shine) takes the pair's packed original
-    // and nothing else -- requestPacked, then the index texture as before: an
-    // HD-pack upscale or a decoded image stays Lit-only (the C# replaces only
-    // Lit materials), and an answer it does not take is left for the pair's
-    // Lit draw to ask for again. An Original-shaded surface asks nothing.
+    // -- with the HD copy the name index pairs with it (ColourReplacement::
+    // hdPath), which the backend draws for a Sprite as for a Lit draw -- and
+    // nothing else: requestPacked, then the index texture as before. An HD
+    // upscale attached to an expansion, or a decoded image, stays Lit-only (the
+    // C# replaces only Lit materials), and an answer it does not take is left
+    // for the pair's Lit draw to ask for again. An Original-shaded surface asks
+    // nothing.
     MdkTextureId surfaceId(const Surface& surface, const formats::Palette* palette);
 
     // surfaceId, plus asking the backend to have the copy ready before a

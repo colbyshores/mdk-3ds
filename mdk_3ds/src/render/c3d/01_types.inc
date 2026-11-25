@@ -193,6 +193,14 @@ struct C3dTexture {
     // from SD again (measured before the table: 440 imports in 3000 frames on
     // level 3 with resident bytes flat, Kurt's idle loop re-read each cycle).
     int32_t hdCopy = -1;
+    // MADE FROM THE PACKS' FILES ALONE (mdk_render_create_compressed_file with an
+    // HD path; docs/HD_TEXTURES_3DS_SPEC.md 3.1): the packed original (packPath)
+    // and the HD copy (hdCopy) of one texture. While enableHdTextures is on the
+    // HD copy is the texture -- requested ahead, drawn when resident, and the
+    // packed original is never read for it (drawsHdOnly, 04_textures.inc) --
+    // and while it is off the packed original is, as for any other. Cleared when
+    // the texture stops being a packed original (a stamp, its index pixels).
+    bool hdOnly = false;
     // A draw has wanted this texture's HD copy (counted once per texture as late
     // when the copy was not resident then: RendererC3D::hdLateTextures).
     bool hdWanted = false;
