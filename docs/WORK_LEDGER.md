@@ -1361,3 +1361,58 @@ the fallback when a set does not fit and serves the legacy HUD/Kurt copies).
   history live on branch `harness/3ds-profiling` (ea8cd744).
 - **Evidence:** `tools/check.sh` ALL GATES PASSED; `make -C tests/scripts test`
   exit 0; gate self-test PASS.
+
+## 2026-11-25 -- the immaculate main on the HD-only tree (branch cleanup/immaculate-hd)
+
+- **Owner's words:** "I want master to look absolutely immaculate without a bunch
+  of ifdefs"; the harness to its own branch; split the ~4,500-line main_3ds.cpp;
+  "make sure that you dont disturb the work that we have already done" (a new
+  branch, from fix/3ds-hd-only 76826339, the owner-tested build plus the HD set).
+- **What (one commit per step):**
+  - 42590c8e the evidence/frames/progress-log prune (8357fcc6, cherry-picked).
+  - 4b5fee8c every harness `#if` in mdk_3ds/src resolved as a release build
+    sees it (4916462f's script on the new tree): 136 conditionals, 2,025 lines;
+    the release ELF and every object byte-identical to 76826339's.
+  - 930508e1 the harness leaves: harness_3ds.{h,cpp} and its calls, the
+    Makefile's harness section, HDROMFS staging, hw_cycle.sh + self-test,
+    compare_linux.sh, kDrawDedupe, kDspAudio (the statistics screen keeps its
+    software sink -- it was never a DSP-failure fallback), log3dsPeriodic and
+    every line it gated, the census, the 3DS BMP capture, the HD probes and
+    the hdrule lines (render_c3d_stats.h is now render_c3d_hd_set.h, the set's
+    load summary). Four warnings fixed. Tests updated (c3d_frame dedupe check,
+    ndsp_sink's main-ledger part, main_3ds_flow's respawn check); AGENTS.md P10
+    says where the harness lives; ledger row 3ds.harness-hooks cites a note.
+  - a497ae0a dead HD streaming: the HD pack's content-hash lookup (unreachable:
+    the HD pack is refused without a name index). The per-surface stream stays
+    (HUD pictures, Kurt's HD frames, a set that does not fit); spec section 4
+    marked superseded for the set's textures.
+  - efedb848, 4b8669ae main_3ds.cpp split, pure moves: 4,268 -> 2,904 lines;
+    config_3ds, packs_3ds, level_load_3ds, platform/clock_3ds.h,
+    platform/heap_probe_3ds. The frame loop stays inline (40-odd shared locals).
+- **Evidence:**
+  - Release build (clean, `make -C mdk_3ds`): zero compiler warnings. Player
+    build: `.git/worktrees/cleanup-hd/hw-logs/play-4b8669ae.3dsx` (md5
+    e74c4b6074c23da6c0e6ae4fb76fb4bb; ELF 043c5cb8dfc57c8f20162005776c91a8),
+    no harness literal in the ELF.
+  - At 4b8669ae: tools/check.sh ALL GATES PASSED (gates_frames ran: PASS);
+    tests/formats 200610 checks, 0 failures; all 19 tests/scripts suites pass
+    (c3d_frame 64 checks / 167 arms / 29 probes).
+  - Hardware (old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on; branch
+    throwaway/cleanup-hd-hw 7d86f347 = 4b8669ae + fix/3ds-hd-only's harness;
+    `AUTOQUIT=90 PROFILE=1 FIXED=1 HDROMFS=1 TOGGLES=enableHdTextures=1`; logs in
+    `.git/worktrees/cleanup-hd/hw-logs/`):
+
+    | run | frames | mean ms | p50 | p95 | p99 | >33.3 | HD gate |
+    |---|---|---|---|---|---|---|---|
+    | L7 walk, fix/3ds-hd-only final | 4858 | 18.52 | 16.8 | 29.1 | 39.7 | 138 | PASS |
+    | L7 walk, this branch | 4998 | 18.00 | 16.8 | 25.6 | 33.8 | 102 | PASS |
+    | L8 walk, fix/3ds-hd-only final | 2955 | 30.45 | 28.6 | 42.6 | 52.0 | 266 | PASS |
+    | L8 walk, this branch | 3084 | 29.18 | 28.6 | 32.7 | 41.8 | 93 | PASS |
+
+    L7: set tier 256, 143/143 resident, 4.18 MB, hold 6.05 s. L8: tier
+    256/128, 281/281 resident, 5.16 MB, hold 12.1 s. The throwaway's PROFILE
+    build has no per-frame span ticks and no arena-entry table, so its frames
+    carry less instrumentation than the reference's.
+- **Not verified:** the player build itself on a console or in Mandarine (the
+  hardware runs are its code plus the harness); the frame-loop split (not done).
+- **Commit:** see `git log cleanup/immaculate-hd`.
