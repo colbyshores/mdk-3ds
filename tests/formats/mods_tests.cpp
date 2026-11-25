@@ -751,6 +751,32 @@ MDK_TEST(surfaceCacheMakesAnHdOnlyPairFromItsFilesAlone) {
     mdk_test_compressedFileId = -1;
 }
 
+// A PAIR ALREADY MADE KEEPS ITS TEXTURE: a Lit draw whose answer is a packed
+// original, for a pair an earlier call already made into an index texture, is
+// handed that texture -- the backend is not asked for a second one (whose entry
+// would overwrite, and leak, the first), and no file is attached to it.
+MDK_TEST(surfaceCacheKeepsAPairsTextureOverALaterPackedAnswer) {
+    resetPackedStubs();
+    mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+    cache.setColourReplacementLookup(hdOnlyLookup, nullptr);
+    mdk::formats::Texture texture = keyTexture();
+    mdk::formats::Palette palette = keyPalette();
+    mdk::Surface lit;
+    lit.texture = &texture;
+    lit.name = "WALL";
+    lit.shading = mdk::Shading::Lit;
+    lit.frameCount = 1;
+    const MdkTextureId made = cache.textureId(&texture, &palette);
+    MDK_CHECK_EQ(made, 0);
+    MDK_CHECK_EQ(mdk_test_indexTextures, 1);
+    MDK_CHECK_EQ(cache.surfaceId(lit, &palette), made);
+    MDK_CHECK_EQ(mdk_test_compressedFileCalls, 0);
+    MDK_CHECK_EQ(mdk_test_compressedCalls, 0);
+    MDK_CHECK_EQ(mdk_test_indexTextures, 1);
+    MDK_CHECK_EQ(cache.sourceStats().hdAnsweredSd, 1);
+    mdk_test_compressedFileId = -1;
+}
+
 // AND NOTHING ELSE. An HD-pack upscale or a decoded image is not a Sprite's: the
 // Sprite gets the plain expansion with nothing attached, and the pair's Lit draw
 // still asks and attaches its replacement to that same texture -- as when a

@@ -196,6 +196,12 @@ MdkTextureId SurfaceCache::createPacked(const Key& key, const Surface& surface,
         !replacement.compressedPath[0]) {
         return -1;
     }
+    // A PAIR ALREADY MADE (its index texture, by a draw that asked nothing or
+    // whose answer it did not take) keeps the texture it has: overwriting the
+    // entry would leak that texture for the level's life.
+    if (textures_.find(key) != textures_.end()) {
+        return -1;
+    }
     const MdkTextureId made = mdk_render_create_compressed_file(
         renderer_, surface.texture->width(),
         surface.texture->height() * surface.texture->frameCount(), replacement.compressedPath,
@@ -303,7 +309,13 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
     // per draw) and a decoded colour image. The backend copies the bytes, so
     // the lookup's image need only live for this call.
     if (lookedNow && id >= 0) {
-        if (replacement.compressedPath && replacement.compressedPath[0]) {
+        if (replacement.compressedOriginal) {
+            // A packed original's answer for a pair already made: nothing to
+            // attach (the file IS the original). Its HD copy is not taken.
+            if (replacement.hdPath && replacement.hdPath[0]) {
+                sourceStats_.hdAnsweredSd++;
+            }
+        } else if (replacement.compressedPath && replacement.compressedPath[0]) {
             mdk_render_replace_compressed(renderer_, id, replacement.compressedPath);
             replacementFound_++;
             sourceStats_.hdAnsweredSd++;
