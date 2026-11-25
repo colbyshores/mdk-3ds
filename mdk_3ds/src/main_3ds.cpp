@@ -733,8 +733,9 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // its pixels. A texture the name index does not know -- one over the PICA's
     // 1024 (refused from both packs by the builds), a model's texture outside
     // the arenas' archives -- is drawn the way it would be with no pack at all:
-    // expanded from its indices.
-    if (source->pack && source->byname) {
+    // expanded from its indices. (An HD pack is only kept for a level with a
+    // name index: main refuses it without one.)
+    if (source->pack) {
         return false;
     }
     // NOTHING OVER THE PICA'S 1024 IS IN THE ORIG PACK (arena_etc1_convert.py
@@ -743,20 +744,13 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // -- and hashing EXPLODE's 128x3328 strip costs ~100 ms on the Old 3DS. A
     // Sprite-shaded object part drawing it asks here at its first draw (frame
     // 650 of the L7 walk: obj 105.5 ms once Sprites asked the pack).
-    if (!source->pack && (surface.texture->width() > 1024 ||
-                          surface.texture->height() * surface.texture->frameCount() > 1024)) {
+    if (surface.texture->width() > 1024 ||
+        surface.texture->height() * surface.texture->frameCount() > 1024) {
         return false;
     }
-    // THE HD PACK FIRST, THE ORIG PACK SECOND: where both hold the key the HD
-    // copy (the upscale) wins, and the orig pack fills the rest -- an arena the
-    // HD pack does not cover still skips the ARM11 expansion. Both resolve by
-    // the same hdKeyOf key, so a texture the HD pack rekeys (a stamped texture,
-    // 05_resources.inc) matches neither pack and takes the index path.
-    if (source->pack && source->pack->resolve(mdk::ModImages::Kind::Textures, name,
-                                              *surface.texture, *palette, &source->path)) {
-        out->compressedPath = source->path.c_str();
-        return true;
-    }
+    // THE ORIG PACK BY CONTENT, with no HD pack and a name the index does not
+    // know: the hdKeyOf key, so a stamped texture (05_resources.inc rekeys it)
+    // matches nothing and takes the index path.
     if (source->orig && source->orig->resolve(mdk::ModImages::Kind::Textures, name,
                                               *surface.texture, *palette, &source->path)) {
         out->compressedPath = source->path.c_str();

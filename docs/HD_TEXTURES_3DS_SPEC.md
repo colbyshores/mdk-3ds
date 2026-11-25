@@ -145,6 +145,15 @@ Old 3DS reads ~13 HD files a second in play -- so pop-in was luck. Since
 
 ## 4. Memory and streaming
 
+**Superseded in part (2026-11-25).** For the arena textures the name index
+pairs with an HD file, sections 3.1 and 3.2 replace what follows: the HD copy is
+the only copy drawn with the toggle on (never the original as a stand-in), and
+the level's whole set is read on the loading screen and kept, so nothing of it
+is streamed, budgeted or evicted in play. The per-surface stream below is still
+the design for what the set does not hold: the HUD's pictures, Kurt's HD
+frames, and a level whose set does not fit (logged `DOES NOT FIT: streamed per
+surface`). Sections 4.1 and 4.2 are kept as the record of how it was sized.
+
 An HD pack does not fit the Old 3DS's linear heap all at once on every level, so
 residency is part of the feature, in two steps:
 
@@ -206,7 +215,9 @@ residency is part of the feature, in two steps:
 
 ## 6. Open, for the owner
 
-- **Which HD pack?** None is in the repository or under `MDK/mods` today
-  (`[main] mods: 0 found`).
-- **The Old-3DS size cap** (256^2 like forsaken's lomem pack, or measured larger).
-- **RomFS or SD** for the pack (size against the push and the CIA).
+- **Which HD pack?** The owner's, built by `build_hd_pack.sh` and copied to
+  `sdmc:/3ds/mdk/hd` (answered; none is in the repository).
+- **The Old-3DS size cap**: the set's tiers (512, 256, 256/128) are chosen per
+  level against the free linear heap (3.2); the pack itself is built at 512.
+- **RomFS or SD**: SD (`sdmc:/3ds/mdk/hd`). A RomFS copy is a harness-build
+  feature (`HDROMFS=1`, branch `harness/3ds-profiling` / `fix/3ds-hd-only`).
