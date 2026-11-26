@@ -9695,6 +9695,54 @@ int main(int argc, char** argv) {
             }
         }
     }
+    // L6 OLYM_4's cannon (in-game level 2): Kurt drops onto the middle XBGUN (script 23159)
+    // and holds fire. It rises (114, restart 23182), fires while he stands on it and fires
+    // (209, the shot loop at 23250), and after the third shot (if_var 2.0 > 2) takes path
+    // 35601 (23266, 23303: the window, group 1, shatters), shows COLYM_4 and carries him
+    // through it (23375); it then dies and he drops into OLYM_5. Before the 209 fix
+    // (upstream C# 3b072d2a) his feet were 0.02 above its model's top and it never fired:
+    // the script sat at 23193 for good. Checked by markers, not a golden: the src/ oracle
+    // is v1.1.1, which still has the old test, and no C# probe ran this schedule.
+    {
+        std::string got;
+        std::string why;
+        if (!kurtPlatformsDump(6, 700, "tp:1:OLYM_4:-1732:92:-1260:90,fire:60-700", data,
+                               spritesArg, &got, &why)) {
+            printf("FAIL L6_cannon: %s\n", why.c_str());
+            failures++;
+        } else {
+            const char* kSteps[] = {
+                "on=XBGUN#1002",                          // he stands on it
+                "/r23250\n",                              // it fires (209 true)
+                "/r23266\n",                              // third shot: off on its path
+                "/r23303\n",                              // the window breaks at frame 4
+                "arena=COLYM_4 state=Shot",               // it carries him into COLYM_4,
+                "on=XBGUN#1002",                          // still standing on it
+                "arena=OLYM_5",                           // and he ends up in OLYM_5
+            };
+            size_t at = 0;
+            const char* missing = nullptr;
+            for (size_t i = 0; i < sizeof(kSteps) / sizeof(kSteps[0]); i++) {
+                at = got.find(kSteps[i], at);
+                if (at == std::string::npos) {
+                    missing = kSteps[i];
+                    break;
+                }
+            }
+            const size_t last = got.rfind("\ns=700 ");
+            if (missing != nullptr) {
+                printf("FAIL L6_cannon: never reached \"%s\" in order\n", missing);
+                failures++;
+            } else if (last == std::string::npos ||
+                       got.compare(last + 1, 25, "s=700 arena=OLYM_5 state=") != 0) {
+                printf("FAIL L6_cannon: Kurt is not in OLYM_5 at the end\n");
+                failures++;
+            } else {
+                printf("PASS L6_cannon: Kurt fires the middle XBGUN three times, it breaks "
+                       "the window and flies him through COLYM_4 into OLYM_5\n");
+            }
+        }
+    }
     // ---- end of package #3 -------------------------------------------------------------
 
     // The rides probe's goldens (tests/scripts/ride_probe; see kurtRideDump for the columns),
