@@ -165,8 +165,15 @@ void ScriptRuntime::kurtTouchesGroups() {
 
 void ScriptRuntime::carryKurt(MdkObject* obj, const Vec3& position, float yaw) {
     // C# ScriptRuntime.cs:982-986: Kurt moves and turns with the platform he stands on.
-    if (player_ != nullptr && obj == player_->platform() && !obj->dead && player_->onFloor) {
+    // One that keeps him (0x800000) takes his XY in the air too (0x46634e; upstream
+    // 7f0dfca8): a jump on LEVEL6's flying XBGUN left him up to ~10 units behind it.
+    if (player_ == nullptr || obj != player_->platform() || obj->dead) {
+        return;
+    }
+    if (player_->onFloor) {
         player_->carry(position, obj->position, obj->yaw - yaw);
+    } else if ((obj->flags & MdkObject::FlagStandable) != 0) {
+        player_->carry(Vec3{position.x, position.y, obj->position.z}, obj->position, 0.0f);
     }
 }
 

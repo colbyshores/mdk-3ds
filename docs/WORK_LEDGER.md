@@ -3057,3 +3057,10 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     `L4_board_lost`, `L4_board_dead`, `L4_board_end`). `L4_board_ride` takes the C++'s
     output: one line, the follow camera's z one 1/64 apart at a yaw of 159.1 (the view's
     trig LUT; the feet and every other column equal the oracle).
+  - **7f0dfca8, keep a kept Kurt over his platform in the air.** `carryKurt`: a platform
+    that keeps Kurt (0x800000) also carries his XY while he is in the air, at the
+    platform's height and without turning him (0x46634e). A jump on LEVEL6's flying
+    XBGUN left him up to ~10 units behind it. No golden moved. A jump on the XBGUN at
+    rest (platform probe, `tp:1:OLYM_4:-1732:92:-1260:0,fire:60-210,jump:250-251`) is the
+    same in the oracle before and after this commit and in our C++; the flying-gun case of
+    upstream's unit test was not reproduced in a probe.
