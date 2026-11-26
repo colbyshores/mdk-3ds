@@ -4,10 +4,11 @@
 #
 #   mdk_3ds/tools/hd_pack_convert.py <mod dir> <out dir> [--max 512] [--jobs N]
 #
-# <mod dir> is an HD texture mod in the PC layout (docs/modding.md): the one the
-# C# port's `--upscale-textures` makes (`mods/hd-textures/`, Real-ESRGAN, from the
-# player's own copy of the game -- nothing upscaled is distributed, so there is
-# no pack to download; mdk_3ds/tools/build_hd_pack.sh makes it). Every PNG under
+# <mod dir> is an HD texture mod in the PC layout (docs/modding.md): the one
+# mdk_3ds/tools/build_hd_mod.py makes, the same as the C# port's
+# `--upscale-textures` (`mods/hd-textures/`, Real-ESRGAN, from the player's own
+# copy of the game -- nothing upscaled is distributed, so there is no pack to
+# download; mdk_3ds/tools/build_hd_pack.sh makes it). Every PNG under
 # its `textures/` and `images/` becomes a `.t3x` at the same relative path under
 # <out dir>, plus <out dir>/manifest.txt. docs/HD_TEXTURES_3DS_SPEC.md is the spec.
 #

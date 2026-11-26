@@ -28,6 +28,7 @@
 #include "formats/dti.h"
 #include "formats/mdk_data.h"
 #include "formats/mto.h"
+#include "formats/texture.h"
 #include "formats/texture_archive.h"
 #include "game/level_data.h"
 #include "scripts/object.h"
@@ -709,4 +710,41 @@ MDK_TEST(AFailedLoadLeavesAnEmptyLevel) {
     MDK_CHECK(!level.levelTextures().textures().empty());
     MDK_CHECK_EQ(level.number(), 3);
     MDK_CHECK_EQ(Arena::liveCount() - before, (int64_t)level.arenas().size());
+}
+
+// The delta form of an animated texture (M_COMM): frame k+1 is frame k with
+// change k applied, as the C#'s Texture.ApplyDeltas builds it. A synthetic
+// 4x2 texture of three frames, so it runs without the game data.
+MDK_TEST(AnimatedTextureDeltasBuildEachNextFrame) {
+    std::vector<uint8_t> b;
+    const auto u16 = [&b](uint32_t v) { b.push_back((uint8_t)v); b.push_back((uint8_t)(v >> 8)); };
+    const auto u32 = [&u16](uint32_t v) { u16(v & 0xFFFFu); u16(v >> 16); };
+    u32(3);  // frames
+    u16(4);  // width
+    u16(2);  // height
+    for (uint8_t i = 1; i <= 8; i++) {
+        b.push_back(i);  // frame 0
+    }
+    u32(0);  // the f32
+    // The table (at 20), offsets from it: control k at slot k, data k at
+    // slot count + k (slot count - 1 unused).
+    u32(20);
+    u32(26);
+    u32(0);
+    u32(32);
+    u32(36);
+    u16(0); u16(1); b.push_back(1); b.push_back(0);  // change 0: pixels 0-3
+    u16(1); u16(1); b.push_back(1); b.push_back(0);  // change 1: pixels 4-7
+    for (int i = 0; i < 4; i++) b.push_back(9);
+    for (int i = 0; i < 4; i++) b.push_back(7);
+    const mdk::formats::Texture t = mdk::formats::Texture::parseAnimated(
+        "DELTAS", b.data(), (int32_t)b.size(), 0, mdk::formats::Texture::kDeltas);
+    const uint8_t expected[24] = {1, 2, 3, 4, 5, 6, 7, 8,
+                                  9, 9, 9, 9, 5, 6, 7, 8,
+                                  9, 9, 9, 9, 7, 7, 7, 7};
+    MDK_CHECK_EQ(t.frameCount(), 3);
+    MDK_CHECK_EQ(t.indexCount(), 24);
+    for (int i = 0; i < 24 && t.indexCount() == 24; i++) {
+        MDK_CHECK_EQ(t.indices()[i], expected[i]);
+    }
 }

@@ -85,7 +85,11 @@ Texture Texture::parseAnimated(const std::string& name, const uint8_t* bytes, in
         }
         int32_t destination = (int32_t)binU16(bytes, control) * kDeltaUnit;
         const int32_t runs = (int32_t)binU16(bytes, control + 2);
-        uint8_t* frame = texture.indices_.data() + (size_t)k * (size_t)size;
+        // Frame k+1 is frame k with change k applied (the C#'s ApplyDeltas).
+        // Applying it to frame k in place instead left frames 1.. empty and
+        // frame 0 changed (found by the HD export's parity check, 2026-11-26).
+        uint8_t* frame = texture.indices_.data() + (size_t)(k + 1) * (size_t)size;
+        memcpy(frame, frame - size, (size_t)size);
         for (int32_t run = 0; run < runs; run++) {
             const int32_t runAt = control + 4 + run * 2;
             if (runAt + 2 > byteCount) {

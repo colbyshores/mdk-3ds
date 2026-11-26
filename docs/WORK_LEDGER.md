@@ -2620,3 +2620,65 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Not tested on hardware:** toggling HD in the pause menu (the remake path;
   the harness's HDFLIP does not go through the menu), levels other than 3.
 - **Commit:** this one (ledger only).
+
+## 2026-11-26 -- the HD texture pack without .NET (branch build/hd-pack-native)
+
+### build_hd_pack.sh: a C++ export and a Python mod step replace the C# `--upscale-textures`
+- **What:**
+  - `mdk_3ds/tools/hd_export/hd_tex_export.cpp` (+ Makefile, host build like
+    arena_etc1/ and kurt_etc1/): reads every texture and 2D image the HD mod
+    replaces out of the game data through mdk_core's loaders, in the C#
+    generator's order (TextureExport.Collect, Kurt, CanvasExport.Level, Menus;
+    fonts skipped), keyed by `hdKeyOf`; writes `index.tsv` and one `<key>.rgba`.
+  - `mdk_3ds/tools/build_hd_mod.py`: everything after the export, as
+    HdGenerator/UpscaleImages do it: the pinned Real-ESRGAN v0.2.5.0 release
+    downloaded once into its own empty folder, SHA-256 checked, unpacked into
+    another empty folder (only the upscaler binary is run); manifest (format=1,
+    the C#'s layout, so a C#-made mod is picked up as it is), mod.txt, per-level
+    prune, incremental skip, first-level-wins for shared keys; bleed (4-neighbour
+    rings) + 8-texel wrap; `-n realesrgan-x4plus -s 4`; margin crop, 2x2 box,
+    hard/soft bilinear alpha; RGB or RGBA PNG.
+  - `build_hd_pack.sh` runs export -> mod -> `hd_pack_convert.py`; header, the
+    converter's header and `docs/HD_TEXTURES_3DS_SPEC.md` say what it needs now:
+    host C++ compiler + zlib, Python 3 with numpy and Pillow, a Vulkan GPU,
+    network once, tex3ds. No .NET. `src/` is unchanged (still the reference).
+  - **mdk_core fix:** `Texture::parseAnimated`'s delta form (only M_COMM, levels
+    4 and 7) applied change k to frame k in place; the C# builds frame k+1 from
+    frame k. C++ frame 0 was altered and frames 1-5 mostly empty. Fixed; new
+    synthetic test `AnimatedTextureDeltasBuildEachNextFrame` (19 failures on the
+    old code, 0 on the fix).
+- **Why:** owner: "that old C# program should probably be in C++ if that is
+  possible"; then the owner's design: C++ only for reading the game data, Python
+  for the rest, no new requirements. Parity with the C# was the requirement.
+- **Evidence** (scratchpad; .NET 10.0.404 SDK fetched there only to run the
+  reference, sha512 checked):
+  - With a deterministic stand-in upscaler (nearest 4x + a position pattern, so
+    the box filter's rounding is exercised) in both the C# and the native run,
+    levels 3-8: all 1417 pre-upscale frames pixel-identical; all 1382 mod images
+    identical in pixels and colour mode; manifest.txt and mod.txt byte-identical;
+    per-level size lines identical. Before the delta fix, M_COMM's 12 frames were
+    the only difference (other keys).
+  - Incremental: two deleted images re-made, a stale level-3 entry pruned with
+    its file, a no-change run makes 0 -- identical trees/manifests on both sides.
+  - Real run, `build_hd_pack.sh` end to end on the idle RX 6600 (0% busy before):
+    download + SHA-256 + unpack, 1417 frames upscaled in 492 s, 33 min in all
+    under a loaded host; the 3DS pack's 1382 `.t3x` are **byte-identical** to the
+    existing `build-hd-pack/` (made by the C# path 2026-11-17/18): same set,
+    names, formats, sizes. The manifest's `src_sha256_16` (a hash of the mod
+    PNG's bytes) differs on every line: Pillow's zlib stream is not .NET's (the
+    pixels are the same), so converting a new mod into an old C#-made pack
+    re-encodes everything once, to the same bytes.
+  - `make -C tests/formats` 0 failures; `make -C tests/scripts test` pass (Linux
+    built first); `tools/check.sh` all gates pass (smdh skipped, no .cia).
+- **Upscaler non-determinism:** the stand-in upscaler isolates our pre/post
+  processing from the GPU (bit-exact). On this GPU and driver Real-ESRGAN was
+  also repeatable: the 2026-11-18 C# pack and today's native pack are identical.
+  Another GPU or driver may give different upscaler pixels; that is not ours.
+- **Not done / differs:** the C#'s `--hd-model=anime` / `--hd-scale=4` and the
+  settings.cfg upscaler source are not carried (the build only used the
+  defaults; MDK_REALESRGAN_URL/SHA256 replace the source); the old
+  `textures-hd/` migration does not apply (no user folder). The 3DS shows the
+  delta fix only after its orig ETC1 set (romfs orig/, arena_etc1_convert.py) is
+  rebuilt: that set still holds M_COMM from the old decode under the old key,
+  and its by-name index serves it. Not run on a console or in Mandarine.
+- **Commit:** this one.
