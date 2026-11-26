@@ -70,6 +70,10 @@ public:
         float burst = 0.0f;
         Vec3 jitter{};
         bool done = false;
+        // The place at the start of the last tick (upstream 7740deb1): a frame
+        // until the next is drawn between it and now. False: new since.
+        bool ticked = false;
+        Vec3 tickedPosition{};
 
         // The sprite's frame now.
         int32_t frame() const {

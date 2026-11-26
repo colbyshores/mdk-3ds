@@ -2757,7 +2757,8 @@ int main(int argc, char** argv) {
         if (runtime && !strikeFrame) {
             // The pieces and sprite effects, where the C# draws them:
             // after the objects, before Kurt (Viewer.cs:707).
-            effectsView.build(*runtime, sceneCamera, &effectsFrame);
+            effectsView.build(*runtime, sceneCamera, &effectsFrame,
+                              fixedStep ? 1.0f : runtime->tick_blend(pending));
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
             if (effectsDraw.allocationFailed()) {
                 if (!effectsFailureLogged) {

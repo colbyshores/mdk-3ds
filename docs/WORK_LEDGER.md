@@ -2887,3 +2887,19 @@ fixes are another agent's.
 - **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match; tests/formats 200,650
   checks, 0 failures; `tools/check.sh` ALL GATES PASSED (the R11 screen first flagged the
   two `% count`s).
+
+### 7740deb1 -- flying pieces and effects drawn between ticks
+- **What:** each debris piece keeps its centre and turn, and each sprite effect its place,
+  at the start of the tick (`Debris::update`, `Effects::update`); `EffectsView::build` takes
+  the tick's alpha and draws them between that and now (culling at the drawn place). New ones,
+  and wounds whose object jumped, are drawn where they are; the sprites' frames stay at the
+  tick rate. Both frontends pass the tick's alpha (Linux: 1 under `--fixed-step`).
+- **Why:** sparks, shattered pieces, slime drops, wounds and bubbles moved at 30 Hz on faster
+  screens.
+- **Not like upstream:** a piece's turn is the normalised lerp (short way round) instead of
+  `Quaternion.Slerp`: the turn between two ticks is small, and the slerp's acos and sines per
+  piece per frame are libm calls on the ARM11 (AGENTS.md R6). Drawing only.
+- **Cost on the 3DS:** a lerp per piece and effect, and four multiply-adds and a square root
+  per piece; measured with the interpolation entry below.
+- **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match (L8_effects_storm builds
+  at alpha 1, unchanged); `tools/check.sh` ALL GATES PASSED.

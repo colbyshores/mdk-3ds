@@ -2507,7 +2507,7 @@ int main(int argc, char** argv) {
             // scene camera's zoom.
             effectsView.setTinyPieceCull((float)enhancedToggles.tinyDebrisPixels, kTopWidth,
                                          kTopHeight);
-            effectsView.build(*runtime, sceneCamera, &effectsFrame);
+            effectsView.build(*runtime, sceneCamera, &effectsFrame, runtime->tick_blend(pending));
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
             if (effectsDraw.allocationFailed()) {
                 if (!effectsFailureLogged) {

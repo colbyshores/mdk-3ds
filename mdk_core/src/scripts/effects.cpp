@@ -178,6 +178,9 @@ void Effects::update(float ticks) {
     copy.assign(effects_.begin(), effects_.end());
     for (size_t i = 0; i < copy.size(); i++) {
         Effect* effect = copy[i];
+        // A tick starts: frames until the next are drawn from here (upstream 7740deb1).
+        effect->ticked = true;
+        effect->tickedPosition = effect->position;
         // The effect may have been removed by an earlier update in this
         // same pass (a wound's drop cannot remove it, but be exact: the
         // C# iterates its own copy of live references; a removed effect
