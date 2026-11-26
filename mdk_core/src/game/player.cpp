@@ -91,6 +91,12 @@ const float kFallSlide = 0.5f;
 const float kCreepSpeed = 0.35f * kTicks;
 // Downhill glue: on floors flatter than this the feet follow the slope down.
 const float kGlueNz = 0.25f;
+// Upstream 3f9315c5 (C# 1.2.0 Kurt.GlueMaxSpeed, FallGrace): the glue's fastest drop
+// (u/s), under the hard landing's so the landing after it does not hurt; and a running
+// or standing Kurt starts the fall animation only after this long (s) off the floor --
+// down a steep slope his feet leave it for a step or two at a time.
+const float kGlueMaxSpeed = 90.0f;
+const float kFallGrace = 0.15f;
 // Landing faster than this is a hard landing (10 damage + K_CRASHL, which land
 // with health). The C# gates the creep snap behind it, so the constant is
 // needed for the position half now.

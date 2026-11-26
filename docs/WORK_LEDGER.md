@@ -2874,3 +2874,19 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     on the next steps. `followCameraClear` and `buildFollowCameraCleared` take the step's
     `delta`. Three goldens moved; each equals the oracle at c81dafc1: `L4_ledge_short` (the
     wall push at step 37), `L7_ride_xd2`, `L4_board_end`.
+  - **3f9315c5, keep Kurt on steep slopes running downhill.** The walk's downhill glue
+    follows the slope's whole drop (`downhill / n.z`, capped at 90 u/s), and a running or
+    standing Kurt starts the fall animation only after 0.15 s off the floor (`_airFor`).
+    Measured on LEVEL6's OLYM_8 slope with the ledge probe (`tp:1:OLYM_8:2307:2469:-1164:180,
+    fwd:30-120`): falls into K_FALL while running drop from 10 to 3, the same in the oracle
+    and the C++. Eleven goldens moved. Nine equal the oracle at 3f9315c5 byte for byte:
+    `L3_kurt_steps`, `L7_plat_door`, `L4_board_lost`, `L4_board_end`, `L4_hazards_snow`,
+    `L6_wind_tunnel`, `L6_wind_arena`, `L6_wind_fan`, `L6_wind_wall`. Two take the C++'s
+    output: `L7_corridor_middle` (one line, a feet z of 4 against 5) and `L4_board_off` (5
+    lines, vz -8.3972 against -8.4009). Both walk at a yaw off the axes, where the glue now
+    binds and divides by n.z, so the trig LUT in `Player::facing` (accepted drift, owner
+    2026-11-20) shows. Evidence: with `facing` switched to libm cosf/sinf in a scratch build,
+    both equal the oracle byte for byte; the shipped LUT was put back.
+  - **Oracle tooling:** `tests/scripts/kurt_probe` is new. The driver that made
+    `L3_kurt_steps`/`L3_kurt_lethal` (`/tmp/kilo/oracle/Driver`) was not kept; this probe
+    replays `dumpKurt`'s schedule and reproduces both goldens byte for byte at d5bb66ec.

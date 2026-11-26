@@ -53,7 +53,7 @@ void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
             _jumpTicksLeft = kJumpHoldTicks;
             _jumpReleased = false;
         } else {
-            glueDownhill(move, delta);
+            glueDownhill(move, delta, true);
         }
     } else {
         updateAir(jumpHeld, delta);
@@ -97,13 +97,18 @@ void Player::updateAir(bool jumpHeld, float delta) {
     }
 }
 
-void Player::glueDownhill(const Vec3& move, float delta) {
+// Upstream 3f9315c5: with `exact` (the walk's glue), the feet follow the slope's whole
+// drop (the move along the slope over the normal's z), capped at kGlueMaxSpeed, not only
+// its share along the normal: on a steep floor (LEVEL6's OLYM_8, 42 degrees) the feet
+// left it every other step and Kurt flickered between the run and the fall.
+void Player::glueDownhill(const Vec3& move, float delta, bool exact) {
     const Vec3 n = _floorNormal.z < 0.0f
                        ? Vec3{-_floorNormal.x, -_floorNormal.y, -_floorNormal.z}
                        : _floorNormal;
     const float downhill = move.x * n.x + move.y * n.y;
     if (n.z > kGlueNz && downhill > 0.0f) {
-        verticalSpeed = std::min(verticalSpeed, -downhill / delta);
+        const float speed = (exact ? downhill / n.z : downhill) / delta;
+        verticalSpeed = std::min(verticalSpeed, -std::min(speed, exact ? kGlueMaxSpeed : speed));
     }
     verticalSpeed = std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
 }

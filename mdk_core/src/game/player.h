@@ -514,7 +514,7 @@ private:
     // C# Kurt.Facing's (x, y) in libm, the oracle's MathF.Cos/Sin, for the slide.
     Vec2 slideFacing() const;
     void updateAir(bool jumpHeld, float delta);
-    void glueDownhill(const Vec3& move, float delta);
+    void glueDownhill(const Vec3& move, float delta, bool exact = false);
     void fall(float delta);
     void fallMove(float delta);
     void land(const Vec3& before, const Vec3& normal, float delta);
@@ -567,6 +567,8 @@ private:
     audio::SoundMixer* _mixer = nullptr;
     bool _footstepPair = true;  // C# Kurt._footstepPair: FOOT3/4 first, then FOOT1/2
     float _stateTime = 0.0f;
+    // How long Kurt has been off the floor (s; upstream 3f9315c5's _airFor).
+    float _airFor = 0.0f;
     float _animationFrame = 0.0f;
     bool _chuteClosing = false;
     bool _died = false;  // the C#'s Died event, once per death; see died() above

@@ -5,6 +5,7 @@
 
 void Player::updateState(float forward, float strafe, float delta) {
     _stateTime += delta;
+    _airFor = onFloor ? 0.0f : _airFor + delta;
 
     // C# UpdateCombatState's first arm (Kurt.Combat.cs:371): health zero on a floor is
     // the death state. The knock-down, get-up and throw arms below are the C#'s next
@@ -88,7 +89,10 @@ void Player::updateState(float forward, float strafe, float delta) {
                    state() != Kurt::Jump && state() != Kurt::RunJump && state() != Kurt::Fall) {
             setState(std::fabs(forwardSpeed) > kMovingSpeed ? Kurt::RunJump : Kurt::Jump);
         } else if (verticalSpeed < kFallStartSpeed &&
-                   ((state() != Kurt::Jump && state() != Kurt::RunJump) || done)) {
+                   ((state() != Kurt::Jump && state() != Kurt::RunJump) || done) &&
+                   (_airFor >= kFallGrace || state() == Kurt::Jump ||
+                    state() == Kurt::RunJump || state() == Kurt::Fall)) {
+            // Upstream 3f9315c5: a running or standing Kurt falls only after kFallGrace.
             setState(Kurt::Fall);
         }
     } else if (state() == Kurt::Jump || state() == Kurt::RunJump || state() == Kurt::Fall ||
