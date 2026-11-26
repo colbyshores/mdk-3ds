@@ -79,7 +79,7 @@ static int32_t acquireTextureSlot(RendererC3D* renderer) {
         // A pending chunked expansion owns its slot and its buffer until it
         // finishes or is dropped: never hand the slot to a new texture.
         if (!texture.valid && !texture.releasePending && texture.source.empty() &&
-            texture.packPath.empty() &&
+            texture.packPath.empty() && texture.pages.empty() &&
             !texture.expandPending && !texture.expandPixels && !texture.expandWanted) {
             return (int32_t)i;
         }

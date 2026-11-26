@@ -160,6 +160,10 @@ void mdk_render_prepare_texture(MdkRenderer r, MdkTextureId t) {
         return;
     }
     C3dTexture& texture = renderer->textures[(size_t)t];
+    // A strip over 1024 is its pages (createStrip): each asked for.
+    for (size_t k = 0; k < texture.pages.size(); k++) {
+        mdk_render_prepare_texture(r, texture.pages[k]);
+    }
     // A PACKED ORIGINAL (packPath) with no GPU copy -- not made yet, or evicted --
     // has its file asked for: the boundary pump reads and imports it before a
     // draw needs it. This is how an evicted one comes back (the pump's surface
@@ -341,13 +345,19 @@ static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool c
 // and is hdOnly -- while enableHdTextures is on its ask below goes to the HD
 // stream (queuePackRead's routing), so the packed original is read only if the
 // toggle goes off or the HD file proves unusable.
+static MdkTextureId createStrip(MdkRenderer r, int32_t w, int32_t h, int32_t frames,
+                                const char* path);
+
 MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t w, int32_t h,
-                                               const char* path, const char* hdPath,
-                                               const uint8_t* paletteRgba) {
+                                               int32_t frames, const char* path,
+                                               const char* hdPath, const uint8_t* paletteRgba) {
     RendererC3D* renderer = asC3d(r);
-    if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !path ||
+    if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || !path ||
         !path[0] || strlen(path) >= mdk::AsyncFileReader::kPathMax) {
         return -1;
+    }
+    if (h > 1024) {
+        return createStrip(r, w, h, frames, path);
     }
     C3dTexture texture;
     texture.realWidth = w;
@@ -368,6 +378,65 @@ MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t w, int32_t
         renderer->textures[(size_t)id].hdOnly = renderer->textures[(size_t)id].hdCopy >= 0;
     }
     queuePackRead(renderer, id);
+    logCreation(renderer, 0, id);
+    return id;
+}
+
+// A STRIP OVER THE PICA'S 1024 (EXPLODE 128x3328, FIRE 64x2628, SL_BIG 64x1920):
+// the orig pack holds it as PAGES of whole frames, <path minus .t3x>.p<k>.t3x
+// (arena_etc1_convert.py paged()), and each page is an ordinary packed original
+// made above -- read on the reader thread and imported at a boundary, asked for
+// now, so the warm that asks for the strip has it resident before its first
+// draw. The strip's own id holds only the page ids; mdk_render_draw_mesh sends
+// each draw to its frame's page (pica::stripPage). A page is the same file
+// whatever the palette (the pack has one key for these strips), so a page
+// already made is SHARED, not made again: one copy a level, not one per arena.
+// Pages live in the level's scope (logCreation); a released strip only drops
+// its list. -1 when the size is not whole frames of at most 1024 rows.
+static MdkTextureId createStrip(MdkRenderer r, int32_t w, int32_t h, int32_t frames,
+                                const char* path) {
+    RendererC3D* renderer = asC3d(r);
+    const size_t length = strlen(path);
+    if (frames <= 1 || length < 4 || strcmp(path + length - 4, ".t3x") != 0) {
+        return -1;
+    }
+    /* @vfp-exempt R11 — once per strip at its creation, never per draw. measured n/a. Verified 2026-11-26. */
+    const int32_t frameHeight = h / frames;
+    if (frameHeight <= 0 || frameHeight > 1024 || frameHeight * frames != h) {
+        return -1;
+    }
+    /* @vfp-exempt R11 — once per strip at its creation, never per draw. measured n/a. Verified 2026-11-26. */
+    const int32_t perPage = 1024 / frameHeight;
+    const std::string base(path, length - 4);
+    std::vector<int32_t> pages;
+    for (int32_t first = 0; first < frames; first += perPage) {
+        char suffix[16];
+        snprintf(suffix, sizeof(suffix), ".p%d.t3x", (int)pages.size());
+        const std::string pagePath = base + suffix;
+        int32_t page = -1;
+        for (size_t i = 0; i < renderer->textures.size() && page < 0; i++) {
+            if (!renderer->textures[i].releasePending &&
+                renderer->textures[i].packPath == pagePath) {
+                page = (int32_t)i;
+            }
+        }
+        if (page < 0) {
+            const int32_t n = frames - first < perPage ? frames - first : perPage;
+            page = mdk_render_create_compressed_file(r, w, n * frameHeight, n, pagePath.c_str(),
+                                                     nullptr, nullptr);
+        }
+        if (page < 0) {
+            return -1;
+        }
+        pages.push_back(page);
+    }
+    C3dTexture strip;
+    strip.realWidth = w;
+    strip.realHeight = h;
+    strip.pages.swap(pages);
+    strip.framesPerPage = perPage;
+    const int32_t id = acquireTextureSlot(renderer);
+    renderer->textures[(size_t)id] = std::move(strip);
     logCreation(renderer, 0, id);
     return id;
 }
@@ -815,6 +884,8 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     // (game/arena_views.h) must hand the heap back for the next arena's stream.
     std::vector<uint8_t>().swap(texture.source);
     std::vector<uint8_t>().swap(texture.palette);
+    // A strip's pages are the level's, shared (createStrip): only the list goes.
+    std::vector<int32_t>().swap(texture.pages);
     dropExpansion(texture);
     texture.stale = false;
     texture.restamped = false;

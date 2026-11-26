@@ -246,9 +246,13 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer r, int32_t width, 
 // from the two files alone. While the HD toggle is on only the HD file is read
 // and drawn -- `path` is never read, nothing is expanded -- and while it is off
 // only `path`, exactly as without one; the toggle stays live per draw.
+//
+// `frames` is the texture's stacked frame count (height is all of them). A
+// strip taller than the 3DS's 1024 is held as pages of whole frames (the orig
+// pack's <path minus .t3x>.p<k>.t3x) and each draw takes its frame's page.
 MdkTextureId mdk_render_create_compressed_file(MdkRenderer r, int32_t width, int32_t height,
-                                               const char* path, const char* hdPath,
-                                               const uint8_t* paletteRgba);
+                                               int32_t frames, const char* path,
+                                               const char* hdPath, const uint8_t* paletteRgba);
 
 // A texture made from a FILE could not be (unreadable, or not this set's .t3x):
 // the backend wants its index pixels through mdk_render_update_texture to draw

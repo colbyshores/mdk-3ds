@@ -479,9 +479,8 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // and hashes the texture's whole index array (and, for an arena texture
     // whose pixels are away, first brings back its arena's whole texture block,
     // LevelData::loadPixelsFromMto). Measured on the Old 3DS: the object warm's
-    // step for EXPLODE -- its 128x3328 strip is over the PICA's 1024, so the
-    // pack never holds it and the name index misses -- spent 104.0 ms of frame 1
-    // in that hash. A hint exists to take work OFF the frame, so it never pays
+    // step for EXPLODE -- before the pack held its 128x3328 strip, when the name
+    // index missed -- spent 104.0 ms of frame 1 in that hash. A hint exists to take work OFF the frame, so it never pays
     // for a hash: `true` with no path is SurfaceCache::requestPacked's "not a
     // pack answer" -- nothing made, nothing marked -- and the texture's first
     // draw asks the full lookup, exactly as without the warm.
@@ -499,12 +498,11 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     if (source->pack) {
         return false;
     }
-    // NOTHING OVER THE PICA'S 1024 IS IN THE ORIG PACK (arena_etc1_convert.py
-    // refuses such a strip by name: sl_big 64x1920, fire 64x2628, explode
-    // 128x3328), so with no HD pack the content hash below can never match one
-    // -- and hashing EXPLODE's 128x3328 strip costs ~100 ms on the Old 3DS. A
-    // Sprite-shaded object part drawing it asks here at its first draw (frame
-    // 650 of the L7 walk: obj 105.5 ms once Sprites asked the pack).
+    // NOTHING OVER THE PICA'S 1024 IS HASHED. The orig pack holds the three
+    // animated strips over it (sl_big 64x1920, fire 64x2628, explode 128x3328)
+    // as pages, found by the name index above; the content hash cannot find
+    // pages, and hashing EXPLODE's 128x3328 strip costs ~100 ms on the Old 3DS
+    // (frame 650 of the L7 walk: obj 105.5 ms once Sprites asked the pack).
     if (surface.texture->width() > 1024 ||
         surface.texture->height() * surface.texture->frameCount() > 1024) {
         return false;

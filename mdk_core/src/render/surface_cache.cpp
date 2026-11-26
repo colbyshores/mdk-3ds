@@ -203,8 +203,8 @@ MdkTextureId SurfaceCache::createPacked(const Key& key, const Surface& surface,
     }
     const MdkTextureId made = mdk_render_create_compressed_file(
         renderer_, surface.texture->width(),
-        surface.texture->height() * surface.texture->frameCount(), replacement.compressedPath,
-        replacement.hdPath, palette->rgba());
+        surface.texture->height() * surface.texture->frameCount(), surface.texture->frameCount(),
+        replacement.compressedPath, replacement.hdPath, palette->rgba());
     if (made < 0) {
         return -1;
     }

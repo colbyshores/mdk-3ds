@@ -729,6 +729,26 @@ CompressedUv compressedFrameUv(const CompressedRect& rect, int32_t frame, int32_
     return uv;
 }
 
+StripPage stripPage(int32_t frame, int32_t frameCount, int32_t framesPerPage) {
+    StripPage out = {0, 0, 1};
+    if (frameCount <= 0 || framesPerPage <= 0) {
+        return out;
+    }
+    if (frame < 0) {
+        frame = 0;
+    } else if (frame >= frameCount) {
+        frame = frameCount - 1;
+    }
+    int32_t first = 0;
+    while (frame - first >= framesPerPage) {
+        first += framesPerPage;
+        out.page++;
+    }
+    out.frame = frame - first;
+    out.frameCount = frameCount - first < framesPerPage ? frameCount - first : framesPerPage;
+    return out;
+}
+
 static int32_t potAtLeast8(int32_t value) {
     int32_t result = 8;
     while (result < value && result < 1024) {

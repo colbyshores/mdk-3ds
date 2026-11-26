@@ -2297,3 +2297,81 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Evidence:** the two runs above; tools/check.sh gates_frames PASS on the built
   Linux binary; tests/formats 200624 checks 0 failures; tests/scripts make test.
 - **Commit:** this one.
+
+### The animated strips over 1024 drawn on the 3DS as pages (spec ticket B, second part)
+- **What:** EXPLODE (128x128 x 26 = 128x3328), FIRE (64x73 x 36 = 64x2628) and
+  SL_BIG (64x64 x 30 = 64x1920) -- the only strips over the PICA's 1024 in levels
+  3-8 (exporter census: 104 + 48 + 104 arena rows, ONE content key each, so one
+  file each for every palette) -- were refused by the orig-pack build and by the
+  backend's size guard, so the explosion, the fire and the wound slime were never
+  drawn. Now:
+  - `arena_etc1_convert.py` writes such a strip as PAGES of whole frames,
+    `<name>@<key>.p<k>.t3x`, 1024 / frame height frames a page (EXPLODE 8+8+8+2,
+    FIRE 14+14+8, SL_BIG 16+14), ETC1A4, NO mip chain (an animated draw is held at
+    level 0). The manifest/byname rows are the strip's own, so the name index finds
+    it as before.
+  - `mdk_render_create_compressed_file` takes the frame count (render.h; the
+    Linux and test stubs follow). In the 3DS backend a height over 1024 makes a
+    STRIP id that only lists its page ids (createStrip, 05_resources.inc); each
+    page is an ordinary packed original, read on the reader thread and imported at
+    a frame boundary, asked for when the warm asks for the strip. A page already
+    made for another palette is the same file and is SHARED (one copy a level), and
+    pages live in the level scope.
+  - `mdk_render_draw_mesh` sends each draw of a strip to its frame's page before
+    it is queued (pica::stripPage: page, frame in page, frames in page), so the
+    prepare, both eyes' submits, the coalescing and the pending path all see an
+    ordinary packed strip; a826ee43's compressedFrameUv picks the frame.
+  - New state: `C3dTexture::pages` + `framesPerPage`. Lines added: 152 C++ (05_resources
+    74, pica_matrix 34, 06_queue 19, 01_types 8; the rest signature/comments; 18
+    removed), 51 test, Python +78/-27.
+- **Not changed:** every texture at or under 1024, the HD rule (an animated
+  texture still takes no HD copy, so the owner's SD pack is not involved and nothing
+  has to be re-uploaded: the orig pack is in the RomFS with the binary), filter/mip
+  policy, blending (sprites stay DoubleSided cut-outs, the C#'s).
+- **Evidence (host):**
+  - `testTheStripPages` (tests/scripts pica_matrix_tests): every frame of the three
+    geometries lands on its page/frame, and every pixel centre of a 1:1 quad drawn
+    through that page's rectangle under NEAREST reads exactly that strip frame and
+    row (page boundaries 7/8, 15/16, 23/24, 13/14, 27/28 included); out-of-range
+    frames clamp.
+  - `arena_etc1_convert.py --check`: every page's ETC1A4 alpha is the colour key
+    texel for texel at the top-left. hw-logs/strip_frames_ref_vs_pages.png: the
+    indexed expansion beside the page's encoded frame for EXPLODE 0,1,7,8,15,16,23,
+    24,25, SL_BIG 0,1,15,16,29, FIRE 0,1,13,14,27,28,35 -- same order, orientation
+    and alpha silhouette; mean RGB error 2-10/255 (the existing ETC look).
+  - tests/formats 200624 checks 0 failures; tests/scripts make test PASS;
+    tools/check.sh all gates PASS (smdh SKIP, no .cia; frames PASS on the Linux
+    build). A read-only review agent over the diff found no serious issue.
+- **Evidence (hardware, old3ds-lan167, Old 3DS 268 MHz L2 off, stereo on,
+  throwaway/restore-strips-hw{,-before}, LEVEL=8 (in-game level 5) PROFILE=1
+  AUTOQUIT=90, BLAST=20: an explosion every 20 steps in front of Kurt -- left,
+  centre, right; near and far -- plus a wound on the nearest object; HD on with
+  the level's HD set from romfs:/hd (HDROMFS=1, the owner's config; tier 256, 295
+  copies resident), every cycle FRESH):**
+
+  | | before (a826ee43) | after | delta |
+  |---|---|---|---|
+  | linear free, min in play (sampled /15 steps) | 3246 KiB | 2702 KiB | -544 KiB (= EXPLODE 416 + SL_BIG 128) |
+  | linear free at loop entry | 6942080 | 6516096 | -416 KiB (EXPLODE warmed at load) |
+  | main free (cap - used), min | 10770 KiB | 10756 KiB | -14 KiB |
+  | strip draws sent to a page | 0 | 9249 | |
+  | textures evicted / main-thread pack reads / failures | 0 / 0 / none | 0 / 0 / none | |
+  | steady frame mean | 33.93 ms | 34.54 ms | +0.61 ms |
+  | p95 / p99 | 35.5 / 44.6 ms | 41.5 / 46.2 ms | |
+  | frames of 3 vblanks / 4+ | 67 / 0 | 118 / 0 | |
+
+  Without the HD set (SD has none on the appliance): linear min 10771 -> 10227 KiB
+  (-544), steady 33.85 -> 34.55 ms, p95 34.9 -> 41.4 ms, 23 -> 23 main-thread pack
+  reads (all at level start, the same in both: not the strips'), 0 evictions.
+  The frame cost is the restored explosions' fill (2-3 128x128 sprites of up to
+  ~1/3 screen, overlapping, both eyes), the stress scene's: a game explosion is one
+  at a time.
+- **Cost by level** (exact page bytes, one shared copy, resident once warmed):
+  levels 6-8 EXPLODE + SL_BIG = 544 KiB; levels 3-5 add FIRE = 736 KiB. On the
+  tightest level measured (LEVEL8 = in-game 5) the route's linear minimum goes
+  3.17 -> 2.64 MB; the earlier "about 2.2 MB" minimum on other LEVEL8 routes would
+  be about 1.7 MB. Nothing else was dropped (0 evictions, same HD set, 0 failures).
+- **Not verified:** the in-play look on hardware (the stereo screenshots of the
+  restored explosion failed: ATM did not commit the sets); other LEVEL8 routes'
+  minima; FIRE on hardware; no Mandarine run.
+- **Commit:** this one.

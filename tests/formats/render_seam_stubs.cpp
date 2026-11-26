@@ -151,7 +151,7 @@ int mdk_test_compressedFileCalls = 0;
 MdkTextureId mdk_test_needsPixels = -1;
 // The HD file the last create_compressed_file was handed ("" for none).
 std::string mdk_test_compressedFileHd;
-MdkTextureId mdk_render_create_compressed_file(MdkRenderer, int32_t, int32_t, const char*,
+MdkTextureId mdk_render_create_compressed_file(MdkRenderer, int32_t, int32_t, int32_t, const char*,
                                                const char* hdPath, const uint8_t*) {
     mdk_test_compressedFileCalls++;
     mdk_test_compressedFileHd = hdPath ? hdPath : "";

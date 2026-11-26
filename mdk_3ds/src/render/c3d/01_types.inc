@@ -281,6 +281,14 @@ struct C3dTexture {
     // file is not read again by a later record or the other eye of that frame.
     int32_t packNoRoomFrame = -1;
 
+    // A STRIP OVER THE PICA'S 1024 (mdk_render_create_compressed_file's
+    // createStrip): never drawn itself, only its PAGES are -- packed originals of
+    // their own, `framesPerPage` whole frames each (pica::stripPage), shared by
+    // every palette's strip of the same file and released with the level's
+    // scope. mdk_render_draw_mesh sends each draw to its frame's page.
+    std::vector<int32_t> pages;
+    int32_t framesPerPage = 0;
+
     // The source changed while the old GPU copy may still be in flight. The
     // replacement waits for the next frame boundary (AGENTS.md P3).
     bool stale = false;

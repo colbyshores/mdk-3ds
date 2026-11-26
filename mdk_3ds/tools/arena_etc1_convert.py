@@ -46,9 +46,11 @@
 #   4. PAD, NOT RESAMPLE, to a power of two each way (>= 8, the PICA's rule),
 #      the image at the TOP-LEFT and the bleed carried into the padding. The
 #      original strip is kept texel for texel (the manifest's src_w/src_h say
-#      how much of the padded image is real); a strip that pads past 1024 on
-#      either axis is REFUSED by name -- the PICA's limit -- and the game draws
-#      that texture from its palette indices.
+#      how much of the padded image is real). An ANIMATED strip taller than
+#      1024 (EXPLODE 128x3328, FIRE 64x2628, SL_BIG 64x1920) is built as PAGES
+#      of whole frames, <name>@<key>.p<k>.t3x, each up to 1024 rows (paged());
+#      anything else past 1024 on either axis is REFUSED by name -- the PICA's
+#      limit -- and the game draws that texture from its palette indices.
 #   5. ENCODE: `tex3ds -f etc1 -q high -m gaussian` for a texture with no
 #      alpha-0 texel, `tex3ds -f etc1a4 -q high -m gaussian` otherwise (the
 #      ../forsaken settings; the mip chain is built and compressed HERE, on the
@@ -146,10 +148,64 @@ def pad_bled(rgba, tw, th):
     return bleed(canvas)
 
 
+def paged(w, h, frames):
+    """An animated strip taller than the PICA's 1024 whose frames fit it: built
+    as PAGES (page_paths), each as many whole frames as 1024 rows hold. The
+    3DS backend splits it by the same rule (05_resources.inc createStrip)."""
+    return frames > 1 and w <= CAP and h <= CAP and h * frames > CAP
+
+
+def page_paths(dst, h, frames):
+    """Page k of a paged strip is <name>@<key>.p<k>.t3x beside where the whole
+    strip's file would be; its frames are [k * per, k * per + n)."""
+    per = CAP // h
+    base = dst[:-4]
+    return [(base + ".p%d.t3x" % k, k * per, min(per, frames - k * per))
+            for k in range((frames + per - 1) // per)]
+
+
+def encode(rgba, fmt, dst, check, mips):
+    """One image to one .t3x (steps 3-5 above); an error string, or None."""
+    sh, sw = rgba.shape[:2]
+    keyed = fmt == "etc1a4"
+    tw, th = pot(sw), pot(sh)
+    img = Image.fromarray(pad_bled(rgba, tw, th), "RGBA")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        staged = os.path.join(tmp, "in.png")
+        img.save(staged)
+        out = dst + ".tmp"
+        r = subprocess.run([TEX3DS, "-f", fmt, "-q", "high"] +
+                           (["-m", "gaussian"] if mips else []) +
+                           ["-z", "none", staged, "-o", out],
+                           capture_output=True, text=True)
+        if r.returncode != 0 or not os.path.exists(out):
+            return "tex3ds failed: " + (r.stderr or r.stdout).strip()[:200]
+        if check and keyed:
+            # The same encode, raw and uncompressed: its alpha must be the colour
+            # key exactly, at the top-left (the orientation the runtime's
+            # rectangle assumes), and transparent in the padding. ETC1 has no
+            # alpha plane to check.
+            rawf = os.path.join(tmp, "raw.bin")
+            r = subprocess.run([TEX3DS, "-f", "etc1a4", "-q", "high", "-r", "-z", "none",
+                                staged, "-o", rawf], capture_output=True, text=True)
+            if r.returncode != 0:
+                return "tex3ds -r failed"
+            alpha = alpha_plane_etc1a4(open(rawf, "rb").read(), tw, th)
+            want = np.zeros((th, tw), np.uint8)
+            want[:sh, :sw] = np.where(rgba[..., 3] > 0, 15, 0)
+            if not np.array_equal(alpha, want):
+                os.remove(out)
+                return ("CHECK: the encoded alpha is not the colour key "
+                        "(%d texels differ)" % int((alpha != want).sum()))
+        os.replace(out, dst)
+    return None
+
+
 def convert(job):
     src, dst, w, h, frames, check = job
     sw, sh = w, h * frames
-    if sw > CAP or sh > CAP:
+    if (sw > CAP or sh > CAP) and not paged(w, h, frames):
         # A named REFUSAL, not a failure: the PICA cannot hold it, the game
         # draws that texture from its palette indices, and the pack is still
         # good. (The manifest not naming it is how the runtime learns this.)
@@ -161,37 +217,24 @@ def convert(job):
     rgba = quantize565(np.frombuffer(data, np.uint8).reshape(sh, sw, 4))
     keyed = bool((rgba[..., 3] == 0).any())
     fmt = "etc1a4" if keyed else "etc1"
-    tw, th = pot(sw), pot(sh)
-    img = Image.fromarray(pad_bled(rgba, tw, th), "RGBA")
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    with tempfile.TemporaryDirectory() as tmp:
-        staged = os.path.join(tmp, "in.png")
-        img.save(staged)
-        out = dst + ".tmp"
-        r = subprocess.run([TEX3DS, "-f", fmt, "-q", "high", "-m", "gaussian", "-z", "none",
-                            staged, "-o", out],
-                           capture_output=True, text=True)
-        if r.returncode != 0 or not os.path.exists(out):
-            return (src, None, "tex3ds failed: " + (r.stderr or r.stdout).strip()[:200])
-        if check and keyed:
-            # The same encode, raw and uncompressed: its alpha must be the colour
-            # key exactly, at the top-left (the orientation the runtime's
-            # rectangle assumes), and transparent in the padding. ETC1 has no
-            # alpha plane to check.
-            rawf = os.path.join(tmp, "raw.bin")
-            r = subprocess.run([TEX3DS, "-f", "etc1a4", "-q", "high", "-r", "-z", "none",
-                                staged, "-o", rawf], capture_output=True, text=True)
-            if r.returncode != 0:
-                return (src, None, "tex3ds -r failed")
-            alpha = alpha_plane_etc1a4(open(rawf, "rb").read(), tw, th)
-            want = np.zeros((th, tw), np.uint8)
-            want[:sh, :sw] = np.where(rgba[..., 3] > 0, 15, 0)
-            if not np.array_equal(alpha, want):
-                os.remove(out)
-                return (src, None, "CHECK: the encoded alpha is not the colour key "
-                                   "(%d texels differ)" % int((alpha != want).sum()))
-        os.replace(out, dst)
-    return (src, (fmt, sw, sh, tw, th, os.path.getsize(dst)), None)
+    if not paged(w, h, frames):
+        err = encode(rgba, fmt, dst, check, True)
+        if err:
+            return (src, None, err)
+        return (src, (fmt, sw, sh, pot(sw), pot(sh), os.path.getsize(dst)), None)
+    # PAGES (the strips over 1024: EXPLODE 128x3328, FIRE 64x2628, SL_BIG
+    # 64x1920). One format for every page, the strip's. NO MIP CHAIN: an
+    # animated texture is always sampled at level 0 (06_draw.inc), so a chain
+    # would be a third more memory nobody reads. The manifest's row is the
+    # strip's (its h column the pages' padded heights summed, its bytes theirs).
+    th, size = 0, 0
+    for path, first, n in page_paths(dst, h, frames):
+        err = encode(rgba[first * h:(first + n) * h], fmt, path, check, False)
+        if err:
+            return (src, None, "page %s: %s" % (os.path.basename(path), err))
+        th += pot(n * h)
+        size += os.path.getsize(path)
+    return (src, (fmt, sw, sh, pot(sw), th, size), None)
 
 
 def build_exporter(build_dir):
@@ -271,9 +314,10 @@ def main():
         rel = "textures/%s@%s" % (name.lower(), key)
         digests[rel] = digest
         dst = os.path.join(out, rel + ".t3x")
+        files = [p for p, _, _ in page_paths(dst, h, frames)] if paged(w, h, frames) else [dst]
         prev = old.get(rel)
         if prev and prev[7] == digest and prev[8] == str(CAP) and prev[9] == SETTINGS \
-                and os.path.exists(dst) and not a.check:
+                and all(os.path.exists(f) for f in files) and not a.check:
             kept[rel] = prev
         else:
             jobs.append((src, dst, w, h, frames, a.check))
@@ -298,7 +342,14 @@ def main():
                           digests[rel], str(CAP), SETTINGS]
 
     # Files no longer named by the set (a re-export with other data) go.
-    wanted = set(os.path.join(out, rel + ".t3x") for rel in lines)
+    wanted = set()
+    for key, (name, w, h, frames) in images.items():
+        rel = "textures/%s@%s" % (name.lower(), key)
+        if rel in lines:
+            dst = os.path.join(out, rel + ".t3x")
+            if paged(w, h, frames):
+                wanted.update(p for p, _, _ in page_paths(dst, h, frames))
+            wanted.add(dst)
     if os.path.isdir(os.path.join(out, "textures")):
         for dirpath, _, files in os.walk(os.path.join(out, "textures")):
             for name in files:

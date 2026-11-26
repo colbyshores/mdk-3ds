@@ -1835,6 +1835,56 @@ void testTheCompressedStripFrame() {
     PICA_CHECK(none.scaleY == idle.bottom - idle.top && none.offsetY == idle.top);
 }
 
+// A STRIP OVER 1024 IS PAGES OF WHOLE FRAMES (spec ticket B): EXPLODE 128x128
+// x 26 (8 a page: 8, 8, 8, 2), FIRE 64x73 x 36 (14 a page: 14, 14, 8) and
+// SL_BIG 64x64 x 30 (16 a page: 16, 14). Every frame of each lands on its page
+// and its frame there, and every pixel centre of a 1:1 quad drawn through that
+// page's rectangle reads exactly that strip frame, its rows in order -- the
+// first, last and page-boundary frames included. Out of range clamps.
+void testTheStripPages() {
+    struct Strip {
+        int32_t w, frameH, frames, perPage;
+    };
+    const Strip strips[3] = {{128, 128, 26, 8}, {64, 73, 36, 14}, {64, 64, 30, 16}};
+    for (int32_t k = 0; k < 3; k++) {
+        const Strip& st = strips[k];
+        PICA_CHECK(1024 / st.frameH == st.perPage);
+        for (int32_t f = 0; f < st.frames; f++) {
+            const mdk::pica::StripPage at = mdk::pica::stripPage(f, st.frames, st.perPage);
+            const int32_t first = at.page * st.perPage;
+            const int32_t inPage =
+                st.frames - first < st.perPage ? st.frames - first : st.perPage;
+            PICA_CHECK(at.page == f / st.perPage && at.frame == f - first &&
+                       at.frameCount == inPage);
+            int32_t paddedH = 8;
+            while (paddedH < inPage * st.frameH) paddedH <<= 1;
+            const mdk::pica::CompressedRect rect =
+                mdk::pica::compressedFrameRect(st.w, inPage * st.frameH, st.w, paddedH);
+            const mdk::pica::CompressedUv uv =
+                mdk::pica::compressedFrameUv(rect, at.frame, at.frameCount);
+            bool exact = true;
+            for (int32_t y = 0; y < st.frameH; y++) {
+                for (int32_t x = 0; x < st.w; x += 7) {
+                    const float u = ((float)x + 0.5f) / (float)st.w;
+                    const float v = ((float)y + 0.5f) / (float)st.frameH;
+                    const int32_t got = sampleNumberedStrip(uv, u, v, st.w, paddedH, st.frameH,
+                                                            inPage);
+                    if (got != at.frame * 1000 + y + x * 100000) exact = false;
+                }
+            }
+            PICA_CHECK(exact);
+        }
+        const mdk::pica::StripPage low = mdk::pica::stripPage(-3, st.frames, st.perPage);
+        const mdk::pica::StripPage high = mdk::pica::stripPage(st.frames + 5, st.frames,
+                                                                st.perPage);
+        PICA_CHECK(low.page == 0 && low.frame == 0);
+        PICA_CHECK(high.page == (st.frames - 1) / st.perPage &&
+                   high.frame == high.frameCount - 1);
+    }
+    const mdk::pica::StripPage none = mdk::pica::stripPage(4, 0, 8);
+    PICA_CHECK(none.page == 0 && none.frame == 0 && none.frameCount == 1);
+}
+
 void testTheHdResidencyPolicy() {
     using mdk::pica::HdSlot;
     // THE VICTIM: the least recently drawn resident copy that the protected frame
@@ -2619,6 +2669,7 @@ int runPicaMatrixTests() {
     testThe16BitStore();
     testTheCompressedKurtFrame();
     testTheCompressedStripFrame();
+    testTheStripPages();
     testTheStreamedPicture();
     testTheHdResidencyPolicy();
     testTheSunsShadow();

@@ -928,6 +928,20 @@ struct CompressedUv {
 };
 CompressedUv compressedFrameUv(const CompressedRect& rect, int32_t frame, int32_t frameCount);
 
+// A STRIP OVER THE PICA'S 1024 (EXPLODE 128x3328, FIRE 64x2628, SL_BIG
+// 64x1920) is held as PAGES of whole frames, framesPerPage = 1024 / frame height
+// each and the remainder last (arena_etc1_convert.py's paged()). A draw of
+// strip frame `frame` of `frameCount` draws page `page`'s frame `frame` of its
+// `frameCount` frames, through compressedFrameUv as any packed strip. A frame
+// out of range is clamped to the first or last frame. No divide (R11): a strip
+// has at most a handful of pages.
+struct StripPage {
+    int32_t page;
+    int32_t frame;
+    int32_t frameCount;
+};
+StripPage stripPage(int32_t frame, int32_t frameCount, int32_t framesPerPage);
+
 // What one Kurt frame costs resident, by store (the sprite residency's bytes and
 // the figures the A/B is reported in): the frame's padded size in RGBA8
 // (texture16=0), RGBA5551 (texture16=1: an index texture's alpha is 0/255), or

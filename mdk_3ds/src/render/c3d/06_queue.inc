@@ -188,6 +188,25 @@ static void replayQueue(RendererC3D* r) {
     if (!r || !draw || !r->inFrame) {
         return;
     }
+    // A STRIP OVER 1024 (createStrip) is drawn from its frame's page: the record
+    // names the page, its frame in the page and the page's frame count, so the
+    // prepare, both eyes' submits and every cache after this see an ordinary
+    // packed strip (pica::stripPage, compressedFrameUv).
+    mdk::MeshDraw paged;
+    const int32_t t = draw->material.texture;
+    if (t >= 0 && (size_t)t < r->textures.size() && !r->textures[(size_t)t].pages.empty()) {
+        const C3dTexture& strip = r->textures[(size_t)t];
+        const mdk::pica::StripPage at =
+            mdk::pica::stripPage(draw->frame, draw->material.frame_count, strip.framesPerPage);
+        if (at.page >= (int32_t)strip.pages.size()) {
+            return;
+        }
+        paged = *draw;
+        paged.material.texture = strip.pages[(size_t)at.page];
+        paged.frame = at.frame;
+        paged.material.frame_count = at.frameCount;
+        draw = &paged;
+    }
     // Queued, not recorded: the oracle renders the frame's commands one pass at
     // a time, and render.h gives that ordering job to the backend. With the
     // depth test off on this target, the order IS the occlusion, so this is not

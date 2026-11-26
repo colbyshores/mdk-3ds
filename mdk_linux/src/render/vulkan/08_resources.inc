@@ -67,7 +67,7 @@ MdkTextureId mdk_render_create_compressed_texture(MdkRenderer, int32_t, int32_t,
 }
 
 // Same answer from a file (render.h): the desktop makes the index texture.
-MdkTextureId mdk_render_create_compressed_file(MdkRenderer, int32_t, int32_t, const char*,
+MdkTextureId mdk_render_create_compressed_file(MdkRenderer, int32_t, int32_t, int32_t, const char*,
                                                const char*, const uint8_t*) {
     return -1;
 }
