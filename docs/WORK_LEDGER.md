@@ -2375,3 +2375,28 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   restored explosion failed: ATM did not commit the sets); other LEVEL8 routes'
   minima; FIRE on hardware; no Mandarine run.
 - **Commit:** this one.
+
+### Restore-strips hardware follow-up: the appliance stopped answering after the screenshot run
+- **What happened:** after the profile A/B above, a non-profile run of the same
+  payload (LEVEL=8, BLAST=20, HD set) was pushed (transfers.log bytes_out
+  248731656 verified) and five `atmctl screenshot` sets were asked for mid-run; ATM
+  answered each "not committed within 30s", and from then on :8080 and :17491 never
+  answered (:17492 open, ping and ARP fine). Trap 8 run in full from this
+  workstation: directed discovers, then `cmd reboot` twice with 5 minutes of
+  discover+poll after each -- no body, no reboot taken. The device log of that run
+  could not be pulled, so whether the game hung or ATM wedged is NOT KNOWN. The
+  same code had just completed four profile cycles FRESH (two without the HD set,
+  two with it). Needs a physical power cycle; the operator was not asked.
+- **Consequently not done:** the stereo screenshots of the restored explosion and
+  wound (frame order/orientation in play, both eyes, page boundaries), the level 3
+  A/B (FIRE + EXPLODE + SL_BIG = 736 KiB; payloads were built), other LEVEL8
+  routes' minima. No Mandarine run either: two Mandarine instances of another
+  project were running.
+- **Kept:** the logs, payloads (md5 in the report) and the throwaway branches as
+  patches (hw-logs/throwaway-patches: the harness, the BLAST hook + counters, the
+  HDROMFS root); throwaway/restore-strips-hw{,-before} deleted.
+- **Player builds:** perf/3ds-restore-strips 22d11f12 mdk.3dsx md5
+  c9445927e8712b98dfbb0a5b25d036a9; test/3ds-restore-strips-fast 7da914a7
+  (22d11f12 + 0fbced92 FAST 3DS) md5 8b1623f16b37f122c09cc76c35dbf4e8; both 0
+  compiler warnings, in .git/worktrees/restore-strips/hw-logs.
+- **Commit:** this one (ledger only).
