@@ -237,6 +237,118 @@ def convert(job):
     return (src, (fmt, sw, sh, pot(sw), th, size), None)
 
 
+# ---- THE SKY ----------------------------------------------------------------
+# The level's sky panorama as ETC1, drawn with HD on in place of its 16-bit
+# palette expansion (mdk_3ds/src/level_load_3ds.cpp buildSky3ds). The source art
+# is an 8-bit palette image whose gradients were error-diffused at authoring
+# time; that dither is what showed on the 3DS, and ETC1 alone keeps it (worse:
+# it smears it into 4x4 blocks). So the panorama is DE-DITHERED first: a
+# gaussian blur of SKY_SIGMA texels over the WHOLE wrap -- wrapped
+# horizontally, edge-clamped vertically -- so the two slices and the 360-degree
+# seam blur the same neighbours and still meet exactly. Then each slice is cut
+# by the dome's own rule (stored column x = first - 1 + x, wrapped: the exporter
+# wrote the slices buildSkyDome made, and the cut is checked against them
+# before the blur), padded to a power of two by repeating its last column and
+# row (the slices are whole 4x4 blocks wide and 360 = 90 blocks tall, so no
+# block straddles image and padding), and encoded ETC1 with NO mip chain (the
+# sky is drawn Original-shaded, level 0 only). Not quantized to RGB565 first:
+# that would put the gradients' steps back.
+SKY_SIGMA = 1.0
+SKY_SETTINGS = "sky;etc1;q=high;dedither=gauss%.2f;pad=edge;nomips;z=none;v1" % SKY_SIGMA
+
+
+def gauss_wrap(rgb, sigma):
+    """A separable gaussian (radius 3 sigma), wrapped across the columns (the
+    panorama is 360 degrees) and clamped at the top and bottom rows."""
+    r = int(3 * sigma + 0.5)
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
+    k /= k.sum()
+    a = rgb.astype(np.float64)
+    h, w = a.shape[:2]
+    rows = np.zeros_like(a)
+    for i, t in enumerate(k):
+        rows += t * np.roll(a, r - i, axis=1)
+    padded = np.concatenate([np.repeat(rows[:1], r, 0), rows, np.repeat(rows[-1:], r, 0)], 0)
+    out = np.zeros_like(a)
+    for i, t in enumerate(k):
+        out += t * padded[i:i + h]
+    return np.clip(out + 0.5, 0, 255).astype(np.uint8)
+
+
+def sky_cut(wrap_rgb, first, stored):
+    w = wrap_rgb.shape[1]
+    return wrap_rgb[:, [(first - 1 + x) % w for x in range(stored)]]
+
+
+def convert_skies(frames_dir, out):
+    """Every exported sky's slices as sky/level<L>_<k>.t3x, listed in
+    sky/manifest.txt. Returns (encoded now, kept, failed)."""
+    index_path = os.path.join(frames_dir, "sky", "index.tsv")
+    sky_out = os.path.join(out, "sky")
+    os.makedirs(sky_out, exist_ok=True)
+    manifest_path = os.path.join(sky_out, "manifest.txt")
+    old = {}
+    if os.path.exists(manifest_path):
+        for line in open(manifest_path):
+            if not line.startswith("#") and line.strip():
+                f = line.rstrip("\n").split("\t")
+                old[f[0]] = f
+    rows = [line.rstrip("\n").split("\t") for line in open(index_path)
+            if line.strip() and not line.startswith("#")]
+    lines, wraps = {}, {}
+    encoded = kept = failed = 0
+    for level, k, first, stored, height, wrap in rows:
+        first, stored, height, wrap = int(first), int(stored), int(height), int(wrap)
+        name = "level%s_%s" % (level, k)
+        slice_rgb = np.fromfile(os.path.join(frames_dir, "sky", name + ".rgba"),
+                                np.uint8).reshape(height, stored, 4)[..., :3]
+        if level not in wraps:
+            raw = np.fromfile(os.path.join(frames_dir, "sky", "level%s.rgba" % level),
+                              np.uint8).reshape(height, wrap, 4)[..., :3]
+            wraps[level] = (raw, gauss_wrap(raw, SKY_SIGMA))
+        raw, smooth = wraps[level]
+        if not np.array_equal(sky_cut(raw, first, stored), slice_rgb):
+            print("arena_etc1_convert: sky %s: the cut is not the dome's slice -- not encoded"
+                  % name, file=sys.stderr)
+            failed += 1
+            continue
+        img = sky_cut(smooth, first, stored)
+        digest = hashlib.sha256(img.tobytes()).hexdigest()[:16]
+        dst = os.path.join(sky_out, name + ".t3x")
+        prev = old.get(name)
+        tw, th = pot(stored), pot(height)
+        if prev and prev[5] == digest and prev[6] == SKY_SETTINGS and os.path.exists(dst):
+            lines[name] = prev
+            kept += 1
+            continue
+        canvas = np.zeros((th, tw, 3), np.uint8)
+        canvas[:height, :stored] = img
+        canvas[height:, :stored] = img[height - 1:height]
+        canvas[:, stored:] = canvas[:, stored - 1:stored]
+        with tempfile.TemporaryDirectory() as tmp:
+            staged = os.path.join(tmp, "in.png")
+            Image.fromarray(canvas, "RGB").save(staged)
+            r = subprocess.run([TEX3DS, "-f", "etc1", "-q", "high", "-z", "none", staged,
+                                "-o", dst + ".tmp"], capture_output=True, text=True)
+            if r.returncode != 0 or not os.path.exists(dst + ".tmp"):
+                print("arena_etc1_convert: sky %s: tex3ds failed: %s"
+                      % (name, (r.stderr or r.stdout).strip()[:200]), file=sys.stderr)
+                failed += 1
+                continue
+            os.replace(dst + ".tmp", dst)
+        lines[name] = [name, str(stored), str(height), str(tw), str(th), digest, SKY_SETTINGS]
+        encoded += 1
+    for f in os.listdir(sky_out):
+        if f.endswith(".t3x") and f[:-4] not in lines:
+            os.remove(os.path.join(sky_out, f))
+    with open(manifest_path + ".tmp", "w") as f:
+        f.write("# name\tsrc_w\tsrc_h\tw\th\tsrc_sha256_16\tsettings\n")
+        for name in sorted(lines):
+            f.write("\t".join(lines[name]) + "\n")
+    os.replace(manifest_path + ".tmp", manifest_path)
+    return encoded, kept, failed
+
+
 def build_exporter(build_dir):
     # THE HOST COMPILER, named on the command line: stage_romfs.sh runs this from
     # the 3DS Makefile, which exports CXX=arm-none-eabi-g++ (a command-line
@@ -411,7 +523,10 @@ def main():
     print("arena_etc1_convert: TOTAL %d images, %.2f MB of .t3x in the RomFS, %.2f MB as "
           "level-0 GPU copies (a mip chain adds a third)" %
           (len(lines), total / 1048576.0, gpu / 1048576.0))
-    return 1 if failed else 0
+    sky_new, sky_kept, sky_failed = convert_skies(frames_dir, out)
+    print("arena_etc1_convert: sky %d slices encoded now, %d kept, %d failed" %
+          (sky_new, sky_kept, sky_failed))
+    return 1 if failed or sky_failed else 0
 
 
 if __name__ == "__main__":

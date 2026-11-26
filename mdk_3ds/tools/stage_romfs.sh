@@ -197,6 +197,15 @@ if [ -f "$ARENA_ETC1_DIR/manifest.txt" ]; then
         mkdir -p "$OUT/orig/$(dirname "$rel")"
         ln "$file" "$OUT/orig/$rel" 2>/dev/null || cp "$file" "$OUT/orig/$rel"
     done < <(find "$ARENA_ETC1_DIR/textures" -type f -name '*.t3x' -print0)
+    # The skies' de-dithered ETC1 slices (romfs:/orig/sky/level<L>_<k>.t3x), drawn
+    # with HD on (level_load_3ds.cpp buildSky3ds); absent, the sky is expanded.
+    if [ -d "$ARENA_ETC1_DIR/sky" ]; then
+        mkdir -p "$OUT/orig/sky"
+        for file in "$ARENA_ETC1_DIR"/sky/*.t3x; do
+            [ -f "$file" ] || continue
+            ln "$file" "$OUT/orig/sky/" 2>/dev/null || cp "$file" "$OUT/orig/sky/"
+        done
+    fi
     echo "stage_romfs:   orig ($(find "$OUT/orig" -name '*.t3x' | wc -l) textures, $(du -sh "$OUT/orig" | cut -f1))"
 else
     echo "stage_romfs:   (skip) orig -- no compressed arena set; arena textures are expanded"

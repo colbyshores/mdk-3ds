@@ -2545,3 +2545,78 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   checks 0 failures, tools/check.sh ALL GATES PASSED (gates_frames PASS on the Linux build,
   gates_smdh SKIP: no .cia); player .3dsx (devkitARM 15.2.0) 0 compiler warnings.
 - **Commit:** this one.
+
+## 2026-11-26 -- the sky as de-dithered ETC1 with HD on (branch perf/3ds-sky-etc1)
+
+### The sky's slices from build-time ETC1 copies, the 8-bit dither removed
+- **What:**
+  - `arena_tex_export` (host) also writes each level's sky: the wrap through the
+    DTI palette (index 0 remapped as the dome remaps it) and every slice exactly
+    as `buildSkyDome` cuts it (the same code, linked into the tool).
+  - `arena_etc1_convert.py convert_skies`: the WHOLE wrap is de-dithered (a
+    gaussian, sigma 1.0 texel, wrapped across the 360-degree seam, clamped at the
+    top and bottom rows), each slice cut by the dome's rule (checked equal to the
+    exported slice before the blur), padded to 1024x512 by repeating its last row
+    and column, and encoded `tex3ds -f etc1 -q high -z none` with no mip chain
+    (the sky is drawn Original-shaded, level 0 only). Output
+    `build-arena-etc1/sky/level<L>_<k>.t3x` + `sky/manifest.txt` (incremental);
+    `stage_romfs.sh` links them as `romfs:/orig/sky/`.
+  - `buildSky3ds(..., level, hd, ...)`: with the HD toggle on a slice is
+    `mdk_render_create_compressed_texture` of its .t3x (read whole at level load)
+    and its indices are never expanded; with HD off, or no file, the 16-bit
+    expansion exactly as before. The pause menu's HD toggle remakes the sky
+    (`releaseSky3ds` + `buildSky3ds`), so the two are never both resident.
+- **Why:** the owner saw the 8-bit palette dither in the sky with HD on ("the
+  sky isnt part of the HD recompression to ETC1 ... We definitely need to fix
+  that"). The sky is not in the HD pack (`TextureExport.cs`: "Not exported: the
+  sky"), so the fix is the original art de-dithered, not an HD source. Merely
+  re-encoding the dithered art keeps the dither and smears it into 4x4 blocks
+  (measured: ETC1 of the raw art rmse 5.6 against the art, of the de-dithered
+  art 2.1 against its source).
+- **Memory:** levels 3, 4, 7, 8 have two slices (1024 + 780 stored columns),
+  levels 5, 6 one (902): 2 MiB / 1 MiB of 16-bit store become 512 KiB / 256 KiB
+  of ETC1 (1.5 MiB / 0.75 MiB of linear saved). The main heap keeps the .t3x
+  bytes (256 KiB a slice) instead of the index source (360 KiB a full slice).
+  RomFS +2.5 MiB.
+- **Evidence (host):** every level's sky compared at screen scale (~1:1; the
+  3DS shows ~0.75 px per sky texel) and 3x, current 16-bit look vs the built
+  .t3x decoded: `.git/worktrees/sky-etc1/hw-logs/sky-compare/level<L>_compare.png`,
+  seam close-ups `level<L>_seams.png`, full panoramas `level<L>_{original,now565,etc1}.png`,
+  numbers `report.txt`. The dither is gone on all six; no new banding; the step
+  across the slice boundary and the 360-degree wrap is the image's typical
+  column step (e.g. level 3: 1.21 / 1.38 vs 1.13); the edge rows meeting the
+  flat caps keep their colour (mean within 2 levels). CPU readers of the sky
+  (`level_light.cpp`, `sky_modes.h`) read the DTI, untouched. Linux untouched.
+  3DS build 0 compiler warnings; tests/scripts `make test` rc 0; tests/formats
+  200624 checks, 0 failures; tools/check.sh ALL GATES PASSED (gates_smdh SKIP).
+- **Not verified here:** Mandarine (another project's instances were running);
+  hardware: see the follow-up entry.
+- **Commit:** this one.
+
+### The ETC1 sky on the Old 3DS appliance (hardware follow-up)
+- **What:** level-3 runs on `old3ds-lan167` (CFGU model 0, 268 MHz, L2 off,
+  stereo on), this branch vs its base 72cfb30b, each with the harness
+  cherry-picked (565b08b3) on a throwaway branch (`throwaway/sky-etc1-hw`; the
+  base as a detached worktree), `AUTOQUIT=90 LEVEL=3`, HD toggle on (default),
+  pushed by `hw_cycle.sh` (FRESH both). The harness on this base has no
+  framebuffer capture (`CAPTURE` is wired in the render files it leaves out), so
+  the pictures are ATM screenshots taken ~45 s into each run.
+- **Evidence:** `.git/worktrees/sky-etc1/hw-logs/`:
+  - `hw_l3_base_vs_new.png`: the same level-3 start view, base vs new, with a 3x
+    sky zoom: the base's sky shows the dither speckle, the new one is smooth, same
+    colours and cloud shapes; no seam in view.
+  - `hw-new-l3.session.log`: `sky: ... 2 ETC1 slices (hd=1)`; linear consumed
+    between `mem[level-data]` and `mem[arena-view]` 712,832 B against the base's
+    188,544 B: the two ETC1 slices are 524,288 B, made at load. The base's two
+    16-bit slices are made at their first draw (after `mem[loop]`, so no probe
+    sees them): 2,097,152 B by the store's arithmetic. Frame 30's resident
+    texture bytes: 8,882,048 (new) vs 10,652,096 (base). This harness build
+    logs no in-play linear-free figure (the profile's linear-free minimum reads
+    0: its first-use counters are not on this base), so the 1.5 MiB saving is
+    the arithmetic, consistent with these readings, not a measured minimum.
+  - `hw-{new,base}-prof.cycle.txt` (`PROFILE=1`, OG): steady mean 25.10 ms vs
+    25.42 ms, p95 27.8 both; frame 1 484 ms vs 1075 ms (the base's first frame
+    includes the two sky expansions among other first-use work, not isolated).
+- **Not tested on hardware:** toggling HD in the pause menu (the remake path;
+  the harness's HDFLIP does not go through the menu), levels other than 3.
+- **Commit:** this one (ledger only).
