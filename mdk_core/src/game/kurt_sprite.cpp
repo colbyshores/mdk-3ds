@@ -18,12 +18,15 @@
 
 #include "formats/bni.h"
 #include "formats/kurt_pack.h"
+#include "formats/model.h"
 #include "formats/palette.h"
 #include "formats/sprite_animation.h"
 #include "formats/texture.h"
 #include "game/arena_space.h"
 #include "game/mod_images.h"
 #include "util/math_lut.h"
+#include "util/matrix.h"
+#include "util/system_numerics_inverse.h"
 
 namespace mdk {
 
@@ -1180,6 +1183,66 @@ bool KurtSprite::floorDepth(ArenaSpace* space, const Vec3& eye, const Vec3& forw
         *outDepth = nearest;
     }
     return have;
+}
+
+namespace {
+
+// A point through a row-vector matrix (Vector3.Transform).
+Vec3 transformPoint(const Vec3& v, const float* m) {
+    return Vec3{v.x * m[0] + v.y * m[4] + v.z * m[8] + m[12], v.x * m[1] + v.y * m[5] + v.z * m[9] + m[13],
+                v.x * m[2] + v.y * m[6] + v.z * m[10] + m[14]};
+}
+
+} // namespace
+
+Mat4 KurtSprite::boardPull(const formats::Box& box, const Mat4& transform, const Vec3& eye,
+                           const Vec3& forward, ArenaSpace* space) {
+    // Floors count where the rays cross them inside the box or this far under it.
+    const float kFloorBelow = 1.0f;
+    // A corner on the eye's plane has no depth to pull to (6eb0963b).
+    const float kMinDepth = 1e-3f;
+    float toBoard[16];
+    if (space == nullptr || !invertSystemNumericsMatrix4(transform.m, toBoard)) {
+        return transform;
+    }
+    float scale = 1.0f;
+    for (int32_t i = 0; i < 8; i++) {
+        // Corner i: bit 0 picks x, bit 1 y, bit 2 z of the box.
+        const Vec3 local{(i & 1) == 0 ? box.min.x : box.max.x, (i & 2) == 0 ? box.min.y : box.max.y,
+                         (i & 4) == 0 ? box.min.z : box.max.z};
+        const Vec3 corner = transformPoint(local, transform.m);
+        ArenaSpace::Floor floor;
+        if (!space->floorCrossing(formats::Vec3f{eye.x, eye.y, eye.z},
+                                  formats::Vec3f{corner.x, corner.y, corner.z}, &floor)) {
+            continue;
+        }
+        const Vec3 on = transformPoint(Vec3{floor.point.x, floor.point.y, floor.point.z}, toBoard);
+        if (on.x < box.min.x || on.x > box.max.x || on.y < box.min.y || on.y > box.max.y ||
+            on.z < box.min.z - kFloorBelow || on.z > box.max.z) {
+            continue;
+        }
+        const float depth = (corner.x - eye.x) * forward.x + (corner.y - eye.y) * forward.y +
+                            (corner.z - eye.z) * forward.z;
+        if (depth <= kMinDepth) {
+            continue;
+        }
+        const float floorDepth = (floor.point.x - eye.x) * forward.x + (floor.point.y - eye.y) * forward.y +
+                                 (floor.point.z - eye.z) * forward.z;
+        const float front = inFront(depth, true, floorDepth);
+        scale = front < scale ? front : scale;
+    }
+    if (scale == 1.0f) {
+        return transform;
+    }
+    // Matrix4x4.CreateScale(scale, eye): about the eye.
+    Mat4 about = Mat4::identity();
+    about.m[0] = scale;
+    about.m[5] = scale;
+    about.m[10] = scale;
+    about.m[12] = eye.x * (1.0f - scale);
+    about.m[13] = eye.y * (1.0f - scale);
+    about.m[14] = eye.z * (1.0f - scale);
+    return multiply(transform, about);
 }
 
 } // namespace mdk

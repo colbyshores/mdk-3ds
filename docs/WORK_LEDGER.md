@@ -2931,3 +2931,19 @@ fixes are another agent's.
 - **Evidence:** Linux and 3DS builds 0 warnings; `fall_frontend_test.sh` case 2 now opens the
   menu at 3 s and resumes at 3.5 s in the intro, with the same fall time at both and no
   "Fall ended": PASS. Not run on the console.
+
+### a27ca2f4 (and 6eb0963b's FloorPull guard) -- the ridden board over the floor under it
+- **What:** `KurtSprite::boardPull` (C# FloorPull.Of): the eye's rays to the board model's eight
+  box corners; a floor they cross inside the box (or up to a unit under it) pulls the board
+  towards the eye by `inFront`, the same on screen; corners on the eye's plane are skipped
+  (6eb0963b). Both frontends skip the ridden board in the object loop and draw it after the
+  objects with the pulled transform (Viewer.DrawBoard).
+- **Why:** on LEVEL4's board runs the board sank into the slope (uphill Kurt's feet lag a step
+  under the floor, banked turns sink an edge); the original draws an object after its leaf's
+  floor with no depth buffer, so the board always shows whole.
+- **Cost:** while on the board only: one 4x4 inverse and up to eight floor crossings a frame.
+- **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match; `tools/check.sh` ALL
+  GATES PASSED. LEVEL4 CMEAT_3 ride (`--ride=XSNOWB --at=420,4285,-570 --walk=forward@60-700`,
+  640x480) A/B with the pull switched off by a temporary hack: at frame 480 the board is
+  hidden under the floor without the pull and whole with it (2,684 pixels differ, all on the
+  board). Not run on the console.

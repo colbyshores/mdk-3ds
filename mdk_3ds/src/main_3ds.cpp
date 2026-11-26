@@ -2369,6 +2369,11 @@ int main(int argc, char** argv) {
                 if (!obj.visible || obj.dead) {
                     continue;
                 }
+                // The ridden board is drawn after the objects, pulled in front of the
+                // floors under it (upstream a27ca2f4; below).
+                if (runtime->rides().onBoard() && &obj == runtime->rides().ridden()) {
+                    continue;
+                }
                 const bool carried = runtime->rides().bomber() && &obj == runtime->rides().ridden();
                 const float alpha =
                     &obj == runtime->rides().driven() || carried ? 1.0f : tickAlpha;
@@ -2392,6 +2397,19 @@ int main(int argc, char** argv) {
                 // Viewer's blend.PoseOf), the driven and carried ones too.
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
                                      &objectStream, tinyHidden, tickAlpha);
+            }
+            // THE RIDDEN BOARD (upstream a27ca2f4, Viewer.DrawBoard): after the objects,
+            // scaled towards the eye in front of the floors its box dips under (the
+            // original draws an object after its leaf's floor, with no depth buffer).
+            if (!strikeFrame && runtime->rides().onBoard() && runtime->rides().ridden() != nullptr &&
+                runtime->rides().ridden()->visible && !runtime->rides().ridden()->dead &&
+                runtime->rides().ridden()->model != nullptr) {
+                const mdk::scripts::MdkObject& board = *runtime->rides().ridden();
+                const mdk::Mat4 pulled = mdk::KurtSprite::boardPull(
+                    board.model->bounds, board.transform_at(tickAlpha), sceneCamera.position,
+                    sceneCamera.forward, &space);
+                objectView.addObject(board, objectLook(board.arena), pulled, &objectStream, nullptr,
+                                     tickAlpha);
             }
             if (strikeFrame) {
                 // THE FULL-SCREEN STRIKE (package 14): the scene's model alone over the sky

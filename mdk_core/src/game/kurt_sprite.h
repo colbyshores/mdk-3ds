@@ -33,6 +33,7 @@
 #include "game/player.h"
 #include "render/render.h"
 #include "render/render_types.h"
+#include "util/matrix.h"
 
 namespace mdk {
 
@@ -46,6 +47,9 @@ class SpriteAnimation;
 } // namespace formats
 
 class ArenaSpace;
+namespace formats {
+struct Box;
+} // namespace formats
 
 // The bound on the sprite frames kept on the GPU, and the choice of which
 // one goes when the bound is exceeded.
@@ -454,6 +458,18 @@ public:
         const float scale = floorDepth / depth * (1.0f - kFloorMargin);
         return scale < kMinFloorShare ? kMinFloorShare : (scale > 1.0f ? 1.0f : scale);
     }
+
+    // THE RIDDEN BOARD IN FRONT OF THE FLOORS IT STANDS ABOVE (upstream a27ca2f4,
+    // 6eb0963b; C# FloorPull.Of). The original draws an object after the floor of
+    // its BSP leaf, so the board shows whole even where it dips into the slope
+    // (uphill its feet lag a step under it, banked turns sink an edge); with a
+    // depth buffer that part hid. As this sprite, it is scaled towards the eye:
+    // the same on screen, nearer than the floors the eye's rays to its box's
+    // eight corners cross inside the box (or up to a unit under it). `box` is the
+    // board model's bounds, `transform` the board's as drawn; the eye looks along
+    // `forward`. Returns `transform`, scaled about the eye when a floor is met.
+    static Mat4 boardPull(const formats::Box& box, const Mat4& transform, const Vec3& eye,
+                          const Vec3& forward, ArenaSpace* space);
 
     // The scale that brings the rows around the feet two world units nearer,
     // and still in front of the floor.
