@@ -10343,6 +10343,63 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- The follow camera leaves a corpse where it fell (FollowCamera.cs:132) ----
+    // LEVEL7's start room, Kurt at (12, 100, 12) facing -x with a wall behind him: the
+    // camera's clearance pushes a living Kurt away from it (tests/kurt_moves_test.sh's
+    // "x 7.0, below 9"). The C# skips the clearance while he is Dead, so the camera does
+    // not slide his corpse through the death beat; this pins that arm against the alive
+    // control. No probe: the C# dump would be the same feet either way.
+    if (spritesArg != nullptr) {
+        LevelData levelData;
+        if (!LevelData::load(&levelData, &data, 7)) {
+            printf("FAIL L7_dead_clearance: the level did not load\n");
+            failures++;
+        } else {
+            ArenaSpace space;
+            const std::vector<const Arena*>& arenas = levelData.arenas();
+            for (size_t i = 0; i < arenas.size(); i++) {
+                if (levelData.isReachable(arenas[i]->name())) {
+                    space.add(arenas[i]);
+                }
+            }
+            float movedX[2] = {0.0f, 0.0f};
+            for (int dead = 0; dead < 2; dead++) {
+                Player player;
+                player.feet = Vec3{12.0f, 100.0f, 12.0f};
+                player.yaw = 180.0f;
+                player.setSpace(&space);
+                player.setFrameCounts(kurtFrameCounts(*spritesArg));
+                if (dead) {
+                    player.setHealth(0);
+                }
+                Input input;
+                // Let him land (and, with no health, die) without the camera.
+                for (int step = 0; step < 60; step++) {
+                    player.update(input, 1.0f / 60.0f);
+                }
+                const float startX = player.feet.x;
+                FollowCamera follow;
+                Camera camera;
+                for (int step = 0; step < 90; step++) {
+                    player.update(input, 1.0f / 60.0f);
+                    follow.update(&camera, &space, player, 0.0f, 1.0f / 60.0f, 4.0f / 3.0f);
+                }
+                movedX[dead] = startX - player.feet.x;
+                if (dead && player.state() != Kurt::Dead) {
+                    movedX[dead] = -1.0f;
+                }
+            }
+            if (movedX[0] > 1.0f && movedX[1] == 0.0f) {
+                printf("PASS L7_dead_clearance: the wall behind pushes a living Kurt %.2f "
+                       "away, and his corpse not at all\n", movedX[0]);
+            } else {
+                printf("FAIL L7_dead_clearance: alive moved %.4f, dead moved %.4f (want > 1 "
+                       "and 0)\n", movedX[0], movedX[1]);
+                failures++;
+            }
+        }
+    }
+
     // ---- The ledges (package #12) ----
     // Kurt's ledge grab, hang and climb against the C# probe tests/scripts/ledge_probe
     // (see kurtLedgeDump for the columns): Kurt.Ledge.cs and ArenaSpace.Probes.cs's

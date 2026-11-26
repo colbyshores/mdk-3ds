@@ -1413,8 +1413,8 @@ Still open:
   shakes, messages and sets the flags), so the port does not either -- an oracle gap.
 - **Unpinned**: FollowCamera's clearance skip while Frozen. No reachable golden blocks the
   camera's sight during the rise (searched: levels 3, 4, 6, 8, eight turns each), so removing
-  the skip does not fail a golden. The C#'s `!Dead` arm of the same guard is still not
-  ported (`followCameraClear`).
+  the skip does not fail a golden. The C#'s `!Dead` arm of the same guard is ported
+  (2026-11-26, `fix/upstream-gameplay`) and pinned by tick1's `L7_dead_clearance`.
 - **Golden schedules cannot walk Kurt before the end**: his walk turns through the LUT
   (`Player::facing`, R6) and lands a ULP off the oracle's feet, which the pieces' sums (they
   turn around his feet) see. Turning and firing are exact.

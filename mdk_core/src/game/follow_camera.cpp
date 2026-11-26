@@ -203,11 +203,10 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
 Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera, float delta,
                        const ClipViewHook* clip) {
     // C# calls Clear only when space != null && !Sniping && !Frozen && !Dead
-    // (FollowCamera.cs:132). Frozen is ported (the end of a level: no clearance, so
-    // the camera does not shove a lifted Kurt), and so is Sniping (a sniping Kurt is
-    // not shoved off a wall by a camera nobody is looking through); the Dead arm is
-    // still open (docs/OPEN_ITEMS.md), so the guard is space, Frozen and Sniping here.
-    if (space == nullptr || player.frozen || player.sniping()) {
+    // (FollowCamera.cs:132): the end of a level does not shove a lifted Kurt, a sniping
+    // Kurt is not shoved off a wall by a camera nobody is looking through, and the
+    // camera does not slide his corpse during the death beat.
+    if (space == nullptr || player.frozen || player.sniping() || player.state() == Kurt::Dead) {
         return camera;
     }
     const Vec head = vAdd(toVec(player.feet), Vec{0.0f, 0.0f, kHeadHeight});

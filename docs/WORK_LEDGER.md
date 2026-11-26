@@ -2948,3 +2948,11 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     - `audit_arm11_math` flagged `partCenter`'s rest-pose fallback cosf/sinf once the posed
       branch was added above it (3005da70); it carries the same R6 pin as
       `reference_point` now.
+  - **The camera's clearance skips a dead Kurt (C# FollowCamera.cs:132; coordinator's
+    request from the death-flow check).** `followCameraClear` returns at once while Kurt's
+    state is Dead, as the C# (every version) and upstream's C++ do; before, the wall push
+    and the object shove could slide his corpse through the ~4 s death beat. No golden
+    moved. tick1's new `L7_dead_clearance` puts Kurt with a wall behind him in LEVEL7's
+    start room: alive, the camera pushes him 5.33 away; dead, 0. With the check removed
+    the dead run moves 5.33 too, so the case fails. `docs/OPEN_ITEMS.md`'s entry is
+    closed.
