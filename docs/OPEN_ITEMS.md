@@ -299,6 +299,12 @@ missing fan sparks; the GUNT_2 debris piece was a port bug, fixed and pinned
   emulator, no Old-3DS — so the only hardware evidence this batch can produce is
   the init log line (`depth: map z*1.0+1.0 near=0.0000 far=1.0000
   clear=0xffffff test=LEQUAL`).
+- **CLOSED 2026-11-26 (fix/3ds-decal-zfight): the 3DS applies the pull.** The
+  backend has had the camera position since `mdk_render_set_camera` stored it
+  (`cameraPos`), so `drawRecorded` builds `buildDepthPullMatrix` for a layered or
+  lines draw and composes it into that draw's matrix, as the Vulkan backend does.
+  Its absence was the owner's flickering ceiling lights (WORK_LEDGER 2026-11-26).
+  The original note, kept for the history:
 - **`DepthPull` on the 3DS is now unblocked but not free.** With a depth test
   installed, the oracle's depth pull (`render/depth_pull.cpp`, a poster over its
   wall) has something to bias against, and `renderer_c3d.cpp` still ignores

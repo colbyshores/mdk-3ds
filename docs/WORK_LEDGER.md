@@ -2620,3 +2620,48 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Not tested on hardware:** toggling HD in the pause menu (the remake path;
   the harness's HDFLIP does not go through the menu), levels other than 3.
 - **Commit:** this one (ledger only).
+
+### 2026-11-26 -- 3DS: coplanar details get the oracle's depth pull (ceiling lights stop flickering)
+- **What:** `drawRecorded` (06_draw_submit.inc) composes `buildDepthPullMatrix`
+  (the C#'s `DepthPull`: scale towards the camera by layer/256 of the distance,
+  lines 1/128) into the MVP of any draw with `material.depth_layer != 0` (or a
+  lines draw), Overlay exempt, as the Vulkan backend's `12_draw.inc` already
+  does. `coalesciblePair` (06_queue.inc) no longer folds two draws of different
+  layers. `docs/OPEN_ITEMS.md`'s "DepthPull on the 3DS" item is closed.
+- **Why (root cause):** the owner's flickering light decals. Core already gives
+  every arena triangle that overlaps a bigger triangle of its plane a depth layer
+  (`arena_scene.cpp`, the C#'s `Layers.cs`, merged as `origin/zfight` e13d91d0)
+  and splits batches by it, but the Citro3D backend never read `depth_layer`
+  (OPEN_ITEMS said so: it lacked the eye position, which `mdk_render_set_camera`
+  has stored in `cameraPos` since). So a light and its ceiling sat at the same
+  depth under `GPU_LEQUAL`: the winner per pixel was rounding, changing as the
+  camera moved, and because batches sort by material before layer, some details
+  are even drawn BEFORE their surface. Not the depth format, the transforms or
+  the second-pass programs: every program (unlit, lit GS, shadow-lit GS, pass-GS)
+  takes the same `mvp` clip position; the lit `world` uniform stays unpulled, so
+  normals and shadow lookups use the real surface.
+- **Which surfaces:** a host census (`computeArenaDepthLayers` over every
+  arena; scratch tool, not committed) finds 800 layered triangles: L3 10, L4 35,
+  L5 256, L6 369, L7 73, L8 57. E.g. DANT_7's ceiling tube lights `D7_TLITE`
+  (6) and their rims (12), DANT_6's windows `D6_WIN1` (38), OLYM_5's hub rims
+  (52), OLYM_7's mirror/floor tiles, MUSE_3/4's flat-colour panels. Objects,
+  sprites and the glow halos carry no layer (the C# does not either; the halo
+  has its own half-size nudge, effects_view.cpp).
+- **Choice:** the oracle's own mechanism, already in core and on Linux, not a
+  new one. `C3D_DepthMap` offset per draw was the alternative: a constant offset
+  in stored depth is a huge world distance at range (decals through walls far
+  away) and tiny up close, while the pull is a share of the distance. Margin of
+  layer 1 in the 24-bit buffer with this projection (near 0.5, far 20000):
+  329 LSB at 100 units, 66 at 500, 33 at 1000, 6.6 at 5000. Cost: only layered
+  draws pay -- one pull matrix, one or two 4x4 multiplies and one uniform write
+  per draw per eye, plus the frame matrix re-sent on the next unlayered draw.
+- **Other backends:** Linux/Vulkan already applied the pull (12_draw.inc, and
+  its casters in 11_shadow_post.inc); not affected.
+- **Evidence (host):** Linux build 0 warnings; 3DS build 0 compiler warnings;
+  tests/scripts `make test` rc 0; tests/formats 200624 checks, 0 failures;
+  tools/check.sh ALL GATES PASSED. Independent read-only review (Sonnet): no
+  defects. Linux reference view of the scene (DANT_7, lights on the ceiling):
+  `--level=7 --arena=DANT_7 --at=520,4420,-110,90`.
+- **Not verified here:** Mandarine (other projects' instances were running; one
+  instance max). Hardware: see the follow-up entry.
+- **Commit:** this one.

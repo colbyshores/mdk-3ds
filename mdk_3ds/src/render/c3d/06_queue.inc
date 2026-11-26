@@ -45,6 +45,7 @@ static bool coalesciblePair(const PreparedDraw* a, const PreparedDraw* b) {
     if (memcmp(&a->origScaleX, &b->origScaleX, sizeof(float) * 4) != 0) return false;
     if (da->material.pass != db->material.pass || da->material.blend != db->material.blend ||
         da->material.shading != db->material.shading) return false;
+    if (da->material.depth_layer != db->material.depth_layer) return false;   // its own matrix
     if (memcmp(&da->material.colour, &db->material.colour, sizeof(da->material.colour)) != 0) return false;
     if (memcmp(da->world, db->world, sizeof(da->world)) != 0) return false;
     return true;

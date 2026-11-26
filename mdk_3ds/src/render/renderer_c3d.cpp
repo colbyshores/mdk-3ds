@@ -61,6 +61,7 @@
 #include "render/render_c3d_hd_set.h"
 #include "render/render_types.h"
 #include "render/draw_queue.h"
+#include "render/depth_pull.h"
 #include "render/pica_matrix.h"
 #include "util/matrix.h"
 #include "render/sun_shadow.h"
