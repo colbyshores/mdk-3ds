@@ -120,7 +120,11 @@ mdk_3ds/tools/build_hd_pack.sh                # all levels; --levels 3,7 for som
 ```
 
 For one level expect several minutes of upscaling on a desktop GPU (level 3 took 217 s on an
-RX 6600) and several more of encoding on the CPU. A second run only redoes what changed. It
+RX 6600) and several more of encoding on the CPU. The pack is stored uncompressed (about 85 MB
+for levels 3-8), because the 3DS reads it faster than it can unpack it. A pack made before
+2026-11-26 is compressed; convert it without upscaling again with
+`mdk_3ds/tools/hd_pack_convert.py --from-pack build-hd-pack build-hd-pack-raw` and copy the new
+folder instead. A second run only redoes what changed. It
 writes the upscaled textures to `build-hd-mod/` and the pack to `build-hd-pack/`. Copy the
 pack's contents to the SD card as `/3ds/mdk/hd/` (so that
 `/3ds/mdk/hd/manifest.txt` exists), then turn on HD TEXTURES in the SELECT menu (or set

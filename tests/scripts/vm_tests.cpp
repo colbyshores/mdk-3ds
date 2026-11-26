@@ -39,6 +39,7 @@
 #include "movie_tests.h"
 #include "save_tests.h"
 #include "input_3ds_tests.h"
+#include "hd_window_tests.h"
 #include "heap_split_tests.h"
 #include "kurt_stream_tests.h"
 #include "formats/case_insensitive_path.h"
@@ -8339,6 +8340,14 @@ int main(int argc, char** argv) {
         printf("PASS HeapSplit\n");
     }
 
+    // The 3DS HD window: the arenas whose HD copies are resident, and the fit
+    // that steps an arena down when its window is over the room (hd_window_3ds.h).
+    const int hdWindowFailures = mdk::test::runHdWindowTests();
+    failures += hdWindowFailures;
+    if (hdWindowFailures == 0) {
+        printf("PASS HdWindow\n");
+    }
+
     // Kurt's pack at level load and its stream (kurt_stream_tests.h), against a
     // fake backend: the 3DS cannot be run here and the stream's logic has no
     // other check, so it is data-independent and sits above the data check.
@@ -8740,6 +8749,13 @@ int main(int argc, char** argv) {
     failures += warmFailures;
     if (warmFailures == 0) {
         printf("PASS ObjectWarmKeys\n");
+    }
+    // The HD window's neighbours read from the level data: doorways, trigger
+    // boxes and the scripts' teleports (hd_window_tests.h).
+    const int hdWindowLevelFailures = mdk::test::runHdWindowLevelTests(data);
+    failures += hdWindowLevelFailures;
+    if (hdWindowLevelFailures == 0) {
+        printf("PASS HdWindowLevels\n");
     }
     // The effects warm asks the pack for every sprite, the small drops too.
     const int effectsWarmFailures = mdk::test::runEffectsWarmTests(data);

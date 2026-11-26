@@ -343,6 +343,7 @@ bool loadOrigByName(int32_t level, mdk::LevelData& levelData,
                 : hdByKey.find(lowerName3ds(fields[3].substr(mark + 1)));
         if (hd != hdByKey.end()) {
             out->hdPaths[key] = hd->second;
+            out->hdArenaRows.push_back(std::make_pair(fields[1], hd->second));
         } else {
             out->hdPaths.erase(key);
         }
@@ -592,110 +593,69 @@ void loadKurtFrames3ds(KurtSprite* kurtSprite, const EnhancedToggles& toggles, i
         (unsigned)mdk::KurtSprite::kStagedCacheBytes);
 }
 
-// THE LEVEL'S HD SET, chosen by arithmetic against the free linear heap and
-// pinned (docs/HD_TEXTURES_3DS_SPEC.md 3.2): every HD file the name index pairs
-// with this level's rows, at tier 512, else 256, else 256 with the files that
-// save the most taken down to 128, else none (streamed per surface). Returns the
-// tier's cap (512, 256, 128) or 0; logged.
-int32_t pinHdSet3ds(MdkRenderer renderer, int32_t level, const OrigByName& origByName,
-                    const std::map<std::string, uint32_t>& hdShapes) {
-    int32_t cap = 0;
-    std::vector<std::string> hdSetPaths;
-    std::vector<const char*> hdSetArgs;
+// THE HD WINDOW AT LEVEL LOAD (hd_window_3ds.h, docs/3DS_ARCHITECTURE.md 3-4).
+// Every arena's HD files -- the name index's rows for that arena, so everything
+// drawn through the arena's palette -- with their bytes at 512, 256 and 128, the
+// neighbours the level names, and the fit: every arena's window (it, its
+// neighbours, the arenas its triggers and scripts name) against the free linear
+// heap less kHdPlayReserve. Measured for the shipped levels: the largest window
+// is 8.8 MiB (level 8 at CGUNT_9), every level fits at 512 in the 30 MiB heap.
+//
+// kHdPlayReserve is what play still takes from the linear heap after this point
+// (Kurt's animation stream, the uncovered textures, effects, meshes): measured
+// on the Old 3DS level-7 walk, 6.27 MB between this point and the walk's lowest
+// free, so 7 MiB.
+uint32_t buildHdWindow3ds(int32_t level, const OrigByName& origByName,
+                          const std::map<std::string, uint32_t>& hdShapes,
+                          const LevelData& levelData, const formats::Cmi* cmi, HdWindow* out) {
     static const uint32_t kHdPlayReserve = 7u * 1024u * 1024u;
-    std::set<std::string> unique;
-    for (std::map<std::pair<const void*, std::string>, std::string>::const_iterator it =
-             origByName.hdPaths.begin();
-         it != origByName.hdPaths.end(); ++it) {
-        unique.insert(it->second);
-    }
-    // Each file's bytes at the three caps, in the set's (sorted) order.
-    hdSetPaths.assign(unique.begin(), unique.end());
-    std::vector<uint32_t> at512(hdSetPaths.size()), at256(hdSetPaths.size()),
-        at128(hdSetPaths.size());
-    uint32_t bytes512 = 0;
-    uint32_t bytes256 = 0;
-    uint32_t bytes128 = 0;
+    out->clear();
     int32_t unsized = 0;
-    for (size_t f = 0; f < hdSetPaths.size(); f++) {
+    for (size_t r = 0; r < origByName.hdArenaRows.size(); r++) {
         const std::map<std::string, uint32_t>::const_iterator shape =
-            hdShapes.find(hdSetPaths[f]);
+            hdShapes.find(origByName.hdArenaRows[r].second);
         if (shape == hdShapes.end()) {
             unsized++;
             continue;
         }
-        at512[f] = mdk::hdChainBytes(shape->second, 0);
-        at256[f] = mdk::hdChainBytes(shape->second, 256);
-        at128[f] = mdk::hdChainBytes(shape->second, 128);
-        bytes512 += at512[f];
-        bytes256 += at256[f];
-        bytes128 += at128[f];
+        const uint32_t bytes[HdWindow::kTiers] = {hdChainBytes(shape->second, 0),
+                                                  hdChainBytes(shape->second, 256),
+                                                  hdChainBytes(shape->second, 128)};
+        out->addFile(origByName.hdArenaRows[r].first, origByName.hdArenaRows[r].second, bytes);
     }
+    if (out->fileCount() == 0) {
+        mdk::log3dsPrintf("hd: level %d has no HD files (%d unsized)", (int)level, (int)unsized);
+        return 0;
+    }
+    const int32_t named = addLevelNeighbours(levelData.dti(), cmi, out);
     const uint32_t freeNow = (uint32_t)linearSpaceFree();
     const uint32_t room = freeNow > kHdPlayReserve ? freeNow - kHdPlayReserve : 0u;
-    // The tier. 512 or 256 for the whole set when it fits; else the set at
-    // 256 with the files that save the most taken down to 128, one at a
-    // time, until it fits (the level's largest textures lose a level, the
-    // rest keep 256); else the stream per surface.
-    std::vector<int32_t> caps(hdSetPaths.size(), 0);
-    int32_t at128Count = 0;
-    uint32_t total = bytes512;
-    if (unsized == 0 && bytes512 <= room) {
-        cap = 512;
-    } else if (unsized == 0 && bytes256 <= room) {
-        cap = 256;
-        std::fill(caps.begin(), caps.end(), 256);
-        total = bytes256;
-    } else if (unsized == 0 && bytes128 <= room) {
-        cap = 128;
-        std::fill(caps.begin(), caps.end(), 256);
-        total = bytes256;
-        std::vector<std::pair<uint32_t, size_t> > savings;
-        for (size_t f = 0; f < hdSetPaths.size(); f++) {
-            savings.push_back(std::make_pair(at256[f] - at128[f], f));
-        }
-        std::sort(savings.begin(), savings.end());
-        for (size_t k = savings.size(); k > 0 && total > room; k--) {
-            const size_t f = savings[k - 1].second;
-            total -= savings[k - 1].first;
-            caps[f] = 128;
-            at128Count++;
-        }
-    } else {
-        cap = 0;
-        hdSetPaths.clear();
+    const uint32_t worst = out->fit(room);
+    mdk::log3dsPrintf("hd: level %d window: %d arenas, %d files (%d unsized), %d script/trigger "
+                      "neighbours; largest window %u bytes, room %u (linear free %u less the %u "
+                      "reserve)%s",
+                      (int)level, (int)out->arenaCount(), (int)out->fileCount(), (int)unsized,
+                      (int)named, (unsigned)worst, (unsigned)room, (unsigned)freeNow,
+                      (unsigned)kHdPlayReserve, worst > room ? ": DOES NOT FIT at 128" : "");
+    for (size_t i = 0; i < out->steppedDown().size(); i++) {
+        mdk::log3dsPrintf("hd: %s steps down to %d to fit", out->steppedDown()[i].first.c_str(),
+                          (int)out->steppedDown()[i].second);
     }
-    mdk::log3dsPrintf("hd: level %d set %d files: %u bytes at 512, %u at 256, %u at 128 "
-                      "(%d unsized); linear free %u, room %u above the %u reserve: %s, "
-                      "%u bytes, %d files at 128",
-                      (int)level, (int)unique.size(), (unsigned)bytes512,
-                      (unsigned)bytes256, (unsigned)bytes128, (int)unsized,
-                      (unsigned)freeNow, (unsigned)room, (unsigned)kHdPlayReserve,
-                      cap == 512   ? "tier 512, the whole set"
-                      : cap == 256 ? "tier 256, the whole set, levels over 256 dropped"
-                      : cap == 128 ? "tier 256/128, the largest files down to 128"
-                                        : "DOES NOT FIT: streamed per surface",
-                      (unsigned)(cap > 0 ? total : 0u), (int)at128Count);
-    if (cap > 0) {
-        for (size_t p = 0; p < hdSetPaths.size(); p++) {
-            hdSetArgs.push_back(hdSetPaths[p].c_str());
-        }
-        mdk_render_pin_hd_set(renderer, hdSetArgs.data(), caps.data(),
-                              (int32_t)hdSetArgs.size());
-    }
-    return cap;
+    return worst;
 }
 
-// THE HOLD for the level's HD set (spec 3.2): the backend reads and imports while
-// this thread waits, the applet loop served throughout (HOME, sleep, power); then
-// the set's one-line summary. `why` names the moment ("loading screen", "toggled on").
-void holdHdSet3ds(MdkRenderer renderer, const char* why) {
+// THE WAIT for HD files (docs/3DS_ARCHITECTURE.md 4): the backend reads and
+// imports while this thread waits, the applet loop served throughout (HOME,
+// sleep, power), as the original's BSPShow loaded an arena before showing it.
+double holdHdWindow3ds(MdkRenderer renderer, const char* const* paths, int32_t count,
+                       const char* why) {
     const double hold0 = mdk::nowSeconds();
     int32_t made = 0;
-    int32_t pending = mdk_render_hd_set_pending(renderer);
+    int32_t pending = mdk_render_hd_pending(renderer, paths, count);
+    const int32_t asked = pending;
     // A wait that makes nothing for a second (no file read or imported, the
-    // count unchanged: what is left cannot be read) ends the hold, as does a
-    // minute in all, or the applet loop saying stop.
+    // count unchanged: what is left cannot be read) ends it, as does a minute in
+    // all, or the applet loop saying stop.
     int32_t idle = 0;
     while (pending > 0 && idle < 20 && mdk::nowSeconds() - hold0 < 60.0) {
         if (!aptMainLoop()) {
@@ -704,7 +664,7 @@ void holdHdSet3ds(MdkRenderer renderer, const char* why) {
         const int32_t slice = mdk_render_settle_streams(renderer, 50);
         const int32_t before = pending;
         made += slice;
-        pending = mdk_render_hd_set_pending(renderer);
+        pending = mdk_render_hd_pending(renderer, paths, count);
         if (slice == 0 && pending == before) {
             idle++;
             svcSleepThread(50000000LL);
@@ -712,15 +672,18 @@ void holdHdSet3ds(MdkRenderer renderer, const char* why) {
             idle = 0;
         }
     }
-    made += mdk_render_settle_streams(renderer, 2000);   // the packed originals asked
+    if (!paths) {
+        made += mdk_render_settle_streams(renderer, 2000);   // the packed originals asked
+    }
+    const double ms = (mdk::nowSeconds() - hold0) * 1000.0;
     MdkHdSetState state;
     mdk_render_hd_set_state(renderer, &state);
-    mdk::log3dsPrintf("hd: set %s: %d of %d resident (%u bytes, cap %d), %d given up, "
-                      "%d files made in %.0f ms; linear free %u",
-                      why, (int)state.resident, (int)state.pinned,
-                      (unsigned)state.residentBytes, (int)state.topCap,
-                      (int)state.givenUp, (int)made, (mdk::nowSeconds() - hold0) * 1000.0,
-                      (unsigned)linearSpaceFree());
+    mdk::log3dsPrintf("hd: wait %s: %d files asked, %d left, %d made in %.0f ms; window %d of %d "
+                      "resident (%u bytes, cap %d), %d given up; linear free %u",
+                      why, (int)asked, (int)pending, (int)made, ms, (int)state.resident,
+                      (int)state.pinned, (unsigned)state.residentBytes, (int)state.topCap,
+                      (int)state.givenUp, (unsigned)linearSpaceFree());
+    return ms;
 }
 
 } // namespace mdk

@@ -23,8 +23,14 @@
 #      picked up as it is).
 #   3. THE 3DS PACK (Python). mdk_3ds/tools/hd_pack_convert.py: bleed,
 #      power-of-two at most --max (512; Kurt's sprite frames at most 128), ETC1 /
-#      ETC1A4 by alpha, tex3ds -q high -m gaussian (mip chain prebuilt),
+#      ETC1A4 by alpha, tex3ds -q high -m gaussian -z none (mip chain prebuilt,
+#      stored UNCOMPRESSED so the console's worker only reads: 3.5 MB/s against
+#      0.77 MB/s reading and unpacking on core 1, measured 2026-11-26),
 #      manifest.txt. Incremental.
+#
+# A pack made before 2026-11-26 (tex3ds' default compression) does not need its
+# mod again: `mdk_3ds/tools/hd_pack_convert.py --from-pack <old pack> <new dir>`
+# rewrites every file uncompressed, the same ETC blocks byte for byte.
 #
 # Output: --out (default build-hd-pack/ at the repo root, ignored as build-*/),
 # the tree the 3DS reads from sdmc:/3ds/mdk/hd/ (docs/HD_TEXTURES_3DS_SPEC.md).

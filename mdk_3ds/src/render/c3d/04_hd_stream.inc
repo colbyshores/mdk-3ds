@@ -498,6 +498,9 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
         copy.right = sub->right;
         copy.bottom = sub->bottom;
         Tex3DS_TextureFree(t3x);
+        // The whole chain cleaned out of the CPU cache by range: Tex3DS does not
+        // for a linear-heap texture (importCompressed, 04_textures.inc, says why).
+        C3D_TexFlush(&copy.tex);
         copy.levels = copy.tex.maxLevel;
         copy.bytes = (uint32_t)C3D_TexCalcTotalSize(copy.tex.size, copy.tex.maxLevel);
         // REPEAT on an axis the image fills (a power-of-two image: exact), CLAMP

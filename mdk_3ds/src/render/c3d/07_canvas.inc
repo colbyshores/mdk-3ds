@@ -304,7 +304,7 @@ void mdk_render_set_scene_window(MdkRenderer rr, const float* rect) {
     }
 }
 
-// The level's resident HD set (render_c3d_hd_set.h). Copies, nothing else.
+// The HD window (render_c3d_hd_set.h). Copies, nothing else.
  void mdk_render_hd_set_state(MdkRenderer r, MdkHdSetState* out) {
     if (!out) return;
     *out = MdkHdSetState();
@@ -322,4 +322,6 @@ void mdk_render_set_scene_window(MdkRenderer rr, const float* rect) {
     }
     out->givenUp = cr->hdPinFailed;
     out->topCap = cr->hdTopCap;
+    out->drawnMissing = cr->hdDrawnMissing;
+    out->imported = cr->hdImported;
  }

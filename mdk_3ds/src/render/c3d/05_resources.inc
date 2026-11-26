@@ -88,7 +88,7 @@ static MdkTextureId createIndexTexture(MdkRenderer r, int32_t w, int32_t h, cons
     // A CANVAS PICTURE WITH AN HD IMAGE (mdk_render_create_hd_image): linked to its
     // HD copy and HD-ONLY -- with enableHdTextures on its copy is the picture and
     // the indices are never expanded (nothing is made here); the level's set pins
-    // the copy (mdk_render_pin_hd_set) so the loading screen holds for it. With
+    // the copy (mdk_render_set_hd_window) so the loading screen holds for it. With
     // the toggle off, its first draw makes it from the indices kept here.
     if (hdPath && hdPath[0]) {
         recordHdPath(r, id, hdPath, true);

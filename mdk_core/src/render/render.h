@@ -170,18 +170,20 @@ void mdk_render_prepare_texture(MdkRenderer r, MdkTextureId texture);
 // files made; 0 on a backend whose textures are made at creation.
 int32_t mdk_render_settle_streams(MdkRenderer r, int32_t maxMs);
 
-// THE LEVEL'S RESIDENT HD SET (the 3DS, docs/HD_TEXTURES_3DS_SPEC.md 3.2): the
-// HD files the frontend chose for this level -- by arithmetic, to fit -- read
-// (each with its levels wider or taller than its `caps` entry dropped; 0 keeps
-// them all), kept
-// resident and never evicted while the set stands; an HD-only texture is then
-// drawn from its file's copy only. The frontend holds the loading screen
-// (mdk_render_settle_streams) until mdk_render_hd_set_pending is 0, and again
-// when the HD toggle comes back on. `count` 0 drops the set. Returns the files
-// pinned; 0 on a backend with no HD stream.
-int32_t mdk_render_pin_hd_set(MdkRenderer r, const char* const* paths, const int32_t* caps,
-                              int32_t count);
-int32_t mdk_render_hd_set_pending(MdkRenderer r);
+// THE HD WINDOW (the 3DS, docs/3DS_ARCHITECTURE.md 4): the HD files of the
+// arenas around Kurt -- his arena, its neighbours, the arenas its triggers and
+// scripts name (mdk_3ds/src/hd_window_3ds.h) -- read in the given order (the
+// drawn arenas' first), each with its levels wider or taller than its `caps`
+// entry dropped (0 keeps them all), and kept resident while they stay in the
+// window. A file that leaves it is freed once no texture draws it. Called
+// between frames whenever the window changes; `count` 0 drops it. Returns the
+// files pinned; 0 on a backend with no HD stream.
+int32_t mdk_render_set_hd_window(MdkRenderer r, const char* const* paths, const int32_t* caps,
+                                 int32_t count);
+// How many of `paths` (null: the whole window) are not resident yet and still
+// to come; 0 with the HD toggle off. The frontend waits on it (pumping
+// mdk_render_settle_streams) before it draws an arena whose files are missing.
+int32_t mdk_render_hd_pending(MdkRenderer r, const char* const* paths, int32_t count);
 
 // Create an RGBA8 texture (the enhanced look's expanded colour textures, the
 // canvas's images, the panorama).

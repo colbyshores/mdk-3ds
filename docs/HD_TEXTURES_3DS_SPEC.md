@@ -54,8 +54,11 @@ then `hd_pack_convert.py` converts it. For every PNG under the mod tree:
 3. **Pick the format by alpha**: any alpha < 255 -> `etc1a4`, else `etc1`.
    (Whether a 1-bit-alpha texture should stay ETC1A4 or be split is open; ETC1A4
    is the safe default.)
-4. **`tex3ds -f <fmt> -q high -m gaussian in.png -o out.t3x`**, then a manifest
-   line per texture: key, file, format, width, height, levels, bytes.
+4. **`tex3ds -f <fmt> -q high -m gaussian -z none in.png -o out.t3x`**, then a
+   manifest line per texture: key, file, format, width, height, levels, bytes.
+   Uncompressed since 2026-11-26 (docs/3DS_ARCHITECTURE.md 5): on the Old 3DS the
+   worker on core 1 reads 3.5 MB/s but reads and unpacks tex3ds' default
+   compression at only 0.77 MB/s of file. `--from-pack` converts an older pack.
 5. **Deterministic and stale-checked**: same input bytes -> same `.t3x` bytes; a
    rebuild only re-encodes what changed. The pack lands in RomFS (or on SD if its
    size makes the `.3dsx` push/CIA impractical -- measured, decided then).
@@ -131,6 +134,13 @@ expansion and not the packed original in `romfs:/orig`. It never blocks either.
   sky, glass) the PC never replaces. `hdrule:` lines at level teardown count it.
 
 ### 3.2 The level's resident set (owner, 2026-11-24/25: "I dont want surface pop in")
+
+**Superseded 2026-11-26 by the HD window** (docs/3DS_ARCHITECTURE.md 3-4,
+`mdk_3ds/src/hd_window_3ds.h`): only Kurt's arena, its neighbours and the arenas
+it names are resident, every level at 512; an arena is not drawn until its files
+are, the frame waiting for them as BSPShow did. `pinHdSet3ds`/`holdHdSet3ds` are
+gone (`buildHdWindow3ds`/`holdHdWindow3ds`, `mdk_render_set_hd_window`). What
+follows is the record of the level-wide set.
 
 Per-surface streaming cannot promise a copy before its surface is seen -- the
 Old 3DS reads ~13 HD files a second in play -- so pop-in was luck. Since

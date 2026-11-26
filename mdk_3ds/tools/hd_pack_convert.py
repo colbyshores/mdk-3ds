@@ -3,6 +3,7 @@
 # hd_pack_convert.py -- the HD texture mod, converted for the 3DS.
 #
 #   mdk_3ds/tools/hd_pack_convert.py <mod dir> <out dir> [--max 512] [--jobs N]
+#   mdk_3ds/tools/hd_pack_convert.py --from-pack <old pack> <out dir>
 #
 # <mod dir> is an HD texture mod in the PC layout (docs/modding.md): the one
 # mdk_3ds/tools/build_hd_mod.py makes, the same as the C# port's
@@ -29,9 +30,23 @@
 #      texture's uv spans its whole image, so a non-POT image is RESAMPLED to the
 #      POT size, not padded: nothing on the 3DS side has to undo a padding.
 #   3. FORMAT. Any alpha below 255 -> ETC1A4 (ETC1 + 4-bit alpha), else ETC1.
-#   4. ENCODE. `tex3ds -f etc1|etc1a4 -q high -m gaussian` (the ../forsaken
-#      settings): the mip chain is built and compressed HERE, on the host, so the
-#      3DS imports it whole and never encodes.
+#   4. ENCODE. `tex3ds -f etc1|etc1a4 -q high -m gaussian -z none` (the
+#      ../forsaken settings): the mip chain is built and compressed HERE, on the
+#      host, so the 3DS imports it whole and never encodes.
+#
+# STORED UNCOMPRESSED (-z none, owner 2026-11-26; docs/3DS_ARCHITECTURE.md 5).
+# tex3ds' default (-z auto) packs each file with LZ10/LZ11/Huffman/RLE, and the
+# console then spends core 1's time share unpacking it: measured on the Old 3DS
+# (old3ds-lan167, 268 MHz, 100 level-8 files), reading and unpacking ran at 0.77
+# MB/s of file on core 1 at its 30% share (one file held the worker 390 ms),
+# while reading alone ran at 3.5 MB/s. Raw, the worker only reads: about 1.7x the
+# SD bytes (55 -> ~90 MB for levels 3-8) for ~2.7x the texels per second.
+#
+# --from-pack rewrites an existing pack (any tex3ds compression) uncompressed
+# without re-encoding: the same ETC blocks, the same mip chain, byte for byte the
+# file `tex3ds -z none` writes for the same image (unpack() below; the self-test
+# `--check-unpack` proves it against tex3ds for every compression it picks). It
+# is how a pack made before 2026-11-26 is brought over without its mod.
 #
 # Deterministic (same input bytes -> same output bytes) and incremental: an image
 # whose source hash, size cap and tool settings match the manifest's line is not
@@ -49,7 +64,7 @@ import numpy as np
 from PIL import Image
 
 TEX3DS = os.environ.get("TEX3DS", "/opt/devkitpro/tools/bin/tex3ds")
-SETTINGS = "q=high;m=gaussian;bleed=flood;v1"
+SETTINGS = "q=high;m=gaussian;bleed=flood;z=none;v1"
 
 
 def pow2_at_most(n, cap):
@@ -112,7 +127,8 @@ def convert(job):
         staged = os.path.join(tmp, "in.png")
         img.save(staged)
         out = dst + ".tmp"
-        r = subprocess.run([TEX3DS, "-f", fmt, "-q", "high", "-m", "gaussian", staged, "-o", out],
+        r = subprocess.run([TEX3DS, "-f", fmt, "-q", "high", "-m", "gaussian", "-z", "none",
+                            staged, "-o", out],
                            capture_output=True, text=True)
         if r.returncode != 0 or not os.path.exists(out):
             return (src, None, "tex3ds failed: " + (r.stderr or r.stdout).strip()[:200])
@@ -120,7 +136,180 @@ def convert(job):
     return (src, (fmt, w0, h0, tw, th, os.path.getsize(dst), digest), None)
 
 
+# ---------------------------------------------------------------------------
+# THE COMPRESSIONS tex3ds' -z auto picks (libctru decompress()'s formats: the
+# 4-byte header is the type byte and a 24-bit size, or 0 and a 32-bit size).
+# ---------------------------------------------------------------------------
+def _lz(src, pos, size, lz11):
+    out = bytearray()
+    while len(out) < size:
+        flags = src[pos]
+        pos += 1
+        for bit in range(8):
+            if len(out) >= size:
+                break
+            if not flags & (0x80 >> bit):
+                out.append(src[pos])
+                pos += 1
+                continue
+            b0 = src[pos]
+            if not lz11:
+                length = (b0 >> 4) + 3
+                disp = (((b0 & 0xF) << 8) | src[pos + 1]) + 1
+                pos += 2
+            elif b0 >> 4 == 0:
+                length = (((b0 & 0xF) << 4) | (src[pos + 1] >> 4)) + 0x11
+                disp = (((src[pos + 1] & 0xF) << 8) | src[pos + 2]) + 1
+                pos += 3
+            elif b0 >> 4 == 1:
+                length = (((b0 & 0xF) << 12) | (src[pos + 1] << 4) | (src[pos + 2] >> 4)) + 0x111
+                disp = (((src[pos + 2] & 0xF) << 8) | src[pos + 3]) + 1
+                pos += 4
+            else:
+                length = (b0 >> 4) + 1
+                disp = (((b0 & 0xF) << 8) | src[pos + 1]) + 1
+                pos += 2
+            for _ in range(length):
+                out.append(out[-disp])
+    return bytes(out[:size])
+
+
+def _rle(src, pos, size):
+    out = bytearray()
+    while len(out) < size:
+        flag = src[pos]
+        pos += 1
+        if flag & 0x80:
+            out += bytes([src[pos]]) * ((flag & 0x7F) + 3)
+            pos += 1
+        else:
+            n = (flag & 0x7F) + 1
+            out += src[pos:pos + n]
+            pos += n
+    return bytes(out[:size])
+
+
+def _huff8(src, pos, size, start):
+    # The tree size byte follows the header (at `pos`). Node addresses are even/odd
+    # relative to the header's start (`start`), not to the file: a .t3x header is
+    # 5 + 12n bytes, odd for one subtexture.
+    tree = pos
+    tree_size = (src[tree] + 1) * 2
+    bits = tree + tree_size
+    out = bytearray()
+    node = tree + 1
+    word = 0
+    left = 0
+    while len(out) < size:
+        if left == 0:
+            word = int.from_bytes(src[bits:bits + 4], "little")
+            bits += 4
+            left = 32
+        bit = (word >> 31) & 1
+        word = (word << 1) & 0xFFFFFFFF
+        left -= 1
+        value = src[node]
+        child = start + ((node - start) & ~1) + (value & 0x3F) * 2 + 2 + bit
+        if value & (0x80 >> bit):
+            out.append(src[child])
+            node = tree + 1
+        else:
+            node = child
+    return bytes(out)
+
+
+def unpack(t3x):
+    """A tex3ds file with its texture data stored raw (the -z none layout), or
+    None for a file this does not understand."""
+    n = t3x[0] | (t3x[1] << 8)
+    if not 1 <= n <= 64:
+        return None
+    head = 5 + 12 * n
+    kind = t3x[head]
+    size = t3x[head + 1] | (t3x[head + 2] << 8) | (t3x[head + 3] << 16)
+    pos = head + 4
+    if size == 0:
+        size = int.from_bytes(t3x[pos:pos + 4], "little")
+        pos += 4
+    if kind == 0x00:
+        raw = t3x[pos:pos + size]
+    elif kind in (0x10, 0x11):
+        raw = _lz(t3x, pos, size, kind == 0x11)
+    elif kind == 0x30:
+        raw = _rle(t3x, pos, size)
+    elif kind == 0x28:
+        raw = _huff8(t3x, pos, size, head)
+    else:
+        return None
+    if len(raw) != size or size >= 1 << 24:
+        return None
+    return bytes(t3x[:head]) + bytes([0, size & 0xFF, (size >> 8) & 0xFF, size >> 16]) + raw
+
+
+def from_pack(old, out):
+    """Every .t3x of `old` (its manifest's lines) rewritten raw into `out`."""
+    lines, failed = [], 0
+    for line in open(os.path.join(old, "manifest.txt")):
+        if line.startswith("#") or not line.strip():
+            continue
+        f = line.rstrip("\n").split("\t")
+        with open(os.path.join(old, f[0] + ".t3x"), "rb") as fh:
+            raw = unpack(fh.read())
+        if raw is None:
+            failed += 1
+            print("hd_pack_convert: %s: compression not understood" % f[0], file=sys.stderr)
+            continue
+        dst = os.path.join(out, f[0] + ".t3x")
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst + ".tmp", "wb") as fh:
+            fh.write(raw)
+        os.replace(dst + ".tmp", dst)
+        f[6] = str(len(raw))
+        f[9] = f[9].replace(";v1", ";z=none;v1") if "z=none" not in f[9] else f[9]
+        lines.append(f)
+    with open(os.path.join(out, "manifest.txt.tmp"), "w") as fh:
+        fh.write("# key\tformat\tsrc_w\tsrc_h\tw\th\tbytes\tsrc_sha256_16\tmax\tsettings\n")
+        for f in sorted(lines):
+            fh.write("\t".join(f) + "\n")
+    os.replace(os.path.join(out, "manifest.txt.tmp"), os.path.join(out, "manifest.txt"))
+    print("hd_pack_convert: %d textures rewritten raw, %d failed, %.1f MB" %
+          (len(lines), failed, sum(int(f[6]) for f in lines) / 1048576.0))
+    return 1 if failed else 0
+
+
+def check_unpack():
+    """unpack() against tex3ds itself: random images through every compression
+    -z auto can pick, each unpacked and compared with the -z none file."""
+    rng = np.random.default_rng(7)
+    bad = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, (w, h) in enumerate(((8, 8), (64, 32), (128, 256), (512, 512))):
+            rgba = rng.integers(0, 256, (h, w, 4), dtype=np.uint8)
+            if i % 2:
+                rgba[..., :3] //= 16   # runs, for RLE and LZ
+            rgba[..., 3] = np.where(rgba[..., 3] > 60, 255, 0)
+            png = os.path.join(tmp, "in.png")
+            Image.fromarray(rgba, "RGBA").save(png)
+            files = {}
+            for z in ("none", "lz10", "lz11", "huff", "rle", "auto"):
+                o = os.path.join(tmp, z + ".t3x")
+                subprocess.run([TEX3DS, "-f", "etc1a4", "-q", "low", "-z", z, png, "-o", o],
+                               check=True, capture_output=True)
+                files[z] = open(o, "rb").read()
+            for z, data in files.items():
+                if unpack(data) != files["none"]:
+                    bad += 1
+                    print("hd_pack_convert: unpack MISMATCH %dx%d -z %s" % (w, h, z),
+                          file=sys.stderr)
+    print("hd_pack_convert: unpack check %s" % ("FAILED" if bad else "PASS"))
+    return 1 if bad else 0
+
+
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--check-unpack":
+        return check_unpack()
+    if len(sys.argv) == 4 and sys.argv[1] == "--from-pack":
+        return from_pack(sys.argv[2], sys.argv[3])
     ap = argparse.ArgumentParser()
     ap.add_argument("mod")
     ap.add_argument("out")

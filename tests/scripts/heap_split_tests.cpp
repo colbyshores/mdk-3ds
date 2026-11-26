@@ -35,43 +35,45 @@ void testTheNew3dsRegionFromCrashDump41() {
 
     const HeapSplit split = heapSplitFor(remaining);
     expect("the New 3DS region fits", split.fits, 1);
-    // With 28 MiB of linear (2026-11-25) main is 95.04 MiB: inside the area, so
-    // the cap does not bind on this region any more (it still guards larger ones,
-    // testTheBoundaries). The New 3DS's linear goes from 27.04 MiB to 28.
+    // With 30 MiB of linear (2026-11-26) main is 93.04 MiB: inside the area, so
+    // the cap does not bind on this region (it still guards larger ones,
+    // testTheBoundaries).
     expect("main fits the area", split.main <= kAreaBytes, 1);
-    expect("main is the rest", split.main, remaining - 28u * kMiB);
-    expect("linear is 28 MiB", split.linear, 28u * kMiB);
+    expect("main is the rest", split.main, remaining - 30u * kMiB);
+    expect("linear is 30 MiB", split.linear, 30u * kMiB);
     expect("nothing is lost", (long long)split.main + split.linear, remaining);
     expect("linear is page-aligned", split.linear & 0xFFFu, 0);
 }
 
 void testTheOriginal3dsSplit() {
     // The appliance's boot log (2026-11-25): avail=65200128, which 24 MiB of
-    // linear split into main 40,034,304. With 28 MiB, 4 MiB moves to linear.
+    // linear split into main 40,034,304. With 30 MiB, 6 MiB moves to linear.
     const unsigned remaining = 65200128u;
     const HeapSplit split = heapSplitFor(remaining);
     expect("the original 3DS fits", split.fits, 1);
-    expect("linear is 28 MiB", split.linear, 28u * kMiB);
-    expect("main is the rest, as the boot log will say it", split.main, 35840000);
-    // The highest main use measured in play (level 8, base 4d9264f3): 30,633,712.
-    expect("main keeps 5 MB above the measured in-play peak",
-           split.main > 30633712u + 5000000u, 1);
+    expect("linear is 30 MiB", split.linear, 30u * kMiB);
+    expect("main is the rest, as the boot log will say it", split.main, 33742848);
+    // The level-8 main peak measured on the Old 3DS with music streamed as
+    // DSP-ADPCM (2026-11-26, halo-shadow-hw l8auto-3, `mem[loop]` peak): 29,113,408.
+    // (The 30.63 MB of 4d9264f3 decoded music into main memory.)
+    expect("main keeps 4.5 MB above the measured level-8 peak",
+           split.main > 29113408u + 4500000u, 1);
 }
 
 void testTheBoundaries() {
-    HeapSplit split = heapSplitFor(kAreaBytes + 28u * kMiB);
+    HeapSplit split = heapSplitFor(kAreaBytes + 30u * kMiB);
     expect("main exactly fills the area", split.main, kAreaBytes);
-    expect("with exactly 28 MiB of linear", split.linear, 28u * kMiB);
+    expect("with exactly 30 MiB of linear", split.linear, 30u * kMiB);
 
-    split = heapSplitFor(kAreaBytes + 28u * kMiB + 0x1000u);
+    split = heapSplitFor(kAreaBytes + 30u * kMiB + 0x1000u);
     expect("one page more: main still the area", split.main, kAreaBytes);
-    expect("one page more: the page is linear's", split.linear, 28u * kMiB + 0x1000u);
+    expect("one page more: the page is linear's", split.linear, 30u * kMiB + 0x1000u);
 
-    split = heapSplitFor(28u * kMiB);
+    split = heapSplitFor(30u * kMiB);
     expect("a region of exactly the linear heap fits", split.fits, 1);
     expect("with no main heap", split.main, 0);
 
-    split = heapSplitFor(28u * kMiB - 0x1000u);
+    split = heapSplitFor(30u * kMiB - 0x1000u);
     expect("a region smaller than the linear heap does not fit", split.fits, 0);
 
     // libctru's largest region (the New 3DS's 178 MiB dev mode): main capped.

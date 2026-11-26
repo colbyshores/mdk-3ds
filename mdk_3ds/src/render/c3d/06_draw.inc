@@ -287,6 +287,11 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
                 // the early asks (the pump, the warms) keep rare.
                 requestHdCopy(r, resource.hdCopy);
                 copy->lastUsed = ++r->drawCounter;
+                // THE WINDOW'S PROMISE BROKEN (docs/3DS_ARCHITECTURE.md 4, 8): a
+                // surface drawn without its HD copy -- nothing, or a stand-in. The
+                // frontend waits for the drawn arenas' files before it draws, so
+                // this stays 0; counted for the profile and the log.
+                r->hdDrawnMissing++;
                 if (resource.valid) {
                     texture = &resource.tex;
                     out->texHd = false;

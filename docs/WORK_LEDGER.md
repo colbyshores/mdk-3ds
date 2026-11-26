@@ -2779,3 +2779,47 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     rebuild 0 warnings; `make -C tests/scripts test` exit 0, 996 PASS, 0 FAIL, 4 SKIP (the
     frame gate's oracle arms); worktree `tools/check.sh` ALL GATES PASSED.
 - **Commit:** this branch.
+
+## 2026-11-26 -- HD through the bubble: the HD window, an uncompressed pack, 30 MiB linear (branch perf/3ds-hd-bubble)
+
+- **What:**
+  - The level-wide pinned HD set (`pinHdSet3ds`, `holdHdSet3ds`, `mdk_render_pin_hd_set`) is
+    replaced by **the HD window** (`mdk_3ds/src/hd_window_3ds.{h,cpp}`): Kurt's arena, its doorway
+    neighbours and the arenas its trigger boxes and scripts name (opcodes 100/112/173/223, DTI
+    records 1/3); the drawn arenas are always in it and their files are asked for first. At
+    level load every arena's files (its name-index rows) are sized at 512/256/128 and every
+    window is checked against the free linear heap less the 7 MiB play reserve; an arena whose
+    window does not fit steps down, never the level (`buildHdWindow3ds`). In play the frontend
+    re-asks the window when Kurt's arena or the drawn list changes (`mdk_render_set_hd_window`,
+    the queue rebuilt in the window's order) and, if a drawn arena's files are still to come,
+    the frame waits for them (`holdHdWindow3ds`, the clock rebased) -- logged, counted, and
+    expected to be rare. `drawsHdOnly` no longer falls back to the original for a copy outside
+    the set. A `hd: level end` line counts waits, their milliseconds, and draws of an HD-only
+    texture without its copy (`hdDrawnMissing`, must be 0).
+  - **The HD pack ships uncompressed**: `hd_pack_convert.py` encodes with `tex3ds -z none`, and
+    `--from-pack` rewrites an older pack without its mod (LZ10/LZ11/Huffman/RLE unpacked in
+    Python; `--check-unpack` proves it byte for byte against tex3ds' own `-z none` for every
+    compression). README, `build_hd_pack.sh` and the HD spec say so.
+  - **Linear heap 28 -> 30 MiB** (`heap_split_policy.h`, its tests).
+  - The per-texture cache clean on import (fix/3ds-mip-chain 68e52d7e's two hunks) is part of
+    the import path; `kHdImportsPerFrame` 4 -> 2 from the import's measured cost.
+  - docs/3DS_ARCHITECTURE.md 3-5: the window rule, the heap split, the uncompressed packs.
+- **Why:** owner 2026-11-26, approving the design report: "streaming the HD textures through
+  the bubble ... that should allow every level have 512x512 textures"; no pop-in, no doorway
+  hitches, one design for both models, plain code; the window as one hop plus named arenas, the
+  short-connector second hop only if a doorway is measured to wait.
+- **Evidence (host and appliance bench; the hardware A/B of docs/3DS_ARCHITECTURE.md 8 follows):**
+  - Appliance bench (old3ds-lan167, 268 MHz, L2 off; throwaway/hd-bubble-bench-hw 9bc4aa62, 100
+    level-8 HD files, 7.09 MB LZ -> 11.78 MB raw): core 1 at 30% reads 3.5 MB/s but reads and
+    unpacks only 0.77 MB/s of file (unpack 1.66 MB/s, 390 ms for one file); core 0 1.78 MB/s;
+    core 1 at 80% reads slower (1.46 MB/s); 32 KiB freads halve the read rate; an import is 3.1
+    ms (4.1 max) and its C3D_TexFlush 0.24 ms (0.77).
+  - From the packs and the level data (worked in the design report): the window at 512 is at
+    most L3 5.60, L4 4.54, L5 4.97, L6 5.47, L7 6.20, L8 8.79 MiB, against 10.92 MiB of room
+    with 30 MiB linear; the thinnest doorway margin with the raw pack is L4's CMEAT_5 connector,
+    +0.1 s at turbo (to be measured on the hardware).
+  - The existing pack rewritten raw: 1382 textures, 0 failed, 84.2 MB (`--from-pack`, 60 s).
+  - `make -C tests/scripts test` exit 0 (HdWindow, HdWindowLevels, HeapSplit PASS; the window
+    tests fail 8 checks with the script scan or the tier rule broken), `make -C tests/formats`
+    exit 0, `tools/check.sh` all gates pass, 3DS build 0 errors.
+- **Commit:** this one.

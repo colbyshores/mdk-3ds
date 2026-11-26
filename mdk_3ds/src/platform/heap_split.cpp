@@ -17,7 +17,8 @@
 // level's worth of expanded colours. 24 MiB was far above that working set and
 // still left ~8 MiB of margin against the old 32.7 MiB.
 //
-// 28 MiB SINCE 2026-11-25 (heap_split_policy.h): the level's resident HD set
+// 30 MiB SINCE 2026-11-26 (heap_split_policy.h, the HD window); before that,
+// 28 MiB SINCE 2026-11-25: the level's resident HD set
 // (docs/HD_TEXTURES_3DS_SPEC.md 3.2) is chosen against the free linear heap, and
 // level 8's at 256 texels did not fit in 24. On the Old 3DS (65,200,128 bytes
 // free after the image, `main: heap split` at boot) main is then 35,840,000

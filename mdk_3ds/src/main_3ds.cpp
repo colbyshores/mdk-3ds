@@ -109,6 +109,7 @@
 #include "level_load_3ds.h"
 #include "menu_screens_3ds.h"
 #include "packs_3ds.h"
+#include "render/render_c3d_hd_set.h"
 #include "platform/clock_3ds.h"
 #include "platform/heap_probe_3ds.h"
 #include "stream_3ds.h"
@@ -517,11 +518,23 @@ int main(int argc, char** argv) {
     // files by content key, the orig files' original sizes. Level-load only.
     std::map<std::string, std::string> hdByKey;
     std::map<std::string, uint32_t> origDims;
-    // Every HD file's .t3x size and format (the level's set is sized from it).
+    // Every HD file's .t3x size and format (the HD window is sized from it).
     std::map<std::string, uint32_t> hdShapes;
-    // THE LEVEL'S RESIDENT HD SET (spec 3.2): the cap its levels are read at, 0
-    // when no set was chosen (pinHdSet3ds, below).
-    int32_t hdSetCap = 0;
+    // THE HD WINDOW (hd_window_3ds.h, docs/3DS_ARCHITECTURE.md 4): every arena's
+    // HD files and neighbours, built at level load (buildHdWindow3ds, below), and
+    // the window the frame last asked for. hdWindowBytes is the largest window, 0
+    // when this level has no HD.
+    mdk::HdWindow hdWindow;
+    uint32_t hdWindowBytes = 0;
+    std::vector<const char*> hdWindowPaths;
+    std::vector<int32_t> hdWindowCaps;
+    int32_t hdWindowDrawn = 0;
+    std::string hdWindowFor;
+    std::vector<std::string> hdWindowDrawnFor;
+    double hdWindowAskedAt = 0.0;
+    bool hdWindowSettled = true;
+    int32_t hdWaits = 0;
+    double hdWaitMs = 0.0;
     if (mdk::loadHdPack(flow.state().level, &hdPack, &hdByKey, &hdShapes)) {
         hdSource.pack = &hdPack;
     }
@@ -1414,12 +1427,26 @@ int main(int argc, char** argv) {
     // walk's lowest free (12.50 MB free here, 4.18 MB of set, 2.05 MB left at
     // the low point), so 7 MiB.
     // The last level's copies are given back first, so the heap read below is
-    // this level's (mdk_render_pin_hd_set frees what nothing links any more).
-    mdk_render_pin_hd_set(renderer, nullptr, nullptr, 0);
+    // this level's (mdk_render_set_hd_window frees what nothing links any more).
+    mdk_render_set_hd_window(renderer, nullptr, nullptr, 0);
     if (hdSource.pack && hdSource.byname) {
-        hdSetCap = mdk::pinHdSet3ds(renderer, flow.state().level, origByName, hdShapes);
+        hdWindowBytes = mdk::buildHdWindow3ds(flow.state().level, origByName, hdShapes, level,
+                                              cmiReady ? &cmi : nullptr, &hdWindow);
     }
     std::map<std::string, uint32_t>().swap(hdShapes);
+    // THE START ARENA'S WINDOW, asked for now and waited for below: Kurt's arena
+    // (the start, or where a save put him), its neighbours and the arenas it names.
+    if (hdWindowBytes > 0 && !startArenaName.empty()) {
+        hdWindowFor = startArenaName;
+        hdWindowDrawnFor.assign(1, startArenaName);
+        if (runtime && !runtime->secondArena().empty() && runtime->secondActive()) {
+            hdWindowDrawnFor.push_back(runtime->secondArena());
+        }
+        hdWindow.window(hdWindowFor, hdWindowDrawnFor, &hdWindowPaths, &hdWindowCaps,
+                        &hdWindowDrawn);
+        mdk_render_set_hd_window(renderer, hdWindowPaths.data(), hdWindowCaps.data(),
+                                 (int32_t)hdWindowPaths.size());
+    }
     // The first view's surfaces asked for now (its batches, hidden ones too, and
     // the textures of every model the arena or its scripts can show), so their
     // ids exist and their packed originals -- the uncovered surfaces' -- are read
@@ -1434,7 +1461,7 @@ int main(int argc, char** argv) {
                                         mdk::requestPackedSurface, &warmAsk, &cursor)) {
             }
         }
-        mdk::holdHdSet3ds(renderer, "loading screen");
+        mdk::holdHdWindow3ds(renderer, nullptr, 0, "loading screen");
     }
     mdk::heapProbe("loop");
     mdk::log3dsPrintf("level: loaded in %.0f ms (from the loading screen to the first frame, "
@@ -1586,10 +1613,10 @@ int main(int argc, char** argv) {
                 if (action == mdk::EnhancedMenu::Action::Changed) {
                     const bool hdWas = hdMenuWas;
                     mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
-                    // THE HD SET BACK ON: held for, like the loading screen
-                    // (spec 3.2) -- the menu stays up while the set is read.
-                    if (!hdWas && enhancedToggles.enableHdTextures && hdSetCap > 0) {
-                        mdk::holdHdSet3ds(renderer, "toggled on");
+                    // HD BACK ON: the window waited for, like the loading screen
+                    // -- the menu stays up while it is read.
+                    if (!hdWas && enhancedToggles.enableHdTextures && hdWindowBytes > 0) {
+                        mdk::holdHdWindow3ds(renderer, nullptr, 0, "toggled on");
                     }
                     // THE SKY FOLLOWS THE HD TOGGLE: its ETC1 slices with it on,
                     // the 16-bit expansion with it off, never both (buildSky3ds).
@@ -2037,6 +2064,47 @@ int main(int argc, char** argv) {
             const int32_t builtViews =
                 arenaViews.sync(streamCurrent, streamSecond, *frameDrawn, bubbleHints);
             const double stream2 = mdk::nowSeconds();
+            // THE HD WINDOW FOLLOWS KURT (docs/3DS_ARCHITECTURE.md 4): when his
+            // arena or the drawn list changes, the window is asked for anew, the
+            // drawn arenas' files first. An arena is never drawn before its files
+            // are resident: if any is still to come, this frame waits for it here,
+            // the last frame on screen, as the original's BSPShow loaded an arena
+            // before it showed it -- and the frame clock is rebased after, so the
+            // wait is not gameplay. The window's lead (an arena is asked for when
+            // its neighbour is entered) makes the wait rare; each one is logged.
+            if (hdWindowBytes > 0 &&
+                (streamCurrent != hdWindowFor || *frameDrawn != hdWindowDrawnFor)) {
+                hdWindowFor = streamCurrent;
+                hdWindowDrawnFor = *frameDrawn;
+                hdWindow.window(hdWindowFor, hdWindowDrawnFor, &hdWindowPaths, &hdWindowCaps,
+                                &hdWindowDrawn);
+                mdk_render_set_hd_window(renderer, hdWindowPaths.data(), hdWindowCaps.data(),
+                                         (int32_t)hdWindowPaths.size());
+                const int32_t pending = mdk_render_hd_pending(
+                    renderer, hdWindowPaths.data(), (int32_t)hdWindowPaths.size());
+                mdk::log3dsPrintf("hd: window %s: %d files (%d drawn), %d to come",
+                                  hdWindowFor.c_str(), (int)hdWindowPaths.size(),
+                                  (int)hdWindowDrawn, (int)pending);
+                hdWindowAskedAt = mdk::nowSeconds();
+                hdWindowSettled = pending == 0;
+                if (mdk_render_hd_pending(renderer, hdWindowPaths.data(), hdWindowDrawn) > 0) {
+                    const std::string why = "for " + hdWindowFor + " (drawn)";
+                    hdWaitMs += mdk::holdHdWindow3ds(renderer, hdWindowPaths.data(),
+                                                     hdWindowDrawn, why.c_str());
+                    hdWaits++;
+                    last = mdk::nowSeconds();
+                }
+            }
+            // The window's arrival time, for the profile (section 8): checked
+            // every eighth frame until the whole window is resident.
+            if (!hdWindowSettled && (frame & 7u) == 0 &&
+                mdk_render_hd_pending(renderer, hdWindowPaths.data(),
+                                      (int32_t)hdWindowPaths.size()) == 0) {
+                hdWindowSettled = true;
+                mdk::log3dsPrintf("hd: window %s resident %.0f ms after it was asked for",
+                                  hdWindowFor.c_str(),
+                                  (mdk::nowSeconds() - hdWindowAskedAt) * 1000.0);
+            }
             // Spread the texture makes over the frames before anyone sees them
             // (arena_views.h): from the resident MTO, so a make is decode and
             // upload with no SD read. Two a frame; the entry stall was 442 ms
@@ -2880,9 +2948,17 @@ int main(int argc, char** argv) {
     }
     music.reset();
     mdk::audioDspClose();
-    // The level's HD set goes with the level (its copies are nobody's from here
-    // and the pump frees them).
-    mdk_render_pin_hd_set(renderer, nullptr, nullptr, 0);
+    // The HD window goes with the level (its copies are nobody's from here and
+    // the pump frees them). Its record for the run first.
+    if (hdWindowBytes > 0) {
+        MdkHdSetState hdState;
+        mdk_render_hd_set_state(renderer, &hdState);
+        mdk::log3dsPrintf("hd: level end: %d waits for HD files (%.0f ms in all), %u draws "
+                          "without their HD copy, %d HD imports",
+                          (int)hdWaits, hdWaitMs, (unsigned)hdState.drawnMissing,
+                          (int)hdState.imported);
+    }
+    mdk_render_set_hd_window(renderer, nullptr, nullptr, 0);
     runtime.reset();
     // 3. The pose caches key on the runtime's Model addresses, which the reset just
     //    freed (scripts/pose_cache.h; the C#'s next Viewer calls ForgetPoses).

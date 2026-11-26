@@ -24,6 +24,7 @@
 #include "game/kurt_sprite.h"
 #include "game/level_data.h"
 #include "game/mod_images.h"
+#include "hd_window_3ds.h"
 #include "render/surface_cache.h"
 
 namespace mdk {
@@ -38,6 +39,9 @@ struct OrigByName {
     std::map<std::pair<const void*, std::string>, std::string> paths;
     std::map<std::pair<const void*, std::string>, std::string> hdPaths;
     std::map<std::pair<const void*, std::string>, uint32_t> dims;
+    // Every (arena, HD file) row the index pairs, for the HD window's per-arena
+    // lists (buildHdWindow3ds).
+    std::vector<std::pair<std::string, std::string>> hdArenaRows;
 };
 
 // Kurt's pack at level load (loadKurtPack).
@@ -96,11 +100,17 @@ void startEffectSurface(void* user, const Surface& surface, const formats::Palet
 // Kurt's compressed frames for `level`: the pack's start set imported (when
 // toggles.kurtCompressed and the pack reads), the rest left to stream. Logged.
 void loadKurtFrames3ds(KurtSprite* kurtSprite, const EnhancedToggles& toggles, int32_t level);
-// The level's resident HD set: chosen against the free linear heap and pinned;
-// returns its cap (512, 256, 128) or 0 when it does not fit. Logged.
-int32_t pinHdSet3ds(MdkRenderer renderer, int32_t level, const OrigByName& origByName,
-                    const std::map<std::string, uint32_t>& hdShapes);
-// Wait on the loading screen (or the pause menu) until the set is resident.
-void holdHdSet3ds(MdkRenderer renderer, const char* why);
+// THE HD WINDOW's level-load half (hd_window_3ds.h): every arena's HD files with
+// their bytes at each tier, the neighbours the level names, and each file's cap
+// chosen so every arena's window fits the free linear heap less the play
+// reserve. Returns the largest window's bytes (0: no HD for this level). Logged.
+uint32_t buildHdWindow3ds(int32_t level, const OrigByName& origByName,
+                          const std::map<std::string, uint32_t>& hdShapes,
+                          const LevelData& levelData, const formats::Cmi* cmi, HdWindow* out);
+// Wait (the applet loop served; the loading screen, the pause menu or the last
+// frame stays up) until none of `paths` -- null: the whole window -- is still to
+// come. `why` names the moment. Returns the milliseconds waited.
+double holdHdWindow3ds(MdkRenderer renderer, const char* const* paths, int32_t count,
+                       const char* why);
 
 } // namespace mdk

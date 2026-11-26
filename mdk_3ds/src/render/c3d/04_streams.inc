@@ -177,13 +177,19 @@ int32_t mdk_render_settle_streams(MdkRenderer rr, int32_t maxMs) {
     return renderer->hdImported + renderer->packImported - before;
 }
 
-// THE LEVEL'S RESIDENT HD SET (render.h mdk_render_pin_hd_set, spec 3.2): the
-// files the frontend chose for the level, by path, each a copy of the table
-// (made for a file not yet seen), pinned and asked for; the copies of the old
-// set are unpinned (nobody's copies are then freed by the pump as before). With
-// `count` 0 the set is dropped and the stream is per-surface again.
-int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, const int32_t* caps,
-                              int32_t count) {
+// THE HD WINDOW (render.h mdk_render_set_hd_window, docs/3DS_ARCHITECTURE.md 4):
+// the files of the arenas around Kurt, by path, each a copy of the table (made
+// for a file not yet seen), pinned and asked for; the copies that left the window
+// are unpinned, and a resident one no texture links to is freed now (between
+// frames: its last draw has finished). With `count` 0 the window is dropped and
+// the stream is per-surface again (between levels).
+//
+// THE ORDER IS THE PRIORITY: the frontend passes the drawn arenas' files first.
+// The pump hands out the queue's pinned copies in queue order, so the queue is
+// rebuilt here with the window's copies in the order given, ahead of anything
+// else waiting.
+int32_t mdk_render_set_hd_window(MdkRenderer rr, const char* const* paths, const int32_t* caps,
+                                 int32_t count) {
     RendererC3D* renderer = asC3d(rr);
     if (!renderer) {
         return 0;
@@ -194,6 +200,7 @@ int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, const in
     renderer->hdPinnedMode = false;
     renderer->hdTopCap = 0;
     int32_t pinned = 0;
+    std::vector<int32_t> order;
     for (int32_t p = 0; paths && p < count; p++) {
         if (!paths[p] || !paths[p][0] || strlen(paths[p]) >= mdk::AsyncFileReader::kPathMax) {
             continue;
@@ -214,7 +221,7 @@ int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, const in
         copy.pinned = true;
         const int32_t cap = caps ? caps[p] : 0;
         if (copy.topCap != cap && copy.state == HdCopy::Resident) {
-            dropHd(renderer, copy);   // read again at this set's cap (between frames)
+            dropHd(renderer, copy);   // read again at this window's cap (between frames)
         }
         copy.topCap = cap;
         if (cap > 0 && (renderer->hdTopCap == 0 || cap < renderer->hdTopCap)) {
@@ -227,12 +234,13 @@ int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, const in
         if (renderer->toggles.enableHdTextures) {
             requestHdCopy(renderer, index);
         }
+        order.push_back(index);
         pinned++;
     }
     // THE CANVAS PICTURES MADE HD-ONLY (mdk_render_create_hd_image: the HUD's, the
-    // pickups', the bomber's sight) are the set's too: pinned, asked for, and so
-    // held for on the loading screen and brought back by the toggle -- never
-    // drawn from their indices while the set is on.
+    // pickups', the bomber's sight) are level-resident: pinned with every window,
+    // asked for, and so held for on the loading screen and brought back by the
+    // toggle -- never drawn from their indices while HD is on.
     if (pinned > 0) {
         for (size_t t = 0; t < renderer->textures.size(); t++) {
             const C3dTexture& texture = renderer->textures[t];
@@ -246,15 +254,31 @@ int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, const in
                 if (renderer->toggles.enableHdTextures) {
                     requestHdCopy(renderer, texture.hdCopy);
                 }
+                order.push_back(texture.hdCopy);
                 pinned++;
             }
         }
     }
-    // THE OLD LEVEL'S COPIES GO NOW, not 600 frames on: a resident copy no
-    // texture links to and no set holds is freed here -- between frames, its
-    // last draw long finished (a loading screen has been drawn since) -- so the
-    // next set's arithmetic (main_3ds.cpp) reads a heap without them, and a
-    // streamed picture (makeStreamed, which never evicts HD) finds its room.
+    // The queue: the window's waiting copies in the window's order, then the rest.
+    {
+        std::vector<int32_t> queue;
+        for (size_t i = 0; i < order.size(); i++) {
+            if (renderer->hdCopies[(size_t)order[i]].state == HdCopy::Queued) {
+                queue.push_back(order[i]);
+            }
+        }
+        for (size_t i = 0; i < renderer->hdQueue.size(); i++) {
+            const int32_t id = renderer->hdQueue[i];
+            if (id >= 0 && (size_t)id < renderer->hdCopies.size() &&
+                !renderer->hdCopies[(size_t)id].pinned) {
+                queue.push_back(id);
+            }
+        }
+        renderer->hdQueue.swap(queue);
+    }
+    // THE COPIES THAT LEFT THE WINDOW GO NOW, not 600 frames on: a resident copy
+    // no texture links to and no window holds is freed here -- between frames,
+    // its last draw finished -- so the window's arithmetic (main_3ds.cpp) holds.
     for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
         HdCopy& copy = renderer->hdCopies[i];
         if (!copy.pinned && copy.links <= 0 && copy.state == HdCopy::Resident &&
@@ -266,18 +290,35 @@ int32_t mdk_render_pin_hd_set(MdkRenderer rr, const char* const* paths, const in
     return pinned;
 }
 
-// The set's copies not resident yet and still to come (render.h): 0 when the
-// set is in, the toggle is off, or there is no set.
-int32_t mdk_render_hd_set_pending(MdkRenderer rr) {
+// Whether a pinned copy is still to come: not resident and not given up on.
+static bool hdStillToCome(const HdCopy& copy) {
+    return copy.state != HdCopy::Resident &&
+           !(copy.state == HdCopy::Failed && (copy.broken || copy.failures >= kHdMaxFailures));
+}
+
+// The window's copies not resident yet and still to come (render.h): of `paths`,
+// or of the whole window (and a linked copy asked for, the HUD's) with null; 0
+// when the toggle is off or there is no window.
+int32_t mdk_render_hd_pending(MdkRenderer rr, const char* const* paths, int32_t count) {
     RendererC3D* renderer = asC3d(rr);
     if (!renderer || !renderer->hdPinnedMode || !renderer->toggles.enableHdTextures) {
         return 0;
     }
     int32_t pending = 0;
+    if (paths) {
+        for (int32_t p = 0; p < count; p++) {
+            const std::map<std::string, int32_t>::const_iterator found =
+                paths[p] ? renderer->hdByPath.find(paths[p]) : renderer->hdByPath.end();
+            if (found != renderer->hdByPath.end() &&
+                hdStillToCome(renderer->hdCopies[(size_t)found->second])) {
+                pending++;
+            }
+        }
+        return pending;
+    }
     for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
         const HdCopy& copy = renderer->hdCopies[i];
-        if (copy.pinned && copy.state != HdCopy::Resident &&
-            !(copy.state == HdCopy::Failed && (copy.broken || copy.failures >= kHdMaxFailures))) {
+        if (copy.pinned && hdStillToCome(copy)) {
             pending++;
         } else if (!copy.pinned && copy.links > 0 &&
                    (copy.state == HdCopy::Queued || copy.state == HdCopy::Reading)) {

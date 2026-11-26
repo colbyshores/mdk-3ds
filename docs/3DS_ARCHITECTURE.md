@@ -50,16 +50,31 @@ owner first.
 | VRAM (later phase) | static, level-resident textures that are read heavily | placed at level load |
 
 - The arena-streamed set has one budget, sized so the worst case along the
-  level's real arena graph (the current pair plus the bubble's arenas) fits on
-  the Old 3DS. Nothing per surface is streamed in play.
+  level's real arena graph fits on the Old 3DS: every arena's HD window
+  (section 4) is checked against the free linear heap less the 7 MiB play
+  reserve at level load. Nothing per surface is streamed in play.
 - When an arena's 512 set cannot fit, that arena steps down a tier, never the
-  whole level.
+  whole level. Measured 2026-11-26: the largest window is 8.79 MiB at 512
+  (level 8, CGUNT_9); every level fits at 512.
+- **The heap split** (`heap_split_policy.h`): 30 MiB linear, the rest main
+  (owner 2026-11-26; 28 before). On the Old 3DS that leaves 33.74 MB of main
+  against a level-8 peak of 29.11 MB; a level-8 walk confirms the main heap's
+  minimum before the change merges.
 
 ## 4. Streaming: the door bubble
 
 - The bubble decides residency for every arena-streamed asset, HD included: the
   arenas through doorways near the camera are requested ahead (speed-scaled
   lead), nearest first; arenas leaving it are released by the worker.
+- **The HD window** (owner 2026-11-26, `mdk_3ds/src/hd_window_3ds.h`): Kurt's
+  arena, its doorway neighbours, and the arenas its trigger boxes and scripts
+  name (teleport, arena_show, preload); the drawn arenas are always in it, and
+  their files are read first. An arena's files are its rows of the name index:
+  everything drawn through its palette. One hop is the whole rule: with the
+  uncompressed pack the next arena's set arrives while Kurt crosses the current
+  one (worked from the data: the thinnest margin is level 4's 31-unit connector
+  CMEAT_5, +0.1 s at turbo). A second hop through short connectors is added
+  only if a doorway is measured to wait on the hardware.
 - **No pop-in.** An arena does not become visible until its set is resident. If
   a doorway, teleport, ride or scripted reveal reaches an arena whose set is not
   complete, the transition waits for it, as the original engine's `BSPShow`
@@ -73,6 +88,10 @@ owner first.
   (ETC1, or ETC1A4 where it has alpha) with its mip chain: arena textures, sky,
   Kurt, effect strips, HD copies. The console reads and hands off; it does not
   expand palettes.
+- **The packs are stored uncompressed** (`tex3ds -z none`; owner 2026-11-26).
+  Measured on the Old 3DS: core 1 at its 30% share reads 3.5 MB/s, but reads and
+  unpacks tex3ds' default compression at only 0.77 MB/s of file, and one file's
+  unpack held the worker 390 ms. The HD pack is ~85 MB raw against 55 MB.
 - Small 2D art made once per level (HUD, fonts, heads, scope, bomber, screens)
   may stay uncompressed, made at level load, never at first show.
 - The movie stays a streamed texture.

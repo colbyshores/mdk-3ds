@@ -120,13 +120,15 @@ struct GpuVertex {
 // allocator).
 static constexpr size_t kHdBudgetBytes = 12u * 1024u * 1024u;
 static constexpr size_t kHdLinearReserveBytes = 2u * 1024u * 1024u;
-// How many .t3x a frame boundary imports at most. The read and the LZ
-// decompress are the reader thread's (04_hd_stream.inc hdUnpackWork), so an
-// import is a copy into the linear heap -- ~1 ms, the uncompressed orig pack's
-// measured figure (37 ms for 39 makes) -- and four keep the boundary's share
-// small while an arena's set lands in a few frames. They wait at the boundary,
-// never inside a draw.
-static constexpr int32_t kHdImportsPerFrame = 4;
+// How many .t3x a frame boundary imports at most. The read (and an older pack's
+// unpack) is the reader thread's (04_hd_stream.inc hdUnpackWork), so an import is
+// a copy into the linear heap and its cache clean: measured on the Old 3DS
+// (2026-11-26, 40 level-8 HD files) 3.1 ms a file on average, 4.1 ms at worst,
+// plus 0.24 ms (0.77) of C3D_TexFlush. Two keep the boundary's share under ~9 ms
+// while the reader delivers ~29 files a second of an uncompressed pack -- one a
+// 30 fps frame. A wait for files (main_3ds.cpp) imports as fast as they come
+// (mdk_render_settle_streams pumps again and again). Never inside a draw.
+static constexpr int32_t kHdImportsPerFrame = 2;
 // The most one pack texture can need: the worst file of the LARGEST cap the
 // manifest gate accepts (main_3ds.cpp loadCompressedManifest). The HD pack is
 // capped at 512 -- 512x512 ETC1A4 with its chain is 349504 bytes -- and the
@@ -380,7 +382,7 @@ struct HdCopy {
     // The image's rectangle in the texture's own texcoords (Tex3DS_SubTexture):
     // the draw maps the oracle's [0,1] uv through it, assuming no orientation.
     float left = 0.0f, top = 1.0f, right = 1.0f, bottom = 0.0f;
-    // IN THE LEVEL'S RESIDENT SET (mdk_render_pin_hd_set): read on the loading
+    // IN THE HD WINDOW (mdk_render_set_hd_window): read on the loading
     // screen, never evicted, never freed as nobody's, while the set stands.
     bool pinned = false;
     // The pinned copy's level cap (hdUnpack: 0 none, 256, 128), the set's choice.
@@ -915,12 +917,15 @@ struct RendererC3D {
     int32_t hdImported = 0;
     int32_t hdEvicted = 0;
     int32_t hdFailedCount = 0;
-    // THE LEVEL'S RESIDENT HD SET (mdk_render_pin_hd_set, spec 3.2): while
-    // hdPinnedMode, an HD-only texture is drawn only from a pinned copy, the set
-    // is read on the loading screen with each copy's levels over its topCap
-    // dropped (hdUnpack), and no copy of it is evicted in play. hdTopCap: the
-    // smallest cap in the set, for the log (0: none dropped).
+    // THE HD WINDOW (mdk_render_set_hd_window, docs/3DS_ARCHITECTURE.md 4):
+    // while hdPinnedMode, the window's copies are pinned -- read ahead of any
+    // other ask, each with its levels over its topCap dropped (hdUnpack), never
+    // evicted while in the window. hdTopCap: the smallest cap in the window, for
+    // the log (0: none dropped).
     bool hdPinnedMode = false;
+    // Draws of an HD-only texture whose copy was not resident (06_draw.inc): the
+    // HD window's pop-in count, which must stay 0 (render_c3d_hd_set.h).
+    uint32_t hdDrawnMissing = 0;
     // The toggle came back on: the originals the HD-off stretch made for HD-only
     // textures are given back once their set copies are resident (04_textures.inc).
     bool hdFreeOriginals = false;

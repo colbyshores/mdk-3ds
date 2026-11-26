@@ -30,13 +30,15 @@
 namespace mdk {
 
 // The GPU heap: one arena's working set, the sky, Kurt's frames, the audio and
-// the level's resident HD set. 28 MiB since 2026-11-25 (was 24): level 8's HD set
-// at 256 texels is 8.54 MB and did not fit above the 7 MiB play reserve in 24
-// (103 files dropped to 128). The 4 MiB come out of a main heap whose highest use
-// measured on the Old 3DS, every level 3-8 walked through door crossings, was
-// 30.63 MB (level 8, base 4d9264f3, music then still decoded in main memory)
-// against the 35.84 MB main this leaves: 5.2 MB of margin (heap_split.cpp).
-const uint32_t kLinearHeapBytes = 28u * 1024u * 1024u;
+// the HD window. 30 MiB since 2026-11-26 (owner; 28 since 2026-11-25, 24
+// before): the HD window -- Kurt's arena, its neighbours and the arenas it names
+// (docs/3DS_ARCHITECTURE.md 4) -- is at most 8.79 MiB at 512 (level 8, CGUNT_9)
+// against 8.92 MiB of room in 28, too thin to keep; 30 gives 2.1 MiB of margin.
+// The 2 MiB come out of the main heap, which leaves 33.74 MB on the Old 3DS
+// against a level-8 main peak of 29.11 MB (Old 3DS, 2026-11-26, halo-shadow-hw
+// l8auto-3, music streamed as DSP-ADPCM): 4.6 MB of margin. The owner's
+// condition: a level-8 walk confirms the main heap's minimum before this merges.
+const uint32_t kLinearHeapBytes = 30u * 1024u * 1024u;
 
 // OS_HEAP_AREA_END - OS_HEAP_AREA_BEGIN (libctru <3ds/os.h>).
 const uint32_t kMainHeapAreaBytes = 0x0E000000u - 0x08000000u;

@@ -343,6 +343,15 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture, const u
         return false;
     }
     Tex3DS_TextureFree(t3x);
+    // THE IMPORT'S CACHE CLEAN, WHOLE CHAIN. Tex3DS decompresses a linear-heap
+    // texture straight into tex->data and cleans nothing (the linked tex3ds.o:
+    // its one GSPGPU_FlushDataCache is the VRAM path's staging buffer), so the
+    // chain is in the CPU's write-back cache until C3D_FrameEnd's heap-wide flush.
+    // Cleaned here by range, as makeTextureNow does for an expanded texture, while
+    // maxLevel is still the import's (the draw rewrites it). See
+    // docs/WORK_LEDGER.md, the mip-chain entry: the candidate for the New 3DS's
+    // distant-surface glitch, unproven until the owner's A/B.
+    C3D_TexFlush(&texture.tex);
     texture.paddedWidth = texture.tex.width;
     texture.paddedHeight = texture.tex.height;
     texture.rect = mdk::pica::compressedFrameRect(texture.realWidth, texture.realHeight,

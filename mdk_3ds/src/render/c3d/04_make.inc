@@ -25,10 +25,9 @@ static bool drawsHdOnly(const RendererC3D* renderer, const C3dTexture& texture) 
         return false;
     }
     const HdCopy& copy = renderer->hdCopies[(size_t)texture.hdCopy];
-    // With the level's set resident (spec 3.2) only a copy of the set counts.
-    if (renderer->hdPinnedMode && !copy.pinned) {
-        return false;
-    }
+    // In the HD window or out of it: a texture with an HD file is drawn from it
+    // and nothing else (out of the window its copy is simply not resident, and no
+    // original is read for it -- docs/3DS_ARCHITECTURE.md 4).
     return !(copy.state == HdCopy::Failed && (copy.broken || copy.failures >= kHdMaxFailures));
 }
 
