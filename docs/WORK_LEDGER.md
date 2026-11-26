@@ -2271,3 +2271,29 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   .git/worktrees/anim-frame/hw-logs (TRAIL_frames.png, TRAIL_correct_vs_bug.png);
   the hardware before/after above.
 - **Commit:** this one (the fix above).
+
+## 2026-11-26
+
+### Linux enhanced mode: an animated texture's colour layers are one frame each (EXPLODE segfault)
+- **What:** `getColourView` (mdk_linux/src/render/vulkan/09_colour.inc) built the
+  enhanced colour texture's array layers from the index texture's FULL stacked
+  height: `colourChain(indices, w, h, frames)` treats `h` as one frame, so it read
+  `frames` times past the indices and every layer was the strip from frame f down.
+  It now uses `height / frames` (the C#'s `SizeOf`, Renderer.Colours.cs, removed in
+  9708e8d6) for the chain and the image, and refuses (the original pipeline draws
+  it) a texture whose rows are not whole frames, the C#'s `CanExpand`. +11 lines
+  net, no new state.
+- **Why:** the census agent's segfault. Reproduced here: `MDK_DATA_DIR=MDK mdk
+  --headless --level=5 --at=250,121,-1622,0 --give=SW_BONES --aim=0,1.25
+  --walk='sniper@20-22;fire@80-82' --enhanced --fixed-step --seed 1 --frames 900
+  --capture-frame=600` -- the parent build (fix-arena-entry-stutter, same 09_colour)
+  dies with SIGSEGV after frame 390, gdb: `colourExpand (count=425984)` <-
+  `colourChain (width=128, frames=26)` <- `getColourView (frames=26)` <-
+  `drawEnhanced` (EXPLODE 128x3328). The fixed build runs to frame 600 and writes
+  its capture. Every other animated texture (TRAIL, SL_MED, ...) was drawn from
+  wrong layers in --enhanced before this (the shader samples layer = frame with uv
+  over one frame, enhanced.frag:161); they read past the indices by less and did
+  not fault.
+- **Evidence:** the two runs above; tools/check.sh gates_frames PASS on the built
+  Linux binary; tests/formats 200624 checks 0 failures; tests/scripts make test.
+- **Commit:** this one.

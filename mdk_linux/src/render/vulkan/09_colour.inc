@@ -279,6 +279,17 @@ VkImageView getColourView(RendererVk* r, int32_t tex, int32_t pal, int32_t frame
         return VK_NULL_HANDLE;
     }
     const TextureVk& t = r->textures[tex];
+    // A layer is ONE FRAME: the index texture stacks its frames downwards, so a
+    // frame is height / frames rows (the C#'s SizeOf, Renderer.Colours.cs), and
+    // indices of whole frames are the C#'s precondition (CanExpand). The full
+    // height here read `frames` times past the indices (EXPLODE 128x3328 x 26:
+    // a segfault in colourChain) and gave every animated texture wrong layers.
+    if (frames <= 0 || t.height % frames != 0) {
+        refused("colour texture for texture %d: %d rows are not %d whole frames, so the "
+                "surface draws through the original pipeline instead", tex, t.height, frames);
+        return VK_NULL_HANDLE;
+    }
+    const int32_t frameHeight = t.height / frames;
     // A mod's replacement image, when one is registered for this triple,
     // is the colour texture instead of the expansion (a stale one has
     // already gone in findReplacement).
@@ -295,9 +306,9 @@ VkImageView getColourView(RendererVk* r, int32_t tex, int32_t pal, int32_t frame
             c.view = VK_NULL_HANDLE;
             const std::vector<uint8_t> chain =
                 rep ? replacementChain(*rep)
-                    : mdk::colourChain(t.indices.data(), t.width, t.height, frames,
+                    : mdk::colourChain(t.indices.data(), t.width, frameHeight, frames,
                                        r->palettes[pal].rgba, 1024);
-            if (!buildColourImage(r, rep ? rep->width : t.width, rep ? rep->height : t.height,
+            if (!buildColourImage(r, rep ? rep->width : t.width, rep ? rep->height : frameHeight,
                                   frames, chain, &c)) {
                 refused("colour texture rebuild for texture %d: the surface draws "
                         "through the original pipeline instead", tex);
@@ -316,9 +327,9 @@ VkImageView getColourView(RendererVk* r, int32_t tex, int32_t pal, int32_t frame
     c.version = t.version;
     const std::vector<uint8_t> chain =
         rep ? replacementChain(*rep)
-            : mdk::colourChain(t.indices.data(), t.width, t.height, frames,
+            : mdk::colourChain(t.indices.data(), t.width, frameHeight, frames,
                                r->palettes[pal].rgba, 1024);
-    if (!buildColourImage(r, rep ? rep->width : t.width, rep ? rep->height : t.height,
+    if (!buildColourImage(r, rep ? rep->width : t.width, rep ? rep->height : frameHeight,
                           frames, chain, &c)) {
         refused("colour texture build for texture %d: the surface draws through "
                 "the original pipeline instead", tex);
