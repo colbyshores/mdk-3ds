@@ -72,8 +72,8 @@ for line in \
     "Fall: index 0 difficulty 1 beam 117.65 missiles 2 spread 6.50 missile gap 32 radar gap 63 pickups SW_HOME,SW_GATT,SW_HOME seed 1" \
     "flow: the fall before level 7" \
     "Fall ended t 33.0" \
-    "health 67 pickups SW_HOME,SW_GATT,SW_HOME" \
-    "level: the fall's carry: health 67, pickups SW_HOME,SW_GATT,SW_HOME; inventory slots 6:1 ammo 16:0:0:0:0 sgun 200" \
+    "health 84 pickups SW_HOME,SW_GATT,SW_HOME" \
+    "level: the fall's carry: health 84, pickups SW_HOME,SW_GATT,SW_HOME; inventory slots 6:1 ammo 16:0:0:0:0 sgun 200" \
     "exiting after 2320 frames"; do
     has "$CHASE" "$line" || bad "[chase] the log has no \"$line\""
 done
@@ -108,7 +108,7 @@ for line in \
 done
 
 if [ "$fail" -eq 0 ]; then
-    echo "PASS FallFrontend (--fall=7 chased into LEVEL7 with health 67 and three pickups in Kurt's inventory; new game -> briefing -> fall -> Esc -> level; LEVEL8's fall the lean way)"
+    echo "PASS FallFrontend (--fall=7 chased into LEVEL7 with health 84 and three pickups in Kurt's inventory; new game -> briefing -> fall -> Esc -> level; LEVEL8's fall the lean way)"
     exit 0
 fi
 echo "FAIL FallFrontend ($fail check(s))"

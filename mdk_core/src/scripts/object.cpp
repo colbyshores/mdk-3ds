@@ -297,6 +297,9 @@ mdk::Vec3 mdk::scripts::MdkObject::partCenter(int index) const {
     float centreZ = (box.min.z + box.max.z) * 0.5f * scale;
     // float.DegreesToRadians is left-associated (yaw * pi / 180f).
     float radians = yaw * 3.14159265358979323846f / 180.0f;
+    /* @vfp-exempt R6 — PartCenter's rest-pose fallback (a part with no vertices), the C#'s
+     * MathF.Cos/Sin as in reference_point; the LUT would move where a shot starts.
+     * measured n/a (corpus empty). Verified 2026-11-26. */
     float c = cosf(radians);
     float s = sinf(radians);
     return Vec3{position.x + (centreX * c - centreY * s),

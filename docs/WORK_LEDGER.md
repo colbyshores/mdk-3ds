@@ -2940,3 +2940,11 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     a left strafe, as the original (damp_animate 0x4646a4, damp_sprite_draw) never does.
     No golden covers the sprite's quad; the build and both host suites pass. The 3DS and
     Linux draw Kurt through this one function, so both change together.
+  - **Follow-ups from the full suite after 8a3740ac:**
+    - `tests/scripts/fall_frontend_test.sh`: the Linux frontend's chased LEVEL7 fall now
+      lands with health 84, not 67. That is 93743b33: the fall probe run the frontend's way
+      (`7 1 1 2400 0.0166666667 chase:0-2400`) carries health 67 at 3f9315c5 and 84 at
+      93743b33, and the Linux binary logs 84. The pickups and inventory are unchanged.
+    - `audit_arm11_math` flagged `partCenter`'s rest-pose fallback cosf/sinf once the posed
+      branch was added above it (3005da70); it carries the same R6 pin as
+      `reference_point` now.
