@@ -101,3 +101,37 @@ The streaming work is one line of branches, each built on the last:
 
 Renderer and gameplay fixes (bullet cams, decals, upstream fixes, death flow)
 are separate branches and add no per-model code.
+
+## 8. Every step is profiled and tested on the hardware appliance
+
+A step is not done, and the next step does not build on it, until it has been
+measured on the Old 3DS appliance (`old3ds-lan167`, AGENTS.md P10) against a
+baseline build of its parent, and the numbers are in `docs/WORK_LEDGER.md`.
+
+- **Conditions:** Old 3DS profile (268 MHz, L2 off), stereo on, HD on, the
+  owner's toggles; record console, clock, cache and stereo mode for each run.
+- **Routes:** the same scripted routes for baseline and change, on all six
+  levels: level start, a door walk at walking speed and at turbo speed through
+  several arenas and back, and one heavy combat scene. Runs that can kill Kurt
+  use god mode.
+- **Measured each run:**
+  - frame time: mean, p95, max, and the frames over 33 ms, overall and at each
+    doorway crossing;
+  - core 1: share of its time slice used, queue depth, music underruns (must
+    be 0);
+  - streaming: files and bytes per second, time from an arena's first request
+    to its set being resident, transitions that had to wait and for how long,
+    surfaces drawn without their texture (must be 0);
+  - core 0: file reads and decodes during play (must be 0), hand-off time per
+    frame;
+  - memory: linear free minimum and main heap free minimum, evictions, failed
+    allocations (must be 0);
+  - level load time;
+  - a capture per level, looked at.
+- **Lifecycle:** HOME and back, lid sleep and wake, and a clean exit, on the
+  build that changes threads.
+- **The owner's New 3DS** confirms the same build behaves the same; the
+  appliance cannot stand in for it, and it is not claimed.
+
+A step that makes any measure worse than its baseline is reported with the
+numbers before it is kept.
