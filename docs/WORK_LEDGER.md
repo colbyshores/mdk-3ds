@@ -2963,3 +2963,6 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     OLYM_3's hatch) did not reach the box in the wind probe either (Kurt starts in COLYM_2
     there and the zone's arena script does not run), so this is checked by build and suites
     only.
+  - **32b1e1b0, hold the slide brake's last frame.** K_BSLIDE is `Once` in
+    `KurtSprite`'s state table (it looped 3 frames 10 times a second, so the sprite
+    flickered while braking). Draw-side only; no golden covers the sprite pick.

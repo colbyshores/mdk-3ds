@@ -142,7 +142,9 @@ KurtSprite::KurtSprite() {
     stateSpecs_.push_back(StateSpec{"K_SLIP", Once});
     stateSpecs_.push_back(StateSpec{"K_SLIDE", Loop});
     stateSpecs_.push_back(StateSpec{"K_FSLIDE", Loop});
-    stateSpecs_.push_back(StateSpec{"K_BSLIDE", Loop});
+    // Braking holds K_BSLIDE's last frame (0x4646a4, state 0x32a; upstream 32b1e1b0):
+    // looped, the sprite flickered while "back" was held on a slide.
+    stateSpecs_.push_back(StateSpec{"K_BSLIDE", Once});
     stateSpecs_.push_back(StateSpec{"K_HANG", Once});
     stateSpecs_.push_back(StateSpec{"K_CRASHL", Once});
     stateSpecs_.push_back(StateSpec{"K_ROLLL", Once});
