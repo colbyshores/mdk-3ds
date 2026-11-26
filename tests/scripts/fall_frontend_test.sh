@@ -14,8 +14,9 @@
 #      whole fall, 38 s, into LEVEL7 with three pickups. The level's Kurt holds them
 #      (the super chain gun in a slot, the homing missiles as ammo) at the fall's
 #      health. The run's own lines are the evidence.
-#   2. New Game -> briefing -> the fall, Esc in its intro (Menu.Back) -> LEVEL7 at
-#      full health with nothing carried (FallSim.Skip).
+#   2. New Game -> briefing -> the fall, Esc in its intro (Menu.Back) opens the
+#      pause menu and the fall waits under it; Esc again resumes it (upstream
+#      75ec50e2: the original's abort prompt, not a skip).
 #   3. --fall=8 --fall-lean: LEVEL8's fall (Bones) drawn the 3DS's way for 700
 #      frames, past the intro.
 #
@@ -80,20 +81,24 @@ done
 
 # --- 2. New game: the briefing, the fall, Esc ----------------------------------
 # --menu: the menu without the INTRO1A splash (package #20c), so the presses keep
-# their times.
+# their times. Esc at 3 s opens the pause menu in the fall's intro, Esc at 3.5 s
+# resumes it (upstream 75ec50e2), and the fall's time stood still in between.
 NEW="$WORK/newgame.log"
-run "$NEW" --menu --press=Menu.Accept@0.5,Menu.Back@1.2,Menu.Accept@1.4,Menu.Back@3 --frames 260
+run "$NEW" --menu --press=Menu.Accept@0.5,Menu.Back@1.2,Menu.Accept@1.4,Menu.Back@3,Menu.Back@3.5 --frames 260
 for line in \
     "flow: the briefing of level 7 (L1_MAP)" \
     "flow: the fall before level 7" \
-    "Fall ended t 0.0" \
-    "health 100 pickups " \
-    "mem[run-end, unsettled]: level 7"; do
+    "fall: the pause menu opens at fall intro" \
+    "fall: the pause menu closes at fall intro"; do
     has "$NEW" "$line" || bad "[new game] the log has no \"$line\""
 done
-if has "$NEW" "level: the fall's carry"; then
-    bad "[new game] a skipped fall carried pickups"
+if has "$NEW" "Fall ended"; then
+    bad "[new game] Esc ended the fall instead of pausing it"
 fi
+OPENED=$(sed -n 's/.*pause menu opens at fall intro t \([0-9.]*\).*/\1/p' "$NEW" | head -n 1)
+CLOSED=$(sed -n 's/.*pause menu closes at fall intro t \([0-9.]*\).*/\1/p' "$NEW" | head -n 1)
+[ -n "$OPENED" ] && [ "$OPENED" = "$CLOSED" ] ||
+    bad "[new game] the fall did not wait under the menu (t $OPENED -> $CLOSED)"
 
 # --- 3. The lean way (the 3DS's) -------------------------------------------------
 LEAN="$WORK/lean.log"
@@ -108,7 +113,7 @@ for line in \
 done
 
 if [ "$fail" -eq 0 ]; then
-    echo "PASS FallFrontend (--fall=7 chased into LEVEL7 with health 67 and three pickups in Kurt's inventory; new game -> briefing -> fall -> Esc -> level; LEVEL8's fall the lean way)"
+    echo "PASS FallFrontend (--fall=7 chased into LEVEL7 with health 67 and three pickups in Kurt's inventory; new game -> briefing -> fall -> Esc pauses it, Esc resumes; LEVEL8's fall the lean way)"
     exit 0
 fi
 echo "FAIL FallFrontend ($fail check(s))"

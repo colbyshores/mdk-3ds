@@ -27,6 +27,7 @@
 #include "game/input.h"
 #include "game/loading_screen.h"
 #include "game/main_menu.h"
+#include "game/pause_menu.h"
 #include "game/save_prompt_screen.h"
 #include "game/movie_view.h"
 #include "game/viewer_saves.h"
@@ -240,6 +241,9 @@ flow::Screen runFrontScreens(FrontScreens* front) {
     // THE FALL (package #17b): made when the flow shows it, closed (its voices
     // stopped, its renderer scope released) when the flow leaves it.
     std::unique_ptr<fall::FallScreen> fall(new fall::FallScreen());
+    // Esc in the fall opens the pause menu, as in a level (upstream 75ec50e2; the
+    // original's abort prompt, 0x403cf8): the fall waits under it.
+    menu::PauseMenu fallPause;
     fall::FallScreen::Print fallPrint;
     fallPrint.line = printLine;
     // C# Show for the fall: a new FallScreen. False when it cannot be shown (its
@@ -395,12 +399,24 @@ flow::Screen runFrontScreens(FrontScreens* front) {
 
         flow::Event next = flow::Event::None;
         if (screen == flow::Screen::Fall) {
-            // C# FallScreen.Frame: Esc (MenuKey.Back) skips, the keys steer.
-            fall::FallSim::Input steer = fall::FallScreen::steering(input, keys.back);
-            if (front->fallChase) {
-                fall::FallScreen::chase(fall->sim(), &steer);
+            // C# FallScreen.Frame: Esc (MenuKey.Back) opens the pause menu and the
+            // fall waits under it (upstream 75ec50e2); otherwise the keys steer.
+            if (fallPause.open()) {
+                next = fallPause.update(keys, elapsed);
+                if (!fallPause.open()) {
+                    std::printf("[main] fall: the pause menu closes at %s\n",
+                                fall->status().c_str());
+                }
+            } else if (keys.back) {
+                fallPause.show();
+                std::printf("[main] fall: the pause menu opens at %s\n", fall->status().c_str());
+            } else {
+                fall::FallSim::Input steer = fall::FallScreen::steering(input, false);
+                if (front->fallChase) {
+                    fall::FallScreen::chase(fall->sim(), &steer);
+                }
+                fall->frame(steer, elapsed);
             }
-            fall->frame(steer, elapsed);
         } else if (screen == flow::Screen::Menu) {
             next = mainMenu->frame(keys, elapsed);
             movieView.sync(front->renderer, mainMenu->video(), false);
@@ -483,10 +499,20 @@ flow::Screen runFrontScreens(FrontScreens* front) {
         mdk_render_begin_frame(front->renderer, &params);
         if (screen == flow::Screen::Fall) {
             fall->draw(front->renderer);
+            if (fallPause.open()) {
+                // C# FallScreen.Paused: the fall as it stopped, the menu over it.
+                ScreenView pauseView;
+                pauseView.layoutInside(mdk_render_canvas_width(front->renderer), kCanvasHeight);
+                mdk_render_canvas_begin(front->renderer);
+                fallPause.draw(front->renderer, pauseView, *ui->big, *ui->small);
+                mdk_render_canvas_end(front->renderer);
+            }
             mdk_render_end_frame(front->renderer);
             // Game.Run: the device after the screen's frame; then FallScreen.Next.
             fall->mixer().device().update(elapsed);
-            next = fall->next(&flow.state());
+            if (next == flow::Event::None) {
+                next = fall->next(&flow.state());
+            }
         } else {
         ScreenView view;
         view.layoutInside(mdk_render_canvas_width(front->renderer), kCanvasHeight);

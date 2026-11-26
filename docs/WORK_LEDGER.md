@@ -2918,3 +2918,16 @@ fixes are another agent's.
   same holds for c881c9bc, whose clamp is in `FollowCamera::blend` and has no caller yet.
 - **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match (the HUD and rounds
   goldens use alpha 1); `tools/check.sh` ALL GATES PASSED.
+
+### 75ec50e2 -- the pause menu in the fall
+- **What:** Esc (Linux) or START (3DS) in the fall opens the pause menu (`menu::PauseMenu`:
+  Resume, Options, Main menu, Quit) and the fall waits under it, drawn as it stopped with the
+  menu over it; Esc/B or Resume goes on. The frontends no longer pass the press as the sim's
+  skip (`FallSim::Input::skip` stays, for the skydive probes' `skip:` schedules).
+- **Why:** the skip was the port's testing shortcut; the original opens its abort prompt
+  there (0x403cf8).
+- **3DS note:** the fall shows the C# pause menu, not the owner's level START menu (its toggles
+  and cheats are the level's); START or A picks the item, B resumes.
+- **Evidence:** Linux and 3DS builds 0 warnings; `fall_frontend_test.sh` case 2 now opens the
+  menu at 3 s and resumes at 3.5 s in the intro, with the same fall time at both and no
+  "Fall ended": PASS. Not run on the console.
