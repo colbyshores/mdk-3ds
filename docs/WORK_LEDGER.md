@@ -2400,3 +2400,28 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   (22d11f12 + 0fbced92 FAST 3DS) md5 8b1623f16b37f122c09cc76c35dbf4e8; both 0
   compiler warnings, in .git/worktrees/restore-strips/hw-logs.
 - **Commit:** this one (ledger only).
+
+### Restore-strips: the console back -- the look on hardware, the level 3 A/B, and an HD pairing the strips must not take
+- **The look (hardware, old3ds-lan167, LEVEL8, HD set, BLAST=20):** a both-eye
+  readback at frame 600 (`hw_cycle --capture`, cycle FRESH; the throwaway branch
+  carries fix/3ds-hd-only's writeScreenshotBmp, which main's harness lacks):
+  hw-logs/after-cap600-stereo.png, -zoom.png. One whole EXPLODE frame -- a round
+  yellow-orange fireball, upright, its colour-key edge clean, no bands of a
+  neighbouring frame and no squash -- the SAME frame in both eyes at the stereo
+  offset, a second explosion half behind the wall corner. Before the change that
+  route drew no explosion at all (the strip was refused).
+- **Level 3 A/B (FIRE's levels; HD set from romfs:/hd, tier 256, BLAST=20,
+  PROFILE, both FRESH):** linear free min 7270 -> 6684 KiB (-586), main min
+  13203 -> 13189 KiB, steady 33.45 -> 33.72 ms, p95 35.0 -> 36.3 ms, 3-vblank
+  frames 11 -> 25, 0 evictions, 0 main-thread pack reads, 0 failures, 10766 strip
+  draws. FIRE's 192 KiB is resident only once something draws or warms it (the
+  route did not show a FIRE object); EXPLODE + SL_BIG account for the 544.
+- **Found in that run and fixed here:** byname now names EXPLODE, and the HD
+  pack holds a squeezed LEVEL3 EXPLODE (256x6656 -> 256x512), so the level's
+  pinned HD set took one more copy (178 vs 177, +43648 bytes at tier 256) that no
+  draw can use -- an animated texture never draws an HD copy. loadOrigByName
+  (packs_3ds.cpp) no longer pairs a strip over 1024 with an HD file. +7/-2 lines.
+- **Evidence:** tests/scripts make test, tests/formats 200624 / 0, tools/check.sh
+  ALL GATES PASSED (smdh SKIP), player .3dsx 0 warnings. The fix itself is not
+  yet re-measured on the console (the L3 set count should read 177 again).
+- **Commit:** this one.

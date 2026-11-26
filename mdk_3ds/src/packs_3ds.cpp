@@ -332,10 +332,15 @@ bool loadOrigByName(int32_t level, mdk::LevelData& levelData,
         } else {
             out->dims.erase(key);
         }
+        // A strip over 1024 (orig-pack pages) is animated, so it never draws an HD
+        // copy (hdPackLookup): no pairing, or the level's HD set would pin the
+        // pack's squeezed EXPLODE (LEVEL3, 43 KiB at tier 256) for nothing.
+        const bool paged = dims != origDims.end() && (dims->second & 0xFFFFu) > 1024u;
         const size_t mark = fields[3].find('@');
         const std::map<std::string, std::string>::const_iterator hd =
-            mark == std::string::npos ? hdByKey.end()
-                                      : hdByKey.find(lowerName3ds(fields[3].substr(mark + 1)));
+            mark == std::string::npos || paged
+                ? hdByKey.end()
+                : hdByKey.find(lowerName3ds(fields[3].substr(mark + 1)));
         if (hd != hdByKey.end()) {
             out->hdPaths[key] = hd->second;
         } else {
