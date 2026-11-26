@@ -290,8 +290,14 @@ public:
     // `tinyHidden`, when given and a tiny cull is set (setTinyCull), is this
     // object's hysteresis byte (1 = hidden last frame): the object is not
     // streamed while it is tiny on screen. Null (the default) never hides.
+    //
+    // `poseAlpha` (upstream ae746b5d): how far the frame is from the last tick's
+    // start to now. Below 1 an animated object is drawn in the pose between its
+    // two baked frames (MdkObject::frames_at), vertex by vertex, into a scratch
+    // pose this view keeps; 1 (the default) draws the tick's pose.
     bool addObject(const scripts::MdkObject& obj, const ObjectLook& look,
-                   const Mat4& transform, ObjectStream* stream, uint8_t* tinyHidden = nullptr);
+                   const Mat4& transform, ObjectStream* stream, uint8_t* tinyHidden = nullptr,
+                   float poseAlpha = 1.0f);
 
     // THE TINY CULL (the 3DS's EnhancedToggles::tinyEnemyPixels): for an
     // object addObject is handed a hysteresis byte for, its cull sphere's full
@@ -346,6 +352,9 @@ private:
 
     const MaterialResolver* resolver_;
     ModModels* swaps_ = nullptr;
+    // The pose between two frames (addObject's poseAlpha): its parts keep their
+    // capacity, so a frame after the first allocates nothing.
+    std::vector<std::vector<formats::Vec3f> > blendPose_;
     Frustum cullFrustum_;
     bool hasCullFrustum_ = false;
     float cullMargin_ = 0.0f;

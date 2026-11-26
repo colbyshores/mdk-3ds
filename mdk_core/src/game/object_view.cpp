@@ -413,7 +413,8 @@ ObjectLayout* ObjectView::layoutOf(const formats::Model* model, const ObjectLook
 // transform, which is all the C#'s Draw call is given: nothing a backend needs
 // may be left in the caller.
 bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look,
-                           const Mat4& transform, ObjectStream* stream, uint8_t* tinyHidden) {
+                           const Mat4& transform, ObjectStream* stream, uint8_t* tinyHidden,
+                           float poseAlpha) {
     if (obj.model == nullptr || obj.dead || stream == nullptr) {
         return false;
     }
@@ -455,7 +456,33 @@ bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look
         }
     }
 
-    const std::vector<std::vector<formats::Vec3f> >& pose = obj.pose_parts();
+    const std::vector<std::vector<formats::Vec3f> >* posed = &obj.pose_parts();
+    // Between two frames (upstream ae746b5d, FrameBlend.PoseOf): each vertex
+    // `share` of the way from the earlier frame to the later. Drawing only, so
+    // the plain lerp (no fused multiply-add: VFPv2 has none, fmaf is a call).
+    const std::vector<std::vector<formats::Vec3f> >* from = nullptr;
+    const std::vector<std::vector<formats::Vec3f> >* to = nullptr;
+    float share = 0.0f;
+    if (poseAlpha < 1.0f && obj.frames_at(poseAlpha, &from, &to, &share)) {
+        blendPose_.resize(to->size());
+        for (size_t p = 0; p < to->size(); p++) {
+            const std::vector<formats::Vec3f>& a = (*from)[p];
+            const std::vector<formats::Vec3f>& b = (*to)[p];
+            std::vector<formats::Vec3f>& out = blendPose_[p];
+            const size_t n = a.size() < b.size() ? a.size() : b.size();
+            out.resize(b.size());
+            for (size_t v = 0; v < n; v++) {
+                out[v].x = a[v].x + (b[v].x - a[v].x) * share;
+                out[v].y = a[v].y + (b[v].y - a[v].y) * share;
+                out[v].z = a[v].z + (b[v].z - a[v].z) * share;
+            }
+            for (size_t v = n; v < b.size(); v++) {
+                out[v] = b[v];
+            }
+        }
+        posed = &blendPose_;
+    }
+    const std::vector<std::vector<formats::Vec3f> >& pose = *posed;
     const int32_t hidden = obj.hidden_parts;
 
     // A pose that is not this model's is a stale pose cache (see

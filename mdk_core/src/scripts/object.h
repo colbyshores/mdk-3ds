@@ -258,6 +258,14 @@ struct MdkObject {
     // object because a level has a handful of models drawn by many objects.
     const std::vector<std::vector<formats::Vec3f> >& pose_parts() const;
 
+    // The C#'s FramesAt(alpha) (upstream ae746b5d): the two baked frames a frame
+    // `alpha` of the way from the last tick's start to now draws between, and
+    // the share of the second (a loop goes on to its first frame). False -- draw
+    // pose_parts() -- with no tick yet, another animation, a restart, a frame
+    // set by a script, or wherever blends() refuses.
+    bool frames_at(float alpha, const std::vector<std::vector<formats::Vec3f> >** from,
+                   const std::vector<std::vector<formats::Vec3f> >** to, float* share) const;
+
     // The C#'s ForgetPoses(): a level change drops the last level's models.
     // The caches are keyed by Model/ModelAnimation ADDRESS, so a level whose
     // models were freed MUST call this or a new model that lands on a freed
@@ -326,6 +334,10 @@ struct MdkObject {
         float pitch = 0.0f;
         float roll = 0.0f;
         std::string arena = "";
+        // The animation and its time (upstream ae746b5d: a frame draws the pose
+        // between the last tick's animation time and this one's).
+        const formats::ModelAnimation* animation = nullptr;
+        float animation_time = 0.0f;
     };
 
     // The C#'s Blends(): whether a frame draws this object between ticks. Not

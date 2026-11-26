@@ -2868,3 +2868,22 @@ fixes are another agent's.
   rewritten from the C++ and byte-identical to the C# 1.1.1 oracle with 683a53ef, 04c25852 and
   8bc42528 applied (fall_probe, scratchpad `up-tools`).
 - **Evidence:** Linux build 0 warnings; tick1 all cases match.
+
+### ae746b5d -- animations drawn between their frames
+- **What:** `MdkObject::remember` keeps the animation and its time; `MdkObject::frames_at`
+  (the C#'s FramesAt) names the two baked frames a frame between ticks draws between and the
+  share of the second (a loop goes on to its first frame; another animation, a restart or a
+  script-set frame snaps). `ObjectView::addObject` takes the tick's alpha and, below 1, lerps
+  the two frames vertex by vertex into one scratch pose it keeps (the stream consumes it at
+  once, so one scratch serves every object, where the C# keeps one per model). Both frontends
+  pass the tick's alpha for every object (the driven and carried ones too, as `PoseOf`).
+- **Why:** monsters, items and doors animated at 30 Hz on screens faster than the ticks.
+- **Not like upstream:** the vertex lerp is the plain `a + (b - a) * t` (drawing only; .NET's
+  fused form would be an `fmaf` call per coordinate on VFPv2); the C#'s `% count`s are
+  bounded subtractions (R11), and a time outside two counts is drawn as it is.
+- **Cost on the 3DS:** one lerp per vertex of each animated object drawn between ticks, and
+  the next frame baked (once) sooner. To be measured on the appliance against the commit
+  before it (see the interpolation measurement entry below).
+- **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match; tests/formats 200,650
+  checks, 0 failures; `tools/check.sh` ALL GATES PASSED (the R11 screen first flagged the
+  two `% count`s).

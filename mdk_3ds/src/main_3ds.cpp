@@ -2388,8 +2388,10 @@ int main(int argc, char** argv) {
                         tinyEnemyHidden[objectSlot] = 0;
                     }
                 }
+                // The pose between its frames at the tick's alpha (upstream ae746b5d,
+                // Viewer's blend.PoseOf), the driven and carried ones too.
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
-                                     &objectStream, tinyHidden);
+                                     &objectStream, tinyHidden, tickAlpha);
             }
             if (strikeFrame) {
                 // THE FULL-SCREEN STRIKE (package 14): the scene's model alone over the sky

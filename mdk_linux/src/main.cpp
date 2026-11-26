@@ -2675,8 +2675,10 @@ int main(int argc, char** argv) {
                 const bool carried = runtime->rides().bomber() && &obj == runtime->rides().ridden();
                 const float alpha =
                     &obj == runtime->rides().driven() || carried ? 1.0f : tickAlpha;
+                // The pose between its frames at the tick's alpha (upstream ae746b5d,
+                // Viewer's blend.PoseOf), the driven and carried ones too.
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
-                                     &objectStream);
+                                     &objectStream, nullptr, tickAlpha);
             }
             if (strikeFrame) {
                 // THE FULL-SCREEN STRIKE (package 14): the scene's model alone over the sky

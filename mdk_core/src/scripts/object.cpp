@@ -5,6 +5,8 @@
 
 #include "formats/model.h"
 #include "game/frame_blend.h"
+#include "formats/model_animation.h"
+#include "scripts/pose_cache.h"
 #include "scripts/script_runtime.h"
 
 // The pose caches are NOT here. They are in scripts/pose_cache.cpp, which is
@@ -123,6 +125,8 @@ void mdk::scripts::MdkObject::remember() {
     ticked_.pitch = pitch;
     ticked_.roll = roll;
     ticked_.arena = arena;
+    ticked_.animation = animation;
+    ticked_.animation_time = animation_time;
     has_ticked_ = true;
 }
 
@@ -133,6 +137,42 @@ void mdk::scripts::MdkObject::remember() {
 bool mdk::scripts::MdkObject::blends(float alpha) const {
     return alpha < 1.0f && has_ticked_ && ticked_.arena == arena &&
            !mdk::frame_blend::jumped(ticked_.position, position, scripts::ScriptRuntime::kTick);
+}
+
+bool mdk::scripts::MdkObject::frames_at(float alpha, const std::vector<std::vector<formats::Vec3f> >** from,
+                                        const std::vector<std::vector<formats::Vec3f> >** to,
+                                        float* share) const {
+    if (!blends(alpha) || model == nullptr || animation == nullptr || animation->frameCount <= 0 ||
+        ticked_.animation != animation) {
+        return false;
+    }
+    const int32_t count = animation->frameCount;
+    const float start = ticked_.animation_time;
+    float end = animation_time;
+    if (end < start && (flags & FlagLoop) != 0) {
+        end += (float)count;
+    }
+    // A restart, or a frame a script set (the frame is not the time's): drawn as
+    // it is. The C#'s `% count`s, without a divide (AGENTS.md R11): the times lie
+    // within two counts, and anything outside is drawn as it is instead.
+    int32_t rounded = (int32_t)std::rint(animation_time);
+    if (rounded >= count) {
+        rounded -= count;
+    }
+    if (end < start || rounded != animation_frame) {
+        return false;
+    }
+    const float time = mdk::frame_blend::lerp(start, end, alpha);
+    const int32_t frame = (int32_t)time;
+    if (frame < 0 || frame >= 2 * count) {
+        return false;
+    }
+    const int32_t first = frame >= count ? frame - count : frame;
+    const int32_t second = first + 1 >= count ? first + 1 - count : first + 1;
+    *from = &bakedPose(model, animation, first);
+    *to = &bakedPose(model, animation, second);
+    *share = time - (float)frame;
+    return (*from)->size() == (*to)->size();
 }
 
 mdk::Vec3 mdk::scripts::MdkObject::position_at(float alpha) const {
