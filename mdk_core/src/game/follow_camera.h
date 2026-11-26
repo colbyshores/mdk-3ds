@@ -124,7 +124,9 @@ struct ClipViewHook {
     // `from` to `to` first meets a blocking object's part, or `to`.
     Vec3 (*clip)(void* context, const Vec3& from, const Vec3& to) = nullptr;
 };
-Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera,
+// `delta` is the step (seconds): the push and the shove move Kurt at most 40 u/s
+// (upstream c81dafc1), the rest on the next steps.
+Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera, float delta,
                        const ClipViewHook* clip = nullptr);
 
 // Fills camera with the follow camera's view for the feet, the horizontal
@@ -141,7 +143,7 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
 // `shakeX`/`shakeY` are the shake's turn in radians (followCameraTurn), 0 for none.
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect,
-                              float rollDegrees, const ClipViewHook* clip = nullptr,
+                              float rollDegrees, float delta, const ClipViewHook* clip = nullptr,
                               float shakeX = 0.0f, float shakeY = 0.0f);
 
 // ---- Sniper mode's view (FollowCamera.cs:381-430) ----

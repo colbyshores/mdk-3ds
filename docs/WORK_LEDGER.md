@@ -2856,3 +2856,21 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   capture on this harness). Mounting by walking from the level's start was not run either:
   the run teleports Kurt over the cannon.
 - **Commit:** this one (ledger only).
+
+### Upstream's C# gameplay fixes (1.1.1 to 1.2.6, and its C++ 2.x), ported to our C++
+- **Why:** the owner's request (2026-11-26): "lets apply all of the upstream fixes but in
+  C++". Upstream is `origin` (nautilusbits/mdk-sdl, read only). Our port started from its C#
+  1.1.1 (d5bb66ec). This branch, `fix/upstream-gameplay`, takes the gameplay fixes one commit
+  each, in upstream's order. The upstream C# commit is the specification; upstream's own C++
+  (d8724627..367cc6fc) is the second reference.
+- **How the goldens move:** a golden changes only when the C# oracle at the fix's upstream
+  commit prints the new bytes and our C++ prints the same bytes. The oracle is the golden's own
+  probe (`tests/scripts/*_probe`) built against `git archive <commit> src` with .NET SDK
+  10.0.404 (scratch). The probe at d5bb66ec reproduces the old golden byte for byte
+  (checked on `L4_ledge_short`), so the setup is sound.
+- **Per fix:**
+  - **c81dafc1, ease the camera's push through doors.** `followCameraClear` caps the wall
+    push and the solid-object shove at 40 u/s (`kMaxPushSpeed * delta`); the rest is pushed
+    on the next steps. `followCameraClear` and `buildFollowCameraCleared` take the step's
+    `delta`. Three goldens moved; each equals the oracle at c81dafc1: `L4_ledge_short` (the
+    wall push at step 37), `L7_ride_xd2`, `L4_board_end`.
