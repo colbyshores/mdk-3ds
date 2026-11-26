@@ -322,6 +322,13 @@ bool loadOrigByName(int32_t level, mdk::LevelData& levelData,
                               ownerRow ? path.c_str() : known->second.c_str(),
                               ownerRow ? known->second.c_str() : path.c_str());
             if (!ownerRow) {
+                // The arena still draws the owner's file for this name: in its
+                // HD window under its own name too (buildHdWindow3ds).
+                const std::map<std::pair<const void*, std::string>, std::string>::const_iterator
+                    ownerHd = out->hdPaths.find(key);
+                if (ownerHd != out->hdPaths.end()) {
+                    out->hdArenaRows.push_back(std::make_pair(fields[1], ownerHd->second));
+                }
                 continue;
             }
         }

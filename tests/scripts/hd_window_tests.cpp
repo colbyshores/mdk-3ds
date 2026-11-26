@@ -106,6 +106,17 @@ void testTheRule() {
     expect("the shared file once", fileF, 1);
     expect("A (not drawn) after the drawn arenas' files", aLast, 1);
     expect("as built: cap 0", caps.empty() ? -1 : caps[0], 0);
+    // An arena the packs know nothing of (no HD rows, no neighbours): an empty
+    // window, nothing drawn first -- the frontend still sets it (the HUD's pictures
+    // stay pinned, render.h) and waits for nothing.
+    w.window("NOWHERE", std::vector<std::string>(1, "NOWHERE"), &paths, &caps, &drawnCount);
+    expect("an unknown arena's window is empty", (long long)paths.size(), 0);
+    expect("... and nothing is drawn first", drawnCount, 0);
+    // A drawn arena outside the rule (a teleport's frame still drawing the arena
+    // Kurt left) brings its files, and they come first.
+    w.window("Z", std::vector<std::string>(1, "A"), &paths, &caps, &drawnCount);
+    expect("Z with A drawn: A's two files first, then z", (long long)paths.size(), 3);
+    expect("... A's files are the drawn ones", drawnCount, 2);
     // One arena's bytes: B's window is CA + B + CB + Z = 10+200+10+50 + f 40.
     expect("B's window bytes", w.windowBytes("B"), 310 * 1024);
 }

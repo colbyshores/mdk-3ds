@@ -535,6 +535,8 @@ int main(int argc, char** argv) {
     bool hdWindowSettled = true;
     int32_t hdWaits = 0;
     double hdWaitMs = 0.0;
+    // A window with no files is still a window (render.h): never a null list.
+    static const char* const kNoHdPaths[1] = {nullptr};
     if (mdk::loadHdPack(flow.state().level, &hdPack, &hdByKey, &hdShapes)) {
         hdSource.pack = &hdPack;
     }
@@ -1444,8 +1446,9 @@ int main(int argc, char** argv) {
         }
         hdWindow.window(hdWindowFor, hdWindowDrawnFor, &hdWindowPaths, &hdWindowCaps,
                         &hdWindowDrawn);
-        mdk_render_set_hd_window(renderer, hdWindowPaths.data(), hdWindowCaps.data(),
-                                 (int32_t)hdWindowPaths.size());
+        mdk_render_set_hd_window(renderer,
+                                 hdWindowPaths.empty() ? kNoHdPaths : hdWindowPaths.data(),
+                                 hdWindowCaps.data(), (int32_t)hdWindowPaths.size());
     }
     // The first view's surfaces asked for now (its batches, hidden ones too, and
     // the textures of every model the arena or its scripts can show), so their
@@ -2078,16 +2081,21 @@ int main(int argc, char** argv) {
                 hdWindowDrawnFor = *frameDrawn;
                 hdWindow.window(hdWindowFor, hdWindowDrawnFor, &hdWindowPaths, &hdWindowCaps,
                                 &hdWindowDrawn);
-                mdk_render_set_hd_window(renderer, hdWindowPaths.data(), hdWindowCaps.data(),
-                                         (int32_t)hdWindowPaths.size());
-                const int32_t pending = mdk_render_hd_pending(
-                    renderer, hdWindowPaths.data(), (int32_t)hdWindowPaths.size());
+                mdk_render_set_hd_window(
+                    renderer, hdWindowPaths.empty() ? kNoHdPaths : hdWindowPaths.data(),
+                    hdWindowCaps.data(), (int32_t)hdWindowPaths.size());
+                const int32_t pending =
+                    hdWindowPaths.empty()
+                        ? 0
+                        : mdk_render_hd_pending(renderer, hdWindowPaths.data(),
+                                                (int32_t)hdWindowPaths.size());
                 mdk::log3dsPrintf("hd: window %s: %d files (%d drawn), %d to come",
                                   hdWindowFor.c_str(), (int)hdWindowPaths.size(),
                                   (int)hdWindowDrawn, (int)pending);
                 hdWindowAskedAt = mdk::nowSeconds();
                 hdWindowSettled = pending == 0;
-                if (mdk_render_hd_pending(renderer, hdWindowPaths.data(), hdWindowDrawn) > 0) {
+                if (hdWindowDrawn > 0 &&
+                    mdk_render_hd_pending(renderer, hdWindowPaths.data(), hdWindowDrawn) > 0) {
                     const std::string why = "for " + hdWindowFor + " (drawn)";
                     hdWaitMs += mdk::holdHdWindow3ds(renderer, hdWindowPaths.data(),
                                                      hdWindowDrawn, why.c_str());
@@ -2097,7 +2105,7 @@ int main(int argc, char** argv) {
             }
             // The window's arrival time, for the profile (section 8): checked
             // every eighth frame until the whole window is resident.
-            if (!hdWindowSettled && (frame & 7u) == 0 &&
+            if (!hdWindowSettled && (frame & 7u) == 0 && !hdWindowPaths.empty() &&
                 mdk_render_hd_pending(renderer, hdWindowPaths.data(),
                                       (int32_t)hdWindowPaths.size()) == 0) {
                 hdWindowSettled = true;

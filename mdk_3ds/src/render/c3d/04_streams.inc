@@ -155,6 +155,15 @@ int32_t mdk_render_settle_streams(MdkRenderer rr, int32_t maxMs) {
         maxMs <= 0) {
         return 0;
     }
+    // THE LAST FRAME FINISHES FIRST (P3). The pumps below evict with nothing
+    // protected (`stamp` is past every draw), which is right only when no frame is
+    // on the GPU: on the loading screen nothing is, but a wait in play (main_3ds.cpp,
+    // a drawn arena's HD files) follows a submitted frame. gxCmdQueueWait is what
+    // C3D_FrameBegin waits on (03_toggles.inc says why it needs no citro3d internals).
+    if (renderer->gpuPending) {
+        gxCmdQueueWait(nullptr, -1);
+        renderer->gpuPending = false;
+    }
     const uint64_t start = svcGetSystemTick();
     const uint64_t limit = (uint64_t)maxMs * (uint64_t)(SYSCLOCK_ARM11 / 1000);
     const int32_t before = renderer->hdImported + renderer->packImported;
@@ -182,7 +191,8 @@ int32_t mdk_render_settle_streams(MdkRenderer rr, int32_t maxMs) {
 // for a file not yet seen), pinned and asked for; the copies that left the window
 // are unpinned, and a resident one no texture links to is freed now (between
 // frames: its last draw has finished). With `count` 0 the window is dropped and
-// the stream is per-surface again (between levels).
+// the stream is per-surface again (between levels). A window with no files is
+// still a window (`paths` not null): the HUD's pictures stay pinned.
 //
 // THE ORDER IS THE PRIORITY: the frontend passes the drawn arenas' files first.
 // The pump hands out the queue's pinned copies in queue order, so the queue is
@@ -241,7 +251,8 @@ int32_t mdk_render_set_hd_window(MdkRenderer rr, const char* const* paths, const
     // pickups', the bomber's sight) are level-resident: pinned with every window,
     // asked for, and so held for on the loading screen and brought back by the
     // toggle -- never drawn from their indices while HD is on.
-    if (pinned > 0) {
+    const bool windowOn = paths != nullptr;
+    if (windowOn) {
         for (size_t t = 0; t < renderer->textures.size(); t++) {
             const C3dTexture& texture = renderer->textures[t];
             if (!texture.hdOnly || !texture.hdCanvas || texture.releasePending ||
@@ -277,16 +288,19 @@ int32_t mdk_render_set_hd_window(MdkRenderer rr, const char* const* paths, const
         renderer->hdQueue.swap(queue);
     }
     // THE COPIES THAT LEFT THE WINDOW GO NOW, not 600 frames on: a resident copy
-    // no texture links to and no window holds is freed here -- between frames,
-    // its last draw finished -- so the window's arithmetic (main_3ds.cpp) holds.
+    // no texture links to and no window holds is freed here -- but only when no
+    // frame is on the GPU (P3: between levels, the loading screen). In play the
+    // last frame may still be reading it, and the boundary pump frees it instead
+    // (after C3D_FrameBegin's wait: nobody's copies, then the import ladder's
+    // evictions when a window copy needs the room).
     for (size_t i = 0; i < renderer->hdCopies.size(); i++) {
         HdCopy& copy = renderer->hdCopies[i];
         if (!copy.pinned && copy.links <= 0 && copy.state == HdCopy::Resident &&
-            !renderer->inFrame) {
+            !renderer->inFrame && !renderer->gpuPending) {
             dropHd(renderer, copy);
         }
     }
-    renderer->hdPinnedMode = pinned > 0;
+    renderer->hdPinnedMode = windowOn;
     return pinned;
 }
 
