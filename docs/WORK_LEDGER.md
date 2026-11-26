@@ -3073,3 +3073,58 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     `L4_board_end` equals that oracle byte for byte and still ends in MEAT_5's box;
     `L4_board_ride` takes the C++'s output (one camera z 1/64 apart, the view's trig LUT,
     as at e1fde558).
+  - **Not ported, and why:**
+    - **1618b8c3** (wheel and zoom bindings in the scope): not applicable. Our Linux
+      frontend has fixed bindings (`window_sdl.cpp`; the settings' `bind.*` lines are kept
+      but never applied) and the 3DS has no wheel. With the default bindings the upstream
+      change only stops a scoped wheel notch from also pressing the item keys, and our
+      `player_sniper.cpp` already skips the item keys on a step the wheel moved. If
+      rebinding is ever wired up, port this with it.
+    - **224d1144**: test-only (`tests/kurt_moves_test.sh`, which runs the C# app in `src/`).
+    - **03ee9031** (pull the board over floors it sank into): a fix to upstream's
+      `FloorPull` (a27ca2f4, "draw the ridden board over the floor under it"), a drawing
+      feature our port does not have. Presentation; listed for that work with a27ca2f4.
+    - **84ad71e4** (stretch spawn_box sprites over the box): drawing; presentation.
+    - **c881c9bc** (keep the between-frames view upright looking down): part of upstream's
+      in-between-frame interpolation; presentation. Our steps already clamp at 89 degrees
+      and 47395c03 stops the look at 60.
+    - **6eb0963b** (a save's `town_total` for the timer ring): belongs with the timer ring
+      (235b1792, presentation). Our saves do not write it; the C# 1.2.3+ loads such saves.
+  - **Upstream's later C++ (d8724627..367cc6fc):** reviewed commit by commit; the only
+    behaviour fix is 6ccc0cf4 (ported above). 1acbcf17 is tests and parity tooling (it
+    marks the second snowboard run's test should_fail, which 6ccc0cf4 then fixes);
+    7750e87b speeds up PNG deflate and SHA-256 (not gameplay); the rest are the port
+    itself, Android, CI, docs and naming. The merge commits between 1.1.1 and 1.2.6 carry
+    no source of their own except c5d11e7c's mod-image conflict resolution (mods).
+  - **Elsewhere, for the owner:** presentation (the other agent's list) -- 5f9ea5f2,
+    683a53ef, 04c25852, c881c9bc, 8bc42528, ae746b5d, 7740deb1, a73a5cd2, bf9b3a53,
+    75ec50e2, a27ca2f4, 03ee9031, 84ad71e4, 235b1792, f0fa4c17, 5b338e44, 6eb0963b,
+    bb39a854, 70c27b14, 7e61858f, 8c6c24cd, bbd2fddb, e1eb36bb, 09f2e511. Renderer
+    (D3D12/SDL GPU): c14fa040, 9fad9b1e, 674a983f, a9cc6ddf. New features, not fixes:
+    47325ca3 (FPS overlay), 0f04fe59 (zip mods), 83379440 (mdk.log, console from the
+    menu), 8f7dd7b2 (quick save/load), bebe9c9a/25a11c52 (version in a corner), the HD/PNG
+    work (3f24f303, b30b8c40, aad0f065, 0551812a, 2e072015, 1b1c21ea), and the Android /
+    touch / NativeAOT commits (7e43522b, 98ebc06d, dbe8ef93, 1a90639f, 4a0c5c28, c571901e,
+    f21cb391, f989576b, 4e0015bb, 9410097c, ea4b340d, b8a84ce8, 1bf504b4, 86c6bea0,
+    ee11e624, e1fd2f86, eb6454e5, e2d839ca).
+  - **Deliberate differences checked:** none of the fixes depends on the console model,
+    adds a thread or file I/O, or touches the 30 fps cap: the per-tick fixes use the step's
+    `delta` (c81dafc1, 93743b33), which is right at any rate. 47395c03 changes the 3DS's
+    stick look: it now stops at -30/60 degrees. 3bb211b6 starts LEVEL3 1.81 higher (on
+    the pad instead of in it). d14ed0b5 reverses the object list (newest first), which
+    also changes which object a script's "first match" finds -- the C#'s order now.
+  - **The trig LUT, where it shows:** five goldens take the C++'s output instead of the
+    oracle's (`L7_corridor_middle`, `L4_board_off` until e1fde558, `L8_fire`,
+    `L4_board_ride`, and the C++-only `L8_effects_storm`); each was checked by a scratch
+    build with libm in `Player::facing` (or is a camera-z 1/64 step in the view's LUT),
+    which is the accepted drift (owner, 2026-11-20). Every other moved golden equals the
+    oracle at its fix's upstream commit byte for byte.
+  - **Final host run (a5e477b2):** Linux build 0 warnings; `make -C tests/scripts test` 999
+    PASS, 0 FAIL; `make -C tests/formats` passes; `tools/check.sh` ALL GATES PASSED
+    (gates_smdh skipped: no .cia).
+  - **3DS:** player build (`make -C mdk_3ds`, no harness) of a5e477b2: 0 compiler warnings
+    (make's own "jobserver unavailable" notice only); saved as
+    `.git/worktrees/upstream-gameplay/hw-logs/mdk-player-a5e477b2.3dsx`. **Not run on
+    hardware or in Mandarine** by this work: everything above is host-verified against
+    the C# oracle; no 3DS-specific code changed.
+- **Commit:** branch `fix/upstream-gameplay`, ab4bbed0..a5e477b2 and this ledger commit.
