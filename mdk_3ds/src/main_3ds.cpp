@@ -104,6 +104,7 @@
 #include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
+#include "platform/stream_worker_3ds.h"
 #include "config_3ds.h"
 #include "level_load_3ds.h"
 #include "menu_screens_3ds.h"
@@ -244,6 +245,11 @@ int main(int argc, char** argv) {
     }
     mdk::log3dsPrintf("main: %s 3DS, %s", isNew3ds ? "New" : "Old",
                       isNew3ds ? "804 MHz + L2 requested" : "268 MHz (no speedup to request)");
+    // THE TWO-CORE LAYOUT (docs/3DS_ARCHITECTURE.md section 2), the same on both
+    // models: core 0 is this thread; core 1 runs the one streaming worker -- the
+    // music, every file read the renderer and the menus ask for, and the log's
+    // writes. Started before anything is read, stopped before the log closes.
+    mdk::streamWorkerStart();
 
     gfxInitDefault();
     // The top screen's parallax barrier. MDK's flat-display stereo modes do
@@ -288,6 +294,7 @@ int main(int argc, char** argv) {
     MdkRenderer renderer = mdk_render_create(&desc);
     if (!renderer) {
         mdk::log3dsPrintf("renderer creation FAILED");
+        mdk::streamWorkerStop();
         mdk::log3dsClose();
         gfxExit();
         return 1;
@@ -327,6 +334,7 @@ int main(int argc, char** argv) {
                           (int)screen);
         mdk_render_destroy(renderer);
         mdk::romfsFileSystemExit();
+        mdk::streamWorkerStop();
         mdk::log3dsClose();
         gfxExit();
         return 0;
@@ -477,6 +485,7 @@ int main(int argc, char** argv) {
     // or a level that ends into the menu).
     bool toMenu = false;
     mdk::log3dsPrintf("level loop: level %d", (int)flow.state().level);
+    const u64 levelLoadTick = svcGetSystemTick();  // the `level: loaded in` line's start
     const MdkScope levelScope = mdk_render_mark(renderer);
     bool nextLevel = false;
     {
@@ -1428,6 +1437,9 @@ int main(int argc, char** argv) {
         mdk::holdHdSet3ds(renderer, "loading screen");
     }
     mdk::heapProbe("loop");
+    mdk::log3dsPrintf("level: loaded in %.0f ms (from the loading screen to the first frame, "
+                      "the HD hold included)",
+                      (double)(svcGetSystemTick() - levelLoadTick) / (double)(SYSCLOCK_ARM11 / 1000ull));
     mdk::log3dsPrintf("loop: entering main loop");
     // THE PAUSE MENU'S FALLBACK. Without the menu's fonts there is no menu to
     // open, and so no Quit row: holding START and SELECT together is then the
@@ -2917,6 +2929,9 @@ int main(int argc, char** argv) {
     mdk::audioClose();
     mdk::audioDspClose();
     mdk::romfsFileSystemExit();
+    // Every service is detached (the renderer's reader, the DSP path): the
+    // streaming worker can go, then the log it wrote for.
+    mdk::streamWorkerStop();
     // The log is closed BEFORE gfxExit(): libctru's gfxExit() tears the SD
     // card's filesystem down, and a FILE* opened on it cannot be flushed
     // afterwards -- the final line would be silently lost.

@@ -114,7 +114,15 @@ static bool finishPackNow(RendererC3D* renderer, C3dTexture& texture) {
     std::vector<uint8_t> read;
     if (!landed) {
         renderer->hdReader.discard(mdk::AsyncFileReader::kChannelOrig, id);
+        const u64 t0 = svcGetSystemTick();
         ok = readWholeFile(texture.packPath.c_str(), &read);
+        const double ms = (double)(svcGetSystemTick() - t0) / (double)(SYSCLOCK_ARM11 / 1000ull);
+        renderer->packMainReads++;
+        mdk::log3dsPrintf("pack: MAIN-THREAD read %s (%u bytes, %.1f ms, %s; %d this session)",
+                          texture.packPath.c_str(), (unsigned)read.size(), ms,
+                          texture.packState == C3dTexture::PackReading ? "its read in flight"
+                                                                       : "not yet asked for",
+                          (int)renderer->packMainReads);
     }
     bool made = false;
     bool refused = false;

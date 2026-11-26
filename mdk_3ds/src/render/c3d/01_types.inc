@@ -934,6 +934,9 @@ struct RendererC3D {
     std::vector<int32_t> packQueue;
     int32_t packImported = 0;
     int32_t packFailed = 0;
+    // finishPackNow's reads on the main thread (the read had not landed): the
+    // count, said with each one (`pack: MAIN-THREAD read`).
+    int32_t packMainReads = 0;
 
     // THE STORES makeTexture chose (EnhancedToggles::texture16), counted per
     // making -- an evicted texture made again counts again -- indexed by

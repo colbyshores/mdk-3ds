@@ -1,7 +1,8 @@
 #pragma once
 
 // ============================================================================
-// async_file_reader.h -- whole files read from the SD card on a worker thread.
+// async_file_reader.h -- files read from the SD card and RomFS by the streaming
+// worker on core 1 (platform/stream_worker_3ds.h).
 //
 // THE HD STREAM'S I/O (docs/HD_TEXTURES_3DS_SPEC.md 4.2). An SD read of a
 // 100-350 KB .t3x is an FS-service round trip measured in tens of milliseconds
@@ -10,18 +11,18 @@
 // the main thread imports (the import -- a copy into the linear heap -- is the
 // only part that has to be on the thread that owns citro3d, AGENTS.md P2).
 //
-// THE THREAD (AGENTS.md P4, R1, §10):
-//   - owned and joined: start() creates it, stop() signals, joins and frees it,
-//     and frees every buffer still held; the renderer's destroy calls stop();
-//   - FZ/DN at entry (vfpThreadFzDn), though it does no float work;
-//   - a small stack (kStackBytes) and no large locals: the path is copied into
-//     a fixed slot, the bytes live in a malloc'd buffer;
-//   - priority one BELOW the main thread's, on the application core: on the Old
-//     3DS it runs while main waits (the frame end's vsync), never instead of it.
-//   - synchronisation: one LightLock guards the slots; a LightEvent wakes the
-//     worker. No `volatile` stands in for either.
+// THE WORKER'S SERVICE (AGENTS.md P4, docs/3DS_ARCHITECTURE.md section 2):
+//   - no thread of its own: start() attaches it to the streaming worker, which
+//     calls step() -- one open, one kChunkBytes chunk, or one finish -- between
+//     the music's refills; stop() detaches it (the worker is then out of
+//     step() for good) and frees the read in progress and every buffer held;
+//     the renderer's destroy calls stop();
+//   - the worker's stack is small: the path in progress lives in this object,
+//     the bytes in a malloc'd buffer;
+//   - synchronisation: one LightLock guards the slots; the worker alone owns
+//     the read in progress (cur*_). No `volatile` stands in for either.
 //
-// TWO CHANNELS, ONE THREAD. The HD stream (kChannelHd: whole files) and Kurt's
+// TWO CHANNELS, ONE WORKER. The HD stream (kChannelHd: whole files) and Kurt's
 // pack stream (kChannelPack: a byte RANGE of romfs:/kurt/kurt.pak, one
 // animation's frames, KurtSprite's stream) share the worker and its slots, so
 // no second thread is made for the pack. Each caller polls its own channel only
@@ -62,6 +63,7 @@
 // ============================================================================
 
 #include <3ds.h>
+#include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -71,7 +73,9 @@ class AsyncFileReader {
 public:
     static constexpr int32_t kSlots = 5;
     static constexpr size_t kPathMax = 192;
-    static constexpr size_t kStackBytes = 16 * 1024;
+    // A read is taken a chunk at a time (stream_worker_3ds.h, THE ORDER): the
+    // music's refills and the better-ranked reads go between two chunks.
+    static constexpr uint32_t kChunkBytes = 64 * 1024;
     static constexpr int32_t kChannelHd = 0;
     static constexpr int32_t kChannelPack = 1;
     static constexpr int32_t kChannelFile = 2;
@@ -88,11 +92,12 @@ public:
     AsyncFileReader(const AsyncFileReader&) = delete;
     AsyncFileReader& operator=(const AsyncFileReader&) = delete;
 
-    // Starts the worker. False (and the reader stays unusable) when the thread
-    // cannot be created.
+    // Attaches the reader to the streaming worker. False (and the reader stays
+    // unusable) when no streaming worker runs.
     bool start();
-    // Stops and joins the worker, then frees every buffer it still holds. Safe
-    // to call when start() failed or was never called.
+    // Detaches the reader from the worker, then frees the read in progress and
+    // every buffer still held. Safe to call when start() failed or was never
+    // called.
     void stop();
 
     // Asks for `path` under `tag`, the whole file, on kChannelHd. False when
@@ -141,9 +146,15 @@ public:
     // is kSlots.
     int32_t busyAll();
 
-    // The worker's loop (the thread's entry, asyncFileReaderThread, calls it
-    // after establishing FZ/DN). Not for any other caller.
-    void run();
+    // Slots waiting to be read or being read (the worker's queue depth; a
+    // finished read nobody has taken is not counted).
+    int32_t queuedReads();
+
+    // ONE STEP of the reads, on the streaming worker only (stream_worker_3ds.h):
+    // open the best-ranked request, or read the next kChunkBytes of the one in
+    // progress, or finish it (its work, then Done). False when nothing was
+    // waiting to be read.
+    bool step();
 
 private:
     enum State : uint8_t { Free, Requested, Reading, Done };
@@ -171,13 +182,40 @@ private:
     bool queue(int32_t channel, int32_t tag, const char* path, uint32_t offset, uint32_t length,
                Work work);
 
+    // The read in progress, the worker's alone (stop() takes it over after
+    // detaching): its slot, file, buffer, size and the bytes read so far.
+    bool stepOnce();
+    void finishCurrent(bool ok);
+    void closeCurrent();
+    int32_t cur_ = -1;
+    char curPath_[kPathMax] = {0};
+    FILE* curFile_ = nullptr;
+    uint8_t* curBytes_ = nullptr;
+    uint32_t curSize_ = 0;
+    uint32_t curDone_ = 0;
+    Work curWork_ = nullptr;
+    uint64_t curStartTick_ = 0;
+
     Slot slots_[kSlots];
     LightLock lock_;
-    LightEvent wake_;
-    Thread thread_ = nullptr;
     bool running_ = false;
-    bool exit_ = false;   // read and written under lock_ only
     uint32_t nextOrder_ = 0;   // read and written under lock_ only
+
+    // THE THROUGHPUT, the worker's own (only step() and stop(), after the
+    // detach, touch them): reads finished (and failed), their bytes, the ticks
+    // the worker spent inside step() on them (reading and their work), the
+    // longest one from its open to its finish (its latency, the other work
+    // between its chunks included), and when the reader was attached -- said
+    // every kSayEvery reads and at stop (`reader:`).
+
+    static constexpr uint32_t kSayEvery = 64;
+    void say(const char* when);
+    uint32_t files_ = 0;
+    uint32_t failed_ = 0;
+    uint64_t bytes_ = 0;
+    uint64_t busyTicks_ = 0;
+    uint64_t maxTicks_ = 0;
+    uint64_t startTick_ = 0;
 };
 
 } // namespace mdk

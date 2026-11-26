@@ -9,59 +9,11 @@
 #include <string.h>
 
 #include "platform/log_3ds.h"
-#include "platform/side_core_3ds.h"
-#include "platform/vfp_fpscr.h"
+#include "platform/stream_worker_3ds.h"
 
 namespace mdk {
 
 namespace {
-
-// The whole file into a malloc'd buffer, or null. Only the worker calls it.
-uint8_t* readWhole(const char* path, size_t* size) {
-    FILE* file = fopen(path, "rb");
-    if (!file) {
-        return nullptr;
-    }
-    uint8_t* bytes = nullptr;
-    long length = -1;
-    if (fseek(file, 0, SEEK_END) == 0) {
-        length = ftell(file);
-    }
-    if (length > 0 && fseek(file, 0, SEEK_SET) == 0) {
-        bytes = static_cast<uint8_t*>(malloc((size_t)length));
-        if (bytes && fread(bytes, 1, (size_t)length, file) != (size_t)length) {
-            free(bytes);
-            bytes = nullptr;
-        }
-    }
-    fclose(file);
-    if (bytes) {
-        *size = (size_t)length;
-    }
-    return bytes;
-}
-
-// `length` bytes at `offset` into a malloc'd buffer, or null -- a short read
-// (the file ends early) is null, never a partial buffer. Only the worker calls it.
-uint8_t* readRange(const char* path, uint32_t offset, uint32_t length) {
-    if (length == 0 || length > AsyncFileReader::kMaxRangeBytes) {
-        return nullptr;
-    }
-    FILE* file = fopen(path, "rb");
-    if (!file) {
-        return nullptr;
-    }
-    uint8_t* bytes = nullptr;
-    if (fseek(file, (long)offset, SEEK_SET) == 0) {
-        bytes = static_cast<uint8_t*>(malloc(length));
-        if (bytes && fread(bytes, 1, length, file) != length) {
-            free(bytes);
-            bytes = nullptr;
-        }
-    }
-    fclose(file);
-    return bytes;
-}
 
 // A channel's place in the worker's order (async_file_reader.h, WHICH READ GOES
 // NEXT): lower goes first.
@@ -74,23 +26,6 @@ int32_t channelRank(int32_t channel) {
     }
 }
 
-// THE THREAD'S ENTRY, a plain function so the R1 gate (tools/runner/gates_vfp.py)
-// can resolve the routine threadCreate names and read its body.
-void asyncFileReaderThread(void* self) {
-    // R1, AT THE WORKER'S ENTRY. Flush-to-zero and default-NaN are MDK's chosen
-    // numerical mode, and FPSCR is per thread: the main thread's state is not
-    // evidence of this one's. This thread does no float work today (it reads
-    // files), but decaying values can reach subnormals in any float code a later
-    // change adds here, and modern libctru already initialises the mode on its
-    // supported thread entry -- so this is the defensive, read-back form the
-    // contract asks every float-capable thread to carry.
-    const bool fzdn = vfpThreadFzDn();
-    if (!fzdn) {
-        log3dsPrintf("hd: reader thread FZ/DN read-back FAILED");
-    }
-    static_cast<AsyncFileReader*>(self)->run();
-}
-
 } // namespace
 
 bool AsyncFileReader::start() {
@@ -98,39 +33,32 @@ bool AsyncFileReader::start() {
         return true;
     }
     LightLock_Init(&lock_);
-    LightEvent_Init(&wake_, RESET_ONESHOT);
-    exit_ = false;
-    s32 priority = 0x30;
-    svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-    // One below the main thread (a larger number is a lower priority), off the
-    // main thread's core when the console has a core to give (side_core_3ds.h:
-    // core 2 on a New 3DS; never the system core, whose one application thread
-    // is the music's), else on it (-2), where it runs while main waits.
-    const s32 workerPriority = priority < 0x3F ? priority + 1 : priority;
-    int32_t core = offMainCore3ds(false);
-    thread_ = threadCreate(asyncFileReaderThread, this, kStackBytes, workerPriority, core, false);
-    if (thread_ == nullptr && core != -2) {
-        core = -2;
-        thread_ = threadCreate(asyncFileReaderThread, this, kStackBytes, workerPriority, -2, false);
+    files_ = 0;
+    failed_ = 0;
+    bytes_ = 0;
+    busyTicks_ = 0;
+    maxTicks_ = 0;
+    startTick_ = svcGetSystemTick();
+    // The reads are the streaming worker's (stream_worker_3ds.h): no thread of
+    // the reader's own. Without the worker nothing would read: say so, refuse.
+    running_ = streamWorkerRunning();
+    if (running_) {
+        streamWorkerAttachReader(this);
     }
-    running_ = thread_ != nullptr;
-    log3dsPrintf("hd: reader thread %s (core %d, priority 0x%X, stack %u)",
-                 running_ ? "started" : "FAILED", (int)core, (unsigned)workerPriority,
-                 (unsigned)kStackBytes);
+    log3dsPrintf("hd: reader %s (the streaming worker's reads, %u-byte chunks)",
+                 running_ ? "attached" : "FAILED: no streaming worker", (unsigned)kChunkBytes);
     return running_;
 }
 
 void AsyncFileReader::stop() {
     if (running_) {
-        LightLock_Lock(&lock_);
-        exit_ = true;
-        LightLock_Unlock(&lock_);
-        LightEvent_Signal(&wake_);
-        threadJoin(thread_, U64_MAX);
-        threadFree(thread_);
-        thread_ = nullptr;
+        // Detached, the worker is not inside step() and will not enter it again:
+        // the read in progress and the slots are this thread's now.
+        streamWorkerAttachReader(nullptr);
         running_ = false;
+        say("at stop");
     }
+    closeCurrent();
     for (int32_t i = 0; i < kSlots; i++) {
         free(slots_[i].bytes);
         slots_[i] = Slot();
@@ -173,7 +101,7 @@ bool AsyncFileReader::queue(int32_t channel, int32_t tag, const char* path, uint
     }
     LightLock_Unlock(&lock_);
     if (queued) {
-        LightEvent_Signal(&wake_);
+        streamWorkerWake();
     }
     return queued;
 }
@@ -255,6 +183,18 @@ int32_t AsyncFileReader::busy(int32_t channel) {
     return count;
 }
 
+int32_t AsyncFileReader::queuedReads() {
+    int32_t count = 0;
+    LightLock_Lock(&lock_);
+    for (int32_t i = 0; i < kSlots; i++) {
+        if (slots_[i].state == Requested || slots_[i].state == Reading) {
+            count++;
+        }
+    }
+    LightLock_Unlock(&lock_);
+    return count;
+}
+
 int32_t AsyncFileReader::busyAll() {
     int32_t count = 0;
     LightLock_Lock(&lock_);
@@ -267,20 +207,93 @@ int32_t AsyncFileReader::busyAll() {
     return count;
 }
 
-void AsyncFileReader::run() {
-    char path[kPathMax];
-    for (;;) {
+void AsyncFileReader::say(const char* when) {
+    const double msPerTick = 1.0 / (double)(SYSCLOCK_ARM11 / 1000ull);
+    const double wallMs = (double)(svcGetSystemTick() - startTick_) * msPerTick;
+    const double busyMs = (double)busyTicks_ * msPerTick;
+    log3dsPrintf("reader: %s: %u files (%u failed), %llu bytes; %.0f ms of the worker's time "
+                 "(%.1f files/s, %.0f KB/s of it); longest open-to-finish %.1f ms; %.1f s attached",
+                 when, (unsigned)files_, (unsigned)failed_, (unsigned long long)bytes_, busyMs,
+                 busyMs > 0.0 ? (double)files_ * 1000.0 / busyMs : 0.0,
+                 busyMs > 0.0 ? (double)bytes_ / busyMs : 0.0,
+                 (double)maxTicks_ * msPerTick, wallMs / 1000.0);
+}
+
+void AsyncFileReader::closeCurrent() {
+    if (curFile_ != nullptr) {
+        fclose(curFile_);
+        curFile_ = nullptr;
+    }
+    free(curBytes_);
+    curBytes_ = nullptr;
+    cur_ = -1;
+}
+
+void AsyncFileReader::finishCurrent(bool ok) {
+    if (curFile_ != nullptr) {
+        fclose(curFile_);
+        curFile_ = nullptr;
+    }
+    uint8_t* bytes = ok ? curBytes_ : nullptr;
+    if (!ok) {
+        free(curBytes_);
+    }
+    curBytes_ = nullptr;
+    size_t size = bytes ? curSize_ : 0;
+    const uint64_t readBytes = size;
+    if (bytes && curWork_) {
+        // The request's work, here on the worker, in one piece (the HD copies'
+        // LZ11 unpack, 1-94 ms; a menu GIF's decode, ~70-120 ms): the music's
+        // eight seconds of queued buffers outlast it many times over.
+        uint32_t worked = 0;
+        uint8_t* result = curWork_(bytes, (uint32_t)size, &worked);
+        free(bytes);
+        bytes = result;
+        size = result ? worked : 0;
+    }
+    const uint64_t latency = svcGetSystemTick() - curStartTick_;
+    LightLock_Lock(&lock_);
+    if (slots_[cur_].discarded) {
+        // discard() while it was read: nobody wants it.
+        free(bytes);
+        slots_[cur_] = Slot();
+    } else {
+        slots_[cur_].bytes = bytes;
+        slots_[cur_].size = bytes ? size : 0;
+        slots_[cur_].ok = bytes != nullptr;
+        slots_[cur_].state = Done;
+    }
+    LightLock_Unlock(&lock_);
+    cur_ = -1;
+    if (readBytes > 0) {
+        files_++;
+    } else {
+        failed_++;
+    }
+    bytes_ += readBytes;
+    maxTicks_ = latency > maxTicks_ ? latency : maxTicks_;
+    if (readBytes > 0 && files_ % kSayEvery == 0) {
+        say("running");
+    }
+}
+
+bool AsyncFileReader::step() {
+    const uint64_t t0 = svcGetSystemTick();
+    const bool worked = stepOnce();
+    if (worked) {
+        busyTicks_ += svcGetSystemTick() - t0;
+    }
+    return worked;
+}
+
+bool AsyncFileReader::stepOnce() {
+    if (cur_ < 0) {
+        // The best-ranked channel's oldest request (WHICH READ GOES NEXT). The
+        // order is compared by difference, so a wrapped counter still orders.
         int32_t slot = -1;
         uint32_t offset = 0;
         uint32_t length = 0;
-        Work work = nullptr;
         LightLock_Lock(&lock_);
-        if (exit_) {
-            LightLock_Unlock(&lock_);
-            return;
-        }
-        // The best-ranked channel's oldest request (WHICH READ GOES NEXT). The
-        // order is compared by difference, so a wrapped counter still orders.
         for (int32_t i = 0; i < kSlots; i++) {
             if (slots_[i].state != Requested) {
                 continue;
@@ -298,39 +311,64 @@ void AsyncFileReader::run() {
         }
         if (slot >= 0) {
             slots_[slot].state = Reading;
-            memcpy(path, slots_[slot].path, kPathMax);
+            memcpy(curPath_, slots_[slot].path, kPathMax);
             offset = slots_[slot].offset;
             length = slots_[slot].length;
-            work = slots_[slot].work;
+            curWork_ = slots_[slot].work;
         }
         LightLock_Unlock(&lock_);
         if (slot < 0) {
-            LightEvent_Wait(&wake_);
-            continue;
+            return false;
         }
-        size_t size = length;
-        uint8_t* bytes = length > 0 ? readRange(path, offset, length) : readWhole(path, &size);
-        if (bytes && work) {
-            // The request's work, here on the worker (the slideshow's GIF decode).
-            uint32_t worked = 0;
-            uint8_t* result = work(bytes, (uint32_t)size, &worked);
-            free(bytes);
-            bytes = result;
-            size = result ? worked : 0;
+        // Opened and sized: the whole file (length 0) or `length` bytes at
+        // `offset` -- a short file is a failed read, never a partial buffer.
+        cur_ = slot;
+        curStartTick_ = svcGetSystemTick();
+        curDone_ = 0;
+        curSize_ = 0;
+        curFile_ = fopen(curPath_, "rb");
+        bool ok = curFile_ != nullptr;
+        if (ok && length == 0) {
+            long end = -1;
+            if (fseek(curFile_, 0, SEEK_END) == 0) {
+                end = ftell(curFile_);
+            }
+            ok = end > 0 && fseek(curFile_, 0, SEEK_SET) == 0;
+            curSize_ = ok ? (uint32_t)end : 0;
+        } else if (ok) {
+            ok = length <= kMaxRangeBytes && fseek(curFile_, (long)offset, SEEK_SET) == 0;
+            curSize_ = length;
         }
-        LightLock_Lock(&lock_);
-        if (slots_[slot].discarded) {
-            // discard() while it was read: nobody wants it.
-            free(bytes);
-            slots_[slot] = Slot();
-        } else {
-            slots_[slot].bytes = bytes;
-            slots_[slot].size = bytes ? size : 0;
-            slots_[slot].ok = bytes != nullptr;
-            slots_[slot].state = Done;
+        if (ok) {
+            curBytes_ = static_cast<uint8_t*>(malloc(curSize_));
+            ok = curBytes_ != nullptr;
         }
-        LightLock_Unlock(&lock_);
+        if (!ok) {
+            finishCurrent(false);
+        }
+        return true;
     }
+    // A read nobody wants any more ends here, not after its last chunk.
+    LightLock_Lock(&lock_);
+    const bool dropped = slots_[cur_].discarded;
+    if (dropped) {
+        slots_[cur_] = Slot();
+    }
+    LightLock_Unlock(&lock_);
+    if (dropped) {
+        closeCurrent();
+        return true;
+    }
+    // One chunk.
+    const uint32_t want = curSize_ - curDone_ < kChunkBytes ? curSize_ - curDone_ : kChunkBytes;
+    const size_t got = fread(curBytes_ + curDone_, 1, want, curFile_);
+    curDone_ += (uint32_t)got;
+    if (got != want) {
+        finishCurrent(false);
+    } else if (curDone_ == curSize_) {
+        finishCurrent(true);
+    }
+    return true;
 }
 
 } // namespace mdk

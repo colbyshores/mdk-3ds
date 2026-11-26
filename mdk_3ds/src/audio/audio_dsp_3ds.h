@@ -41,7 +41,7 @@
 //
 // THE MUSIC is DSP-ADPCM from the level's own files (mdk_3ds/music, made from
 // the soundtrack by mdk_3ds/tools/music_dsp_convert.py; audioDspMusicRegister),
-// streamed by the worker (Forsaken's and T2K's shape: six ADPCM wave buffers per
+// streamed by the streaming worker on core 1 (Forsaken's and T2K's shape: six ADPCM wave buffers per
 // channel, two seconds queued, refilled as each comes back DONE, each handed its
 // predictor history) and decoded by the DSP. The bank never reads or decodes a
 // track. A start copies a PRIMED read-ahead (audioDspPrimeMusic), so it reads
@@ -57,12 +57,14 @@
 //
 // NOT CARRIED OVER (SPEC.md 8): the master limiter and the summed stream.
 //
-// THREADS. The worker follows AGENTS.md R1 (FZ/DN at its entry), P4 (it is
-// signalled, woken and joined before anything it reads is freed) and 10 (a small
-// stack; no recursion, no large locals). It is created ONCE at open and never on
-// resume (P1): an aptHook parks it (under its lock) while the system is
-// suspended or asleep, and on resume gives ndsp 100 ms to restore its channels
-// before the worker may restart one that looks dry. ndsp itself saves and
+// THREADS. The music is streamed by the one streaming worker on core 1
+// (platform/stream_worker_3ds.h), whose entry follows AGENTS.md R1 (FZ/DN) and
+// 10 (a small stack; no recursion, no large locals). The DSP path is ATTACHED to
+// it at open and DETACHED at close before anything the pass reads is freed
+// (P4). Nothing is made on resume (P1): an aptHook parks the music's pass (under
+// its lock) while the system is suspended or asleep, and on resume gives ndsp
+// 100 ms to restore its channels before the pass may restart one that looks
+// dry. ndsp itself saves and
 // restores the channels across sleep.
 // ============================================================================
 
@@ -75,13 +77,14 @@
 
 namespace mdk {
 
-// ndsp + the sample arena + the music buffers + the worker. FALSE with a logged
+// ndsp + the sample arena + the music buffers, attached to the streaming
+// worker. FALSE with a logged
 // reason (no DSP firmware, ndspInit failed, no linear memory); the game then runs
 // muted with the lifecycle still advancing. The voices bring their own samples
 // (the binder's orders); the music its files (audioDspMusicRegister).
 bool audioDspOpen();
 
-// Stop and join the worker, silence every channel, close the music files,
+// Detach from the streaming worker, silence every channel, close the music files,
 // ndspExit, free the linear memory. Safe when nothing opened. Call while the
 // bank is still alive.
 void audioDspClose();
@@ -136,5 +139,10 @@ struct AudioDspStats {
     uint32_t dspDropped;
 };
 AudioDspStats audioDspStats();
+
+// The streaming worker's pass over the music (platform/stream_worker_3ds.h):
+// the worker only, while the DSP path is attached. `tickDue`: its 25 ms refill
+// tick; otherwise the pass runs only when a request asked for it.
+void audioDspWorkerPass(bool tickDue);
 
 } // namespace mdk

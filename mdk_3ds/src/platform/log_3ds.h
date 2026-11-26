@@ -17,6 +17,7 @@
 // ============================================================================
 
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 
 namespace mdk {
@@ -62,5 +63,12 @@ void log3dsClose();
 // stays the gate's job (check 17 of main_3ds_flow_test.sh): a call can be
 // format-clean and still print a corner count where the sentence says bytes.
 void log3dsPrintf(const char* format, ...) __attribute__((format(printf, 1, 2)));
+
+// THE STREAMING WORKER'S SIDE (platform/stream_worker_3ds.h): the bytes queued,
+// the queue's size, and the write of everything queued (the worker calls it;
+// so does log3dsClose once the worker is gone).
+size_t log3dsQueuedBytes();
+size_t log3dsQueueBytes();
+void log3dsDrain();
 
 } // namespace mdk

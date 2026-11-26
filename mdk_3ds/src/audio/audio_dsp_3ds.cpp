@@ -17,7 +17,7 @@
 #include "audio/dsp_adpcm.h"
 #include "audio/voice_binding.h"
 #include "platform/log_3ds.h"
-#include "platform/side_core_3ds.h"
+#include "platform/stream_worker_3ds.h"
 #include "platform/vfp_fpscr.h"
 
 namespace mdk {
@@ -106,8 +106,6 @@ constexpr uint32_t kMusicBytes =
 constexpr int32_t kMusicPrimes = 2;
 constexpr int32_t kMusicNameBytes = 16;
 constexpr int32_t kMusicPathBytes = 64;
-constexpr s64 kWorkerTickNs = 25 * 1000 * 1000;
-constexpr size_t kWorkerStackBytes = 16 * 1024;  // Forsaken's music worker's
 constexpr float kMusicCutoff = 6000.0f;          // AudioDevice.MusicCutoff
 
 // An open track: the worker's alone.
@@ -190,10 +188,8 @@ uint32_t g_frame = 0;
 float g_lowPassE = 0.0f;  // exp(-2 pi fc / fs) at the DSP's rate
 
 LightLock g_lock;
-LightEvent g_wake;
-Thread g_thread = nullptr;
-int32_t g_workerCore = -2;  // where the worker runs (side_core_3ds.h)
-bool g_exit = false;      // guarded by g_lock
+bool g_attached = false;  // main thread: the streaming worker serves the music
+bool g_kick = false;      // guarded by g_lock: a request the worker should carry out now
 bool g_suspended = false; // guarded by g_lock: the system is suspended / asleep
 int32_t g_resumeGrace = 0;  // guarded by g_lock: ticks after a resume with no restart
 aptHookCookie g_aptCookie;
@@ -201,6 +197,8 @@ aptHookCookie g_aptCookie;
 uint32_t g_cacheFills = 0;
 uint32_t g_cacheEvictions = 0;
 uint32_t g_cacheMisses = 0;
+uint64_t g_fillTicks = 0;     // main thread: the arena copies' time (arenaGet), all of it
+uint64_t g_fillTicksMax = 0;  // ... and the slowest one
 uint32_t g_musicQueued = 0;   // guarded by g_lock
 uint32_t g_musicRestarts = 0; // guarded by g_lock
 uint32_t g_musicUnprimed = 0; // guarded by g_lock: starts that had to read first
@@ -320,6 +318,7 @@ int32_t arenaGet(const std::string& name, const audio::Sound& sound) {
         return -1;
     }
     uint8_t* dst = g_arena + (uint32_t)at;
+    const u64 t0 = svcGetSystemTick();
     if (pcm8) {
         int8_t* out = (int8_t*)dst;
         for (size_t k = 0; k < count; k++) {
@@ -329,6 +328,9 @@ int32_t arenaGet(const std::string& name, const audio::Sound& sound) {
         memcpy(dst, src, count * sizeof(int16_t));
     }
     DSP_FlushDataCache(dst, bytes);
+    const u64 ticks = svcGetSystemTick() - t0;
+    g_fillTicks += ticks;
+    g_fillTicksMax = ticks > g_fillTicksMax ? ticks : g_fillTicksMax;
     Entry& e = g_entries[slot];
     e.used = true;
     e.name = name;
@@ -807,34 +809,25 @@ void musicPrimeWork() {
     }
 }
 
-// THE WORKER'S ENTRY, a plain function so the R1 gate (tools/runner/gates_vfp.py)
-// resolves the routine threadCreate names and reads its body.
-void audioDspWorker(void*) {
-    // R1, AT THE WORKER'S ENTRY. Flush-to-zero and default-NaN are MDK's chosen
-    // numerical mode, and FPSCR is per thread: the main thread's state is not
-    // evidence of this one's. This worker does float work -- a channel's
-    // (re)configuration sets its rate, its mix and its filter coefficients -- and
-    // decaying values can reach subnormals in float code; modern libctru already
-    // initialises the mode on its supported thread entry, so this is the
-    // defensive, read-back form the contract asks every float thread to carry.
-    const bool fzdn = vfpThreadFzDn();
-    if (!fzdn) {
-        log3dsPrintf("audio: dsp worker FZ/DN read-back FAILED");
+} // namespace
+
+// THE STREAMING WORKER'S PASS (stream_worker_3ds.h): on its 25 ms tick, or
+// sooner when a start, stop or prime asked for it (g_kick).
+void audioDspWorkerPass(bool tickDue) {
+    LightLock_Lock(&g_lock);
+    const bool kicked = g_kick;
+    g_kick = false;
+    LightLock_Unlock(&g_lock);
+    if (!tickDue && !kicked) {
+        return;
     }
-    for (;;) {
-        LightEvent_WaitTimeout(&g_wake, kWorkerTickNs);
-        LightLock_Lock(&g_lock);
-        const bool exit = g_exit;
-        LightLock_Unlock(&g_lock);
-        if (exit) {
-            break;
-        }
-        // Suspended (HOME, sleep): each pass checks under g_lock and leaves the
-        // channels alone while ndsp saves and restores them (musicWork).
-        for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
-            musicWork(m);
-        }
-        musicPrimeWork();
+    // Suspended (HOME, sleep): each pass checks under g_lock and leaves the
+    // channels alone while ndsp saves and restores them (musicWork).
+    for (int32_t m = 0; m < VoiceBinder::kMusicChannels; m++) {
+        musicWork(m);
+    }
+    musicPrimeWork();
+    if (tickDue) {
         LightLock_Lock(&g_lock);
         if (!g_suspended && g_resumeGrace > 0) {
             g_resumeGrace--;
@@ -842,6 +835,8 @@ void audioDspWorker(void*) {
         LightLock_Unlock(&g_lock);
     }
 }
+
+namespace {
 
 // libctru runs the hooks newest first, so this one (registered after ndspInit)
 // runs BEFORE ndsp's own: on suspend the worker is parked before ndsp saves its
@@ -866,6 +861,14 @@ void onAptHook(APT_HookType hook, void*) {
 
 // ---- the main thread's side: requests ------------------------------------------
 
+// A request posted: the streaming worker's next pass carries it out.
+void kickWorker() {
+    LightLock_Lock(&g_lock);
+    g_kick = true;
+    LightLock_Unlock(&g_lock);
+    streamWorkerWake();
+}
+
 void musicStop(int32_t m, bool cut) {
     MusicSlot& slot = g_music[m];
     LightLock_Lock(&g_lock);
@@ -874,7 +877,7 @@ void musicStop(int32_t m, bool cut) {
     slot.cut = cut;
     LightLock_Unlock(&g_lock);
     slot.owned = false;
-    LightEvent_Signal(&g_wake);
+    kickWorker();
 }
 
 void musicStart(int32_t m, const VoiceBinder::Channel& order, const std::string& name) {
@@ -891,8 +894,8 @@ void musicStart(int32_t m, const VoiceBinder::Channel& order, const std::string&
     slot.right = order.right;
     LightLock_Unlock(&g_lock);
     slot.owned = true;
-    // The worker (one priority above this thread) carries it out at once.
-    LightEvent_Signal(&g_wake);
+    // The streaming worker carries it out at once.
+    kickWorker();
 }
 
 void musicMix(int32_t m, const VoiceBinder::Channel& order) {
@@ -1032,43 +1035,31 @@ bool audioDspOpen() {
     g_frame = 0;
 
     LightLock_Init(&g_lock);
-    LightEvent_Init(&g_wake, RESET_ONESHOT);
-    g_exit = false;
+    g_kick = false;
     g_suspended = false;
     g_resumeGrace = 0;
     aptHook(&g_aptCookie, onAptHook, nullptr);
-    s32 priority = 0x30;
-    svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-    // OFF THE MAIN THREAD'S CORE (side_core_3ds.h): core 2 on a New 3DS, the
-    // application's one system-core thread on an Old 3DS. Measured 2026-11-25 on
-    // the Old 3DS appliance: on the main thread's core, a track's start and a
-    // prime's reads ran inside the door-crossing frame (the worker preempts main),
-    // adding to it. One ABOVE the main thread's priority still (a smaller number
-    // is a higher priority), for the fallback onto the main thread's core: there
-    // the worker sleeps 25 ms at a time and must not wait for a busy frame to
-    // yield, which is Forsaken's 0x28 against its 0x30 main.
-    const s32 workerPriority = priority > 0x18 ? priority - 1 : priority;
-    g_workerCore = offMainCore3ds(true);
-    g_thread = threadCreate(audioDspWorker, nullptr, kWorkerStackBytes, workerPriority,
-                            g_workerCore, false);
-    if (!g_thread && g_workerCore != -2) {
-        g_workerCore = -2;
-        g_thread = threadCreate(audioDspWorker, nullptr, kWorkerStackBytes, workerPriority, -2,
-                                false);
-    }
+    // THE MUSIC IS THE STREAMING WORKER'S (stream_worker_3ds.h), on core 1:
+    // measured 2026-11-25 on the Old 3DS appliance, on the main thread's core a
+    // track's start and a prime's reads ran inside the door-crossing frame.
+    // Without the worker the music does not stream (said below).
+    g_attached = streamWorkerRunning();
+    streamWorkerAttachAudio(g_attached);
     g_live = true;
     log3dsPrintf("audio: dsp voices=%d music=ch%d+ch%d (crossfade) effects=ndsp 0-%d; arena %u B "
                  "linear (samples, PCM8 for 8-bit), music DSP-ADPCM from %s, %d x %d x %d "
                  "ADPCM frames = %u B linear, %d primes; "
-                 "worker %s core %d prio 0x%X stack %u tick 25 ms; music low-pass biquad %.0f Hz "
+                 "music %s; music low-pass biquad %.0f Hz "
                  "(e=%.6f at %.1f Hz); no limiter; linear free after %u B. The `audio: frame=` "
                  "sink ledger counts the software sink and reads 0 in this mode: read `audio: dsp`",
                  (int)VoiceBinder::kEffectChannels, (int)kMusicNdsp[0], (int)kMusicNdsp[1],
                  (int)VoiceBinder::kEffectChannels - 1, (unsigned)kSampleArenaBytes,
                  g_musicFolder[0] ? g_musicFolder : "(no folder)",
                  (int)VoiceBinder::kMusicChannels, (int)kMusicBuffers, (int)kMusicBufFrames,
-                 (unsigned)kMusicBytes, (int)kMusicPrimes, g_thread ? "started" : "FAILED (music will stop)",
-                 (int)g_workerCore, (unsigned)workerPriority, (unsigned)kWorkerStackBytes, (double)kMusicCutoff,
+                 (unsigned)kMusicBytes, (int)kMusicPrimes,
+                 g_attached ? "streamed by the streaming worker, 25 ms tick"
+                            : "NOT streamed (no streaming worker): silent",
+                 (double)kMusicCutoff,
                  (double)g_lowPassE, (double)NDSP_SAMPLE_RATE, (unsigned)linearSpaceFree());
     return true;
 }
@@ -1078,17 +1069,30 @@ void audioDspClose() {
         return;
     }
     aptUnhook(&g_aptCookie);
-    // P4: signal, unblock, join -- then nothing the worker reads may go.
-    if (g_thread != nullptr) {
-        LightLock_Lock(&g_lock);
-        g_exit = true;
-        LightLock_Unlock(&g_lock);
-        LightEvent_Signal(&g_wake);
-        threadJoin(g_thread, U64_MAX);
-        threadFree(g_thread);
-        g_thread = nullptr;
+    // The session's summary, read off the counters before they go: the music's
+    // underruns and slowest read, the DSP's dropped frames, and what the effect
+    // copies cost the main thread.
+    {
+        const AudioDspStats st = audioDspStats();
+        const double msPerTick = 1.0 / (double)(SYSCLOCK_ARM11 / 1000ull);
+        log3dsPrintf("audio: dsp close: music %u buffers queued, %u underrun restart(s), %u unprimed "
+                     "start(s), slowest buffer read %.1f ms; dsp frames %u dropped %u; effect "
+                     "copies %u (%u evicted, %u missed) %.1f ms on main, slowest %.2f ms",
+                     (unsigned)st.musicQueued, (unsigned)st.musicRestarts,
+                     (unsigned)st.musicUnprimed, (double)st.musicReadMaxUs / 1000.0,
+                     (unsigned)st.dspFrames, (unsigned)st.dspDropped, (unsigned)g_cacheFills,
+                     (unsigned)g_cacheEvictions, (unsigned)g_cacheMisses,
+                     (double)g_fillTicks * msPerTick, (double)g_fillTicksMax * msPerTick);
+        g_fillTicks = 0;
+        g_fillTicksMax = 0;
     }
-    // The worker is gone: the channels are silenced and the files closed here.
+    // P4: detached, the worker is out of the music's pass for good -- then
+    // nothing it reads may go.
+    if (g_attached) {
+        streamWorkerAttachAudio(false);
+        g_attached = false;
+    }
+    // The worker has let go: the channels are silenced and the files closed here.
     for (int32_t c = 0; c < VoiceBinder::kEffectChannels; c++) {
         effectCut(c);
     }
@@ -1204,7 +1208,7 @@ void audioDspPrimeMusic(const std::string& name) {
     }
     LightLock_Unlock(&g_lock);
     if (!have) {
-        LightEvent_Signal(&g_wake);
+        kickWorker();
     }
 }
 
