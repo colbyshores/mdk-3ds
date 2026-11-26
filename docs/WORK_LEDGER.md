@@ -2903,3 +2903,18 @@ fixes are another agent's.
   per piece; measured with the interpolation entry below.
 - **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match (L8_effects_storm builds
   at alpha 1, unchanged); `tools/check.sh` ALL GATES PASSED.
+
+### a73a5cd2 -- the sniper rounds and their cameras drawn between ticks (the tick half)
+- **What:** each round keeps its place, camera, yaw, pitch and roll at the start of the tick
+  (`SniperRounds::update`; a new round is drawn where it is); `SniperRounds::visualTransform`
+  and `camera(index, alpha)` give the flying model and the round camera between that and now,
+  and both frontends pass the tick's alpha (`SniperView::draw`/`hudOf` take it).
+- **Why:** the rounds in flight and the views at the top of the scope moved at 30 Hz.
+- **Not done, the step half (the scope's zoom, tilt and clip timer between steps):** this port
+  draws Kurt and the camera at the last step -- upstream's step blending (FrameBlend's Kurt
+  pose, `FollowCamera.Blend`) is not ported and neither frontend calls `FollowCamera::blend`
+  (frame_blend.h) -- so blending the scope alone would draw it out of step with the view it
+  is in. It belongs with that subsystem if the owner wants frames above the step rate. The
+  same holds for c881c9bc, whose clamp is in `FollowCamera::blend` and has no caller yet.
+- **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match (the HUD and rounds
+  goldens use alpha 1); `tools/check.sh` ALL GATES PASSED.

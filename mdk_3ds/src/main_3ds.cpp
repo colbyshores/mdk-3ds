@@ -2410,7 +2410,9 @@ int main(int argc, char** argv) {
             for (int32_t i = 0; i < mdk::scripts::SniperRounds::kSlots && !strikeFrame; i++) {
                 if (runtime->sniperRounds().visualFlying(i)) {
                     const mdk::scripts::MdkObject& round = runtime->sniperRounds().visual(i);
-                    objectView.addObject(round, objectLook(round.arena), round.transform(),
+                    // Between the last two ticks (upstream a73a5cd2); a new round where it is.
+                    objectView.addObject(round, objectLook(round.arena),
+                                         runtime->sniperRounds().visualTransform(i, tickAlpha),
                                          &objectStream);
                 }
             }
@@ -2528,7 +2530,8 @@ int main(int argc, char** argv) {
             // (sniper_view.h): a watching camera's window is filled as an empty one.
             sniperView.draw(renderer, hud.sniper(), player, runtime.get(), elapsed, false,
                             objectView, &surfaces,
-                            objectLook(runtime ? runtime->currentArena() : std::string()));
+                            objectLook(runtime ? runtime->currentArena() : std::string()),
+                            runtime ? runtime->tick_blend(pending) : 1.0f);
             if (sniperView.allocationFailed()) {
                 if (!sniperClipFailureLogged) {
                     sniperClipFailureLogged = true;

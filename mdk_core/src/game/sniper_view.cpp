@@ -202,7 +202,8 @@ StrikeAim SniperView::aim(const Player& player, const scripts::ScriptRuntime* sc
     return StrikeAim::None;
 }
 
-SniperHud SniperView::hudOf(const Player& player, const scripts::ScriptRuntime* scripts) {
+SniperHud SniperView::hudOf(const Player& player, const scripts::ScriptRuntime* scripts,
+                            float tickAlpha) {
     // C# SniperView.Draw (SniperView.cs:59-67): new SniperHud(kurt.Scope.Zoom,
     // kurt.Inventory.Ammo, kurt.Inventory.SelectedAmmo, cameras, Aim(kurt, scripts)).
     SniperHud hud;
@@ -213,7 +214,7 @@ SniperHud SniperView::hudOf(const Player& player, const scripts::ScriptRuntime* 
     hud.selectedAmmo = player.combat().selectedAmmo();
     if (scripts != nullptr) {
         for (int32_t i = 0; i < scripts::SniperRounds::kSlots; i++) {
-            hud.cameras[i] = scripts->sniperRounds().camera(i);
+            hud.cameras[i] = scripts->sniperRounds().camera(i, tickAlpha);
         }
         hud.cameraCount = scripts::SniperRounds::kSlots;
     }

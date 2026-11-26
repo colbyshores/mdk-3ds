@@ -5,6 +5,8 @@
 
 #include "scripts/sniper_rounds.h"
 
+#include "game/frame_blend.h"
+
 #include <float.h>
 #include <math.h>
 
@@ -260,10 +262,13 @@ Mat4 rotationY(float radians) {
 
 // SniperRounds.VisualBasis: the round models stand upright (their length along +Z): the
 // nose is turned from +Z to the flight direction, and the spin is around the length.
+Mat4 visualBasis(float roll, float pitch, float yaw) {
+    return multiply(multiply(rotationZ(degreesToRadians(roll)), rotationY(kPi / 2.0f + degreesToRadians(pitch))),
+                    rotationZ(degreesToRadians(yaw)));
+}
+
 Mat4 visualBasis(const SniperRounds::Round& round) {
-    return multiply(multiply(rotationZ(degreesToRadians(round.roll)),
-                             rotationY(kPi / 2.0f + degreesToRadians(round.pitch))),
-                    rotationZ(degreesToRadians(round.yaw)));
+    return visualBasis(round.roll, round.pitch, round.yaw);
 }
 
 } // namespace
@@ -302,6 +307,7 @@ bool SniperRounds::fire(int32_t type, const Vec3& eye, float yaw, float pitch, M
     round->cameraDistance = 0.0f;
     round->cameraPosition = eye;
     round->watch = 0.0f;
+    round->ticked = false;
     if (kind == Mortar) {
         /* @vfp-exempt R6 — the mortar's launch, once per shot (cold); libm cos/sin match
          * the oracle's MathF bit for bit, and the LUT would move the throw the
@@ -315,7 +321,7 @@ bool SniperRounds::fire(int32_t type, const Vec3& eye, float yaw, float pitch, M
     return true;
 }
 
-SniperRounds::RoundCamera SniperRounds::camera(int32_t index) const {
+SniperRounds::RoundCamera SniperRounds::camera(int32_t index, float alpha) const {
     // C# Camera (SniperRounds.cs:187-207).
     const Round& round = rounds_[index];
     RoundCamera result;
@@ -331,12 +337,31 @@ SniperRounds::RoundCamera SniperRounds::camera(int32_t index) const {
         result.shot = ShotWatching;
         result.position = round.cameraPosition;
         result.forward = direction(round);
+        if (round.ticked && alpha < 1.0f) {
+            result.position = mdk::frame_blend::lerp(round.tickedCamera, round.cameraPosition, alpha);
+            result.forward = Scope::direction(mdk::frame_blend::lerp_angle(round.tickedYaw, round.yaw, alpha),
+                                              mdk::frame_blend::lerp_angle(round.tickedPitch, round.pitch, alpha));
+        }
         return result;
     }
 
     result.shot = round.state == Hit ? ShotHit : round.state == Dead ? ShotMiss : ShotKill;
     result.time = kMissLinger - round.linger;
     return result;
+}
+
+Mat4 SniperRounds::visualTransform(int32_t index, float alpha) const {
+    const Round& round = rounds_[index];
+    const MdkObject& visual = round.visual;
+    if (!round.ticked || alpha >= 1.0f) {
+        return visual.transform();
+    }
+    // At most three rounds a frame, sniping: the basis' cos/sin (above) stay the oracle's.
+    const Mat4 basis = visualBasis(mdk::frame_blend::lerp_angle(round.tickedRoll, round.roll, alpha),
+                                   mdk::frame_blend::lerp_angle(round.tickedPitch, round.pitch, alpha),
+                                   mdk::frame_blend::lerp_angle(round.tickedYaw, round.yaw, alpha));
+    const Vec3 at = mdk::frame_blend::lerp(round.tickedPosition, round.position, alpha);
+    return multiply(multiply(create_scale(visual.scale), basis), create_translation(at.x, at.y, at.z + visual.lift()));
 }
 
 void SniperRounds::guideLastMortar(int32_t path) {
@@ -389,6 +414,14 @@ void SniperRounds::update(float ticks) {
         if (round->state == Free) {
             continue;
         }
+
+        // A tick starts: frames until the next are drawn from here (upstream a73a5cd2).
+        round->ticked = true;
+        round->tickedPosition = round->position;
+        round->tickedCamera = round->cameraPosition;
+        round->tickedYaw = round->yaw;
+        round->tickedPitch = round->pitch;
+        round->tickedRoll = round->roll;
 
         if (round->state != Flying) {
             round->linger -= ticks;

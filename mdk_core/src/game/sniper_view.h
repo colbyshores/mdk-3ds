@@ -98,7 +98,9 @@ public:
 
     // The SniperHud SniperView.Draw hands the overlay in sniper mode: the zoom, the
     // ammo, the rounds' three cameras (none without `scripts`) and Aim.
-    static SniperHud hudOf(const Player& player, const scripts::ScriptRuntime* scripts);
+    // `tickAlpha`: the round cameras between ticks (upstream a73a5cd2).
+    static SniperHud hudOf(const Player& player, const scripts::ScriptRuntime* scripts,
+                           float tickAlpha = 1.0f);
 
     // C# RoundModels: the loaded rounds' model for an ammo type (clamped to 0-5).
     static const char* roundModel(int32_t type);
@@ -111,7 +113,7 @@ public:
     // without its scripts): no cameras and no clip.
     void draw(MdkRenderer renderer, SniperOverlay& overlay, const Player& player,
               scripts::ScriptRuntime* scripts, float delta, bool roundInsets, ObjectView& objects,
-              SurfaceCache* surfaces, const ObjectLook& look);
+              SurfaceCache* surfaces, const ObjectLook& look, float tickAlpha = 1.0f);
 
     // The clip draw's refusal, for the frontend's log (ObjectDraw's).
     bool allocationFailed() const { return clipDraw_.allocationFailed(); }
