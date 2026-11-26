@@ -583,7 +583,10 @@ bool FollowCamera::blend(Camera* camera, const Vec3& feet, float yaw, float alph
 
     const float yawRadians = follow_camera::degreesToRadians(yaw);
     const Vec3 facing{fastCos(yawRadians), fastSin(yawRadians), 0.0f};
-    const float pitchDegrees = frame_blend::lerp(_previousAim.pitch, _aim.pitch, alpha) + _lookOffset;
+    // The steps' limit too (upstream c881c9bc): looking all the way down, the
+    // unclamped 90 degrees turned the view over and Kurt jumped to the top.
+    const float pitchDegrees =
+        clampViewPitch(frame_blend::lerp(_previousAim.pitch, _aim.pitch, alpha) + _lookOffset);
     const float pitch = follow_camera::degreesToRadians(pitchDegrees);
     const float pivot = frame_blend::lerp(_previousAim.pivot, _aim.pivot, alpha);
     const Vec3 position = followCameraPoint(feet, facing, pitch, pivot);

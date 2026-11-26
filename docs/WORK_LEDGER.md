@@ -2850,3 +2850,10 @@ fixes are another agent's.
 - **Evidence:** Linux build 0 warnings; tick1 all cases match (no golden draws the trails; the
   fall dumps hold the trail points, unchanged); a level 7 fall captured at frame 1500, desktop
   and lean: the ribbons show white with yellow tips at the missiles.
+
+### c881c9bc -- the view upright looking straight down
+- **What:** `FollowCamera::blend` (the frames between steps) clamps the pitch to the steps'
+  +-89 degrees (`clampViewPitch`), as upstream's `ViewPitch`.
+- **Why:** looking all the way down, a frame between steps looked exactly 90 degrees down; the
+  view turned over and Kurt jumped from the middle of the screen to the top.
+- **Evidence:** Linux build 0 warnings; tick1 all cases match.
