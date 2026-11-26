@@ -2807,3 +2807,31 @@ fixes are another agent's.
   frame gate before the manifest was regenerated (it was the changed frame, confirmed by
   rebuilding with the old path: CONTRACT CLEAN); after: FrameGate PASS, tick1 "All cases
   match the oracle", `tools/check.sh` ALL GATES PASSED.
+
+### 683a53ef -- the sounds the arenas carry
+- **What:** `SoundBank::forLevel` adds a fourth archive: the sounds embedded in LEVELnO.MTO's
+  arenas whose names none of the three SNI archives has (the first arena's when two share a
+  name), read at the level's load (only their own bytes: the directory, three small reads an
+  arena, then each WAV) and played once at full volume, as upstream's `SoundBank.ArenaSounds`.
+  `arenaSoundBytes()` reports what it holds.
+- **Why:** 68 names across the six levels played nothing, e.g. LEVEL7's barricade soldiers'
+  SING and TAUNT1 (DANT_2), LEVEL4's FLY, LEVEL5's SMASH, LEVEL8's XFORK.
+- **Cost:** resident bytes per level, measured on the retail data: L3 566,552, L4 299,732,
+  L5 304,238, L6 249,016, L7 185,680, L8 411,666. Decoded on first play like the other
+  archives' effects. The reads are at the level's load, on the thread that already reads
+  TRAVERSE.SNI and LEVELnS.SNI there; none in play. The load-time cost on the console is not
+  yet measured. **Flagged for the 3DS architecture (owner rule: loading belongs to the core-1
+  streaming worker):** these reads should move with the bank's other load reads when that
+  worker lands.
+- **Not like the original:** the original registers an arena's sounds when its stream
+  completes and drops them with it (0x41983c -> 0x4310cc, at most 16). Upstream (and this)
+  hold all of a level's at once.
+- **Goldens:** 42 tick1 cases changed (scripts now hear these sounds; some scripts wait on a
+  voice, so object counts and timings move too). The oracle was the C# 1.1.1 tree with only
+  683a53ef's SoundBank.cs applied, the probes passing `levelData.Arenas` as upstream's Viewer
+  does (.NET 10.0.404, scratchpad `up-tools/cases.sh`). 41 goldens are byte-identical to that
+  oracle; the 42nd, L8_effects_storm, is the C++'s own record over L8_hazards_debris's storm
+  (which matches the oracle) and was rewritten from the C++. Against upstream at 683a53ef
+  itself, 12 differ, from upstream's other changes in between.
+- **Evidence:** vm_tests' new case (level 7 plays SING and TAUNT1 at 0x7FFF, once; every level
+  has the fourth archive); tick1 "All cases match the oracle"; Linux build 0 warnings.

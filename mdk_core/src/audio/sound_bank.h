@@ -134,7 +134,9 @@ public:
     SoundBank(const SoundBank&) = delete;
     SoundBank& operator=(const SoundBank&) = delete;
 
-    // The three archives a level plays from. FALSE when one cannot be read or
+    // The three archives a level plays from, then the sounds its arenas carry
+    // for names none of them has (upstream 683a53ef; a fourth archive, absent
+    // when the MTO has none). FALSE when one of the three cannot be read or
     // parsed (the C# throws there).
     static bool forLevel(SoundBank* out, const formats::MdkData& data, int32_t level);
 
@@ -278,6 +280,9 @@ public:
     // counts for nothing here. The other half of what the bank costs, beside
     // decodedBytes().
     size_t archiveBytes() const;
+    // Of those, the arenas' own sounds' archive (forLevel; 0 without one): what
+    // upstream 683a53ef adds, 185-566 KB a level on the retail data.
+    size_t arenaSoundBytes() const { return arenaSoundBytes_; }
 
 private:
     // Look the name up in the archives, newest first: the archive and the
@@ -329,6 +334,7 @@ private:
     std::map<std::string, int32_t> pins_;
     std::deque<std::string> recent_;
     std::vector<formats::Sni> archives_;
+    size_t arenaSoundBytes_ = 0;
     std::map<std::string, Entry> cache_;
     // The decoded samples, one per cached name. A std::map node never moves, so
     // the Entry's `sound` pointer stays good however many names are added after

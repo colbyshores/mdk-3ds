@@ -1,7 +1,7 @@
 SCRIPT level=5 ticks=720 seed=1 currentArena=MUSE_1 objects=11 target_pos=-33.0000,-988.0000,-293.0000 target_yaw=284.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
 KURT health=94 hurt_flash=175.0000 invulnerable=0.0000 knock=6.0000 state=0 slots=0
-AUDIO voices=16 list=1:SPIT,2:SPIT,3:SPIT,4:LASER1,5:XU_JUMP,7:LASER3,8:XU_JUMP,9:XG_COCK,10:LASER3,11:XU_JUMP,12:LASER1,13:XU_JUMP,14:RICO1,15:RICO1,16:RICO1,17:RICO1
+AUDIO voices=17 list=1:SPIT,2:SPIT,3:SPIT,4:SMASH,5:LASER1,6:XU_JUMP,8:LASER3,9:XU_JUMP,10:XG_COCK,11:LASER3,12:XU_JUMP,13:LASER1,14:XU_JUMP,15:RICO1,16:RICO1,17:RICO1,18:RICO1
 DEBRIS pieces=0 list=
 OBJ 000 type=XGEN sflags=0x00000000 vars=0.0000,0.0000,-24.1666,-9.2333 restart=5037 wait=0.0000 wresume=0 death=1824 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
 OBJ 001 type=XS sflags=0x00000401 vars=0.0000,0.0000,0.0000,0.0000 restart=3650 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=4.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
