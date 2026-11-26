@@ -52,8 +52,8 @@ distribution has it; otherwise [build SDL 3 from source](https://wiki.libsdl.org
 and install it), `glslangValidator` (`glslang-tools`), `pkg-config`, and a GPU with a Vulkan
 driver to run it. The Vulkan headers and loader (volk) are in the repository.
 
-**Check them**: `tools/check_prereqs.sh 3ds` and `tools/check_prereqs.sh linux` print what is
-missing. The 3DS build runs the first one itself before it compiles anything.
+**Check them**: `tools/check_prereqs.sh 3ds`, `tools/check_prereqs.sh linux` and (for the
+optional HD textures) `tools/check_prereqs.sh hd` print what is missing. The 3DS build runs the first one itself before it compiles anything.
 
 ## Building for the 3DS
 
@@ -102,25 +102,26 @@ effects menu.
 
 ### HD textures (3DS, optional)
 
-> [!NOTE]
-> This part is being replaced: a C++ texture tool will make the HD pack without .NET. These
-> steps describe how it is made today and will change.
-
 The 3DS can draw textures upscaled 2x by the AI upscaler
 [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), made on your computer from your copy of
-the game. Nothing upscaled is distributed. Today the pack is made by
-`mdk_3ds/tools/build_hd_pack.sh`, which needs, besides the 3DS build's prerequisites:
+the game. Nothing upscaled is distributed. `mdk_3ds/tools/build_hd_pack.sh` makes the pack in
+three steps: a C++ tool reads the textures out of your game data, Real-ESRGAN upscales them,
+and they are converted to the 3DS's compressed formats. Besides the 3DS build's prerequisites
+it needs:
 
-- the .NET 10 SDK (`MDK_DOTNET=/path/to/dotnet`; the script builds the C# port in `src/` and
-  runs its texture upscaler),
-- a GPU with a Vulkan driver (there is no CPU fallback),
-- network access once, to download the pinned Real-ESRGAN release.
+- a GPU with a Vulkan driver and the Vulkan loader (`libvulkan1`); there is no CPU fallback,
+- network access once, to download the pinned Real-ESRGAN release (about 45 MB, SHA-256
+  checked, into `build-hd-tools/`).
 
 ```
-MDK_DOTNET=/path/to/dotnet mdk_3ds/tools/build_hd_pack.sh
+export MDK_DATA_DIR="/path/to/MDK"
+tools/check_prereqs.sh hd
+mdk_3ds/tools/build_hd_pack.sh                # all levels; --levels 3,7 for some
 ```
 
-It writes `build-hd-pack/`. Copy its contents to the SD card as `/3ds/mdk/hd/` (so that
+All six levels take minutes on a desktop GPU and the encoding takes longer than the upscaling.
+A second run only redoes what changed. It writes the upscaled textures to `build-hd-mod/` and
+the pack to `build-hd-pack/`. Copy the pack's contents to the SD card as `/3ds/mdk/hd/` (so that
 `/3ds/mdk/hd/manifest.txt` exists), then turn on HD TEXTURES in the SELECT menu (or set
 `enableHdTextures=1` in `/3ds/mdk/config.ini`); it takes effect from the next level loaded.
 The pack is read from the SD card, not from the `.3dsx`.

@@ -4,6 +4,7 @@
 #
 #   tools/check_prereqs.sh 3ds      the 3DS .3dsx (make -C mdk_3ds runs this first)
 #   tools/check_prereqs.sh linux    the Linux build (cmake)
+#   tools/check_prereqs.sh hd       the 3DS HD pack (mdk_3ds/tools/build_hd_pack.sh)
 #
 # Prints one line per missing thing and exits 1 if anything is missing, so a
 # build stops in the first second instead of after minutes of compiling, or
@@ -95,6 +96,15 @@ case "$TARGET" in
         [ "$found" -eq 1 ] || missing "game data: $DATA has no TRAVERSE folder; point it at the folder MDK is installed in"
     fi
     ;;
+hd)
+    check_python "the HD mod and pack"
+    check_host_cxx "the HD texture export"
+    [ -x "${TEX3DS:-${DEVKITPRO:-/opt/devkitpro}/tools/bin/tex3ds}" ] ||
+        missing "tex3ds (devkitPro package tex3ds; or set TEX3DS)"
+    # Not `| grep -q`: with pipefail, grep quitting early kills ldconfig (SIGPIPE).
+    case "$(ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null)" in *libvulkan.so.1*) ;; *) false ;; esac ||
+        missing "the Vulkan loader libvulkan.so.1 (e.g. libvulkan1) and a GPU driver, for Real-ESRGAN"
+    ;;
 linux)
     need_cmd cmake "CMake 3.16 or newer"
     need_cmd make "GNU make"
@@ -111,7 +121,7 @@ linux)
     fi
     ;;
 *)
-    echo "usage: $0 3ds|linux" >&2
+    echo "usage: $0 3ds|linux|hd" >&2
     exit 2
     ;;
 esac
