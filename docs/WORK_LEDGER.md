@@ -2745,3 +2745,37 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   rebuilt: that set still holds M_COMM from the old decode under the old key,
   and its by-name index serves it. Not run on a console or in Mandarine.
 - **Commit:** this one.
+
+## 2026-11-26 -- second README pass: the native HD generator (branch build/docs)
+
+- **What:** merged `build/hd-pack-native` (bd9e3f66: no .NET; `hd_export/hd_tex_export` +
+  `build_hd_mod.py`; the `Texture::parseAnimated` delta fix) into `build/docs`, this ledger
+  unioned. README's HD section rewritten for that flow (no .NET anywhere in the README, the
+  "being replaced" note gone); `tools/check_prereqs.sh hd` (Python modules, host C++ and zlib,
+  tex3ds, `libvulkan.so.1`; 8 lines) and the README names it.
+- **Why:** owner's plan: "we will update it again once the C++ texture conversion tool is
+  finished".
+- **Evidence:**
+  - Stale arena cache after the decode fix: the first fresh clone's `build-arena-etc1/` (made
+    before the fix) was brought to this branch and rebuilt incrementally (`make -C mdk_3ds`,
+    32.8 s): `1030 images, 2 encoded now, 1028 kept`. The two re-encoded files are M_COMM's two
+    palette views; their keys moved (`75e6a954...`, `b1861aaf...` -> `33b2ce90...`,
+    `2abcfc49...`), `byname.txt` points at the new files and the old `.t3x` were deleted. No
+    fix needed: the key is the hash of the decoded indices, and the exporter is rebuilt from
+    `texture.cpp` by its dependency files, so a fixed decode makes a new key.
+  - The pinned Real-ESRGAN URL downloads (46,931,474 B) with the pinned SHA-256.
+  - HD steps from a second fresh clone, README order: `tools/check_prereqs.sh hd` passed;
+    `build_hd_pack.sh --levels 3` exit 0 in 399 s at nice 19 under load: export 561 level-3
+    textures + 27 menu images, mod 578 textures, pack 578 (400 ETC1A4, 178 ETC1, 0 failed),
+    `build-hd-pack/manifest.txt` present. **The upscaler was a stand-in** (nearest 4x, same CLI,
+    via `MDK_REALESRGAN_URL=file://...` and its SHA-256), because two other projects' emulators
+    were using the GPU; the real Real-ESRGAN run and the pack on a console are not verified
+    here. The owner's `build-hd-pack/` was not touched.
+  - Clean 3DS build of the merged branch in the second fresh clone: `make -C mdk_3ds -j16`
+    exit 0, 725 s at nice 19 under load, 0 compiler warnings (only make's pre-existing
+    "jobserver unavailable" notice from the exporter sub-make), 1030 arena images, 455 Kurt
+    frames, 50 music tracks.
+  - After the merge (first clone): `make -C tests/formats` 200,650 checks, 0 failures; Linux
+    rebuild 0 warnings; `make -C tests/scripts test` exit 0, 996 PASS, 0 FAIL, 4 SKIP (the
+    frame gate's oracle arms); worktree `tools/check.sh` ALL GATES PASSED.
+- **Commit:** this branch.

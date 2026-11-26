@@ -119,9 +119,10 @@ tools/check_prereqs.sh hd
 mdk_3ds/tools/build_hd_pack.sh                # all levels; --levels 3,7 for some
 ```
 
-All six levels take minutes on a desktop GPU and the encoding takes longer than the upscaling.
-A second run only redoes what changed. It writes the upscaled textures to `build-hd-mod/` and
-the pack to `build-hd-pack/`. Copy the pack's contents to the SD card as `/3ds/mdk/hd/` (so that
+For one level expect several minutes of upscaling on a desktop GPU (level 3 took 217 s on an
+RX 6600) and several more of encoding on the CPU. A second run only redoes what changed. It
+writes the upscaled textures to `build-hd-mod/` and the pack to `build-hd-pack/`. Copy the
+pack's contents to the SD card as `/3ds/mdk/hd/` (so that
 `/3ds/mdk/hd/manifest.txt` exists), then turn on HD TEXTURES in the SELECT menu (or set
 `enableHdTextures=1` in `/3ds/mdk/config.ini`); it takes effect from the next level loaded.
 The pack is read from the SD card, not from the `.3dsx`.
