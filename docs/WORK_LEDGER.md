@@ -2822,4 +2822,26 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   - `make -C tests/scripts test` exit 0 (HdWindow, HdWindowLevels, HeapSplit PASS; the window
     tests fail 8 checks with the script scan or the tier rule broken), `make -C tests/formats`
     exit 0, `tools/check.sh` all gates pass, 3DS build 0 errors.
+- **Review** (independent agent, 2026-11-26): two P3 defects fixed in 17889b9d -- a copy that
+  left the window was freed while the last frame could still be on the GPU, and the in-play wait
+  evicted with nothing protected (it now waits for the GX queue first); an empty window kept the
+  HUD's pictures unpinned; a corridor row skipped as a name collision lost its file. Not changed:
+  the fit counts each arena's own window, not the drawn arenas a teleport's frame may add (the
+  2.1 MiB margin covers one), and a wait gives up after 1 s without progress (logged, counted).
+- **Emulator** (Mandarine r1.2.1 md5 0d2adab6, `DISPLAY=:99`, emurun.sh, harness payloads of
+  throwaway/hd-bubble-change-hw with ROUTE -- waypoint door walks, noclip, god):
+  - L7: `hd: level 7 window: 19 arenas, 144 files, 1 script/trigger neighbours; largest window
+    5959360 bytes, room 10383360`; loading-screen wait 84 files; DANT_1 -> CDANT_1 -> DANT_2 ->
+    CDANT_2, each window's new files resident 0.4 s after it was asked for; 0 waits, 0 draws
+    without their copy.
+  - L8: `largest window 8400064 bytes, room 10398208`, 8 script/trigger neighbours; GUNT_1 ->
+    CGUNT_1 -> GUNT_2 -> CGUNT_2 -> GUNT_3, windows resident 0.7-1.2 s after asked; 0 waits.
+  - The emulator's heap and timing are not the Old 3DS's: these show the logic, not the margins.
+- **Hardware:** the A/B (docs/3DS_ARCHITECTURE.md 8) is built for all six levels (base:
+  c95310c9 + harness, LZ pack; change: this branch + harness, raw pack; same routes) and was
+  queued, but old3ds-lan167 left the network at ~15:30 (ping and ARP dead, broadcast discovery
+  empty) while another agent held the appliance lock; it needs physical power. Not measured yet.
+- **Player build:** `mdk_3ds/mdk.3dsx` of 17889b9d (no harness), kept as
+  `.git/worktrees/hd-bubble/player/mdk-hd-bubble-17889b9d.3dsx`; it needs the raw pack on the SD
+  card (`hd_pack_convert.py --from-pack`).
 - **Commit:** this one.
