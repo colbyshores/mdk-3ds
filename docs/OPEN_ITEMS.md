@@ -1953,7 +1953,7 @@ Still open:
 - ~~Bones' air strike~~ (`FireSniper`'s `Scope.Strike` arm, `AirStrike.Call`): landed with
   package #14 on 2026-11-20 (`golden/L5_strike_gunter.txt`, `L3_strike_teeth.txt`).
 - ~~**The round models are not drawn**~~: both frontends draw them with the objects, and the
-  round cameras are Vulkan insets (#7, 2026-11-20; the 3DS draws no round camera, below).
+  round cameras are insets on both frontends (#7, 2026-11-20; the 3DS's since 2026-11-26).
 - **Bullet holes** (opcode 130, package #16): landed 2026-11-20, see "The bullet holes"
   below. A WALL gets none: the C#'s `MoveStraight` stamps nothing where a round stops on the
   arena, so neither does the port.
@@ -2136,12 +2136,12 @@ sniperhud|sniperiris`, every quad and matrix as bits), and by Linux frames again
 376).
 
 Still open:
-- **The 3DS draws no round camera.** A round camera is a Scene inset: the whole scene submitted
-  again into a 140x70 sub-viewport, three of them, with a depth clear the PICA200 path cannot do
-  for a rectangle. On the Old 3DS that is a second and third frame's worth of command list, so
-  the backend refuses Scene insets (logged once) and the 3DS frontend asks the overlay to fill a
-  watching camera's window as an empty one. Owner-gated: a reduced-rate inset behind an
-  EnhancedMenu toggle is the next step if the owner wants the round views on the console.
+- ~~**The 3DS draws no round camera.**~~ Drawn since 2026-11-26 (fix/3ds-bullet-cam, WORK_LEDGER
+  "The sniper's round cameras on the 3DS"): each watching camera's Scene inset re-submits the
+  frame's scene records through its camera into its sub-viewport, depth reset by a far-plane
+  quad, in each eye. Known differences from the C#: the inset's sky is the 3DS's queued dome
+  (only under Backdrop::Sky, centred on the scope's eye), not a panorama centred on the inset;
+  the sun shadow map stays centred on Kurt.
 - **The 3DS overlay's budget**: the frame and the mask are drawn from 63x63 pieces of every
   second texel (`SniperOverlay::Budget`, ~0.4 MiB of linear memory instead of 4 MiB); the
   transparent pieces are not made. Unmeasured on hardware: the pieces' cost (~100 canvas quads)

@@ -223,8 +223,9 @@ static void installAlphaTest(RendererC3D* r, int reference, bool force);
 // `pica::depthPasses` pins that tie.
 static void installDepthState(RendererC3D* r, mdk::pica::DepthState state) {
     C3D_DepthTest(state.test,
-                  state.test ? (state.equal ? GPU_EQUAL : GPU_LEQUAL) : GPU_ALWAYS,
-                  state.write ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
+                  state.test && !state.reset ? (state.equal ? GPU_EQUAL : GPU_LEQUAL)
+                                             : GPU_ALWAYS,
+                  state.reset ? GPU_WRITE_DEPTH : state.write ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
     r->depthTest = state.test;
     r->depthWrite = state.write;
 }

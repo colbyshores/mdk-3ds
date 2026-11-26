@@ -529,8 +529,9 @@ int32_t mdk_render_canvas_capacity(MdkRenderer r);
 //   * Vulkan draws both kinds, each in its viewport and scissor with its depth
 //     cleared; not in a stereo frame (refused once).
 //   * Citro3D draws an Own inset's meshes the canvas's way (one composed matrix
-//     onto the rectangle, no depth, no cull) and NO Scene inset (refused once in
-//     the log): a second pass of the whole scene is not this target's budget.
+//     onto the rectangle, no depth, no cull), and a Scene inset as the frame's
+//     scene records again through its camera in its viewport, its depth reset by
+//     a far-plane quad, in each eye (at most three a frame).
 // A zero-area inset draws nothing.
 void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* inset);
 void mdk_render_end_inset(MdkRenderer r);

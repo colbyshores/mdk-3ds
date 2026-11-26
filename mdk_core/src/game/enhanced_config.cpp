@@ -190,6 +190,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->scopeMono = value;
     } else if (keyIs(begin, keyEnd, "scopeClip")) {
         toggles->scopeClip = value;
+    } else if (keyIs(begin, keyEnd, "sniperRoundCams")) {
+        toggles->sniperRoundCams = value;
     }
 }
 
@@ -252,6 +254,7 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "scopeMono", toggles.scopeMono);
     // 3DS: the scene clipped to the scope's window (render_types.h).
     appendToggle(&out, "scopeClip", toggles.scopeClip);
+    appendToggle(&out, "sniperRoundCams", toggles.sniperRoundCams);
     // 3DS: debris this many pixels or smaller is not drawn, 0 = off (render_types.h).
     snprintf(size, sizeof(size), "tinyDebrisPixels=%d\n", (int)toggles.tinyDebrisPixels);
     out.append(size);

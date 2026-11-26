@@ -1106,27 +1106,43 @@ def adjudicate(text, quiet=False):
     # eye and any game frame: testNativeShadowWrites, the once-per-session test
     # of the PICA's own shadow writes, which draws one quad into an 8x8 texture of
     # its own in a frame of its own before the first frame that wants a shadow.
+    # drawSceneInsets (the sniper's round cameras) is replayQueue's too, once per
+    # eye at the glow's slot: its depth-reset quad and its records' re-submit
+    # (`scene-insets-only-from-the-replay` below).
     allowed = [line_range(text, body_span(text, n))
                for n in ("drawRecorded", "drawDiagnostic", "drawGlow", "drawGlowBillboards",
-                         "castShadows", "testNativeShadowWrites", "testSampleShadowMap")]
+                         "castShadows", "testNativeShadowWrites", "testSampleShadowMap",
+                         "drawSceneInsets")]
     stray = [loc for ln, loc in sites(text, EMIT_DRAW)
              if not any(r and r[0] <= ln <= r[1] for r in allowed)]
     rep.check("emission-sites-closed",
               not stray and all(allowed),
               "%d draw call(s) outside drawRecorded/drawDiagnostic/drawGlow/drawGlowBillboards/castShadows/"
-              "testNativeShadowWrites/testSampleShadowMap: %s (an immediate draw "
+              "testNativeShadowWrites/testSampleShadowMap/drawSceneInsets: %s (an immediate draw "
               "anywhere else is outside the per-eye replay, so it lands in one target or "
               "none)" % (len(stray), "none" if not stray else "; ".join(stray)))
 
     rec = call_sites(text, "drawRecorded")
     rec_range = line_range(text, body_span(text, "replayQueue"))
+    inset_range = line_range(text, body_span(text, "drawSceneInsets"))
     stray_rec = [loc for ln, loc in rec
-                 if not (rec_range and rec_range[0] <= ln <= rec_range[1])]
+                 if not (rec_range and rec_range[0] <= ln <= rec_range[1])
+                 and not (inset_range and inset_range[0] <= ln <= inset_range[1])]
     rep.check("recorded-draws-only-from-the-replay",
               len(rec) >= 1 and not stray_rec,
-              "%d drawRecorded call(s), %d outside replayQueue: %s (a record drawn from a "
-              "seam skips the eye loop)"
+              "%d drawRecorded call(s), %d outside replayQueue and drawSceneInsets: %s (a "
+              "record drawn from a seam skips the eye loop)"
               % (len(rec), len(stray_rec), "none" if not stray_rec else "; ".join(stray_rec)))
+    # drawSceneInsets is itself reached only from replayQueue, so its draws are
+    # inside the eye loop like the rest.
+    ins = call_sites(text, "drawSceneInsets")
+    stray_ins = [loc for ln, loc in ins
+                 if not (rec_range and rec_range[0] <= ln <= rec_range[1])]
+    rep.check("scene-insets-only-from-the-replay",
+              len(ins) >= 1 and not stray_ins,
+              "%d drawSceneInsets call(s), %d outside replayQueue: %s (the round cameras "
+              "drawn from a seam would land in one eye or none)"
+              % (len(ins), len(stray_ins), "none" if not stray_ins else "; ".join(stray_ins)))
 
     depth = calls(text, r"C3D_DepthTest\(")
     rep.check("depth-state-single-writer", len(depth) == 1,
@@ -1268,7 +1284,7 @@ def adjudicate(text, quiet=False):
                                  for fn in ("drawRecorded", "drawDiagnostic", "drawGlow",
                                             "drawGlowBillboards", "glowDrawState",
                                             "castShadows", "testNativeShadowWrites",
-                                            "testSampleShadowMap")) if rg]
+                                            "testSampleShadowMap", "drawSceneInsets")) if rg]
     in_eye = [loc for ln, loc in bind if eye_range and eye_range[0] <= ln <= eye_range[1]]
     bind_stray = [loc for ln, loc in bind
                   if not (eye_range and eye_range[0] <= ln <= eye_range[1])

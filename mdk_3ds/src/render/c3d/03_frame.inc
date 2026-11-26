@@ -145,6 +145,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
         }
     }
     r->queue.reset();
+    r->sceneInsetCount = 0;
 
     // THE CLEAR COLOUR IS CONVERTED, NOT PASSED THROUGH. The seam carries
     // 0xAARRGGBB (what the Vulkan backend unpacks, and what both frontends
@@ -324,6 +325,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     r->canvasDrawsThisFrame = 0;
     r->queue.reset();
     r->insetOverDraws.clear();
+    r->sceneInsetCount = 0;
     r->insetOpen = false;
     r->sceneWindowOn = false;
     // C3D_FrameEnd is the ONLY present path. It triggers the auto display

@@ -2393,6 +2393,19 @@ int main(int argc, char** argv) {
             }
             arenaViews.draw(*frameDrawn);
         }
+        // A sniper round camera watching its round (SniperView's insets, below)
+        // sees the scene from the round, 90 degrees wide: the scope's frustum
+        // does not cover it, so the object and effects culls (the frustum and the
+        // tiny-size ones) are off while one watches (EnhancedToggles::sniperRoundCams).
+        bool roundWatching = false;
+        if (runtime && playerReady && player.sniping() && enhancedToggles.sniperRoundCams) {
+            for (int32_t i = 0; i < mdk::scripts::SniperRounds::kSlots; i++) {
+                if (runtime->sniperRounds().camera(i).shot ==
+                    mdk::scripts::SniperRounds::ShotWatching) {
+                    roundWatching = true;
+                }
+            }
+        }
         if (runtime) {
             // C# Viewer.DrawScene draws the objects after the arena and before
             // Kurt (Viewer.cs:702-708): every object the scripts hold, in its
@@ -2428,7 +2441,7 @@ int main(int argc, char** argv) {
             // separation; the eyes are this frustum translated along the
             // camera's right axis).
             mdk::Frustum objectFrustum;
-            if (mdk::buildFrustum(sceneCamera, &objectFrustum)) {
+            if (!roundWatching && mdk::buildFrustum(sceneCamera, &objectFrustum)) {
                 objectView.setCullFrustum(&objectFrustum,
                                           mdk::g_gameSettings.stereoSeparation * 0.5f);
             } else {
@@ -2441,7 +2454,8 @@ int main(int argc, char** argv) {
             // eyes), is not drawn until it covers more than 1.25 times as many --
             // ObjectView tests it after the frustum cull, on the same sphere.
             // Drawing only: the runtime has already run it this frame.
-            const float tinyHide = (float)enhancedToggles.tinyEnemyPixels;
+            // Off while a round camera watches: its view is not the scope's.
+            const float tinyHide = roundWatching ? 0.0f : (float)enhancedToggles.tinyEnemyPixels;
             objectView.setTinyCull(&sceneCamera, tinyHide, tinyHide * 1.25f, kTopWidth,
                                    kTopHeight);
             size_t slot = 0;
@@ -2604,7 +2618,7 @@ int main(int argc, char** argv) {
             // centre frustum and stereo margin, so a piece or sprite behind the
             // camera or off to the side is not built (the Linux build culls none).
             mdk::Frustum effectsFrustum;
-            if (mdk::buildFrustum(sceneCamera, &effectsFrustum)) {
+            if (!roundWatching && mdk::buildFrustum(sceneCamera, &effectsFrustum)) {
                 effectsView.setCullFrustum(&effectsFrustum,
                                            mdk::g_gameSettings.stereoSeparation * 0.5f);
             } else {
@@ -2613,8 +2627,9 @@ int main(int argc, char** argv) {
             // Debris this small on the top screen is not drawn (EnhancedToggles::
             // tinyDebrisPixels, 0 = off): one decision for both eyes, at the
             // scene camera's zoom.
-            effectsView.setTinyPieceCull((float)enhancedToggles.tinyDebrisPixels, kTopWidth,
-                                         kTopHeight);
+            effectsView.setTinyPieceCull(
+                roundWatching ? 0.0f : (float)enhancedToggles.tinyDebrisPixels, kTopWidth,
+                kTopHeight);
             effectsView.build(*runtime, sceneCamera, &effectsFrame, runtime->tick_blend(pending));
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
             if (effectsDraw.allocationFailed()) {
@@ -2631,10 +2646,11 @@ int main(int argc, char** argv) {
             }
         }
         if (playerReady && !strikeFrame) {
-            // The rest of C# SniperView.Draw (Viewer.cs:706): the overlay's state and
-            // the loaded rounds' inset. NO round-camera insets on this target
-            // (sniper_view.h): a watching camera's window is filled as an empty one.
-            sniperView.draw(renderer, hud.sniper(), player, runtime.get(), elapsed, false,
+            // The rest of C# SniperView.Draw (Viewer.cs:706): the overlay's state, the
+            // round cameras' insets (EnhancedToggles::sniperRoundCams) and the
+            // loaded rounds' inset.
+            sniperView.draw(renderer, hud.sniper(), player, runtime.get(), elapsed,
+                            enhancedToggles.sniperRoundCams,
                             objectView, &surfaces,
                             objectLook(runtime ? runtime->currentArena() : std::string()),
                             runtime ? runtime->tick_blend(pending) : 1.0f);

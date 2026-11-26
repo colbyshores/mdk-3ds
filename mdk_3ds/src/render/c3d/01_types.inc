@@ -44,6 +44,8 @@ static constexpr GPU_CULLMODE kSolidCull = GPU_CULL_FRONT_CCW;
 // grows when the frame's staging needs it, and the budget is checked
 // against the free VRAM.
 static constexpr size_t kGpuScratchSize = 256u * 1024u;
+// Where in the scratch the scene insets' depth quad lives (02_lifecycle.inc).
+static constexpr size_t kInsetQuadOffset = 4096u;
 
 // The canvas's quad ceiling, in QUADS, and the single definition of it. The
 // oracle's own cap is `CanvasQuads = 4096` (Renderer.cs:198), compared against
@@ -697,10 +699,23 @@ struct RendererC3D {
     // of the canvas and the canvas's own matrix (pica::canvasMatrix) -- so they go
     // through the canvas's path: no depth, no cull, drawn in record order. Those
     // over the canvas wait in `insetOverDraws` for the end of each eye's Overlay
-    // bucket (replayQueue). A Scene inset (a round camera: the whole scene again in
-    // a sub-viewport) is NOT drawn on this target: the frontend does not ask for
-    // one (sniper_view.h), and one that arrives is refused once in the log.
+    // bucket (replayQueue). A Scene inset (a sniper round camera: the frame's scene
+    // again through the round's camera, in its window under the canvas; C#
+    // Renderer.Insets.cs RenderInset) is kept in `sceneInsets` and drawn in each
+    // eye's replay after the scene and the glow, before the canvas
+    // (drawSceneInsets, 06_queue.inc). The sniper screen has three windows.
     bool insetOpen = false;
+    struct SceneInset {
+        float rect[4];          // x, y, width, height on the canvas
+        float view[16];
+        float projection[16];
+        float position[3];      // the camera's eye, for the lit programs' face turn
+    };
+    static const int32_t kMaxSceneInsets = 3;
+    SceneInset sceneInsets[kMaxSceneInsets];
+    int32_t sceneInsetCount = 0;
+    // The eye installEye installed last (its offset), for the insets' own matrices.
+    float eyeOffset = 0.0f;
     // THE SCENE WINDOW (mdk_render_set_scene_window), this frame's: the canvas
     // rectangle the scene's draws are scissored to in replayQueue.
     bool sceneWindowOn = false;
