@@ -2308,9 +2308,9 @@ int main(int argc, char** argv) {
         // A sniper round camera watching its round (SniperView's insets, below)
         // sees the scene from the round, 90 degrees wide: the scope's frustum
         // does not cover it, so the object and effects culls (the frustum and the
-        // tiny-size ones) are off while one watches.
+        // tiny-size ones) are off while one watches (EnhancedToggles::sniperRoundCams).
         bool roundWatching = false;
-        if (runtime && playerReady && player.sniping()) {
+        if (runtime && playerReady && player.sniping() && enhancedToggles.sniperRoundCams) {
             for (int32_t i = 0; i < mdk::scripts::SniperRounds::kSlots; i++) {
                 if (runtime->sniperRounds().camera(i).shot ==
                     mdk::scripts::SniperRounds::ShotWatching) {
@@ -2537,8 +2537,10 @@ int main(int argc, char** argv) {
         }
         if (playerReady && !strikeFrame) {
             // The rest of C# SniperView.Draw (Viewer.cs:706): the overlay's state, the
-            // round cameras' insets and the loaded rounds' inset.
-            sniperView.draw(renderer, hud.sniper(), player, runtime.get(), elapsed, true,
+            // round cameras' insets (EnhancedToggles::sniperRoundCams) and the
+            // loaded rounds' inset.
+            sniperView.draw(renderer, hud.sniper(), player, runtime.get(), elapsed,
+                            enhancedToggles.sniperRoundCams,
                             objectView, &surfaces,
                             objectLook(runtime ? runtime->currentArena() : std::string()));
             if (sniperView.allocationFailed()) {

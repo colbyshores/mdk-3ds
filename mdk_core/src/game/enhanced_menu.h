@@ -87,9 +87,9 @@ public:
     };
 
     // The rows: RESUME, the settings (MOVIES HALF RATE, package #20c, then the
-    // 3DS draw culls: TINY DEBRIS, TINY ENEMIES, then SCOPE IN 2D and SCOPE CLIP),
-    // CHEATS (#21), OPTIONS, MAIN MENU, QUIT.
-    static const int32_t kItemCount = 23;
+    // 3DS draw culls: TINY DEBRIS, TINY ENEMIES, then SCOPE IN 2D, SCOPE CLIP and
+    // ROUND CAMERAS), CHEATS (#21), OPTIONS, MAIN MENU, QUIT.
+    static const int32_t kItemCount = 24;
     static const int32_t kResumeRow = 0;
     static const int32_t kCheatsRow = kItemCount + 1;
     static const int32_t kOptionsRow = kItemCount + 2;

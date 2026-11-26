@@ -370,6 +370,13 @@ struct EnhancedToggles {
     // covers everything outside it), so the fill the frame hides is not
     // paid. The picture is the same. On by default. The PC ignores it.
     bool scopeClip = true;
+
+    // 3DS: the sniper's round cameras (the three windows at the top of the scope)
+    // show the round's chase view, as the C#'s: the scene again through each
+    // watching camera, in both eyes. Off, a watching window is an empty fill.
+    // Measured on the Old 3DS (level 3, stereo): ~44 ms a frame while a camera
+    // watches, against ~33.5 with it off. On by default. The PC ignores it.
+    bool sniperRoundCams = true;
 };
 
 // ---------------------------------------------------------------------------

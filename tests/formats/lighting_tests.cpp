@@ -442,10 +442,10 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(10), "EDGE SMOOTHING");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kQuitRow), "QUIT");
     // + OPTIONS and MAIN MENU, the C# PauseMenu's rows (package #20a).
-    // 23 settings (MOVIES HALF RATE, package #20c, then TINY DEBRIS, TINY
-    // ENEMIES, SCOPE IN 2D and SCOPE CLIP), RESUME, CHEATS (gap package #21),
-    // OPTIONS, MAIN MENU, QUIT.
-    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 28);
+    // 24 settings (MOVIES HALF RATE, package #20c, then TINY DEBRIS, TINY
+    // ENEMIES, SCOPE IN 2D, SCOPE CLIP and ROUND CAMERAS), RESUME, CHEATS (gap
+    // package #21), OPTIONS, MAIN MENU, QUIT.
+    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 29);
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kCheatsRow), "CHEATS");
     // Left/right on RESUME flip nothing.
     mdk::EnhancedMenu::Input left;
@@ -586,9 +586,10 @@ std::string menuValue(int32_t row, const mdk::EnhancedToggles& toggles) {
 MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
     using Action = mdk::EnhancedMenu::Action;
     using Menu = mdk::EnhancedMenu;
-    MDK_CHECK_EQ(Menu::kItemCount, 23);   // + MOVIES HALF RATE (package #20c), row 19
+    MDK_CHECK_EQ(Menu::kItemCount, 24);   // + MOVIES HALF RATE (package #20c), row 19
                                           // + TINY DEBRIS, row 20; TINY ENEMIES, row 21
                                           // + SCOPE IN 2D, row 22; SCOPE CLIP, row 23
+                                          // + ROUND CAMERAS, row 24
     MDK_CHECK_EQ(Menu::kQuitRow, Menu::kRowCount - 1);
     // The rows after the ten toggles, in order.
     MDK_CHECK_EQ(menuRowOf("30 FPS CAP"), 11);
@@ -818,6 +819,21 @@ MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
         mdk::EnhancedToggles back;
         MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
         MDK_CHECK(!back.scopeClip);
+    }
+    // THE ROUND CAMERAS: on by default (the C#'s), row 24, a config line.
+    {
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        MDK_CHECK(toggles.sniperRoundCams);
+        menuSelect(&menu, &toggles, 24);
+        MDK_CHECK(menuValue(24, toggles) == "ON");
+        MDK_CHECK(menu.handle(confirm, &toggles) == Action::Changed);
+        MDK_CHECK(!toggles.sniperRoundCams);
+        const std::string text = mdk::writeEnhancedConfig(toggles);
+        MDK_CHECK(text.find("sniperRoundCams=0\n") != std::string::npos);
+        mdk::EnhancedToggles back;
+        MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
+        MDK_CHECK(!back.sniperRoundCams);
     }
 }
 

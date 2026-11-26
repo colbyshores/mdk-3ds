@@ -73,6 +73,8 @@ const Item kItems[EnhancedMenu::kItemCount] = {
      0},
     {"SCOPE CLIP", Kind::Toggle, &EnhancedToggles::scopeClip, nullptr, nullptr, nullptr, nullptr,
      0},
+    {"ROUND CAMERAS", Kind::Toggle, &EnhancedToggles::sniperRoundCams, nullptr, nullptr, nullptr,
+     nullptr, 0},
 };
 
 bool isItemRow(int32_t row) {
