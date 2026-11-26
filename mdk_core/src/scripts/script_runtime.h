@@ -204,6 +204,12 @@ public:
     ArenaState& getArenaState(const std::string& arena);
     MdkObject* spawn(MdkObject* parent, const std::string& type, const Vec3& position, float yaw,
                      int32_t instance, int32_t script, bool flagged);
+    // spawn_flagged (opcode 161, 0x451b88; upstream e1d13fdf): an object, or for the
+    // model-less pickups SW_EWJ and BONEFLC a sprite box (spawn_box 0x45cca8) of 6x6x6 and
+    // 9x9x6, flagged 0x2008a6 either way. LEVEL4's board runs lost 20 bones and 11 EWJ,
+    // LEVEL8 2 EWJ.
+    void spawnFlagged(MdkObject* parent, const std::string& type, const Vec3& position,
+                      int32_t script);
     void spawnConnector(MdkObject* obj, const std::string& type, const Vec3& position, float yaw,
                         int32_t instance, const std::string& otherArena, int32_t script);
     // Path following (ObjectMotion's path reads): a path is a run of keys in the

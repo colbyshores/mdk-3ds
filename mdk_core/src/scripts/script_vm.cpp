@@ -762,7 +762,7 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.spawn(obj, strval(op(ins, 3)), vpos(ins), 0.0f, -1, ival(op(ins, 4)), false);
             break;
         case 161:  // spawn_flagged
-            runtime_.spawn(obj, strval(op(ins, 3)), vpos(ins), 0.0f, -1, ival(op(ins, 4)), true);
+            runtime_.spawnFlagged(obj, strval(op(ins, 3)), vpos(ins), ival(op(ins, 4)));
             break;
         case 230:  // spawn_ex
             runtime_.spawn(obj, strval(op(ins, 5)), vpos(ins), fval(op(ins, 3)), ival(op(ins, 4)),

@@ -3035,3 +3035,13 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     `player_state.inc` "a file with a loop", so `wrapAnimationFrame`'s `%` became a
     candidate. `animateJump` moved to `player_vertical.inc` (the jump's file, no `%`);
     `tools/check.sh` then passes all gates.
+  - **e1d13fdf, spawn LEVEL4's red bones and EWJ pickups.** Opcode 161 goes through
+    `ScriptRuntime::spawnFlagged`: SW_EWJ and BONEFLC have no model, so they become sprite
+    boxes (6x6x6 and 9x9x6) flagged 0x2008a6 instead of being dropped; anything else
+    spawns as before. LEVEL4's board runs had lost 20 bones and 11 EWJ, LEVEL8 2 EWJ. Six
+    goldens moved; five equal the oracle at e1d13fdf byte for byte (`L4_board_ride`,
+    `L4_board_lost`, `L4_board_dead`, `L4_board_end`, `L4_hazards_snow`) and
+    `L4_board_off` takes the C++'s output (the same 5 trig-LUT lines as at 3f9315c5; a libm
+    `Player::facing` scratch build equals the oracle). Upstream's companion 84ad71e4
+    (stretch a spawn_box sprite over its box, so a bone draws 9x6, not 9x5) is a drawing
+    change and is left to the presentation work.

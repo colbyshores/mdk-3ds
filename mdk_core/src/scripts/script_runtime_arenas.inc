@@ -453,6 +453,20 @@ void ScriptRuntime::spawnDtiAliens(const std::string& arena) {
     }
 }
 
+void ScriptRuntime::spawnFlagged(MdkObject* parent, const std::string& type, const Vec3& position,
+                                 int32_t script) {
+    Vec3 size;
+    if (type == "SW_EWJ") {
+        size = Vec3{6.0f, 6.0f, 6.0f};
+    } else if (type == "BONEFLC") {
+        size = Vec3{9.0f, 9.0f, 6.0f};
+    } else {
+        spawn(parent, type, position, 0.0f, -1, script, true);
+        return;
+    }
+    spawnBox(parent, position, size, type, script)->flags = kSpawnFlaggedFlags;
+}
+
 MdkObject* ScriptRuntime::spawn(MdkObject* parent, const std::string& type, const Vec3& position,
                                 float yaw, int32_t instance, int32_t script, bool flagged) {
     const uint64_t probeStart = probeClock != nullptr ? probeClock() : 0;
