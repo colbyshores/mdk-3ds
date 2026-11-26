@@ -2364,11 +2364,12 @@ void testBossBarShowsOnlyWhileKurtFires(LevelData* levelData, const Cmi* cmi,
     CHECK(runtime.barTime == 0.0f);
 }
 
-// Opcode 209 (if_player_on_me_low): Kurt stands on the object, fires, and is not above
-// its top (ScriptVm.cs:1269-1273). With no Player bound there is no Kurt to stand on
-// anything (GetKurtPlatform is null), so the branch is not taken even while he fires;
-// what this pins is that the opcode is dispatched (not the unimplemented bucket). The
-// platform half is pinned on a real platform by golden/L3_plat_keeper.txt.
+// Opcode 209 (if_player_on_me_low): Kurt stands on the object and fires (0x458a59; the
+// upstream C# fix 3b072d2a dropped the oracle's feet-not-above-the-model's-top test).
+// With no Player bound there is no Kurt to stand on anything (GetKurtPlatform is null),
+// so the branch is not taken even while he fires; what this pins is that the opcode is
+// dispatched (not the unimplemented bucket). The true answer is pinned on LEVEL6's
+// cannon by tick1's L6_cannon case.
 void testIfPlayerOnMeLowNeedsThePlatform(LevelData* levelData, const Cmi* cmi,
                                          audio::SoundBank* bank) {
     scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);

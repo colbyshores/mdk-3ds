@@ -2620,3 +2620,55 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Not tested on hardware:** toggling HD in the pause menu (the remake path;
   the harness's HDFLIP does not go through the menu), levels other than 3.
 - **Commit:** this one (ledger only).
+
+## 2026-11-26
+
+### LEVEL6 (in-game level 2): the OLYM_4 cannon never fired with Kurt on it
+- **What:** opcode 209 (`if_player_on_me_low`) in `mdk_core/src/scripts/script_vm.cpp`
+  is now "Kurt's platform is this object and he fires". It also required his feet to be
+  at or below the object's model top (`kurtPosition().z <= worldBounds(obj).max.z`). That
+  test was dropped.
+- **Why:** the owner's report (2026-11-26, photo in `.git/mdk-review/owner-reports/`):
+  on level 2's row of cannons, Kurt stands on the middle one and fires, and nothing
+  happens. The cannon should fire on each shot, and the third shot should send it through
+  the window behind him.
+  - The level is LEVEL6 (`kOrder = {7, 6, 3, 4, 8, 5}`). OLYM_4 spawns six XBGUN. The
+    middle one at x -1732 runs script 23159: `if_player_on_me` (114) raises it. Then a loop
+    on 209 fires XBG_B1 and counts shots in var 2.0. Once that count is past 2 (the third
+    shot), the cannon follows path 35601. At path frame 4 it hides and shatters group 1
+    (the window), shows COLYM_4 and preloads OLYM_5. When the path ends it dies and drops
+    Kurt.
+  - Root cause: once the cannon has risen, Kurt's feet are 0.02 above its model's top,
+    so 209 was always false. On the host the script sat at 23193 for the whole run while
+    Kurt stood on it in the Shot state.
+  - The C++ copied the C# in `src/`, which is v1.1.1 and has the same bug. Upstream fixed
+    it in `3b072d2a` "Fire LEVEL6's cannon with Kurt on it" (v1.2.1, origin/main). The
+    original (0x458a59) compares his feet with his floor on the platform (0x573a1c), and
+    standing on the platform already means that test passes. The fix ports upstream's
+    change.
+  - Every other opcode in the sequence was checked against the C# and is implemented. That
+    covers the XBGUN script, XBG_B1's script, and OLYM_4's arena script (114, 68, 3, 154, 12,
+    1, 66, 89, 61, 67, 64, 92, 116, 2, 33, 98, 138, 100, 102, 41, 240, 223, 16, 210, 53,
+    106, 218, 17, 50, 88, 107, 158, 238, 172, 135, 71, 247, 119, 86, 161, 230, 252). The
+    run to OLYM_5 also put no opcode in the VM's unimplemented bucket.
+  - 209 occurs once in the whole game (all six CMIs disassembled), so no other level
+    depends on it.
+- **Related, not fixed here:** upstream `d14ed0b5` "Run objects newest first, per arena"
+  (after v1.2.1) fixes LEVEL7 DANT_6's cannon XD6GUN, which blew up as soon as Kurt came
+  near. Newly spawned XG had not yet counted themselves in var 1.0 when the cannon checked
+  that count. The port still appends new objects and runs one mixed list (`objects_.push_back`
+  in `script_runtime_arenas.inc`), so in-game level 1's window cannon probably has the same
+  bug. This is not verified in the port. The fix changes the object order for every level,
+  and many goldens pin that order, so it needs its own increment.
+- **Evidence:**
+  - Host: the new `tick1` case `L6_cannon` drops Kurt on the middle XBGUN and holds fire
+    from step 60. It checks, in order: he stands on it, it fires (23250), it takes the path
+    (23266), the window shatters (23303), it carries him in COLYM_4, and at step 700 he is
+    in OLYM_5.
+  - The case fails on the unfixed VM (`never reached "/r23250"`) and passes with the fix.
+  - The case checks markers, not a golden, because the C# oracle cannot run here (no
+    dotnet) and its v1.1.1 copy has the bug.
+  - Linux build, `make -C tests/scripts test`, `make -C tests/formats` (200,624 checks, 0
+    failures) and `tools/check.sh` all pass with zero warnings.
+  - Hardware: see below.
+- **Commit:** this one.
