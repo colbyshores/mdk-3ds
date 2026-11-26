@@ -2779,3 +2779,75 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     rebuild 0 warnings; `make -C tests/scripts test` exit 0, 996 PASS, 0 FAIL, 4 SKIP (the
     frame gate's oracle arms); worktree `tools/check.sh` ALL GATES PASSED.
 - **Commit:** this branch.
+
+## 2026-11-26 -- one streaming worker on core 1, both models (branch fix/3ds-second-core-streaming, step 1 of docs/3DS_ARCHITECTURE.md section 7)
+
+- **Owner (relayed):** "both 3DS units use the second core for streaming in assets";
+  "WE ARENT SPLITTING UP THE ARCHITECTURE BETWEEN BOTH 3DS MODELS"; "the OS core has
+  more than enough resources to stream music, play sounds and handle asset loading and
+  unloading on that OG 3DS". Written up as docs/3DS_ARCHITECTURE.md (arch/3ds-platform
+  6f038e68), which this branch is based on.
+- **What:** `platform/stream_worker_3ds.{h,cpp}`: ONE application thread on core 1
+  (`APT_SetAppCpuTimeLimit(kSyscorePercent)` first; 30% until the sweep below is run),
+  the same on the Old and New 3DS. It replaces three threads -- the DSP music worker,
+  the async file reader and the log writer -- and `side_core_3ds` (core 2 on a New
+  3DS, core 1 for the music only on an Old one), which is deleted. Each pass: the music
+  (`audioDspWorkerPass`, its 25 ms tick or a start/stop/prime kick), then one 64 KiB
+  chunk of the best-ranked read (`AsyncFileReader::step`, channel order unchanged: Kurt's
+  pack, menu files, orig pack, HD), then the log when nothing waits or after 100 ms.
+  Services attach/detach under the lock the worker holds for its pass (P4); started
+  after the log opens, stopped before it closes on all three exit paths; FZ/DN at entry
+  (R1); a refused share or failed thread puts it on core -2 and logs "OFF THE TWO-CORE
+  LAYOUT". New log lines for the A/B: `stream:` (every 10 s: busy share by service,
+  read queue depth), `reader:` (files, bytes, worker time, longest open-to-finish),
+  `stream: worker running on core N` (svcGetProcessorID), `level: loaded in`,
+  `pack: MAIN-THREAD read`, `audio: dsp close` (underruns, slowest music read, effect
+  copies on main). Review (independent agent) found the OOM handler closing the log
+  under a running worker and an unfair-lock wait at attach/detach; both fixed.
+- **Where each piece of asset work runs** (before = main 89c119b5 on the Old 3DS /
+  New 3DS; after = both models):
+
+  | work | before | after |
+  |---|---|---|
+  | music streaming + primes (DSP-ADPCM reads) | core 1 (Old) / core 2 (New) | core 1 worker |
+  | HD .t3x reads + LZ11 unpack, orig .t3x reads, Kurt pack ranges, menu files + GIF decode | core 0 below main (Old) / core 2 (New) | core 1 worker, chunked |
+  | log writes | core 0 below main (Old) / core 2 (New) | core 1 worker |
+  | `finishPackNow` read (a drawn surface whose read has not landed) | core 0, in the frame | unchanged, now logged per read |
+  | `SoundBank::get` decode on a sound's first use, and its DSP arena copy (`arenaGet`) | core 0 | unchanged (copy time now logged); NOT yet core 1 |
+  | level-load reads (MTO/CMI/BNI/SNI, sky, manifests, music folder) | core 0, loading screen | unchanged |
+  | Tex3DS import, C3D_TexInit/Delete, expansion + mip build, evictions | core 0 | unchanged: citro3d owner (P2/P3), step 2/3 of the doc |
+
+- **Evidence:**
+  - 3DS release and harness builds: zero compiler warnings. Linux build; tests/scripts
+    exit 0; tests/formats 200650 checks, 0 failures; tools/check.sh all gates PASS.
+  - Mandarine (r1.2.1 md5 0d2adab6, DISPLAY=:99, `emurun.sh --secs 150`, level 7 door
+    route payload, `hw-logs/emu-new-L7.txt`): `stream: core 1 share 30% granted ...
+    worker made on core 1`, music started, `reader: 64 files ... 121.6 files/s`,
+    `stream: 10.0 s: busy 7% (music 1.0%, reads 5.5%, log 0.1%), read queue max 3`. The
+    emulator reports `running on core 0` (it does not model the cores) and only reached
+    frame 5 under llvmpipe: a smoke test, not a measurement.
+  - **Hardware: NOT RUN.** The appliance (192.168.4.167) was ARP-dead from 13:57
+    (when this branch first got the lock, after another agent's run) through 14:30:
+    ping fails, neighbour FAILED, directed and broadcast discovery time out, a UDP
+    `cmd reboot` is not consumed -- the hard-hang state of AGENTS.md P10 trap 8, which
+    needs a physical power-cycle. Nothing from this branch was pushed.
+- **Ready to run** (`.git/worktrees/second-core/hw-logs/`): baseline payloads
+  `base-L{3..8}.3dsx` (89c119b5's layout: music on core 1 at 10%, reader and log writer
+  on core 0; same instrumentation) and change payloads `new-L{3..8}.3dsx`, plus
+  `new-L8-s{10,50,80}.3dsx` for the share sweep; each level's route is the 2026-11-25
+  door walk (teleport into an arena, walk through its doorway at turbo, 3-6 crossings,
+  GOD=1, FIXED=1, PROFILE=1, the owner's toggles with HD on). Resume with
+  `scripts/runall.sh 7 8 3 4 5 6` (takes the appliance lock), then run the three sweep
+  payloads with `NOBUILD=1 scripts/hwrun.sh new 8 new-L8-s<N>`; `scripts/summ.py`
+  pulls the measures out of each log. Throwaway branches: `throwaway/second-core-hw`
+  (baseline), `throwaway/second-core-hw2` (change).
+- **Not done / open:** the walking-speed leg and a combat scene (the routes are turbo
+  door walks); per-arena arrival times (step 2's bubble); moving the sound effects'
+  first-use decode and arena copy off core 0 (needs the level's effects decoded and
+  copied at level load or on the worker, with SoundBank made safe for it); HOME and lid
+  sleep/wake (no remote HOME or lid on the appliance; the aptHook path is unchanged in
+  shape -- the music pass is parked under its lock -- but unverified); the CIA
+  (cia/mdk.rsf has AffinityMask 1: if the kernel refuses core 1 there, the log says OFF
+  THE TWO-CORE LAYOUT); the owner's New 3DS (same build, same layout -- only the owner
+  can confirm, from the `stream: worker running on core 1` line).
+- **Commits:** c95310c9 (the worker), this entry.
