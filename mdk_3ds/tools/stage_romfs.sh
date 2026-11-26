@@ -5,10 +5,14 @@
 # USAGE:  stage_romfs.sh <output-directory>
 #
 # THE GAME DATA IS THE USER'S OWN COPY of a commercial game. It is not
-# committed, and it is not redistributed: this script stages it from the
-# tree the formats library already knows how to find (MDK_DATA_DIR, the
-# mdk_paths.cfg next to the program, the folders above the program, the GOG
-# and Steam folders) or from ../MDK.
+# committed, and it is not redistributed: this script stages it from
+# MDK_DATA_DIR, or else from <repo>/MDK. Without it the script FAILS: a .3dsx
+# with no data in it cannot run.
+#
+# FAILURES ARE FATAL. A converter that fails (the arena textures, Kurt's frames,
+# the music) stops the build rather than shipping a slower or silent .3dsx. The
+# explicit opt-outs are MDK_ARENA_ETC1=0 and MDK_KURT_ETC1=0: the game then
+# expands those textures from their palette indices at run time.
 #
 # WHY THE TREE IS LOWERCASED:
 #
@@ -49,11 +53,9 @@ if [ -n "${MDK_DATA_DIR:-}" ] && [ -d "$MDK_DATA_DIR" ]; then
 elif [ -d "$REPO/MDK" ]; then
     SRC="$REPO/MDK"
 else
-    echo "stage_romfs: no MDK data found. Set MDK_DATA_DIR, or put the game's" >&2
-    echo "               data in $REPO/MDK. (The .3dsx still builds without it;" >&2
-    echo "               the game then reports the data as missing.)" >&2
-    mkdir -p "$OUT"
-    exit 0
+    echo "stage_romfs: ERROR: no MDK game data. Set MDK_DATA_DIR to the folder MDK is" >&2
+    echo "             installed in, or copy (or link) that folder to $REPO/MDK." >&2
+    exit 1
 fi
 
 echo "stage_romfs: staging from $SRC"
@@ -130,14 +132,15 @@ stage_dir stream "$SRC/STREAM"
 # kurt/kurt.pak. The 408 loose .t3x files and their manifest stay in the work
 # directory for the next incremental run and are NOT staged: the game opens the
 # pack once at level load (408 files opened one by one cost 4.6 s of an Old-3DS
-# level load). Not fatal: without the pack (no tex3ds, no numpy or PIL, a failed
-# encode) the game draws every frame from its palette indices.
+# level load). A failed conversion stops the build; MDK_KURT_ETC1=0 skips it on
+# purpose, and the game then draws every frame from its palette indices.
 KURT_ETC1_DIR="${KURT_ETC1_DIR:-$REPO/build-kurt-etc1}"
 if [ "${MDK_KURT_ETC1:-1}" != "0" ]; then
-    if MDK_DATA_DIR="$SRC" python3 "$HERE/kurt_etc1_convert.py" "$KURT_ETC1_DIR" >&2; then
-        :
-    else
-        echo "stage_romfs:   (warning) kurt_etc1_convert.py failed; Kurt is expanded" >&2
+    if ! MDK_DATA_DIR="$SRC" python3 "$HERE/kurt_etc1_convert.py" "$KURT_ETC1_DIR" >&2 ||
+       [ ! -f "$KURT_ETC1_DIR/kurt.pak" ]; then
+        echo "stage_romfs: ERROR: kurt_etc1_convert.py failed (see above). MDK_KURT_ETC1=0" >&2
+        echo "             builds without Kurt's compressed frames (slower level loads)." >&2
+        exit 1
     fi
 fi
 if [ -f "$KURT_ETC1_DIR/kurt.pak" ]; then
@@ -153,17 +156,34 @@ fi
 # (levelN/<name>.dsp, made from the soundtrack by music_dsp_convert.py; no
 # download, no dependency on the soundtrack at build time), hard-linked here as
 # music/levelN/. The audio worker streams them; the bank never reads a track.
+#
+# WITHOUT mdk_3ds/music the tracks are made here from the game data alone
+# (music_dsp_convert.py with the original as both trees: ~15 s, ffmpeg) into
+# $MUSIC_BUILD_DIR (default <repo>/build-music, kept across `make clean`). The
+# tracks the original data has come out byte-identical to the committed ones;
+# the three the soundtrack adds (level 3 AMB_DRIP and H9WATER, level 7 TRACK12)
+# are absent, so those arenas are silent, as they are with the original game.
+# HOST_CC: the encoder is a host program, and the 3DS Makefile exports
+# CC=arm-none-eabi-gcc.
 MUSIC_DIR="$HERE/../music"
-if [ -d "$MUSIC_DIR" ]; then
-    while IFS= read -r -d '' file; do
-        rel="${file#"$MUSIC_DIR"/}"
-        mkdir -p "$OUT/music/$(dirname "$rel")"
-        ln "$file" "$OUT/music/$rel" 2>/dev/null || cp "$file" "$OUT/music/$rel"
-    done < <(find "$MUSIC_DIR" -type f -name '*.dsp' -print0)
-    echo "stage_romfs:   music ($(find "$OUT/music" -name '*.dsp' | wc -l) tracks, $(du -sh "$OUT/music" | cut -f1))"
-else
-    echo "stage_romfs:   (skip) music -- mdk_3ds/music is missing; the levels are silent on the DSP"
+if [ ! -d "$MUSIC_DIR" ]; then
+    MUSIC_DIR="${MUSIC_BUILD_DIR:-$REPO/build-music}"
+    if [ ! -f "$MUSIC_DIR/CONVERT_REPORT.txt" ]; then
+        echo "stage_romfs:   music -- mdk_3ds/music is absent; converting the game's own music"
+        rm -rf "$MUSIC_DIR"
+        if ! CC="${HOST_CC:-cc}" python3 "$HERE/music_dsp_convert.py" "$SRC" "$SRC" "$MUSIC_DIR" >&2; then
+            rm -rf "$MUSIC_DIR"
+            echo "stage_romfs: ERROR: music_dsp_convert.py failed (see above)." >&2
+            exit 1
+        fi
+    fi
 fi
+while IFS= read -r -d '' file; do
+    rel="${file#"$MUSIC_DIR"/}"
+    mkdir -p "$OUT/music/$(dirname "$rel")"
+    ln "$file" "$OUT/music/$rel" 2>/dev/null || cp "$file" "$OUT/music/$rel"
+done < <(find "$MUSIC_DIR" -type f -name '*.dsp' -print0)
+echo "stage_romfs:   music ($(find "$OUT/music" -name '*.dsp' | wc -l) tracks, $(du -sh "$OUT/music" | cut -f1))"
 
 # THE ARENA TEXTURES AS ETC1/ETC1A4 (arena streaming): every arena and level
 # texture of levels 3-8, expanded through its arena's palette with the 3DS's
@@ -172,15 +192,15 @@ fi
 # kept across `make clean`) -- incremental, seconds when nothing changed -- so
 # the console never expands a palette or builds a mip at runtime. The manifest
 # and textures/ are hard-linked here as orig/ (the ModImages key is the
-# @<hdkey> in each file name). Not fatal: without the set (no tex3ds, no numpy
-# or PIL, a failed encode) the game draws every arena texture from its palette
-# indices.
+# @<hdkey> in each file name). A failed conversion stops the build;
+# MDK_ARENA_ETC1=0 skips it on purpose, and the game then draws every arena
+# texture from its palette indices.
 ARENA_ETC1_DIR="${ARENA_ETC1_DIR:-$REPO/build-arena-etc1}"
 if [ "${MDK_ARENA_ETC1:-1}" != "0" ]; then
-    if MDK_DATA_DIR="$SRC" python3 "$HERE/arena_etc1_convert.py" "$ARENA_ETC1_DIR" >&2; then
-        :
-    else
-        echo "stage_romfs:   (warning) arena_etc1_convert.py failed; arena textures are expanded" >&2
+    if ! MDK_DATA_DIR="$SRC" python3 "$HERE/arena_etc1_convert.py" "$ARENA_ETC1_DIR" >&2; then
+        echo "stage_romfs: ERROR: arena_etc1_convert.py failed (see above). MDK_ARENA_ETC1=0" >&2
+        echo "             builds without the compressed arena textures (slower, hitchier)." >&2
+        exit 1
     fi
 fi
 rm -rf "$OUT/orig"

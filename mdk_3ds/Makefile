@@ -5,6 +5,7 @@
 #   make -C mdk_3ds            # release build (Citro3D / PICA200)
 #   make -C mdk_3ds DEBUG=1    # debug build (__3DS_DEBUG__ defined)
 #   make -C mdk_3ds cia        # build the .cia with the MDK data in RomFS
+#   make -C mdk_3ds prereqs    # only check the prerequisites (run by every build)
 #   make -C mdk_3ds clean
 #
 # Sources come from TWO trees: ../mdk_core/src (the platform-agnostic game --
@@ -194,6 +195,16 @@ $(SHADER_HDR) $(SHADER_OBJ) &: $(SHADER_SHBIN)
 #---------------------------------------------------------------------------------
 $(BUILD):
 	@mkdir -p $@
+
+# THE PREREQUISITES, checked before anything compiles: the devkitPro packages,
+# the converters' Python modules and host compiler, and the game data
+# (tools/check_prereqs.sh, README.md "Prerequisites"). Order-only, so it runs
+# once per make and never forces a rebuild.
+.PHONY: prereqs
+prereqs:
+	@$(CURDIR)/../tools/check_prereqs.sh 3ds
+
+$(OFILES) $(SHADER_SHBIN) $(CIA_SMDH) $(CIA_ROMFS): | prereqs
 
 $(BUILD)/%.o: %.cpp | $(BUILD)
 	@echo "CXX  $<"
