@@ -223,10 +223,32 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     // `pica::canvasMatrix` builds and `mdk_render_canvas_end` stores. Composing
     // it with the eye matrix would put the HUD at the arena's origin and behind
     // the camera, and it is exactly the mistake the pass is the flag for.
+    //
+    // THE DEPTH PULL (the oracle's DepthPull, `render/depth_pull.cpp`): a detail
+    // lying on a bigger triangle of its plane -- a ceiling light on its ceiling, a
+    // sign on its wall -- has a depth layer (arena_scene.cpp), and the C# draws it
+    // scaled towards the camera by layer/256 of its distance: the same place on
+    // screen, nearer in depth. Without it the two are at the same depth and the
+    // LEQUAL test picks a winner per pixel from rounding, which flickers as the
+    // camera moves (and the batch order puts some details BEFORE their wall).
+    // The Vulkan backend applies the same matrix (12_draw.inc). Only layered
+    // draws pay it: one or two 4x4 multiplies and one uniform write each.
     float composed[16];
     const float* upload = r->eyeVp;
     if (overlay) {
         upload = draw->world;
+    } else if (draw->material.depth_layer != 0 || draw->primitive == mdk::Primitive::Lines) {
+        const mdk::Vec3 eye = {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2]};
+        float pull[16];
+        mdk::buildDepthPullMatrix(eye, draw->primitive, draw->material.depth_layer, pull);
+        if (p->worldIdentity) {
+            mdk::pica::drawMatrix(pull, r->eyeVp, composed);
+        } else {
+            float pulled[16];
+            mdk::pica::drawMatrix(draw->world, pull, pulled);
+            mdk::pica::drawMatrix(pulled, r->eyeVp, composed);
+        }
+        upload = composed;
     } else if (!p->worldIdentity) {
         mdk::pica::drawMatrix(draw->world, r->eyeVp, composed);
         upload = composed;

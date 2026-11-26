@@ -3465,3 +3465,87 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   `EffectsView::build` (the transforms already blend) without touching Linux.
 - **Also checked:** Linux, level 3 at 150 s (`--god`, frame 9000): the timer ring shows an
   emptied wedge from the right, counter-clockwise (235b1792).
+
+### 2026-11-26 -- 3DS: coplanar details get the oracle's depth pull (ceiling lights stop flickering)
+- **What:** `drawRecorded` (06_draw_submit.inc) composes `buildDepthPullMatrix`
+  (the C#'s `DepthPull`: scale towards the camera by layer/256 of the distance,
+  lines 1/128) into the MVP of any draw with `material.depth_layer != 0` (or a
+  lines draw), Overlay exempt, as the Vulkan backend's `12_draw.inc` already
+  does. `coalesciblePair` (06_queue.inc) no longer folds two draws of different
+  layers. `docs/OPEN_ITEMS.md`'s "DepthPull on the 3DS" item is closed.
+- **Why (root cause):** the owner's flickering light decals. Core already gives
+  every arena triangle that overlaps a bigger triangle of its plane a depth layer
+  (`arena_scene.cpp`, the C#'s `Layers.cs`, merged as `origin/zfight` e13d91d0)
+  and splits batches by it, but the Citro3D backend never read `depth_layer`
+  (OPEN_ITEMS said so: it lacked the eye position, which `mdk_render_set_camera`
+  has stored in `cameraPos` since). So a light and its ceiling sat at the same
+  depth under `GPU_LEQUAL`: the winner per pixel was rounding, changing as the
+  camera moved, and because batches sort by material before layer, some details
+  are even drawn BEFORE their surface. Not the depth format, the transforms or
+  the second-pass programs: every program (unlit, lit GS, shadow-lit GS, pass-GS)
+  takes the same `mvp` clip position; the lit `world` uniform stays unpulled, so
+  normals and shadow lookups use the real surface.
+- **Which surfaces:** a host census (`computeArenaDepthLayers` over every
+  arena; scratch tool, not committed) finds 800 layered triangles: L3 10, L4 35,
+  L5 256, L6 369, L7 73, L8 57. E.g. DANT_7's ceiling tube lights `D7_TLITE`
+  (6) and their rims (12), DANT_6's windows `D6_WIN1` (38), OLYM_5's hub rims
+  (52), OLYM_7's mirror/floor tiles, MUSE_3/4's flat-colour panels. Objects,
+  sprites and the glow halos carry no layer (the C# does not either; the halo
+  has its own half-size nudge, effects_view.cpp).
+- **Choice:** the oracle's own mechanism, already in core and on Linux, not a
+  new one. `C3D_DepthMap` offset per draw was the alternative: a constant offset
+  in stored depth is a huge world distance at range (decals through walls far
+  away) and tiny up close, while the pull is a share of the distance. Margin of
+  layer 1 in the 24-bit buffer with this projection (near 0.5, far 20000):
+  329 LSB at 100 units, 66 at 500, 33 at 1000, 6.6 at 5000. Cost: only layered
+  draws pay -- one pull matrix, one or two 4x4 multiplies and one uniform write
+  per draw per eye, plus the frame matrix re-sent on the next unlayered draw.
+- **Other backends:** Linux/Vulkan already applied the pull (12_draw.inc, and
+  its casters in 11_shadow_post.inc); not affected.
+- **Evidence (host):** Linux build 0 warnings; 3DS build 0 compiler warnings;
+  tests/scripts `make test` rc 0; tests/formats 200624 checks, 0 failures;
+  tools/check.sh ALL GATES PASSED. Independent read-only review (Sonnet): no
+  defects. Linux reference view of the scene (DANT_7, lights on the ceiling):
+  `--level=7 --arena=DANT_7 --at=520,4420,-110,90`.
+- **Not verified here:** Mandarine (other projects' instances were running; one
+  instance max). Hardware: see the follow-up entry.
+- **Commit:** this one.
+
+### The decal depth pull on the Old 3DS appliance (hardware follow-up, INCOMPLETE)
+- **What:** A/B of ad997c4f against its base 3f59a93a on `old3ds-lan167` (CFGU
+  model 0, 268 MHz, L2 off, stereo on), harness 3fe09fde cherry-picked on
+  `throwaway/decal-zfight-hw` plus the AT/ARENA/GOD/NOCLIP start aids ported
+  from `harness/3ds-profiling` (the main-based harness lacked them), scene
+  `LEVEL=7 ARENA=DANT_7 AT=520,4420,-110,90 GOD=1 NOCLIP=1 AUTOQUIT=90`
+  (the room under DANT_7's ceiling tube lights; Linux view of the same spot:
+  `--level=7 --arena=DANT_7 --at=520,4420,-110,90`). This harness has no
+  framebuffer capture, so the pictures were to be ATM screenshots.
+- **What happened:**
+  - First pass: AT/ARENA were not wired on this harness, so Kurt started in
+    DANT_1 (`.git/worktrees/decal-zfight/hw-logs/first-try-no-AT/`).
+  - Second pass: Kurt was teleported, but without noclip he fell through the
+    unloaded floor. Both builds ran 90 s cleanly (FRESH, 5294 frames each), but
+    the screenshots show an empty void (`second-try-fell/`). The profiles of that
+    pass (steady 16.884 ms vs 16.890 ms, both vsync-bound) therefore measure no
+    layered draws. They are NOT the cost of the fix.
+  - Third pass, with noclip: the base build ran FRESH (Kurt held at the spot,
+    `hw-before-shot.session.log`). During the fix build's run (pushed 13:22,
+    verified `bytes_out=234688444`) the console stopped answering HTTP, and by
+    13:54 it was ARP-dead (`hw-after-shot.cycle.txt`: 48 failed pulls). The next
+    lock holder (bullet-cam) found it ARP-dead too and did not push. Trap 8 was
+    followed once: directed discovers for 2 min, no answer, ping dead. It needs
+    physical power. It is NOT established whether the fix build caused this.
+    Its run log is on the card (`sdmc:/3ds/mdk/mdk.log` or `mdk.prev.log`), and
+    so are the six screenshot sets (`shot_0000000d`-`0f` before, the next three
+    after, per `atm.log`). Pull those before anything else touches the console.
+  - The ATM screenshot quota was exhausted by stale sets at the start. They were
+    retrieved to `.git/mdk-review/atm-retrieved-2026-11-26/` and purged; the
+    purge deleted 32 sets, about 18 of them beyond the truncated listing and not
+    retrieved (README there).
+- **Still owed:** the before/after look in DANT_7 on hardware, the frame cost
+  with the decals in view, and an answer on the hang. Next step: power the
+  console, pull `mdk.log`/`mdk.prev.log` and the shot sets, and rerun
+  `after-shot.3dsx` and `after-profile.3dsx` (kept in hw-logs).
+  Mandarine: not run, because other projects' instances held the
+  one-instance limit all session.
+- **Commit:** this one (ledger only).
