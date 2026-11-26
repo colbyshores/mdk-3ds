@@ -521,6 +521,7 @@ private:
     // C# Kurt.Facing's (x, y) in libm, the oracle's MathF.Cos/Sin, for the slide.
     Vec2 slideFacing() const;
     void updateAir(bool jumpHeld, float delta);
+    void climbOut(const ArenaSpace::Result& result);
     void glueDownhill(const Vec3& move, float delta, bool exact = false);
     void fall(float delta);
     void fallMove(float delta);

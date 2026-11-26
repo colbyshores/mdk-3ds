@@ -120,6 +120,10 @@ float[] M(Matrix4x4 m) => [m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M2
 (int Step, string Model)[] gives = [(5, "SW_HGREN"), (6, "SW_BONES")];
 
 var wheelProperty = typeof(Input).GetProperty("Wheel")!;
+// Upstream 1618b8c3 (C# 1.2.0) zooms the scope with Input.ZoomWheel, which Input.AddWheel fills
+// while sniping under the default bindings; the notches are written there too when the C# has it,
+// so the probe drives the same zoom before and after that commit.
+var zoomWheelProperty = typeof(Input).GetProperty("ZoomWheel");
 const float Aspect = 400f / 240f;
 // Two fixed points for Scope.ToScreen: one ahead and a little to the side (it locks at zoom 1
 // and leaves the lock square zoomed in), one behind the eye.
@@ -142,6 +146,10 @@ for (var step = 1; step <= steps; step++)
     foreach (var wheel in wheels.Where(w => w.Step == step))
     {
         wheelProperty.SetValue(input, wheel.Notches);
+        if (zoomWheelProperty != null && kurt.Sniping)
+        {
+            zoomWheelProperty.SetValue(input, wheel.Notches);
+        }
     }
 
     kurt.Update(input, 1f / 60f);

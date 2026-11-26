@@ -34,7 +34,7 @@ s=32 state=Run roll=2.8750
 s=33 state=Run roll=3.0000
 s=34 state=Run roll=3.1250
 s=35 state=Run roll=3.2500
-s=36 state=Run roll=3.3750
+s=36 state=Fall roll=3.3750
 s=37 state=Fall roll=3.5000
 s=38 state=Fall roll=3.6250
 s=39 state=Fall roll=3.7500

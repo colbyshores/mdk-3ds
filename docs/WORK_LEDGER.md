@@ -2986,3 +2986,22 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     the look now stops at -30/60 (a behaviour change there, as upstream intends: past 60
     Kurt's sprite lay flat behind the floor). No golden moved (none looks with the
     mouse). New vm_tests case `MouseLookStopsAtTheLookLimits`.
+  - **3bb211b6, lift Kurt out of a floor he sank into** (a deliberate deviation from the
+    original, upstream's issue #30). `ArenaSpace::sunk` measures how far the falling box's
+    lowest corner lies under the floor plane a fall move stopped on; `Player::climbOut`
+    (before `land`) moves him up onto it when that is more than 0.5 and at most 2.5 and the
+    move up is free, never on a ride. LEVEL8's GUNT_7 walkway (no side wall) let Kurt walk
+    2 units inside it. **It also moves LEVEL3's start:** Kurt starts 1.81 units into the
+    start pad and now stands on it from the first step (feet z 190.0 -> 191.8), in the C#
+    1.2.4 oracle too. That shifts every level-3 Kurt golden. Twelve goldens moved; eleven
+    equal the oracle at 3bb211b6 byte for byte (`L3_kurt_steps`, `L4_ledge_climb`,
+    `L3_sniper`, `cheats_L3_god`, `L3_end_level`, `L3_strike_teeth`, `L3_kurt_invuln`,
+    `L3_kurt_knockdown`, `L3_kurt_flashes`, `L3_kurt_push`, `L3_kurt_camroll`), and
+    `L7_corridor_middle` takes the C++'s output, 3 lines off the oracle through the trig LUT
+    (a libm `Player::facing` scratch build matches the oracle byte for byte). The pinned
+    frame (`gates_frames`, L3_f1) still passes.
+  - **Oracle tooling:** `tests/scripts/hurt_probe` is new; it rebuilds the lost driver's
+    `hurt` mode and reproduces all eight `L3_kurt_{hurt,hurtland,knock,invuln,knockdown,
+    flashes,push,camroll}` goldens at d5bb66ec. `sniper_probe` also writes the wheel's
+    notches to `Input.ZoomWheel` when the C# has it (upstream 1618b8c3 zooms through it
+    while sniping); it still reproduces `L3_sniper`/`L7_sniper` at d5bb66ec and at 47395c03.

@@ -197,7 +197,27 @@ void Player::fallMove(float delta) {
         return;
     }
 
+    climbOut(result);
     land(before, fromVec(result.normal()), delta);
+}
+
+// Upstream 3bb211b6 (C# 1.2.4 Kurt.ClimbOut), a deliberate deviation from the original
+// (issue #30 upstream): a floor without a side wall at its edge lets the walking box in
+// from the side (the BSP has faces, no volume), and every fall move then stops at once on
+// its top (bsp_sweep_node 0x409680, damp_collide_move 0x465e34): Kurt walked 2 units
+// inside level 8's GUNT_7 walkway until a jump. Sunk deeper than a step, up to his waist,
+// he climbs onto the top when there is room above. Not on a ride (the board, the bomber).
+void Player::climbOut(const ArenaSpace::Result& result) {
+    const float sunk = ArenaSpace::sunk(result, toVec(feet));
+    if (sunk <= kSunkMin || sunk > kSunkMax || _rideHook.step != nullptr) {
+        return;
+    }
+    const ArenaSpace::Result up =
+        _space->move(toVec(feet), Vec{0.0f, 0.0f, sunk}, ArenaSpace::kMotionFall, kFallSlide);
+    if (up.hit()) {
+        return;
+    }
+    feet = fromVec(up.feet);
 }
 
 void Player::land(const Vec3& before, const Vec3& normal, float delta) {

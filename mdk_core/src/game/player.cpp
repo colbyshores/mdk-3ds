@@ -113,6 +113,10 @@ const float kHardLandingSpeed = -100.0f;
 const int kHardLandingDamage = 10;   // C# HardLandingDamage
 // Kurt dies this far below his arena's lowest point (C# FallOutDepth).
 const float kFallOutDepth = -50.0f;
+// Upstream 3bb211b6 (C# 1.2.4 Kurt.SunkMin/SunkMax): sunk into a floor between these,
+// Kurt climbs onto it -- from what the walking box steps over (its 0.5 lift) to his waist.
+const float kSunkMin = 0.5f;
+const float kSunkMax = 5.0f / 2.0f;
 // Falling onto a platform first goes to 0.05 above its top (C# PlatformLift, damp_gravity).
 const float kPlatformLift = 0.05f;
 // Objects this far around a move (and Kurt's height above it) may stop it (C#
