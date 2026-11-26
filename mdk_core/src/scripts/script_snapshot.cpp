@@ -752,6 +752,10 @@ std::string ScriptRuntime::capture() const {
     out.valueInt(option);
     out.key("town_ticks");
     out.valueInt(townTicks);
+    // The town's whole time (upstream 6eb0963b): saves have no difficulty, so the
+    // timer ring of a save loaded on another one needs it.
+    out.key("town_total");
+    out.valueInt(townTotal_);
     out.key("current_arena");
     out.valueString(currentArena_);
     out.key("second_arena");
@@ -970,6 +974,9 @@ bool ScriptRuntime::load(const std::string& text, std::string* why) {
     skyMode = doc.intOr(doc.member(levelNode, "sky_mode"), 0);
     option = doc.intOr(doc.member(levelNode, "option"), 0);
     townTicks = doc.intOr(doc.member(levelNode, "town_ticks"), 0);
+    // Saves before upstream 1.2.3 (and this port's before 6eb0963b) have no
+    // total: the current difficulty's, set when the runtime was made, stays.
+    townTotal_ = doc.intOr(doc.member(levelNode, "town_total"), townTotal_);
     currentArena_ = doc.stringOr(doc.member(levelNode, "current_arena"), "");
     secondArena_ = doc.stringOr(doc.member(levelNode, "second_arena"), "");
     bool flag = false;

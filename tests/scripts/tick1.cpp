@@ -9226,6 +9226,11 @@ int main(int argc, char** argv) {
     // restore lines. A `loadOnly` case pins only the load of the C#'s file, for a
     // scene whose play the port does not yet match (none today: L3_save_fan was one
     // until package 8's updrafts landed).
+    // The seven goldens carry "town_total" (upstream 6eb0963b) in their save text and
+    // file: the C# 1.1.1 probe's output with that key added after "town_ticks", the
+    // sizes grown by its length and the hashes over it (checked 2026-11-26: every
+    // other byte as the probe wrote it). The 1.1.1 file's form is still loaded below,
+    // as a save without the key.
     {
         struct SaveCase {
             const char* name;
@@ -9306,6 +9311,39 @@ int main(int argc, char** argv) {
                 } else if (loaded != want) {
                     printf("FAIL %s (the C#'s file): %s\n", c.name,
                            firstDifference(loaded, want).c_str());
+                    ok = false;
+                }
+                // A save from before upstream 6eb0963b has no "town_total": it loads
+                // with the difficulty's total (the runtime's), which is what the file
+                // above carries, so from the restore on it must print the same lines.
+                // Two lines are left out: "parsed" names the shorter file's size, and
+                // the restored state differs from the file read (it gained the total),
+                // so saveLoadDump prints the restored state after "restored".
+                std::string older = file;
+                const size_t total = older.find(",\"town_total\":");
+                if (total != std::string::npos) {
+                    const size_t end = older.find_first_not_of("0123456789", total + 14);
+                    older.erase(total, end - total);
+                }
+                std::string olderLoaded;
+                std::string olderTail;
+                std::string wantTail;
+                const bool olderOk = total != std::string::npos &&
+                                     mdk::test::saveLoadDump(data, spritesArg, older, c.level,
+                                                             c.after, &olderLoaded, &why);
+                const size_t olderAt = olderLoaded.find("\nrestored ");
+                const size_t wantAt = want.find("\nrestored ");
+                if (olderOk && olderAt != std::string::npos && wantAt != std::string::npos) {
+                    olderTail = olderLoaded.substr(olderAt);
+                    wantTail = want.substr(wantAt);
+                    const size_t state = olderTail.find("\n{");
+                    if (state != std::string::npos) {
+                        olderTail.erase(state, olderTail.find('\n', state + 1) - state);
+                    }
+                }
+                if (!olderOk || olderTail.empty() || olderTail != wantTail) {
+                    printf("FAIL %s (a save without town_total): %s\n", c.name,
+                           why.empty() ? firstDifference(olderLoaded, want).c_str() : why.c_str());
                     ok = false;
                 }
             }

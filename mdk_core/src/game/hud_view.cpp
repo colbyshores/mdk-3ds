@@ -459,7 +459,8 @@ void HudView::uploadTimer() {
     if (modWidth <= 0 || modHeight <= 0 || modPanel_.rgba.size() < (size_t)modWidth * (size_t)modHeight * 4) {
         return;
     }
-    const uint8_t* colours = levelRgba_.data();
+    // The arena's colours once entered (upstream 6eb0963b), the level's before.
+    const uint8_t* colours = arenaColours_ != nullptr ? arenaColours_->rgba() : levelRgba_.data();
     // The panel pixel under mod pixel (x, y) is (x * panelWidth_ / modWidth,
     // y * panelHeight_ / modHeight), stepped here without a divide per pixel
     // (AGENTS.md R11: the ARM11 has no integer divide): each coordinate keeps

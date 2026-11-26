@@ -1034,7 +1034,15 @@ public:
     // C# TownTimeLeft (upstream 235b1792): the time left for the town, townTicks
     // over the whole time it started with; 1 without a town (the last level). The
     // HUD's timer ring empties by it.
-    float townTimeLeft() const { return townTotal_ == 0 ? 1.0f : (float)townTicks / (float)townTotal_; }
+    // Clamped (upstream 6eb0963b): a save's ticks can exceed the total it is read
+    // against.
+    float townTimeLeft() const {
+        if (townTotal_ == 0) {
+            return 1.0f;
+        }
+        const float left = (float)townTicks / (float)townTotal_;
+        return left < 0.0f ? 0.0f : (left > 1.0f ? 1.0f : left);
+    }
     // (C# AirStrike.UsedUp is airStrike().usedUp since package #14; a save carries it.)
     // The arenas' states in the order they were made (the C#'s Dictionary order,
     // which the save follows; arenas_ is a map and sorts).
@@ -1042,7 +1050,7 @@ public:
 
 private:
     // The town's whole time (C# _townTotal), townTimeLeft's denominator; 0
-    // without a town.
+    // without a town. Saved (upstream 6eb0963b).
     int32_t townTotal_ = 0;
     // FindConnections (ScriptRuntime.cs:856): pair the DTI type-6 connection
     // records of every arena by their id, so (arena, id) names the arena on the
