@@ -3029,3 +3029,9 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   - **Oracle tooling:** `table_probe` gained the pose, transform, blend, layout, draw,
     bound and runner modes (all 25 such goldens reproduced at d5bb66ec); `rounds_probe`
     calls `SniperRounds.Camera(i, 1f)` where the C# has upstream a73a5cd2's alpha.
+  - **Full suite after d14ed0b5:** Linux build 0 warnings; `make -C tests/scripts test` 999
+    PASS, 0 FAIL; `make -C tests/formats` passes; `tools/check.sh` failed only the R11
+    screen, which is file-level: `animateJump`'s `while` (a91c0870) made
+    `player_state.inc` "a file with a loop", so `wrapAnimationFrame`'s `%` became a
+    candidate. `animateJump` moved to `player_vertical.inc` (the jump's file, no `%`);
+    `tools/check.sh` then passes all gates.

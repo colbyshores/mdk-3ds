@@ -100,6 +100,29 @@ void Player::updateAir(bool jumpHeld, float delta) {
     }
 }
 
+// Upstream a91c0870 (C# 1.2.0 Kurt.AnimateJump, 0x4646a4): a jump's frames are timed,
+// then follow the vertical speed down through its top, then the fall. Played through by
+// time, the jump ended while Kurt still rose and he hung on its last frame until he fell
+// fast enough, the only time the chute could open (issue #17).
+void Player::animateJump(float delta) {
+    const bool standing = state() == Kurt::Jump;
+    const int timed = standing ? kJumpTimedFrames : kRunJumpTimedFrames;
+    const int frames = standing ? kJumpFrames : kRunJumpFrames;
+    if (_animationFrame < (float)timed) {
+        _animationFrame = std::min(_animationFrame + kTicks * delta, (float)timed);
+        return;
+    }
+    int frame = (int)_animationFrame;
+    while (frame < frames && verticalSpeed <= kJumpSpeeds[frame]) {
+        frame++;
+    }
+    _animationFrame = (float)frame;
+    _pastJumpTop = _pastJumpTop || verticalSpeed <= 0.0f;
+    if (frame >= frames) {
+        setState(Kurt::Fall);
+    }
+}
+
 // Upstream 3f9315c5: with `exact` (the walk's glue), the feet follow the slope's whole
 // drop (the move along the slope over the normal's z), capped at kGlueMaxSpeed, not only
 // its share along the normal: on a steep floor (LEVEL6's OLYM_8, 42 degrees) the feet

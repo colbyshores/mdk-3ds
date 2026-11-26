@@ -212,29 +212,6 @@ void Player::animate(float delta) {
     }
 }
 
-// Upstream a91c0870 (C# 1.2.0 Kurt.AnimateJump, 0x4646a4): a jump's frames are timed,
-// then follow the vertical speed down through its top, then the fall. Played through by
-// time, the jump ended while Kurt still rose and he hung on its last frame until he fell
-// fast enough, the only time the chute could open (issue #17).
-void Player::animateJump(float delta) {
-    const bool standing = state() == Kurt::Jump;
-    const int timed = standing ? kJumpTimedFrames : kRunJumpTimedFrames;
-    const int frames = standing ? kJumpFrames : kRunJumpFrames;
-    if (_animationFrame < (float)timed) {
-        _animationFrame = std::min(_animationFrame + kTicks * delta, (float)timed);
-        return;
-    }
-    int frame = (int)_animationFrame;
-    while (frame < frames && verticalSpeed <= kJumpSpeeds[frame]) {
-        frame++;
-    }
-    _animationFrame = (float)frame;
-    _pastJumpTop = _pastJumpTop || verticalSpeed <= 0.0f;
-    if (frame >= frames) {
-        setState(Kurt::Fall);
-    }
-}
-
 void Player::footstep(int32_t previous, int32_t current) {
     // C# Kurt.Footstep: one stamp per frame the animation crossed, the left foot on
     // the left frame and the right foot alternating its pair. The pair flips only
