@@ -43,8 +43,13 @@ bool entry(const formats::Box& box, Vec a, Vec b, float* t, int* axisOut) {
 
         const float t0 = (lo - ai) / step;
         const float t1 = (hi - ai) / step;
-        if (minf(t0, t1) > enter) {
-            enter = minf(t0, t1);
+        // On the face (t = 0) counts as outside: entered at once (0x45f588: A <= min;
+        // upstream e96fb32e). A BSP wall in the plane of a part's face left Kurt exactly on
+        // the grown face, the walk entered at t = 0 and was ignored, and once the wall let
+        // go he slid into the box (LEVEL4's MEAT_7: through the closed X4DOOR).
+        const float near = minf(t0, t1);
+        if (near > enter || (near == enter && axis < 0)) {
+            enter = near;
             axis = i;
         }
         leave = minf(leave, maxf(t0, t1));

@@ -2966,3 +2966,9 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   - **32b1e1b0, hold the slide brake's last frame.** K_BSLIDE is `Once` in
     `KurtSprite`'s state table (it looped 3 frames 10 times a second, so the sprite
     flickered while braking). Draw-side only; no golden covers the sprite pick.
+  - **e96fb32e, stop Kurt on an object face he touches.** `solids::entry` counts a start
+    exactly on a grown face (t = 0) as an entry on that axis, as the original (0x45f588)
+    does. No golden moved. Upstream's case (LEVEL4 MEAT_7, a jump over the board through
+    the closed X4DOOR) was tried in the platform probe at five jump steps; the old and new
+    oracle and our C++ end in the same place in each, so the exact on-the-face contact was
+    not reproduced there. Checked by build and suites only.
