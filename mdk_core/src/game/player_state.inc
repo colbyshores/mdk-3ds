@@ -5,6 +5,10 @@
 
 void Player::updateState(float forward, float strafe, float delta) {
     _stateTime += delta;
+    _airFor = onFloor ? 0.0f : _airFor + delta;
+    if (onFloor || (verticalSpeed > 0.0f && !chuteOpen)) {
+        _pastJumpTop = false;
+    }
 
     // C# UpdateCombatState's first arm (Kurt.Combat.cs:371): health zero on a floor is
     // the death state. The knock-down, get-up and throw arms below are the C#'s next
@@ -87,8 +91,10 @@ void Player::updateState(float forward, float strafe, float delta) {
         } else if (verticalSpeed > 0.0f &&
                    state() != Kurt::Jump && state() != Kurt::RunJump && state() != Kurt::Fall) {
             setState(std::fabs(forwardSpeed) > kMovingSpeed ? Kurt::RunJump : Kurt::Jump);
-        } else if (verticalSpeed < kFallStartSpeed &&
-                   ((state() != Kurt::Jump && state() != Kurt::RunJump) || done)) {
+        } else if (verticalSpeed < kFallStartSpeed && state() != Kurt::Jump &&
+                   state() != Kurt::RunJump && (_airFor >= kFallGrace || state() == Kurt::Fall)) {
+            // Upstream 3f9315c5: a running or standing Kurt falls only after kFallGrace.
+            // A jump falls when its frames run out (animateJump, upstream a91c0870).
             setState(Kurt::Fall);
         }
     } else if (state() == Kurt::Jump || state() == Kurt::RunJump || state() == Kurt::Fall ||
@@ -199,6 +205,8 @@ void Player::animate(float delta) {
         // No guard: a missing K_TRN45 leaves the frame at zero, as the C#'s
         // multiply by frameCount(Turn) == 0 does.
         _animationFrame = yaw / kTurnFrameDegrees * (float)frameCount(Kurt::Turn);
+    } else if (state() == Kurt::Jump || state() == Kurt::RunJump) {
+        animateJump(delta);
     } else {
         _animationFrame += kTicks * delta;
     }

@@ -110,6 +110,15 @@ foreach (var arena in levelData.Arenas)
 
 var runtime = new ScriptRuntime(levelData, cmi, sprites, space, groups, mixer, kurt, 1) { Option = 1 };
 
+// SniperRounds.Camera(index) before upstream a73a5cd2, Camera(index, 1f) after.
+SniperRounds.RoundCamera CameraOf(int index)
+{
+    var method = typeof(SniperRounds).GetMethod("Camera", [typeof(int), typeof(float)]);
+    return method != null
+        ? (SniperRounds.RoundCamera)method.Invoke(runtime.SniperRounds, [index, 1f])!
+        : (SniperRounds.RoundCamera)typeof(SniperRounds).GetMethod("Camera", [typeof(int)])!.Invoke(runtime.SniperRounds, [index])!;
+}
+
 string B(float v) => BitConverter.SingleToUInt32Bits(v).ToString("X8");
 string V(Vector3 v) => $"{B(v.X)},{B(v.Y)},{B(v.Z)}";
 float H(string hex) => BitConverter.UInt32BitsToSingle(uint.Parse(hex, NumberStyles.HexNumber));
@@ -425,7 +434,9 @@ for (var step = 1; step <= steps; step++)
         var cameras = new List<SniperRounds.RoundCamera>();
         for (var i = 0; i < SniperRounds.Slots; i++)
         {
-            cameras.Add(runtime.SniperRounds.Camera(i));
+            // Upstream a73a5cd2 (C# 1.2.0) added Camera's frame-blend alpha; at 1 it is the tick's
+            // camera, the one the older single-argument Camera returned.
+            cameras.Add(CameraOf(i));
         }
 
         if (!kurt.Sniping)

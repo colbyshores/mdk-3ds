@@ -2845,3 +2845,352 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   `.git/worktrees/hd-bubble/player/mdk-hd-bubble-17889b9d.3dsx`; it needs the raw pack on the SD
   card (`hd_pack_convert.py --from-pack`).
 - **Commit:** this one.
+
+## 2026-11-26
+
+### LEVEL6 (in-game level 2): the OLYM_4 cannon never fired with Kurt on it
+- **What:** opcode 209 (`if_player_on_me_low`) in `mdk_core/src/scripts/script_vm.cpp`
+  is now "Kurt's platform is this object and he fires". It also required his feet to be
+  at or below the object's model top (`kurtPosition().z <= worldBounds(obj).max.z`). That
+  test was dropped.
+- **Why:** the owner's report (2026-11-26, photo in `.git/mdk-review/owner-reports/`):
+  on level 2's row of cannons, Kurt stands on the middle one and fires, and nothing
+  happens. The cannon should fire on each shot, and the third shot should send it through
+  the window behind him.
+  - The level is LEVEL6 (`kOrder = {7, 6, 3, 4, 8, 5}`). OLYM_4 spawns six XBGUN. The
+    middle one at x -1732 runs script 23159: `if_player_on_me` (114) raises it. Then a loop
+    on 209 fires XBG_B1 and counts shots in var 2.0. Once that count is past 2 (the third
+    shot), the cannon follows path 35601. At path frame 4 it hides and shatters group 1
+    (the window), shows COLYM_4 and preloads OLYM_5. When the path ends it dies and drops
+    Kurt.
+  - Root cause: once the cannon has risen, Kurt's feet are 0.02 above its model's top,
+    so 209 was always false. On the host the script sat at 23193 for the whole run while
+    Kurt stood on it in the Shot state.
+  - The C++ copied the C# in `src/`, which is v1.1.1 and has the same bug. Upstream fixed
+    it in `3b072d2a` "Fire LEVEL6's cannon with Kurt on it" (v1.2.1, origin/main). The
+    original (0x458a59) compares his feet with his floor on the platform (0x573a1c), and
+    standing on the platform already means that test passes. The fix ports upstream's
+    change.
+  - Every other opcode in the sequence was checked against the C# and is implemented. That
+    covers the XBGUN script, XBG_B1's script, and OLYM_4's arena script (114, 68, 3, 154, 12,
+    1, 66, 89, 61, 67, 64, 92, 116, 2, 33, 98, 138, 100, 102, 41, 240, 223, 16, 210, 53,
+    106, 218, 17, 50, 88, 107, 158, 238, 172, 135, 71, 247, 119, 86, 161, 230, 252). The
+    run to OLYM_5 also put no opcode in the VM's unimplemented bucket.
+  - 209 occurs once in the whole game (all six CMIs disassembled), so no other level
+    depends on it.
+- **Related, not fixed here:** upstream `d14ed0b5` "Run objects newest first, per arena"
+  (after v1.2.1) fixes LEVEL7 DANT_6's cannon XD6GUN, which blew up as soon as Kurt came
+  near. Newly spawned XG had not yet counted themselves in var 1.0 when the cannon checked
+  that count. The port still appends new objects and runs one mixed list (`objects_.push_back`
+  in `script_runtime_arenas.inc`), so in-game level 1's window cannon probably has the same
+  bug. This is not verified in the port. The fix changes the object order for every level,
+  and many goldens pin that order, so it needs its own increment.
+- **Evidence:**
+  - Host: the new `tick1` case `L6_cannon` drops Kurt on the middle XBGUN and holds fire
+    from step 60. It checks, in order: he stands on it, it fires (23250), it takes the path
+    (23266), the window shatters (23303), it carries him in COLYM_4, and at step 700 he is
+    in OLYM_5.
+  - The case fails on the unfixed VM (`never reached "/r23250"`) and passes with the fix.
+  - The case checks markers, not a golden, because the C# oracle cannot run here (no
+    dotnet) and its v1.1.1 copy has the bug.
+  - Linux build, `make -C tests/scripts test`, `make -C tests/formats` (200,624 checks, 0
+    failures) and `tools/check.sh` all pass with zero warnings.
+  - Hardware: see the follow-up entry.
+- **Commit:** 419613a6.
+
+### The OLYM_4 cannon on the Old 3DS appliance (hardware follow-up)
+- **What:** one harness run on `old3ds-lan167` (Old 3DS, 268 MHz, L2 off, stereo per
+  config), `hw_cycle.sh --once`, FRESH, push verified (`bytes_out=234691660`). The build:
+  - Branch `throwaway/level2-cannons-hw`, which is 3f59a93a plus the harness cherry-pick
+    3fe09fde plus the 209 fix.
+  - That harness has no `AT=`/`ARENA=` wiring in `main_3ds.cpp`, so 49e3c824's two
+    blocks were copied in (throwaway only).
+  - Flags: `AUTOQUIT=90 LEVEL=6 FIXED=1 AT=-1732,92,-1260,90 ARENA=OLYM_4
+    WALK='fire@60-200;...;fire@600-900'`.
+  - `--capture` refused the payload: this harness base has no framebuffer capture. There is
+    no picture.
+- **Evidence:** `.git/worktrees/level2-cannons/hw-logs/`:
+  - `L6-cannon.session.log`: the walk's feet and arena at frames 60, 200, 240, 300, 400
+    and 600 are identical to the host dump's at the same steps
+    (`host-L6-cannon-platforms-dump.txt`). In OLYM_4 he stands on the cannon at 60 and is
+    still on it at 200. In COLYM_4 at 240 he is at (-1733.0, 157.5, -1249.2), and at 300
+    and 400 he is still flying. At 600 he is in OLYM_5 at z -1665.0.
+  - The music follows the arenas: ROCK_FS, then CORRIDOR for COLYM_4, then DUNE_M2 for
+    OLYM_5. The run exits clean after 3662 frames.
+  - `mdk-player-419613a6.3dsx`: the player build of the fix (no harness).
+- **Not seen on hardware:** the picture of the window shattering and of the flight (no
+  capture on this harness). Mounting by walking from the level's start was not run either:
+  the run teleports Kurt over the cannon.
+- **Commit:** this one (ledger only).
+
+### Upstream's C# gameplay fixes (1.1.1 to 1.2.6, and its C++ 2.x), ported to our C++
+- **Why:** the owner's request (2026-11-26): "lets apply all of the upstream fixes but in
+  C++". Upstream is `origin` (nautilusbits/mdk-sdl, read only). Our port started from its C#
+  1.1.1 (d5bb66ec). This branch, `fix/upstream-gameplay`, takes the gameplay fixes one commit
+  each, in upstream's order. The upstream C# commit is the specification; upstream's own C++
+  (d8724627..367cc6fc) is the second reference.
+- **How the goldens move:** a golden changes only when the C# oracle at the fix's upstream
+  commit prints the new bytes and our C++ prints the same bytes. The oracle is the golden's own
+  probe (`tests/scripts/*_probe`) built against `git archive <commit> src` with .NET SDK
+  10.0.404 (scratch). The probe at d5bb66ec reproduces the old golden byte for byte
+  (checked on `L4_ledge_short`), so the setup is sound.
+- **Per fix:**
+  - **c81dafc1, ease the camera's push through doors.** `followCameraClear` caps the wall
+    push and the solid-object shove at 40 u/s (`kMaxPushSpeed * delta`); the rest is pushed
+    on the next steps. `followCameraClear` and `buildFollowCameraCleared` take the step's
+    `delta`. Three goldens moved; each equals the oracle at c81dafc1: `L4_ledge_short` (the
+    wall push at step 37), `L7_ride_xd2`, `L4_board_end`.
+  - **3f9315c5, keep Kurt on steep slopes running downhill.** The walk's downhill glue
+    follows the slope's whole drop (`downhill / n.z`, capped at 90 u/s), and a running or
+    standing Kurt starts the fall animation only after 0.15 s off the floor (`_airFor`).
+    Measured on LEVEL6's OLYM_8 slope with the ledge probe (`tp:1:OLYM_8:2307:2469:-1164:180,
+    fwd:30-120`): falls into K_FALL while running drop from 10 to 3, the same in the oracle
+    and the C++. Eleven goldens moved. Nine equal the oracle at 3f9315c5 byte for byte:
+    `L3_kurt_steps`, `L7_plat_door`, `L4_board_lost`, `L4_board_end`, `L4_hazards_snow`,
+    `L6_wind_tunnel`, `L6_wind_arena`, `L6_wind_fan`, `L6_wind_wall`. Two take the C++'s
+    output: `L7_corridor_middle` (one line, a feet z of 4 against 5) and `L4_board_off` (5
+    lines, vz -8.3972 against -8.4009). Both walk at a yaw off the axes, where the glue now
+    binds and divides by n.z, so the trig LUT in `Player::facing` (accepted drift, owner
+    2026-11-20) shows. Evidence: with `facing` switched to libm cosf/sinf in a scratch build,
+    both equal the oracle byte for byte; the shipped LUT was put back.
+  - **Oracle tooling:** `tests/scripts/kurt_probe` is new. The driver that made
+    `L3_kurt_steps`/`L3_kurt_lethal` (`/tmp/kilo/oracle/Driver`) was not kept; this probe
+    replays `dumpKurt`'s schedule and reproduces both goldens byte for byte at d5bb66ec.
+  - **93743b33, home the fall's missiles once per tick.** `FallMissile::home` blends with
+    keep = 0.8^(dt × 30) instead of 0.8 per frame. The frame's dt is the frontend's elapsed
+    time (60 fps and up on Linux, 30 or less on the 3DS), so the steering now matches the
+    original's per-tick rate at any frame rate. Six goldens moved, all equal to the oracle at
+    93743b33 byte for byte (the 1/30 s cases too: `(1 - keep) × 250` rounds differently from
+    the old folded 50): `L6_skydive_chase`, `L8_skydive_hard`, `L3_skydive_slow`,
+    `L7_skydive_skip`, `L6_fallview_chase`, `L8_fallview_hard`.
+  - **3005da70, fire projectiles from the posed part.** `MdkObject::partCenter` takes the
+    box of the part's vertices in the current pose through `transform()`, as the part is
+    drawn (the rest-pose box only when the part has no vertices). LEVEL7's boss XB1 had his
+    GUN at his feet at rest, so every BIGBOLT started in the floor. Twenty-one goldens
+    moved, all equal to the oracle at 3005da70 byte for byte: `L8_holes_guntam`,
+    `L6_holes_xb2`, `L7_bomber_mount`, `L7_bomber_bombs`, `L7_bomber_walk`, `L7_bomber_end`,
+    `L6_hazards_bomb`, and LEVEL5's tick tables `L5_t590` to `L5_t30000` and
+    `L5_t10000_script`.
+  - **Oracle tooling:** `tests/scripts/table_probe` is new. It rebuilds the lost driver of
+    the tick tables (`golden/L*_t*.txt`, `L*_t*_script.txt`) and reproduces 15 of them at
+    d5bb66ec byte for byte (5 tables and 3 scripts named in its header, plus 7 spot
+    checks). `tick1 dump table|script <level> <ticks>` prints the C++ side.
+  - **94bf1d0b, hang chains from a one-point leader's hook.** The chain update hangs a
+    link from its leader's second reference point, or from its only one when the leader's
+    model has fewer than two (LEVEL7's ship XE: its hook). One golden moved,
+    `L7_plat_tank` (an XE chain in DANT_3 next to the tank), equal to the oracle at
+    94bf1d0b byte for byte.
+  - **a48e64c7, hang chain links by their animated points.** `MdkObject::reference_point`
+    takes the point where the current animation frame has it (frame clamped to the
+    track), as the C# does; the rest-pose point only without an animation. It is every
+    reference point's reader (chains, attachments, wounds, shots from a point), so 46
+    goldens moved, all equal to the oracle at a48e64c7 byte for byte: LEVEL5's tick tables
+    and script states from t720, `L8_fire`, `L8_fire_run`, four `L8_items_*`,
+    `L8_rounds_ship`, `L3_screen_hmo3`, `L8_sniper_hud_ship`, `L6_plat_gun`, `L7_ride_xd2`,
+    `L4_board_end`, five `L7_bomber_*`, `L8_end_level`, and four `*_hazards_*`.
+  - **a91c0870, follow the jump's arc in its frames.** `Player::animateJump`: the first 10
+    frames of the jump (7 of the running jump) play one a tick, then each frame waits for
+    the vertical speed to drop to its threshold (0x492030), and past the last comes the
+    fall. Reaching the top in those frames sets `_pastJumpTop`, which lets held jump open
+    the chute at once (it waited ~0.4 s for -16 u/s before, issue #17 upstream). A jump no
+    longer falls through the state machine's speed test, only through its frames. Nine
+    goldens moved, all equal to the oracle at a91c0870 byte for byte: `L3_kurt_steps`,
+    `L8_items_air`, `L7_ride_lost`, `L3_wind_shaft`, `L8_wind_fan`, `L6_ledge_climb`,
+    `L4_ledge_climb`, `L4_ledge_short`, `L6_ledge_letgo`.
+  - **224d1144** (upstream's next gameplay commit) only moves `tests/kurt_moves_test.sh`'s
+    ledge check to 2 s for this change. That script tests the C# app in `src/` (1.1.1),
+    not our C++, so there is nothing to port; the C++ ledge goldens above already follow
+    the chute-at-the-top arc.
+  - **8a3740ac, keep Kurt's gun in his right hand strafing left.** `KurtSprite::draw`
+    mirrors only the left roll (the 1996 demo's K_ROLLL); K_SIDE is no longer mirrored on
+    a left strafe, as the original (damp_animate 0x4646a4, damp_sprite_draw) never does.
+    No golden covers the sprite's quad; the build and both host suites pass. The 3DS and
+    Linux draw Kurt through this one function, so both change together.
+  - **Follow-ups from the full suite after 8a3740ac:**
+    - `tests/scripts/fall_frontend_test.sh`: the Linux frontend's chased LEVEL7 fall now
+      lands with health 84, not 67. That is 93743b33: the fall probe run the frontend's way
+      (`7 1 1 2400 0.0166666667 chase:0-2400`) carries health 67 at 3f9315c5 and 84 at
+      93743b33, and the Linux binary logs 84. The pickups and inventory are unchanged.
+    - `audit_arm11_math` flagged `partCenter`'s rest-pose fallback cosf/sinf once the posed
+      branch was added above it (3005da70); it carries the same R6 pin as
+      `reference_point` now.
+  - **The camera's clearance skips a dead Kurt (C# FollowCamera.cs:132; coordinator's
+    request from the death-flow check).** `followCameraClear` returns at once while Kurt's
+    state is Dead, as the C# (every version) and upstream's C++ do; before, the wall push
+    and the object shove could slide his corpse through the ~4 s death beat. No golden
+    moved. tick1's new `L7_dead_clearance` puts Kurt with a wall behind him in LEVEL7's
+    start room: alive, the camera pushes him 5.33 away; dead, 0. With the check removed
+    the dead run moves 5.33 too, so the case fails. `docs/OPEN_ITEMS.md`'s entry is
+    closed.
+  - **dce8d904, keep Kurt's chute shut in a wind zone.** The wind zone's air arm calls
+    `Player::blow` (the pull down plus `_blown`), and `updateAir` neither opens the chute
+    nor keeps it open while `_blown`; `updateVertical` clears it after the fall. No golden
+    moved: none drops through a wind box in the air. Upstream's own case (COLYM_3 under
+    OLYM_3's hatch) did not reach the box in the wind probe either (Kurt starts in COLYM_2
+    there and the zone's arena script does not run), so this is checked by build and suites
+    only.
+  - **32b1e1b0, hold the slide brake's last frame.** K_BSLIDE is `Once` in
+    `KurtSprite`'s state table (it looped 3 frames 10 times a second, so the sprite
+    flickered while braking). Draw-side only; no golden covers the sprite pick.
+  - **e96fb32e, stop Kurt on an object face he touches.** `solids::entry` counts a start
+    exactly on a grown face (t = 0) as an entry on that axis, as the original (0x45f588)
+    does. No golden moved. Upstream's case (LEVEL4 MEAT_7, a jump over the board through
+    the closed X4DOOR) was tried in the platform probe at five jump steps; the old and new
+    oracle and our C++ end in the same place in each, so the exact on-the-face contact was
+    not reproduced there. Checked by build and suites only.
+  - **8fceff8c, fly Gunter head first down the stream.** The Gunter tube's `other_` starts
+    with yaw 0 (the tube's frame unturned, 0x435a34/0x4366f4) instead of the 90 Kurt
+    uses, so he no longer lies sideways across the tube. Two goldens moved, both equal to
+    the stream probe at 8fceff8c byte for byte: `stream_L8_planet`, `stream_L8_death`.
+    (The probe links the stream sources by `../../../src`; the oracle script places it
+    under `tests/scripts/` for that, and it reproduces `stream_L8_planet` at d5bb66ec.)
+  - **47395c03, limit the mouse look to -30..60 degrees.** `FollowCamera` clamps the look
+    offset so the look and the automatic pitch (arena, fall, climb, ride tilt) together
+    stay within -30..60, the automatic part alone may go past (`clampLook`); before, the
+    range was -60..90. The view pitch is now `automatic + look`, the C#'s order. This is
+    the 3DS's look too: the circle pad/C-stick look feeds `Input::mouseY`, so on the 3DS
+    the look now stops at -30/60 (a behaviour change there, as upstream intends: past 60
+    Kurt's sprite lay flat behind the floor). No golden moved (none looks with the
+    mouse). New vm_tests case `MouseLookStopsAtTheLookLimits`.
+  - **3bb211b6, lift Kurt out of a floor he sank into** (a deliberate deviation from the
+    original, upstream's issue #30). `ArenaSpace::sunk` measures how far the falling box's
+    lowest corner lies under the floor plane a fall move stopped on; `Player::climbOut`
+    (before `land`) moves him up onto it when that is more than 0.5 and at most 2.5 and the
+    move up is free, never on a ride. LEVEL8's GUNT_7 walkway (no side wall) let Kurt walk
+    2 units inside it. **It also moves LEVEL3's start:** Kurt starts 1.81 units into the
+    start pad and now stands on it from the first step (feet z 190.0 -> 191.8), in the C#
+    1.2.4 oracle too. That shifts every level-3 Kurt golden. Twelve goldens moved; eleven
+    equal the oracle at 3bb211b6 byte for byte (`L3_kurt_steps`, `L4_ledge_climb`,
+    `L3_sniper`, `cheats_L3_god`, `L3_end_level`, `L3_strike_teeth`, `L3_kurt_invuln`,
+    `L3_kurt_knockdown`, `L3_kurt_flashes`, `L3_kurt_push`, `L3_kurt_camroll`), and
+    `L7_corridor_middle` takes the C++'s output, 3 lines off the oracle through the trig LUT
+    (a libm `Player::facing` scratch build matches the oracle byte for byte). The pinned
+    frame (`gates_frames`, L3_f1) still passes.
+  - **Oracle tooling:** `tests/scripts/hurt_probe` is new; it rebuilds the lost driver's
+    `hurt` mode and reproduces all eight `L3_kurt_{hurt,hurtland,knock,invuln,knockdown,
+    flashes,push,camroll}` goldens at d5bb66ec. `sniper_probe` also writes the wheel's
+    notches to `Input.ZoomWheel` when the C# has it (upstream 1618b8c3 zooms through it
+    while sniping); it still reproduces `L3_sniper`/`L7_sniper` at d5bb66ec and at 47395c03.
+  - **d14ed0b5, run objects newest first, per arena.** Spawns go to the front of the
+    object list (`push_front`, the original's 0x45fd4c), and the tick runs Kurt's arena's
+    objects, then the active second arena's (as it is by then), each once
+    (`runArenaObjects`, `MdkObject::ran_this_tick`). LEVEL7 DANT_6's cannon XD6GUN blew up
+    as soon as Kurt came near because it checked its XG count before they counted
+    themselves. Knock-on fixes: `touchDamage`'s snapshot of the list now indexes the old
+    entries behind any it spawns; a save's restore appends its boxes (`spawnBox(...,
+    atBack)`) so the list keeps the saved order, as the C#'s `Objects.AddRange`.
+    **Goldens: 367 moved** (the list order is in every table): 365 equal the oracle at
+    d14ed0b5 byte for byte, among them all `L*_t*` tables and scripts, the
+    pose/transform/blend/layout/draw/bound/runner dumps, rounds, holes, items, bomber,
+    hazards, platforms, ride, board, strike, cutscene, screen and the five saves. The five
+    saves were checked against d14ed0b5 with 6eb0963b's `town_total` save field taken
+    out of the C#: that field is the timer ring's (presentation, 1.2.3), not part of this
+    port. Two take the C++'s output: `L8_fire` (17 lines: one debris piece bounces one
+    step apart; a libm `Player::facing` scratch build equals the oracle byte for byte, so
+    it is the trig LUT, now visible under the new random order) and `L8_effects_storm`
+    (the C++ effects view over `L8_hazards_debris`, which equals the oracle). tick1's
+    hand-written `footing`/`walk` checks and vm_tests' synthetic spawn-order cases read the
+    list in its new order (the same objects and values). Also fixed in vm_tests:
+    47395c03's case compared -30 + 15.000001 with == -15.
+  - **Oracle tooling:** `table_probe` gained the pose, transform, blend, layout, draw,
+    bound and runner modes (all 25 such goldens reproduced at d5bb66ec); `rounds_probe`
+    calls `SniperRounds.Camera(i, 1f)` where the C# has upstream a73a5cd2's alpha.
+  - **Full suite after d14ed0b5:** Linux build 0 warnings; `make -C tests/scripts test` 999
+    PASS, 0 FAIL; `make -C tests/formats` passes; `tools/check.sh` failed only the R11
+    screen, which is file-level: `animateJump`'s `while` (a91c0870) made
+    `player_state.inc` "a file with a loop", so `wrapAnimationFrame`'s `%` became a
+    candidate. `animateJump` moved to `player_vertical.inc` (the jump's file, no `%`);
+    `tools/check.sh` then passes all gates.
+  - **e1d13fdf, spawn LEVEL4's red bones and EWJ pickups.** Opcode 161 goes through
+    `ScriptRuntime::spawnFlagged`: SW_EWJ and BONEFLC have no model, so they become sprite
+    boxes (6x6x6 and 9x9x6) flagged 0x2008a6 instead of being dropped; anything else
+    spawns as before. LEVEL4's board runs had lost 20 bones and 11 EWJ, LEVEL8 2 EWJ. Six
+    goldens moved; five equal the oracle at e1d13fdf byte for byte (`L4_board_ride`,
+    `L4_board_lost`, `L4_board_dead`, `L4_board_end`, `L4_hazards_snow`) and
+    `L4_board_off` takes the C++'s output (the same 5 trig-LUT lines as at 3f9315c5; a libm
+    `Player::facing` scratch build equals the oracle). Upstream's companion 84ad71e4
+    (stretch a spawn_box sprite over its box, so a bone draws 9x6, not 9x5) is a drawing
+    change and is left to the presentation work.
+  - **e1fde558, stand Kurt on platforms' triangles, not boxes.** `solids::platform` takes
+    the part's posed triangles under the feet (`MdkObject::floorAt`: the segment in model
+    space against the part's triangles, either side, Moller-Trumbore as the C# writes it;
+    damp_platform_floor 0x41d2c4 casts at them, 0x414668); a box only selects the
+    candidates, and `Solid` carries its part. On LEVEL3's hover ship XGS Kurt stood level
+    with the fins, 2.6 above the deck. The same commit nudges a snowboard stuck where the
+    path time cannot advance towards the path ahead (`Snowboard::nudge`). Eight goldens
+    moved; seven equal the oracle at e1fde558 byte for byte (`L3_plat_keeper`,
+    `L7_plat_tank`, `L6_plat_gun`, `L4_board_off` -- which matches the oracle again --,
+    `L4_board_lost`, `L4_board_dead`, `L4_board_end`). `L4_board_ride` takes the C++'s
+    output: one line, the follow camera's z one 1/64 apart at a yaw of 159.1 (the view's
+    trig LUT; the feet and every other column equal the oracle).
+  - **7f0dfca8, keep a kept Kurt over his platform in the air.** `carryKurt`: a platform
+    that keeps Kurt (0x800000) also carries his XY while he is in the air, at the
+    platform's height and without turning him (0x46634e). A jump on LEVEL6's flying
+    XBGUN left him up to ~10 units behind it. No golden moved. A jump on the XBGUN at
+    rest (platform probe, `tp:1:OLYM_4:-1732:92:-1260:0,fire:60-210,jump:250-251`) is the
+    same in the oracle before and after this commit and in our C++; the flying-gun case of
+    upstream's unit test was not reproduced in a probe.
+  - **6ccc0cf4 (upstream's C++ 2.0 only), the second snowboard run no longer ends in
+    MEAT_4.** `Snowboard::nudge` moves a stuck Kurt through `Player::shove`, which collides,
+    instead of writing the step into his feet: since e1fde558 the board sticks against
+    MEAT_4's bank (y 9360) and the raw nudge put Kurt inside it, over no floor. Upstream
+    notes the C# 1.2.6 has the same bug, so the oracle is the C# 1.2.6 (1094e273) with
+    exactly this change made in `Snowboard.Nudge` (`_kurt.Shove(...)`) in scratch.
+    `L4_board_end` equals that oracle byte for byte and still ends in MEAT_5's box;
+    `L4_board_ride` takes the C++'s output (one camera z 1/64 apart, the view's trig LUT,
+    as at e1fde558).
+  - **Not ported, and why:**
+    - **1618b8c3** (wheel and zoom bindings in the scope): not applicable. Our Linux
+      frontend has fixed bindings (`window_sdl.cpp`; the settings' `bind.*` lines are kept
+      but never applied) and the 3DS has no wheel. With the default bindings the upstream
+      change only stops a scoped wheel notch from also pressing the item keys, and our
+      `player_sniper.cpp` already skips the item keys on a step the wheel moved. If
+      rebinding is ever wired up, port this with it.
+    - **224d1144**: test-only (`tests/kurt_moves_test.sh`, which runs the C# app in `src/`).
+    - **03ee9031** (pull the board over floors it sank into): a fix to upstream's
+      `FloorPull` (a27ca2f4, "draw the ridden board over the floor under it"), a drawing
+      feature our port does not have. Presentation; listed for that work with a27ca2f4.
+    - **84ad71e4** (stretch spawn_box sprites over the box): drawing; presentation.
+    - **c881c9bc** (keep the between-frames view upright looking down): part of upstream's
+      in-between-frame interpolation; presentation. Our steps already clamp at 89 degrees
+      and 47395c03 stops the look at 60.
+    - **6eb0963b** (a save's `town_total` for the timer ring): belongs with the timer ring
+      (235b1792, presentation). Our saves do not write it; the C# 1.2.3+ loads such saves.
+  - **Upstream's later C++ (d8724627..367cc6fc):** reviewed commit by commit; the only
+    behaviour fix is 6ccc0cf4 (ported above). 1acbcf17 is tests and parity tooling (it
+    marks the second snowboard run's test should_fail, which 6ccc0cf4 then fixes);
+    7750e87b speeds up PNG deflate and SHA-256 (not gameplay); the rest are the port
+    itself, Android, CI, docs and naming. The merge commits between 1.1.1 and 1.2.6 carry
+    no source of their own except c5d11e7c's mod-image conflict resolution (mods).
+  - **Elsewhere, for the owner:** presentation (the other agent's list) -- 5f9ea5f2,
+    683a53ef, 04c25852, c881c9bc, 8bc42528, ae746b5d, 7740deb1, a73a5cd2, bf9b3a53,
+    75ec50e2, a27ca2f4, 03ee9031, 84ad71e4, 235b1792, f0fa4c17, 5b338e44, 6eb0963b,
+    bb39a854, 70c27b14, 7e61858f, 8c6c24cd, bbd2fddb, e1eb36bb, 09f2e511. Renderer
+    (D3D12/SDL GPU): c14fa040, 9fad9b1e, 674a983f, a9cc6ddf. New features, not fixes:
+    47325ca3 (FPS overlay), 0f04fe59 (zip mods), 83379440 (mdk.log, console from the
+    menu), 8f7dd7b2 (quick save/load), bebe9c9a/25a11c52 (version in a corner), the HD/PNG
+    work (3f24f303, b30b8c40, aad0f065, 0551812a, 2e072015, 1b1c21ea), and the Android /
+    touch / NativeAOT commits (7e43522b, 98ebc06d, dbe8ef93, 1a90639f, 4a0c5c28, c571901e,
+    f21cb391, f989576b, 4e0015bb, 9410097c, ea4b340d, b8a84ce8, 1bf504b4, 86c6bea0,
+    ee11e624, e1fd2f86, eb6454e5, e2d839ca).
+  - **Deliberate differences checked:** none of the fixes depends on the console model,
+    adds a thread or file I/O, or touches the 30 fps cap: the per-tick fixes use the step's
+    `delta` (c81dafc1, 93743b33), which is right at any rate. 47395c03 changes the 3DS's
+    stick look: it now stops at -30/60 degrees. 3bb211b6 starts LEVEL3 1.81 higher (on
+    the pad instead of in it). d14ed0b5 reverses the object list (newest first), which
+    also changes which object a script's "first match" finds -- the C#'s order now.
+  - **The trig LUT, where it shows:** five goldens take the C++'s output instead of the
+    oracle's (`L7_corridor_middle`, `L4_board_off` until e1fde558, `L8_fire`,
+    `L4_board_ride`, and the C++-only `L8_effects_storm`); each was checked by a scratch
+    build with libm in `Player::facing` (or is a camera-z 1/64 step in the view's LUT),
+    which is the accepted drift (owner, 2026-11-20). Every other moved golden equals the
+    oracle at its fix's upstream commit byte for byte.
+  - **Final host run (a5e477b2):** Linux build 0 warnings; `make -C tests/scripts test` 999
+    PASS, 0 FAIL; `make -C tests/formats` passes; `tools/check.sh` ALL GATES PASSED
+    (gates_smdh skipped: no .cia).
+  - **3DS:** player build (`make -C mdk_3ds`, no harness) of a5e477b2: 0 compiler warnings
+    (make's own "jobserver unavailable" notice only); saved as
+    `.git/worktrees/upstream-gameplay/hw-logs/mdk-player-a5e477b2.3dsx`. **Not run on
+    hardware or in Mandarine** by this work: everything above is host-verified against
+    the C# oracle; no 3DS-specific code changed.
+- **Commit:** branch `fix/upstream-gameplay`, ab4bbed0..a5e477b2 and this ledger commit.

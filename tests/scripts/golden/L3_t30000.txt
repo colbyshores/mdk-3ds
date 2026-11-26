@@ -1,12 +1,12 @@
 level=3 ticks=30000 seed=1 currentArena=HMO_1 objects=11
-000 type=SW_BONES arena=HMO_1 pos=(-64.0000,349.0000,144.4500) yaw=150.0151 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-001 type=SW_H01 arena=HMO_1 pos=(-59.0000,314.0000,105.4500) yaw=342.0153 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-002 type=SW_GATT arena=HMO_1 pos=(58.0000,355.0000,162.4500) yaw=12.0150 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-003 type=SW_HBOMB arena=HMO_1 pos=(-57.0000,186.0000,128.4500) yaw=330.0152 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-004 type=XF arena=HMO_1 pos=(-135.5255,685.0759,251.5790) yaw=206.0606 hp=10 flags=0x00000200 dead=0 move=0/0 connects= path=27240/59.0000/1.0000/-1
+000 type=XTUR arena=HMO_1 pos=(-14.0000,460.0000,149.0000) yaw=255.0000 hp=100 flags=0x00000000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+001 type=XTUR arena=HMO_1 pos=(13.0000,460.0000,149.0000) yaw=255.0000 hp=100 flags=0x00000000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+002 type=XH1_DOOR arena=HMO_1 pos=(0.0000,632.0000,104.0000) yaw=270.0000 hp=65000 flags=0x01002000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+003 type=XS arena=HMO_1 pos=(0.0000,615.0000,115.0000) yaw=270.0000 hp=400 flags=0x00000004 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+004 type=XG arena=HMO_1 pos=(15.9138,179.4314,126.9600) yaw=263.6671 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
 005 type=XG arena=HMO_1 pos=(-30.8038,179.4882,126.9500) yaw=278.4935 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-006 type=XG arena=HMO_1 pos=(15.9138,179.4314,126.9600) yaw=263.6671 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-007 type=XS arena=HMO_1 pos=(0.0000,615.0000,115.0000) yaw=270.0000 hp=400 flags=0x00000004 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-008 type=XH1_DOOR arena=HMO_1 pos=(0.0000,632.0000,104.0000) yaw=270.0000 hp=65000 flags=0x01002000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-009 type=XTUR arena=HMO_1 pos=(13.0000,460.0000,149.0000) yaw=255.0000 hp=100 flags=0x00000000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-010 type=XTUR arena=HMO_1 pos=(-14.0000,460.0000,149.0000) yaw=255.0000 hp=100 flags=0x00000000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+006 type=XF arena=HMO_1 pos=(-135.5255,685.0759,251.5790) yaw=206.0606 hp=10 flags=0x00000200 dead=0 move=0/0 connects= path=27240/59.0000/1.0000/-1
+007 type=SW_HBOMB arena=HMO_1 pos=(-57.0000,186.0000,128.4500) yaw=330.0152 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+008 type=SW_GATT arena=HMO_1 pos=(58.0000,355.0000,162.4500) yaw=12.0150 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+009 type=SW_H01 arena=HMO_1 pos=(-59.0000,314.0000,105.4500) yaw=342.0153 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+010 type=SW_BONES arena=HMO_1 pos=(-64.0000,349.0000,144.4500) yaw=150.0151 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1

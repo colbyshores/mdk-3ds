@@ -4,6 +4,7 @@
 // ============================================================================
 
 #include "game/arena_space.h"
+#include <cmath>
 
 #include <cfloat>
 
@@ -18,8 +19,31 @@ const float kWalkLift = 0.5f;
 const float kFallLift = 0.01f;
 const int kSlides = 4;
 const float kBoundsMargin = 2.0f;
+// Faces at least this upright are floors (0x421708).
+const float kFloorNz = 0.5f;
 
 } // namespace
+
+float ArenaSpace::sunk(const Result& result, Vec feet) {
+    if (result.bsp == nullptr || result.node < 0) {
+        return 0.0f;
+    }
+    // The plane, facing up.
+    const formats::BspNode& plane = result.bsp->arena()->nodes()[result.node];
+    const bool flip = plane.normal[2] < 0.0f;
+    const Vec n = flip ? Vec{-plane.normal[0], -plane.normal[1], -plane.normal[2]}
+                       : Vec{plane.normal[0], plane.normal[1], plane.normal[2]};
+    const float d = flip ? -plane.d : plane.d;
+    if (n.z < kFloorNz) {
+        return 0.0f;
+    }
+    // The box's reach towards the plane, less the centre's height above it, upright.
+    const Vec centre{feet.x, feet.y, feet.z + (kFallBox.z + kFallLift)};
+    const float reach = std::fabs(kFallBox.x * n.x) + std::fabs(kFallBox.y * n.y) + kFallBox.z * n.z;
+    const float above = n.x * centre.x + n.y * centre.y + n.z * centre.z + d;
+    const float depth = (reach - above) / n.z;
+    return depth > 0.0f ? depth : 0.0f;
+}
 
 bool ArenaSpace::contains(Vec min, Vec max, Vec p) {
     return p.x >= min.x - kBoundsMargin && p.y >= min.y - kBoundsMargin &&

@@ -114,6 +114,10 @@ public:
     // plain move.
     Result move(Vec feet, Vec delta, Motion motion, float slideK,
                 const std::vector<solids::Solid>& solids);
+    // C# ArenaSpace.Sunk (upstream 3bb211b6): how far the falling box at `feet` lies below
+    // the floor plane a move stopped on -- its lowest corner, so on a slope more than
+    // under the centre; 0 above it, with no floor, or on a face steeper than |nz| 0.5.
+    static float sunk(const Result& result, Vec feet);
     // C# ArenaSpace.Touching: the owners of the solids Kurt's walking box at `feet`
     // touches or is in, each added once.
     static void touching(Vec feet, const std::vector<solids::Solid>& solids,

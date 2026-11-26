@@ -762,7 +762,7 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.spawn(obj, strval(op(ins, 3)), vpos(ins), 0.0f, -1, ival(op(ins, 4)), false);
             break;
         case 161:  // spawn_flagged
-            runtime_.spawn(obj, strval(op(ins, 3)), vpos(ins), 0.0f, -1, ival(op(ins, 4)), true);
+            runtime_.spawnFlagged(obj, strval(op(ins, 3)), vpos(ins), ival(op(ins, 4)));
             break;
         case 230:  // spawn_ex
             runtime_.spawn(obj, strval(op(ins, 5)), vpos(ins), fval(op(ins, 3)), ival(op(ins, 4)),
@@ -1723,14 +1723,14 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             return branch(obj, ins, hit);
         }
-        case 209: {  // if_player_on_me_low: Kurt stands on it, fires, and isn't above its top
-            // ScriptVm.cs:1269-1273: the platform Kurt stands on (Kurt.Platform while on
-            // a floor, package #3) is this object, he fires, and his feet are not above
-            // its top.
-            const bool onMe = runtime_.getKurtPlatform() == obj && runtime_.kurt().firing();
+        case 209:  // if_player_on_me_low: Kurt stands on it and fires
+            // The original (0x458a59) compares his feet with his floor on the platform
+            // (0x573a1c), which standing on it already means. The model's top can be
+            // below his feet: on LEVEL6's risen XBGUN they are 0.02 above it, and a
+            // feet <= top test never fired the cannon. Upstream C# fix 3b072d2a (v1.2.1);
+            // the src/ oracle (v1.1.1) still has the old test.
             return branch(obj, ins,
-                          onMe && runtime_.kurtPosition().z <= runtime_.worldBounds(obj).max.z);
-        }
+                          runtime_.getKurtPlatform() == obj && runtime_.kurt().firing());
         case 174: {  // if_ammo: 0 is the super chain gun's ticks; 1-5 are sniper ammo
             const int32_t kind = ival(op(ins, 0));
             const int32_t amount = kind == 0 ? runtime_.kurt().superChainGun()

@@ -437,8 +437,15 @@ public:
     // C# Kurt.SlideAccel (slide_accel 0x468be0): adds a push (u/s per axis) to the
     // slide velocity over dt seconds.
     void slideAccel(const Vec2& push, float dt);
-    // C# Kurt.AddVerticalSpeed (Kurt.cs:278): wind zones and push_kurt.
+    // C# Kurt.AddVerticalSpeed (Kurt.cs:278): push_kurt.
     void addVerticalSpeed(float speed) { verticalSpeed += speed; }
+    // C# Kurt.Blow (upstream dce8d904): in a wind zone's box in the air (opcode 224 sets
+    // 0x573bec) the wind pulls him down and keeps his chute shut for his next step
+    // (damp_vertical 0x4694bc), so he lands in the box and slides instead of gliding past.
+    void blow(float dt) {
+        _blown = true;
+        verticalSpeed -= kSlideGravity * dt;
+    }
 
     // ---- Ledges (C# Kurt.Ledge.cs, damp_ledge_grab 0x469868; game/player_ledge.cpp) ----
     // The climb's tick counter (C# Kurt._climbTicks), for the goldens.
@@ -514,7 +521,8 @@ private:
     // C# Kurt.Facing's (x, y) in libm, the oracle's MathF.Cos/Sin, for the slide.
     Vec2 slideFacing() const;
     void updateAir(bool jumpHeld, float delta);
-    void glueDownhill(const Vec3& move, float delta);
+    void climbOut(const ArenaSpace::Result& result);
+    void glueDownhill(const Vec3& move, float delta, bool exact = false);
     void fall(float delta);
     void fallMove(float delta);
     void land(const Vec3& before, const Vec3& normal, float delta);
@@ -553,6 +561,7 @@ private:
     void updateSpecial(float delta);
     void updateDeath(float delta);
     void animate(float delta);
+    void animateJump(float delta);
     void footstep(int32_t previous, int32_t current);  // C# Kurt.Footstep
     void updateChuteSound();                           // C# Kurt.UpdateChuteSound
     void stopChuteSound();                             // C# Kurt.StopChuteSound
@@ -567,6 +576,11 @@ private:
     audio::SoundMixer* _mixer = nullptr;
     bool _footstepPair = true;  // C# Kurt._footstepPair: FOOT3/4 first, then FOOT1/2
     float _stateTime = 0.0f;
+    // How long Kurt has been off the floor (s; upstream 3f9315c5's _airFor).
+    float _airFor = 0.0f;
+    // A jump's frames went past its top (0x573a48, upstream a91c0870): held jump may open
+    // the chute without waiting to fall faster than kFallStartSpeed.
+    bool _pastJumpTop = false;
     float _animationFrame = 0.0f;
     bool _chuteClosing = false;
     bool _died = false;  // the C#'s Died event, once per death; see died() above
@@ -617,6 +631,8 @@ private:
     Vec2 _slidePush = {0.0f, 0.0f};
     float _slideAir = 0.0f;
     float _slideLeft = 0.0f;
+    // A wind zone blew on him since his last step (0x573bec, upstream dce8d904).
+    bool _blown = false;
     int32_t _slideVoice = 0;
     const char* _slideSound = "";
     // The frame's mouse X while sliding. The C# slide steers by input.MouseX inside the

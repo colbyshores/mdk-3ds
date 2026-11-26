@@ -45,11 +45,15 @@ constexpr float kDefaultPivot = 4.5f;
 // exactly 90 degrees.
 constexpr float kViewPitchLimit = 89.0f;  // degrees
 
-// The pitch smoothing (C# FollowCamera). The look offset is clamped to this
-// range once the arena pitch and the air tilt are taken off it.
+// The pitch smoothing (C# FollowCamera).
 constexpr float kMouseDegrees = 0.15f;    // degrees per mouse count
-constexpr float kMinPitch = -60.0f;
-constexpr float kMaxPitch = 90.0f;
+// Upstream 47395c03 (C# 1.2.3): the mouse's look stops at this pitch, counting the
+// arena's, the fall's and the climb's tilt (those alone may still go past). The
+// original's keys allow -60 to 90 degrees and spring back to 0; a held mouse look
+// further down laid Kurt's sprite flat under the camera behind the floor ahead, and
+// further up sank the camera to his feet, through a rising slope.
+constexpr float kLookUpLimit = -30.0f;
+constexpr float kLookDownLimit = 60.0f;
 constexpr float kTicks = 30.0f;           // the original's ticks per second
 // The arena pitch eases in by 0.85·old + 0.15·new per tick.
 constexpr float kPitchEase = 0.85f;
@@ -124,7 +128,9 @@ struct ClipViewHook {
     // `from` to `to` first meets a blocking object's part, or `to`.
     Vec3 (*clip)(void* context, const Vec3& from, const Vec3& to) = nullptr;
 };
-Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera,
+// `delta` is the step (seconds): the push and the shove move Kurt at most 40 u/s
+// (upstream c81dafc1), the rest on the next steps.
+Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera, float delta,
                        const ClipViewHook* clip = nullptr);
 
 // Fills camera with the follow camera's view for the feet, the horizontal
@@ -141,7 +147,7 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
 // `shakeX`/`shakeY` are the shake's turn in radians (followCameraTurn), 0 for none.
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect,
-                              float rollDegrees, const ClipViewHook* clip = nullptr,
+                              float rollDegrees, float delta, const ClipViewHook* clip = nullptr,
                               float shakeX = 0.0f, float shakeY = 0.0f);
 
 // ---- Sniper mode's view (FollowCamera.cs:381-430) ----
@@ -236,6 +242,8 @@ public:
     // read-only so the host harness can pin the oracle's exact rounding; no
     // gameplay path needs to read it back.
     float arenaPitch() const { return _arenaPitch; }
+    // The mouse's look (degrees down), for the tests.
+    float lookOffset() const { return _lookOffset; }
 
     // The air tilt, in degrees. Read-only for the same reason as arenaPitch(): the
     // host harness pins the oracle's NaN propagation at this camera's MathF.Max.

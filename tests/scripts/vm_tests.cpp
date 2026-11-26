@@ -724,7 +724,8 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     runProgram(runtime, code, &obj);
     CHECK(!sawUnimplemented(kSpawnAtPoint));
     CHECK(runtime.objects().size() == before + 1);
-    const scripts::MdkObject& created = runtime.objects()[before];
+    // Newest first (upstream d14ed0b5): the spawn is at the front.
+    const scripts::MdkObject& created = runtime.objects()[0];
     CHECK(created.type_name == "BEAMS");
     CHECK(created.arena == "DANT_1");
     CHECK(created.position.x == 11.0f);
@@ -770,7 +771,7 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     runProgram(runtime, fallback, &plain);
     CHECK(!sawUnimplemented(kSpawnAtPoint));
     CHECK(runtime.objects().size() == again + 1);
-    const scripts::MdkObject& landed = runtime.objects()[again];
+    const scripts::MdkObject& landed = runtime.objects()[0];  // newest first
     CHECK(landed.position.x == 1.0f);
     CHECK(landed.position.y == 2.0f);
     CHECK(landed.position.z == 3.0f);
@@ -806,7 +807,7 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     runProgram(runtime, turned, &spinner);
     CHECK(!sawUnimplemented(kSpawnAtPoint));
     CHECK(runtime.objects().size() == third + 1);
-    const scripts::MdkObject& rotated = runtime.objects()[third];
+    const scripts::MdkObject& rotated = runtime.objects()[0];  // newest first
     CHECK(fabsf(rotated.position.x - 8.0f) < 1e-3f);
     CHECK(fabsf(rotated.position.y - 26.0f) < 1e-3f);
     CHECK(fabsf(rotated.position.z - 6.0f) < 1e-3f);
@@ -1014,7 +1015,8 @@ void testSpawnAlongPathSpawnsEveryStep(scripts::ScriptRuntime& runtime) {
     const float times[2] = {0.0f, 5.0f};
     int32_t firstInstance = -1;
     for (int i = 0; i < 2; i++) {
-        const scripts::MdkObject& created = runtime.objects()[before + (size_t)i];
+        // Newest first (upstream d14ed0b5): the i-th of the 2 spawns is at 1 - i.
+        const scripts::MdkObject& created = runtime.objects()[1 - (size_t)i];
         CHECK(created.type_name == "BEAMS");
         CHECK(created.arena == "DANT_1");
         CHECK(created.flags == scripts::ScriptRuntime::kSpawnFlaggedFlags);
@@ -1035,8 +1037,8 @@ void testSpawnAlongPathSpawnsEveryStep(scripts::ScriptRuntime& runtime) {
         }
     }
     // The two steps land at different times: t=0 is (0,0,0), t=5 is (0,0,6).
-    const scripts::MdkObject& first = runtime.objects()[before];
-    const scripts::MdkObject& second = runtime.objects()[before + 1];
+    const scripts::MdkObject& first = runtime.objects()[1];  // newest first
+    const scripts::MdkObject& second = runtime.objects()[0];
     CHECK(first.position.z != second.position.z);
     // Absolute key-frame positions (not just relative to pathPosition): they
     // pin the position/frame-field reads, not the Hermite tangents (any
@@ -1071,7 +1073,7 @@ void testSpawnAlongPathSpawnsEveryStep(scripts::ScriptRuntime& runtime) {
         float acc = 0.0f;
         int differ = 0;
         for (int i = 0; i < 100; i++) {
-            const scripts::MdkObject& created = runtime.objects()[before2 + (size_t)i];
+            const scripts::MdkObject& created = runtime.objects()[99 - (size_t)i];  // newest first
             const mdk::Vec3 want = runtime.pathPosition(kPath, acc);
             CHECK(created.position.x == want.x);
             CHECK(created.position.y == want.y);
@@ -2365,11 +2367,12 @@ void testBossBarShowsOnlyWhileKurtFires(LevelData* levelData, const Cmi* cmi,
     CHECK(runtime.barTime == 0.0f);
 }
 
-// Opcode 209 (if_player_on_me_low): Kurt stands on the object, fires, and is not above
-// its top (ScriptVm.cs:1269-1273). With no Player bound there is no Kurt to stand on
-// anything (GetKurtPlatform is null), so the branch is not taken even while he fires;
-// what this pins is that the opcode is dispatched (not the unimplemented bucket). The
-// platform half is pinned on a real platform by golden/L3_plat_keeper.txt.
+// Opcode 209 (if_player_on_me_low): Kurt stands on the object and fires (0x458a59; the
+// upstream C# fix 3b072d2a dropped the oracle's feet-not-above-the-model's-top test).
+// With no Player bound there is no Kurt to stand on anything (GetKurtPlatform is null),
+// so the branch is not taken even while he fires; what this pins is that the opcode is
+// dispatched (not the unimplemented bucket). The true answer is pinned on LEVEL6's
+// cannon by tick1's L6_cannon case.
 void testIfPlayerOnMeLowNeedsThePlatform(LevelData* levelData, const Cmi* cmi,
                                          audio::SoundBank* bank) {
     scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
@@ -2717,12 +2720,14 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
     runtime.remove(nearerLater);
     runtime.remove(exactly100);
     runtime.remove(farAway);
-    scripts::MdkObject* boundaryReceiver = runtime.spawn(&controller, "BEAMS",
-                                                         Vec3{0.0f, 0.0f, 0.0f}, 0.0f, -1, 0, false);
+    // Spawned last to first: the list is newest first (upstream d14ed0b5), so it reads
+    // receiver, at99, at100.
     scripts::MdkObject* at100 = runtime.spawn(&controller, "BEAMS", Vec3{100.0f, 0.0f, 0.0f},
                                               0.0f, -1, 0, false);
     scripts::MdkObject* at99 = runtime.spawn(&controller, "BEAMS", Vec3{99.0f, 0.0f, 0.0f},
                                              0.0f, -1, 0, false);
+    scripts::MdkObject* boundaryReceiver = runtime.spawn(&controller, "BEAMS",
+                                                         Vec3{0.0f, 0.0f, 0.0f}, 0.0f, -1, 0, false);
     CHECK(boundaryReceiver != nullptr && at100 != nullptr && at99 != nullptr);
     if (boundaryReceiver == nullptr || at100 == nullptr || at99 == nullptr) {
         return;
@@ -3888,30 +3893,32 @@ void testDebugMessageIsNoOp(scripts::ScriptRuntime& runtime) {
 // leaves all receiver state untouched on a miss.
 void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
-    // Insert valid candidates first, then self and exclusions. Because the
-    // runtime scans in insertion order and retains the last match, each
-    // missing exclusion independently changes the selected leader.
-    scripts::MdkObject* first = runtime.spawn(&controller, "BEAMS", Vec3{1.0f, 2.0f, 3.0f},
-                                               0.0f, -1, 0, false);
-    scripts::MdkObject* second = runtime.spawn(&controller, "BEAMS", Vec3{4.0f, 5.0f, 6.0f},
-                                                0.0f, 1000, 0, false);
-    scripts::MdkObject* differentId = runtime.spawn(&controller, "BEAMS", Vec3{5.0f, 6.0f, 7.0f},
-                                                     0.0f, 1001, 0, false);
-    // Keep near-matches before self/dead/cross-arena entries so those
-    // exclusion checks remain independently sensitive to scan order.
-    scripts::MdkObject* lowerNearMatch = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
-                                                        0.0f, 999, 0, false);
-    scripts::MdkObject* longerNearMatch = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
-                                                         0.0f, 10001, 0, false);
+    // The runtime scans newest first (spawns go to the front, upstream d14ed0b5) and
+    // retains the last match, so the exclusions are spawned first and the valid
+    // candidates last: the scan meets the candidates first, then the near-matches, then
+    // self and the exclusions, and each missing exclusion independently changes the
+    // selected leader.
+    scripts::MdkObject* otherArena = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                    0.0f, 1000, 0, false);
+    scripts::MdkObject* dead = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                              0.0f, 1000, 0, false);
+    scripts::MdkObject* self = runtime.spawn(&controller, "BEAMS", Vec3{7.0f, 8.0f, 9.0f},
+                                              0.0f, 1000, 0, false);
     // Colliding ID, different type: TYPE_ID must match both components.
     scripts::MdkObject* otherType = runtime.spawn(&controller, "BOLT", Vec3{0.0f, 0.0f, 0.0f},
                                                    0.0f, 1000, 0, false);
-    scripts::MdkObject* self = runtime.spawn(&controller, "BEAMS", Vec3{7.0f, 8.0f, 9.0f},
-                                              0.0f, 1000, 0, false);
-    scripts::MdkObject* dead = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
-                                              0.0f, 1000, 0, false);
-    scripts::MdkObject* otherArena = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
-                                                    0.0f, 1000, 0, false);
+    // Near-matches between the candidates and self/dead/cross-arena entries, so those
+    // exclusion checks remain independently sensitive to scan order.
+    scripts::MdkObject* longerNearMatch = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                         0.0f, 10001, 0, false);
+    scripts::MdkObject* lowerNearMatch = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                        0.0f, 999, 0, false);
+    scripts::MdkObject* differentId = runtime.spawn(&controller, "BEAMS", Vec3{5.0f, 6.0f, 7.0f},
+                                                     0.0f, 1001, 0, false);
+    scripts::MdkObject* second = runtime.spawn(&controller, "BEAMS", Vec3{4.0f, 5.0f, 6.0f},
+                                                0.0f, 1000, 0, false);
+    scripts::MdkObject* first = runtime.spawn(&controller, "BEAMS", Vec3{1.0f, 2.0f, 3.0f},
+                                               0.0f, -1, 0, false);
     CHECK(first != nullptr);
     CHECK(second != nullptr);
     CHECK(differentId != nullptr);
@@ -4074,9 +4081,11 @@ void testAlarmSoundsForTenTicksAndPlaysEveryThirtyTwo(LevelData* levelData,
 // spawned them in.
 std::vector<scripts::MdkObject*> linksOf(scripts::ScriptRuntime& runtime,
                                           const scripts::MdkObject* leader) {
+    // In spawn order: the list is newest first (upstream d14ed0b5), so it is read back to front.
     std::vector<scripts::MdkObject*> links;
     std::deque<scripts::MdkObject>& objects = runtime.objects();
-    for (std::deque<scripts::MdkObject>::iterator it = objects.begin(); it != objects.end(); ++it) {
+    for (std::deque<scripts::MdkObject>::reverse_iterator it = objects.rbegin(); it != objects.rend();
+         ++it) {
         if (!it->dead && it->leader == leader) {
             links.push_back(&(*it));
         }
@@ -5046,10 +5055,12 @@ void testCommandObjectsFormationArmInstallsTheSlot(LevelData* levelData, const C
     scripts::MdkObject& sender = runtime.getArenaState("DANT_1").controller;
     sender.position = Vec3{0.0f, 0.0f, 0.0f};
     sender.yaw = 0.0f;
-    scripts::MdkObject* left =
-        runtime.spawn(&sender, "X_STRIKB", Vec3{0.0f, -40.0f, 0.0f}, 0.0f, -1, 0, false);
+    // Right first: the list is newest first (upstream d14ed0b5), so left is the first
+    // follower the command meets and takes formation slot 0.
     scripts::MdkObject* right =
         runtime.spawn(&sender, "X_STRIKB", Vec3{0.0f, -60.0f, 0.0f}, 0.0f, -1, 0, false);
+    scripts::MdkObject* left =
+        runtime.spawn(&sender, "X_STRIKB", Vec3{0.0f, -40.0f, 0.0f}, 0.0f, -1, 0, false);
     CHECK(left != nullptr && right != nullptr);
     if (left == nullptr || right == nullptr) {
         return;
@@ -6161,6 +6172,22 @@ static bool nearFloat(float actual, float expected, float tolerance) {
 // recorded in the progress log instead. 2e-5 is that measurement plus room, and it is
 // still four orders below anything the eye resolves while failing every wrong sign, a
 // swapped sine and cosine, or a roll about the wrong axis, all of which are O(0.1).
+// Upstream 47395c03: the mouse look stops at -30 and 60 degrees (from a level aim, the
+// whole limit is the look's); before, -60 and 90.
+void testMouseLookStopsAtTheLookLimits() {
+    FollowCamera camera;
+    Input input;
+    input.mouseY = 1000.0f;   // 150 degrees down
+    camera.mouseLook(input);
+    CHECK(camera.lookOffset() == 60.0f);
+    input.mouseY = -2000.0f;  // 300 degrees up
+    camera.mouseLook(input);
+    CHECK(camera.lookOffset() == -30.0f);
+    input.mouseY = 100.0f;    // 15 down from the stop
+    camera.mouseLook(input);
+    CHECK(fabsf(camera.lookOffset() + 15.0f) < 1e-4f);
+}
+
 void testCameraRollBanksTheFollowCamera() {
     const Vec3 feet{0.0f, 0.0f, 0.0f};
     const Vec3 facing{1.0f, 0.0f, 0.0f};
@@ -8687,6 +8714,8 @@ int main(int argc, char** argv) {
     printf("PASS SweepHalfHeightPropagatesNaNLikeTheOracle\n");
     testArrivalKeepsTheStuckCountTheOracleKeeps(&levelData, &cmi, &bank);
     printf("PASS ArrivalKeepsTheStuckCountTheOracleKeeps\n");
+    testMouseLookStopsAtTheLookLimits();
+    printf("PASS MouseLookStopsAtTheLookLimits\n");
     testCameraRollBanksTheFollowCamera();
     testFollowCameraBlendPlacesTheFrame();
     printf("PASS CameraRollBanksTheFollowCamera\n");

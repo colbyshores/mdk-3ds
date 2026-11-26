@@ -935,8 +935,8 @@ bool ScriptRuntime::load(const std::string& text, std::string* why) {
             const Vec3 size{doc.floatOr(doc.at(box, 0), 0.0f), doc.floatOr(doc.at(box, 1), 0.0f),
                             doc.floatOr(doc.at(box, 2), 0.0f)};
             // SpawnBox then Objects.Remove(box): the list is rebuilt from `created`
-            // below, and spawnBox appended it in the order `created` has.
-            created.push_back(spawnBox(controller, Vec3{0.0f, 0.0f, 0.0f}, size, type, 0));
+            // below (Objects.AddRange), so the box is appended in the order `created` has.
+            created.push_back(spawnBox(controller, Vec3{0.0f, 0.0f, 0.0f}, size, type, 0, true));
             continue;
         }
         const formats::Model* model = findModel(arena, type);

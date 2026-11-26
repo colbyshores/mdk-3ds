@@ -97,6 +97,7 @@ private:
     void updateSounds(float dt);
     void followPath(const Vec3& previous, float dt);
     Vec3 pathPoint(float t);
+    void nudge(const Vec3& to, float kurtX, float kurtY);
     float distance(float t, float kurtX, float kurtY);
     void turn(float delta, float dt);
     void place(float delta);

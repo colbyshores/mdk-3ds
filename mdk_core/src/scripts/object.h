@@ -109,6 +109,8 @@ struct MdkObject {
     MdkObject* linked = nullptr;   // obj+0x2b8 (variable kind "other")
     MdkObject* leader = nullptr;   // obj+0x138
     bool dead = false;
+    // The tick's object loop ran it already (ScriptRuntime::runArenaObjects).
+    bool ran_this_tick = false;
     int32_t hidden_parts = 0;      // obj+0x2c8
     int32_t locked_parts = 0;      // obj+0x2cc (opcode 129)
     int32_t texture_frame = -1;    // -1 = by the level's clock
@@ -286,13 +288,19 @@ struct MdkObject {
     float lift() const { return (flags & FlagRolling) != 0 ? height_offset : 0.0f; }
 
     // World position of a model reference point (the C#'s ReferencePoint): the
-    // point scaled and rotated about Z by yaw, added to the position; the position
+    // point (where the current animation frame has it, upstream a48e64c7) scaled and
+    // rotated about Z by yaw, added to the position; the position
     // itself when the model has no such point (index out of range). Used by the
     // attach motion (command 74) to hang a chute on its leader.
     Vec3 reference_point(int index) const;
-    // World position of the centre of a model part at rest (the C#'s PartCenter):
-    // the part box's mean, scaled and rotated about Z by yaw, at the position.
+    // World position of the centre of a model part (the C#'s PartCenter): the box of
+    // the part's vertices in the current pose, through transform() (upstream 3005da70);
+    // the rest-pose part box's mean, scaled and turned by yaw, when it has no vertices.
     Vec3 partCenter(int index) const;
+    // Where the segment `from` -> `to` (world) first meets the part's posed triangles,
+    // either side: its world z in `*z` (the C#'s ISurface.Floor, 0x414668 in model
+    // space; upstream e1fde558). False when it meets none.
+    bool floorAt(int part, const Vec3& from, const Vec3& to, float* z) const;
     // The first part with this name, case-insensitively (the C#'s FindPart); -1.
     int32_t findPart(const std::string& name) const;
 
@@ -308,8 +316,7 @@ struct MdkObject {
     // Animation, pose_bounds(), sound_position(), distance_to(), part_center(),
     // and yaw_to() are implemented in ScriptRuntime, SoundMixer, or this class.
     // sound_position() and distance_to() are inlined/owned elsewhere, not members
-    // here. part_center() (rest-pose box centre) is not part_bounds()/pose_bounds()
-    // (current-pose boxes).
+    // here.
 
   private:
     // The C#'s RotationOf(roll, pitch, yaw): the same matrix rotation() builds,

@@ -142,7 +142,9 @@ KurtSprite::KurtSprite() {
     stateSpecs_.push_back(StateSpec{"K_SLIP", Once});
     stateSpecs_.push_back(StateSpec{"K_SLIDE", Loop});
     stateSpecs_.push_back(StateSpec{"K_FSLIDE", Loop});
-    stateSpecs_.push_back(StateSpec{"K_BSLIDE", Loop});
+    // Braking holds K_BSLIDE's last frame (0x4646a4, state 0x32a; upstream 32b1e1b0):
+    // looped, the sprite flickered while "back" was held on a slide.
+    stateSpecs_.push_back(StateSpec{"K_BSLIDE", Once});
     stateSpecs_.push_back(StateSpec{"K_HANG", Once});
     stateSpecs_.push_back(StateSpec{"K_CRASHL", Once});
     stateSpecs_.push_back(StateSpec{"K_ROLLL", Once});
@@ -463,11 +465,10 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
 
     const Vec3 right = normalize(cross(forward, up));
     // K_ROLLL and K_ROLLR are the same file, a roll to the right: mirrored
-    // for the left. A left strafe mirrors K_SIDE too.
-    const float flip = (player.state() == Kurt::Side && player.strafeSpeed < 0.0f) ||
-                               player.state() == Kurt::RollLeft
-                           ? -1.0f
-                           : 1.0f;
+    // for the left. A left strafe does NOT mirror K_SIDE (upstream 8a3740ac): the
+    // original plays its frames forward whichever way he strafes and blits them
+    // unflipped, so the gun stays in his right hand.
+    const float flip = player.state() == Kurt::RollLeft ? -1.0f : 1.0f;
     Quad at;
     at.feet = feet;
     at.right = scale(right, pixel * flip);

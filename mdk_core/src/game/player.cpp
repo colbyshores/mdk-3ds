@@ -68,6 +68,15 @@ const float kJumpSpeed = 40.0f;
 const int kJumpHoldTicks = 6;
 const float kJumpReleasePenalty = 3.333f;
 const float kFallStartSpeed = -16.0f;
+// Upstream a91c0870 (C# 1.2.0): the jumps' frames (0x4646a4). The first ones play one a
+// tick, then frame n waits for the vertical speed to drop to kJumpSpeeds[n] (0x492030;
+// the running jump's 0x492074 is the same to frame 12); past the last comes the fall.
+const int kJumpTimedFrames = 10;
+const int kJumpFrames = 16;
+const int kRunJumpTimedFrames = 7;
+const int kRunJumpFrames = 12;
+const float kJumpSpeeds[kJumpFrames] = {25.0f, 26.0f, 27.0f, 20.0f, 15.0f, 13.0f, 9.0f, 6.6f,
+                                        4.0f,  0.2f,  -3.0f, -6.3f, -10.0f, -14.0f, -17.0f, -20.0f};
 const float kChuteGravity = 21.33f;
 const float kChuteFallSpeed = -8.0f;
 const float kChuteBrake = 256.0f;
@@ -91,6 +100,12 @@ const float kFallSlide = 0.5f;
 const float kCreepSpeed = 0.35f * kTicks;
 // Downhill glue: on floors flatter than this the feet follow the slope down.
 const float kGlueNz = 0.25f;
+// Upstream 3f9315c5 (C# 1.2.0 Kurt.GlueMaxSpeed, FallGrace): the glue's fastest drop
+// (u/s), under the hard landing's so the landing after it does not hurt; and a running
+// or standing Kurt starts the fall animation only after this long (s) off the floor --
+// down a steep slope his feet leave it for a step or two at a time.
+const float kGlueMaxSpeed = 90.0f;
+const float kFallGrace = 0.15f;
 // Landing faster than this is a hard landing (10 damage + K_CRASHL, which land
 // with health). The C# gates the creep snap behind it, so the constant is
 // needed for the position half now.
@@ -98,6 +113,10 @@ const float kHardLandingSpeed = -100.0f;
 const int kHardLandingDamage = 10;   // C# HardLandingDamage
 // Kurt dies this far below his arena's lowest point (C# FallOutDepth).
 const float kFallOutDepth = -50.0f;
+// Upstream 3bb211b6 (C# 1.2.4 Kurt.SunkMin/SunkMax): sunk into a floor between these,
+// Kurt climbs onto it -- from what the walking box steps over (its 0.5 lift) to his waist.
+const float kSunkMin = 0.5f;
+const float kSunkMax = 5.0f / 2.0f;
 // Falling onto a platform first goes to 0.05 above its top (C# PlatformLift, damp_gravity).
 const float kPlatformLift = 0.05f;
 // Objects this far around a move (and Kurt's height above it) may stop it (C#

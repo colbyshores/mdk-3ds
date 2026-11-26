@@ -6,6 +6,7 @@
 #include "formats/model.h"
 #include "game/frame_blend.h"
 #include "scripts/script_runtime.h"
+#include "util/system_numerics_inverse.h"
 
 // The pose caches are NOT here. They are in scripts/pose_cache.cpp, which is
 // the translation unit whose header the game layer is allowed to call; see that
@@ -223,7 +224,22 @@ mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
         static_cast<size_t>(index) >= model->referencePoints.size()) {
         return position;
     }
-    const mdk::formats::Vec3f& p = model->referencePoints[static_cast<size_t>(index)];
+    mdk::formats::Vec3f p = model->referencePoints[static_cast<size_t>(index)];
+    // Upstream a48e64c7 (C# 1.2.0): where the current animation frame has the point
+    // (animations keep each point's place per frame). LEVEL7's soldiers hanging in a
+    // chain (XG) raise the hand they hang by; rest-pose points bunched the chain up.
+    if (animation != nullptr && animation->frameCount > 0 &&
+        static_cast<size_t>(index) < animation->referencePoints.size()) {
+        const std::vector<mdk::formats::Vec3f>& frames =
+            animation->referencePoints[static_cast<size_t>(index)];
+        if (!frames.empty()) {
+            int32_t frame = animation_frame < 0 ? 0 : animation_frame;
+            if (frame > (int32_t)frames.size() - 1) {
+                frame = (int32_t)frames.size() - 1;
+            }
+            p = frames[(size_t)frame];
+        }
+    }
     float x = p.x * scale;
     float y = p.y * scale;
     float z = p.z * scale;
@@ -240,10 +256,40 @@ mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
     return Vec3{position.x + (x * c - y * s), position.y + (x * s + y * c), position.z + z};
 }
 
+// Vector3.Transform(position, matrix) as .NET computes it: row X times x, then Y and Z
+// fused in, then W (the same as sniper_rounds.cpp's transformPoint).
+static mdk::Vec3 transformByMatrix(float x, float y, float z, const float m[16]) {
+    return mdk::Vec3{std::fma(z, m[8], std::fma(y, m[4], x * m[0])) + m[12],
+                     std::fma(z, m[9], std::fma(y, m[5], x * m[1])) + m[13],
+                     std::fma(z, m[10], std::fma(y, m[6], x * m[2])) + m[14]};
+}
+
 mdk::Vec3 mdk::scripts::MdkObject::partCenter(int index) const {
     if (index < 0 || model == nullptr ||
         static_cast<size_t>(index) >= model->partList.size()) {
         return position;
+    }
+    // Upstream 3005da70 (C# 1.2.0): the centre of the part as drawn, in the current pose
+    // through the object's transform. The rest pose can leave an animated part far from
+    // where it is drawn: LEVEL7's boss XB1 rested his GUN at his feet, so every BIGBOLT
+    // started in the floor and died on its first tick.
+    const std::vector<std::vector<mdk::formats::Vec3f> >& pose = pose_parts();
+    if (static_cast<size_t>(index) < pose.size() && !pose[static_cast<size_t>(index)].empty()) {
+        const std::vector<mdk::formats::Vec3f>& vertices = pose[static_cast<size_t>(index)];
+        mdk::formats::Vec3f lo = vertices[0];
+        mdk::formats::Vec3f hi = vertices[0];
+        for (size_t i = 1; i < vertices.size(); i++) {
+            const mdk::formats::Vec3f& v = vertices[i];
+            lo.x = v.x < lo.x ? v.x : lo.x;
+            lo.y = v.y < lo.y ? v.y : lo.y;
+            lo.z = v.z < lo.z ? v.z : lo.z;
+            hi.x = v.x > hi.x ? v.x : hi.x;
+            hi.y = v.y > hi.y ? v.y : hi.y;
+            hi.z = v.z > hi.z ? v.z : hi.z;
+        }
+        const mdk::Mat4 world = transform();
+        return transformByMatrix((lo.x + hi.x) / 2.0f, (lo.y + hi.y) / 2.0f,
+                                 (lo.z + hi.z) / 2.0f, world.m);
     }
     const mdk::formats::Box& box = model->partList[static_cast<size_t>(index)].bounds;
     // The C#'s (bounds.Min + bounds.Max) / 2f * Scale: the mean scaled after.
@@ -252,10 +298,71 @@ mdk::Vec3 mdk::scripts::MdkObject::partCenter(int index) const {
     float centreZ = (box.min.z + box.max.z) * 0.5f * scale;
     // float.DegreesToRadians is left-associated (yaw * pi / 180f).
     float radians = yaw * 3.14159265358979323846f / 180.0f;
+    /* @vfp-exempt R6 — PartCenter's rest-pose fallback (a part with no vertices), the C#'s
+     * MathF.Cos/Sin as in reference_point; the LUT would move where a shot starts.
+     * measured n/a (corpus empty). Verified 2026-11-26. */
     float c = cosf(radians);
     float s = sinf(radians);
     return Vec3{position.x + (centreX * c - centreY * s),
                 position.y + (centreX * s + centreY * c), position.z + centreZ};
+}
+
+// Where (0..1) the segment a -> a + ab crosses the triangle, either side (Moller-Trumbore,
+// as the C#'s MdkObject.Crossing writes it: each term divided by the determinant).
+static bool segmentCrossing(const mdk::Vec3& a, const mdk::Vec3& ab, const mdk::formats::Vec3f& v0,
+                            const mdk::formats::Vec3f& v1, const mdk::formats::Vec3f& v2,
+                            float* t) {
+    const mdk::Vec3 e1{v1.x - v0.x, v1.y - v0.y, v1.z - v0.z};
+    const mdk::Vec3 e2{v2.x - v0.x, v2.y - v0.y, v2.z - v0.z};
+    const mdk::Vec3 p{ab.y * e2.z - ab.z * e2.y, ab.z * e2.x - ab.x * e2.z, ab.x * e2.y - ab.y * e2.x};
+    const float det = e1.x * p.x + e1.y * p.y + e1.z * p.z;
+    if (std::fabs(det) < 1e-9f) {
+        return false;
+    }
+    const mdk::Vec3 s{a.x - v0.x, a.y - v0.y, a.z - v0.z};
+    const float u = (s.x * p.x + s.y * p.y + s.z * p.z) / det;
+    const mdk::Vec3 q{s.y * e1.z - s.z * e1.y, s.z * e1.x - s.x * e1.z, s.x * e1.y - s.y * e1.x};
+    const float v = (ab.x * q.x + ab.y * q.y + ab.z * q.z) / det;
+    const float hit = (e2.x * q.x + e2.y * q.y + e2.z * q.z) / det;
+    if (u < 0.0f || v < 0.0f || u + v > 1.0f || hit < 0.0f || hit > 1.0f) {
+        return false;
+    }
+    *t = hit;
+    return true;
+}
+
+bool mdk::scripts::MdkObject::floorAt(int part, const Vec3& from, const Vec3& to, float* z) const {
+    const std::vector<std::vector<mdk::formats::Vec3f> >& pose = pose_parts();
+    if (part < 0 || static_cast<size_t>(part) >= pose.size()) {
+        return false;
+    }
+    const mdk::Mat4 world = transform();
+    float inverse[16];
+    if (!invertSystemNumericsMatrix4(world.m, inverse)) {
+        return false;
+    }
+    const mdk::Vec3 a = transformByMatrix(from.x, from.y, from.z, inverse);
+    const mdk::Vec3 b = transformByMatrix(to.x, to.y, to.z, inverse);
+    const mdk::Vec3 ab{b.x - a.x, b.y - a.y, b.z - a.z};
+    const std::vector<mdk::formats::Vec3f>& vertices = pose[static_cast<size_t>(part)];
+    const std::vector<int32_t>& indices = model->partList[static_cast<size_t>(part)].triangleIndices;
+    bool found = false;
+    float nearest = 0.0f;
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        float t = 0.0f;
+        if (segmentCrossing(a, ab, vertices[(size_t)indices[i]], vertices[(size_t)indices[i + 1]],
+                            vertices[(size_t)indices[i + 2]], &t) &&
+            (!found || t < nearest)) {
+            nearest = t;
+            found = true;
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    *z = transformByMatrix(a.x + ab.x * nearest, a.y + ab.y * nearest, a.z + ab.z * nearest,
+                           world.m).z;
+    return true;
 }
 
 int32_t mdk::scripts::MdkObject::findPart(const std::string& name) const {

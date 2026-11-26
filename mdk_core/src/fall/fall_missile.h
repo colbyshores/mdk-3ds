@@ -57,7 +57,7 @@ private:
     enum Phase { Free, Homing, Passed };
 
     // FallMissile.Home: steers towards a point below Kurt until 5 units above him.
-    Event home(const formats::Vec3f& kurt);
+    Event home(const formats::Vec3f& kurt, float dt);
 
     // The aim's offset from Kurt (x, y).
     float offsetX_ = 0.0f;

@@ -27,6 +27,10 @@ const float kHeadHeight = 5.5f;
 const float kSightBox = 0.1f;
 const float kPushFloorRange = 4.0f;
 const float kPushSide = 0.5f;
+// Upstream c81dafc1 (C# 1.2.0 FollowCamera.MaxPushSpeed): the camera's push on Kurt, and
+// a solid object's shove, move him at most this fast (u/s), the rest over the next steps.
+// All at once, a door behind him "fast-forwarded" him through it.
+const float kMaxPushSpeed = 40.0f;
 
 // The seam between the renderer's Vec3 and the collision's formats::Vec3f.
 inline Vec toVec(const Vec3& v) { return Vec{v.x, v.y, v.z}; }
@@ -47,6 +51,13 @@ float clampViewPitch(float degrees) {
 
 float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
+}
+
+// C# FollowCamera.ClampLook (upstream 47395c03): the mouse's `look` kept from turning the
+// view past the look limits; the `automatic` pitch (arena, air, climb) alone may go past.
+float clampLook(float look, float automatic) {
+    return clampf(look, mathMin(follow_camera::kLookUpLimit - automatic, 0.0f),
+                  mathMax(follow_camera::kLookDownLimit - automatic, 0.0f));
 }
 
 Vec3 cross(const Vec3& a, const Vec3& b) {
@@ -196,14 +207,13 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
     return true;
 }
 
-Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera,
+Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera, float delta,
                        const ClipViewHook* clip) {
     // C# calls Clear only when space != null && !Sniping && !Frozen && !Dead
-    // (FollowCamera.cs:132). Frozen is ported (the end of a level: no clearance, so
-    // the camera does not shove a lifted Kurt), and so is Sniping (a sniping Kurt is
-    // not shoved off a wall by a camera nobody is looking through); the Dead arm is
-    // still open (docs/OPEN_ITEMS.md), so the guard is space, Frozen and Sniping here.
-    if (space == nullptr || player.frozen || player.sniping()) {
+    // (FollowCamera.cs:132): the end of a level does not shove a lifted Kurt, a sniping
+    // Kurt is not shoved off a wall by a camera nobody is looking through, and the
+    // camera does not slide his corpse during the death beat.
+    if (space == nullptr || player.frozen || player.sniping() || player.state() == Kurt::Dead) {
         return camera;
     }
     const Vec head = vAdd(toVec(player.feet), Vec{0.0f, 0.0f, kHeadHeight});
@@ -230,6 +240,13 @@ Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera,
         const Vec side{ny * (d * kPushSide), -nx * (d * kPushSide), 0.0f};
         Vec chosen;
         if (clearancePush(space, player, push, side, &chosen)) {
+            // Eased in (upstream c81dafc1): at most kMaxPushSpeed, the rest on the next steps.
+            const float limit = kMaxPushSpeed * delta;
+            const float length = sqrtf(chosen.x * chosen.x + chosen.y * chosen.y);
+            if (length > limit) {
+                chosen.x = chosen.x / length * limit;
+                chosen.y = chosen.y / length * limit;
+            }
             const Vec3 moved = player.shove(fromVec(chosen));
             cam = vAdd(cam, toVec(moved));
         }
@@ -244,19 +261,26 @@ Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera,
     const Vec3 end = clip->clip(clip->context,
                                 Vec3{player.feet.x, player.feet.y, player.feet.z + kHeadHeight},
                                 camera3);
-    const Vec3 moved =
-        player.shove(Vec3{end.x - camera3.x, end.y - camera3.y, end.z - camera3.z});
+    // A solid object (a door) behind Kurt shoves him on by up to ~8 units in one step:
+    // eased in too (upstream c81dafc1).
+    Vec3 offset{end.x - camera3.x, end.y - camera3.y, end.z - camera3.z};
+    const float limit = kMaxPushSpeed * delta;
+    const float length = sqrtf(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+    if (length > limit) {
+        offset = Vec3{offset.x / length * limit, offset.y / length * limit, offset.z / length * limit};
+    }
+    const Vec3 moved = player.shove(offset);
     return Vec3{camera3.x + moved.x, camera3.y + moved.y, camera3.z + moved.z};
 }
 
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect,
-                              float rollDegrees, const ClipViewHook* clip,
+                              float rollDegrees, float delta, const ClipViewHook* clip,
                               float shakeX, float shakeY) {
     const float pitch = follow_camera::degreesToRadians(clampViewPitch(pitchDegrees));
     const Vec3 facing = player.facing();
     Vec3 position = followCameraPoint(player.feet, facing, pitch, pivot);
-    position = followCameraClear(space, player, position, clip);
+    position = followCameraClear(space, player, position, delta, clip);
     Vec3 forward;
     Vec3 up;
     followCameraOrient(facing, pitch, &forward, &up);
@@ -383,9 +407,8 @@ void FollowCamera::mouseLook(const Player& player, Input& input) {
 void FollowCamera::mouseLook(Input& input) {
     // C# FollowCamera.MouseLook's clamp, for a caller with no Player (the guards are
     // the overload above's).
-    _lookOffset = clampf(_lookOffset + input.takeMouseY() * follow_camera::kMouseDegrees,
-                         follow_camera::kMinPitch - _arenaPitch - _airPitch,
-                         follow_camera::kMaxPitch - _arenaPitch - _airPitch);
+    _lookOffset = clampLook(_lookOffset + input.takeMouseY() * follow_camera::kMouseDegrees,
+                            _aim.pitch);
 }
 
 void FollowCamera::updateAirTime(const Player& player, float delta) {
@@ -527,18 +550,18 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
         _airPitch = mathMax(_airPitch,
                             mathMin(_airTime * follow_camera::kAirPitchRate, follow_camera::kAirPitchMax));
     }
-    _lookOffset = clampf(_lookOffset, follow_camera::kMinPitch - _arenaPitch - _airPitch,
-                         follow_camera::kMaxPitch - _arenaPitch - _airPitch);
     // CameraTilt and CameraPivot live on the Player (C# Kurt.Ride), and CameraRoll
     // is read off it here exactly as the C# reads it off Kurt (FollowCamera.cs:139).
-    const float degrees =
-        _arenaPitch + _lookOffset + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt;
+    const float automatic =
+        _arenaPitch + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt;
+    _lookOffset = clampLook(_lookOffset, automatic);
+    const float degrees = automatic + _lookOffset;
     // C# FollowCamera.cs:137-139: Orient, UpdateShake, then Turn by the shake and the roll.
     // The shake's update reads nothing the placement writes, so it runs before the build
     // that does Point, Clear, Orient and Turn together.
     updateShake(delta);
     buildFollowCameraCleared(camera, space, player, degrees, player.cameraPivot,
-                             aspect, player.cameraRoll().roll(), &clipView, shakeTurnX(),
+                             aspect, player.cameraRoll().roll(), delta, &clipView, shakeTurnX(),
                              shakeTurnY());
 
     // The Aim the next Blend interpolates (C# FollowCamera.cs:141-143): the
@@ -546,7 +569,7 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     // pivot and the roll. The first step makes previous and current the same;
     // after that the previous one is the one before this step.
     const Aim aim{
-        _arenaPitch + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt,
+        automatic,
         player.cameraPivot,
         player.cameraRoll().roll()};
     if (!_haveAim) {

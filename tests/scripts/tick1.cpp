@@ -8103,7 +8103,13 @@ int main(int argc, char** argv) {
                 runtime.update(1.0f / 30.0f);
             }
         }
-        if (what == "pose") {
+        if (what == "table") {
+            // `tick1 dump table|script <level> <ticks>`: the golden/L*_t*.txt and
+            // L*_t*_script.txt texts; the oracle twin is tests/scripts/table_probe.
+            printf("%s", dumpTable(level, ticks, runtime).c_str());
+        } else if (what == "script") {
+            printf("%s", dumpScript(level, ticks, runtime).c_str());
+        } else if (what == "pose") {
             printf("%s", dumpObjectPoses(level, ticks, runtime).c_str());
         } else if (what == "transform") {
             printf("%s", dumpObjectTransforms(level, ticks, runtime).c_str());
@@ -9695,6 +9701,54 @@ int main(int argc, char** argv) {
             }
         }
     }
+    // L6 OLYM_4's cannon (in-game level 2): Kurt drops onto the middle XBGUN (script 23159)
+    // and holds fire. It rises (114, restart 23182), fires while he stands on it and fires
+    // (209, the shot loop at 23250), and after the third shot (if_var 2.0 > 2) takes path
+    // 35601 (23266, 23303: the window, group 1, shatters), shows COLYM_4 and carries him
+    // through it (23375); it then dies and he drops into OLYM_5. Before the 209 fix
+    // (upstream C# 3b072d2a) his feet were 0.02 above its model's top and it never fired:
+    // the script sat at 23193 for good. Checked by markers, not a golden: the src/ oracle
+    // is v1.1.1, which still has the old test, and no C# probe ran this schedule.
+    {
+        std::string got;
+        std::string why;
+        if (!kurtPlatformsDump(6, 700, "tp:1:OLYM_4:-1732:92:-1260:90,fire:60-700", data,
+                               spritesArg, &got, &why)) {
+            printf("FAIL L6_cannon: %s\n", why.c_str());
+            failures++;
+        } else {
+            const char* kSteps[] = {
+                "on=XBGUN#1002",                          // he stands on it
+                "/r23250\n",                              // it fires (209 true)
+                "/r23266\n",                              // third shot: off on its path
+                "/r23303\n",                              // the window breaks at frame 4
+                "arena=COLYM_4 state=Shot",               // it carries him into COLYM_4,
+                "on=XBGUN#1002",                          // still standing on it
+                "arena=OLYM_5",                           // and he ends up in OLYM_5
+            };
+            size_t at = 0;
+            const char* missing = nullptr;
+            for (size_t i = 0; i < sizeof(kSteps) / sizeof(kSteps[0]); i++) {
+                at = got.find(kSteps[i], at);
+                if (at == std::string::npos) {
+                    missing = kSteps[i];
+                    break;
+                }
+            }
+            const size_t last = got.rfind("\ns=700 ");
+            if (missing != nullptr) {
+                printf("FAIL L6_cannon: never reached \"%s\" in order\n", missing);
+                failures++;
+            } else if (last == std::string::npos ||
+                       got.compare(last + 1, 25, "s=700 arena=OLYM_5 state=") != 0) {
+                printf("FAIL L6_cannon: Kurt is not in OLYM_5 at the end\n");
+                failures++;
+            } else {
+                printf("PASS L6_cannon: Kurt fires the middle XBGUN three times, it breaks "
+                       "the window and flies him through COLYM_4 into OLYM_5\n");
+            }
+        }
+    }
     // ---- end of package #3 -------------------------------------------------------------
 
     // The rides probe's goldens (tests/scripts/ride_probe; see kurtRideDump for the columns),
@@ -10289,6 +10343,63 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- The follow camera leaves a corpse where it fell (FollowCamera.cs:132) ----
+    // LEVEL7's start room, Kurt at (12, 100, 12) facing -x with a wall behind him: the
+    // camera's clearance pushes a living Kurt away from it (tests/kurt_moves_test.sh's
+    // "x 7.0, below 9"). The C# skips the clearance while he is Dead, so the camera does
+    // not slide his corpse through the death beat; this pins that arm against the alive
+    // control. No probe: the C# dump would be the same feet either way.
+    if (spritesArg != nullptr) {
+        LevelData levelData;
+        if (!LevelData::load(&levelData, &data, 7)) {
+            printf("FAIL L7_dead_clearance: the level did not load\n");
+            failures++;
+        } else {
+            ArenaSpace space;
+            const std::vector<const Arena*>& arenas = levelData.arenas();
+            for (size_t i = 0; i < arenas.size(); i++) {
+                if (levelData.isReachable(arenas[i]->name())) {
+                    space.add(arenas[i]);
+                }
+            }
+            float movedX[2] = {0.0f, 0.0f};
+            for (int dead = 0; dead < 2; dead++) {
+                Player player;
+                player.feet = Vec3{12.0f, 100.0f, 12.0f};
+                player.yaw = 180.0f;
+                player.setSpace(&space);
+                player.setFrameCounts(kurtFrameCounts(*spritesArg));
+                if (dead) {
+                    player.setHealth(0);
+                }
+                Input input;
+                // Let him land (and, with no health, die) without the camera.
+                for (int step = 0; step < 60; step++) {
+                    player.update(input, 1.0f / 60.0f);
+                }
+                const float startX = player.feet.x;
+                FollowCamera follow;
+                Camera camera;
+                for (int step = 0; step < 90; step++) {
+                    player.update(input, 1.0f / 60.0f);
+                    follow.update(&camera, &space, player, 0.0f, 1.0f / 60.0f, 4.0f / 3.0f);
+                }
+                movedX[dead] = startX - player.feet.x;
+                if (dead && player.state() != Kurt::Dead) {
+                    movedX[dead] = -1.0f;
+                }
+            }
+            if (movedX[0] > 1.0f && movedX[1] == 0.0f) {
+                printf("PASS L7_dead_clearance: the wall behind pushes a living Kurt %.2f "
+                       "away, and his corpse not at all\n", movedX[0]);
+            } else {
+                printf("FAIL L7_dead_clearance: alive moved %.4f, dead moved %.4f (want > 1 "
+                       "and 0)\n", movedX[0], movedX[1]);
+                failures++;
+            }
+        }
+    }
+
     // ---- The ledges (package #12) ----
     // Kurt's ledge grab, hang and climb against the C# probe tests/scripts/ledge_probe
     // (see kurtLedgeDump for the columns): Kurt.Ledge.cs and ArenaSpace.Probes.cs's
@@ -10641,10 +10752,11 @@ int main(int argc, char** argv) {
                         runtime.update(1.0f / 30.0f);
                     }
                     // The two XG spawn at z=127.0 and fall; the oracle lands them at
-                    // 126.9500 and 126.9644 (their arena floors), which free-fall alone
-                    // would overshoot (126.8933).
+                    // 126.9644 and 126.9500 (their arena floors), which free-fall alone
+                    // would overshoot (126.8933). Newest first since upstream d14ed0b5, so
+                    // the list holds them in that order (golden/L3_t3.txt, 004 and 005).
                     int checked = 0;
-                    const float expectedZ[2] = {126.9500f, 126.9644f};
+                    const float expectedZ[2] = {126.9644f, 126.9500f};
                     int xi = 0;
                     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
                          it != runtime.objects().end(); ++it) {
@@ -10698,13 +10810,16 @@ int main(int argc, char** argv) {
                     for (int t = 0; t < 2; t++) {
                         runtime.update(1.0f / 30.0f);
                     }
-                    // The first two XGs (in table order) are commanded to move; the
-                    // oracle turns them to these yaws with move command 78 active.
-                    const float expectedYaw[2] = {84.5768f, 84.0f};
+                    // Two XGs are commanded to move; the oracle turns them to these yaws
+                    // with move command 78 active. Newest first since upstream d14ed0b5,
+                    // they are the second and third XG in the list (golden/L8_t2.txt, 003
+                    // and 004); the first, 002, has not been commanded yet.
+                    const float expectedYaw[2] = {84.0f, 84.5768f};
                     int xi = 0;
+                    int seen = 0;
                     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
                          it != runtime.objects().end() && xi < 2; ++it) {
-                        if (it->type_name != "XG") {
+                        if (it->type_name != "XG" || seen++ == 0) {
                             continue;
                         }
                         float yaw = it->yaw;

@@ -5,6 +5,8 @@
 
 #include "game/solids.h"
 
+#include "scripts/object.h"
+
 namespace mdk {
 namespace solids {
 
@@ -43,8 +45,13 @@ bool entry(const formats::Box& box, Vec a, Vec b, float* t, int* axisOut) {
 
         const float t0 = (lo - ai) / step;
         const float t1 = (hi - ai) / step;
-        if (minf(t0, t1) > enter) {
-            enter = minf(t0, t1);
+        // On the face (t = 0) counts as outside: entered at once (0x45f588: A <= min;
+        // upstream e96fb32e). A BSP wall in the plane of a part's face left Kurt exactly on
+        // the grown face, the walk entered at t = 0 and was ignored, and once the wall let
+        // go he slid into the box (LEVEL4's MEAT_7: through the closed X4DOOR).
+        const float near = minf(t0, t1);
+        if (near > enter || (near == enter && axis < 0)) {
+            enter = near;
             axis = i;
         }
         leave = minf(leave, maxf(t0, t1));
@@ -105,8 +112,8 @@ bool walk(Vec a, Vec b, Vec half, const std::vector<Solid>& solids, Vec* endOut)
 
 bool platform(Vec feet, float bottom, const std::vector<Solid>& solids, float* top,
               scripts::MdkObject** owner) {
-    // C# Solids.Platform (Solids.cs:67-85): the highest box top inside the ray, ties
-    // to the first (`b.Top >= box.Max.Z` skips an equal one).
+    // C# Solids.Platform (1.2.6): the highest surface the ray meets, ties to the first
+    // (`b.Top >= z` skips an equal one). The box only selects the candidates.
     bool have = false;
     float bestTop = 0.0f;
     scripts::MdkObject* bestOwner = nullptr;
@@ -116,12 +123,26 @@ bool platform(Vec feet, float bottom, const std::vector<Solid>& solids, float* t
         const Solid& solid = solids[i];
         const formats::Box& box = solid.box;
         if (solid.footing == kWall || feet.x < box.min.x || feet.x > box.max.x ||
-            feet.y < box.min.y || feet.y > box.max.y || box.max.z > from || box.max.z < to ||
-            (have && bestTop >= box.max.z)) {
+            feet.y < box.min.y || feet.y > box.max.y || box.min.z > from || box.max.z < to) {
+            continue;
+        }
+        // C# Solids.Surface: the part's triangles, or the box's top.
+        float z = 0.0f;
+        if (solid.owner != nullptr && solid.owner->model != nullptr) {
+            if (!solid.owner->floorAt(solid.part, Vec3{feet.x, feet.y, from},
+                                      Vec3{feet.x, feet.y, to}, &z)) {
+                continue;
+            }
+        } else if (box.max.z <= from) {
+            z = box.max.z;
+        } else {
+            continue;
+        }
+        if (z < to || (have && bestTop >= z)) {
             continue;
         }
         have = true;
-        bestTop = box.max.z;
+        bestTop = z;
         bestOwner = solid.owner;
     }
     if (have) {
