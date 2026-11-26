@@ -81,6 +81,15 @@ public:
     bool load(MdkRenderer renderer, const formats::Bni& sprites, const formats::Palette& palette,
               ModImages* mods = nullptr);
 
+    // C# HudView.Enter (upstream f0fa4c17): Kurt's arena's palette. The HUD's
+    // sprites take its colours 64-175 (0x4709d8 sets them in the table 0x581c28
+    // they are drawn through); the dog's icon needs them, its 64-175 are magenta
+    // in the level's DTI. Cheap when the palette has not changed (a pointer
+    // compare); on a change, only the images whose indices reach 64-175 are made
+    // again through it -- on both backends, since the 3DS expands an index texture
+    // through its palette when it is made.
+    void enter(const formats::Palette& arena);
+
     // Advances the blink once a tick (the C# Tick).
     void tick();
 
@@ -112,7 +121,18 @@ private:
         float h = 0.0f;
         int32_t hotspotX = 0;
         int32_t hotspotY = 0;
+        // The palette it is drawn through (-1: palette_), and, for an image whose
+        // indices reach the arena's colours (64-175) and that is its expansion
+        // (not an HD or mod picture), its indices and size, to be made again by
+        // enter().
+        int32_t palette = -1;
+        std::vector<uint8_t> arenaIndices;
+        int32_t indexWidth = 0;
+        int32_t indexHeight = 0;
     };
+    // Keeps `indices` on `image` when they reach 64-175 (see Image).
+    static void keepArenaIndices(Image* image, const uint8_t* indices, int32_t width, int32_t height);
+    void remake(Image* image, const formats::Palette& palette, int32_t paletteId);
 
     // The palette is a parameter and not just the `palette_` id, because the two
     // backends need different things: the seam's index-texture call takes the
@@ -136,6 +156,10 @@ private:
     MdkRenderer renderer_ = nullptr;
     ModImages* mods_ = nullptr;
     int32_t palette_ = -1;
+    // The arena's palette the HUD was last entered with, and its palette id (the
+    // images enter() made again are drawn through it); -1 before the first.
+    const formats::Palette* arenaColours_ = nullptr;
+    int32_t arenaPalette_ = -1;
     Image panel_;
     Image skull_;
     Image digits_;

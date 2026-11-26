@@ -43,6 +43,9 @@ const float kSelectionH = 47.0f;
 const float kCountRise = 12.0f;
 const float kFlashMax = 255.0f;
 const float kHurtAlpha = 0.4f;
+// The arena's colours in the palette (C# Arena.PaletteColors at 64).
+const int32_t kArenaFirst = 64;
+const int32_t kArenaLast = 175;
 
 Colour paletteColour(const formats::Palette& palette, int32_t index) {
     const uint8_t* rgba = palette.rgba();
@@ -168,6 +171,8 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
                    const formats::Palette& palette, ModImages* mods) {
     renderer_ = renderer;
     mods_ = mods;
+    arenaColours_ = nullptr;
+    arenaPalette_ = -1;
     palette_ = mdk_render_create_palette(renderer, palette.rgba());
     if (palette_ < 0) {
         return false;
@@ -212,6 +217,8 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
                 icon.texture = mdk_render_create_index_texture(
                     renderer, frame.image.width(), frame.image.height() * frame.image.frameCount(),
                     frame.image.indices(), palette.rgba());
+                keepArenaIndices(&icon, frame.image.indices(), frame.image.width(),
+                                 frame.image.height() * frame.image.frameCount());
             }
             // A mod's image for this pickup frame (CanvasImages.FrameName).
             if (mods_ && !mods_->compressed() && icon.texture >= 0 &&
@@ -220,6 +227,7 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
                 if (mods_->image(name, frame.image, palette, &image)) {
                     mdk_render_replace_image(renderer, icon.texture, palette_, image.width,
                                              image.height, image.rgba.data());
+                    icon.arenaIndices.clear();   // the mod's picture is drawn, not the indices
                 }
             }
             icon.w = (float)frame.image.width();
@@ -277,6 +285,7 @@ void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* ou
         out->texture = mdk_render_create_index_texture(renderer_, texture.width(),
                                                        texture.height() * texture.frameCount(),
                                                        texture.indices(), palette.rgba());
+        keepArenaIndices(out, texture.indices(), texture.width(), texture.height() * texture.frameCount());
     }
     // A mod's image for this picture (CanvasImages.Create): the enhanced
     // canvas draws it instead of the filtered index texture.
@@ -285,10 +294,68 @@ void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* ou
         if (mods_->image(name, texture, palette, &image)) {
             mdk_render_replace_image(renderer_, out->texture, palette_, image.width, image.height,
                                      image.rgba.data());
+            out->arenaIndices.clear();   // the mod's picture is drawn, not the indices
         }
     }
     out->w = (float)texture.width();
     out->h = (float)texture.height();
+}
+
+void HudView::keepArenaIndices(Image* image, const uint8_t* indices, int32_t width, int32_t height) {
+    const size_t size = (size_t)width * (size_t)height;
+    for (size_t i = 0; i < size; i++) {
+        if (indices[i] >= kArenaFirst && indices[i] <= kArenaLast) {
+            image->arenaIndices.assign(indices, indices + size);
+            image->indexWidth = width;
+            image->indexHeight = height;
+            return;
+        }
+    }
+}
+
+void HudView::remake(Image* image, const formats::Palette& palette, int32_t paletteId) {
+    if (image->arenaIndices.empty() || image->texture < 0) {
+        return;
+    }
+    // The panel is made from its stamped copy, so the timer's ring stays.
+    const uint8_t* indices = image == &panel_ && !timerPanel_.empty() ? timerPanel_.data()
+                                                                       : image->arenaIndices.data();
+    const int32_t texture = mdk_render_create_index_texture(renderer_, image->indexWidth, image->indexHeight,
+                                                            indices, palette.rgba());
+    if (texture < 0) {
+        return;   // the old picture stays, in the level's colours
+    }
+    mdk_render_release_texture(renderer_, image->texture);
+    image->texture = texture;
+    image->palette = paletteId;
+}
+
+void HudView::enter(const formats::Palette& arena) {
+    if (&arena == arenaColours_ || renderer_ == nullptr) {
+        return;
+    }
+    arenaColours_ = &arena;
+    bool any = !panel_.arenaIndices.empty() || !skull_.arenaIndices.empty() || !digits_.arenaIndices.empty();
+    for (size_t i = 0; i < icons_.size() && !any; i++) {
+        any = !icons_[i].arenaIndices.empty();
+    }
+    if (!any) {
+        return;
+    }
+    const int32_t paletteId = mdk_render_create_palette(renderer_, arena.rgba());
+    if (paletteId < 0) {
+        return;
+    }
+    remake(&panel_, arena, paletteId);
+    remake(&skull_, arena, paletteId);
+    remake(&digits_, arena, paletteId);
+    for (size_t i = 0; i < icons_.size(); i++) {
+        remake(&icons_[i], arena, paletteId);
+    }
+    if (arenaPalette_ >= 0) {
+        mdk_render_release_palette(renderer_, arenaPalette_);
+    }
+    arenaPalette_ = paletteId;
 }
 
 void HudView::tick() { blink_ = (blink_ + 1) & kBlinkMask; }
@@ -391,7 +458,7 @@ void HudView::drawImage(const Image& image, float x, float y, const Colour& tint
     q.u3 = 0.0f; q.v3 = 1.0f;
     q.colour = tint;
     q.texture = image.texture;
-    q.palette = palette_;
+    q.palette = image.palette >= 0 ? image.palette : palette_;
     mdk_render_canvas_quad(renderer_, &q);
 }
 
@@ -427,7 +494,7 @@ void HudView::drawNumber(int32_t value, float centreX, float y) {
         q.u3 = uL; q.v3 = 1.0f;
         q.colour = {1.0f, 1.0f, 1.0f, 1.0f};
         q.texture = digits_.texture;
-        q.palette = palette_;
+        q.palette = digits_.palette >= 0 ? digits_.palette : palette_;
         mdk_render_canvas_quad(renderer_, &q);
         x += kDigitWidth;
     }

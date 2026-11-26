@@ -2593,6 +2593,13 @@ int main(int argc, char** argv) {
             // lands, because the C# starts it empty and nothing here may invent it.
             mdk_render_canvas_begin(renderer);
             if (hudReady) {
+                // The HUD in Kurt's arena's colours (upstream f0fa4c17; a pointer compare
+                // unless the arena's palette changed).
+                if (runtime) {
+                    if (const mdk::formats::Arena* arena = level.arenaNamed(runtime->currentArena())) {
+                        hud.enter(level.paletteOf(arena));
+                    }
+                }
                 mdk::HudState state;
                 state.health = player.health();
                 state.dead = player.dead;

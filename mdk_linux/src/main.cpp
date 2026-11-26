@@ -2817,6 +2817,13 @@ int main(int argc, char** argv) {
             // oracle's constants in mdk::Kurt and there is no second beat to keep in
             // step, and the red damage flash and opcode 215's white one now reach the
             // screen at all -- which is what the fade in Player::update is for.
+            // The HUD in Kurt's arena's colours (upstream f0fa4c17; a pointer compare
+            // unless the arena's palette changed).
+            if (runtime) {
+                if (const mdk::formats::Arena* arena = level.arenaNamed(runtime->currentArena())) {
+                    hud.enter(level.paletteOf(arena));
+                }
+            }
             mdk::HudState state;
             state.health = player.health();
             state.dead = player.dead;
