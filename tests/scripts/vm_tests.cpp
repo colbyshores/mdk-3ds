@@ -2840,6 +2840,54 @@ void testRemoveKeepsInboundReferences(LevelData* levelData, const Cmi* cmi,
     CHECK(follower->move_command == 0);
 }
 
+// The frontends' object pass skips `obj.dead` instead of isRemoved(&obj) (a
+// linear scan of every removal so far). Pinned: through remove()'s paths --
+// an attached chute removed first, a repeated (idempotent) removal -- every
+// slot's dead equals isRemoved. The one state where they could differ, a save
+// restoring "Dead": true (neither the port nor the C# writes one: both save
+// only the live objects), draws nothing either way: addObject refuses it.
+void testFrontendDeadSkipMatchesIsRemoved(LevelData* levelData, const Cmi* cmi,
+                                          audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+    scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
+    scripts::MdkObject* spawned[4] = {};
+    for (int i = 0; i < 4; i++) {
+        spawned[i] = runtime.spawn(&controller, "BEAMS", Vec3{(float)i * 10.0f, 0.0f, 0.0f},
+                                   0.0f, -1, 0, false);
+        CHECK(spawned[i] != nullptr);
+        if (spawned[i] == nullptr) {
+            return;
+        }
+    }
+    spawned[1]->attached = spawned[3];  // a pickup's chute
+    runtime.remove(spawned[1]);         // takes the chute first
+    runtime.remove(spawned[1]);         // idempotent
+    runtime.remove(spawned[0]);
+    CHECK(spawned[3]->dead && runtime.isRemoved(spawned[3]));
+    CHECK(!spawned[2]->dead && !runtime.isRemoved(spawned[2]));
+    CHECK(runtime.objectCount() == 1);
+    for (const scripts::MdkObject& o : runtime.objects()) {
+        CHECK(o.dead == runtime.isRemoved(&o));
+    }
+
+    MaterialResolver resolver(&levelData->dti(), Shading::Original);
+    ObjectView view(resolver);
+    ObjectLook look;
+    const formats::Arena* arena = levelData->arenaNamed(spawned[2]->arena);
+    look.palette = arena != nullptr ? &levelData->paletteOf(arena) : &levelData->dti().palette();
+    if (arena != nullptr) {
+        look.archives = levelData->archivesOf(arena);
+    }
+    scripts::MdkObject restored = *spawned[2];  // not in removed_, as a restore leaves it
+    ObjectStream live;
+    CHECK(view.addObject(restored, look, Mat4::identity(), &live));
+    CHECK(!live.draws.empty());
+    restored.dead = true;
+    ObjectStream dead;
+    CHECK(!view.addObject(restored, look, Mat4::identity(), &dead));
+    CHECK(dead.draws.empty() && dead.vertices.empty());
+}
+
 // Opcode 243 (if_point_sees_player) has no C# ScriptVmTests counterpart, so
 // this pins the oracle directly (ScriptVm.cs:1703-1708): the REFERENCE point
 // (not the position) must be within the u16 range of Kurt's feet, and the
@@ -8555,6 +8603,8 @@ int main(int argc, char** argv) {
     printf("PASS LinkPartnersPairsEligibleObjectsInListOrder\n");
     testRemoveKeepsInboundReferences(&levelData, &cmi, &bank);
     printf("PASS RemoveKeepsInboundReferences\n");
+    testFrontendDeadSkipMatchesIsRemoved(&levelData, &cmi, &bank);
+    printf("PASS FrontendDeadSkipMatchesIsRemoved\n");
     testUnidentifiedValueSlotsStoreTheirOperand(runtime);
     printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
     testKurtAndScreenWrites(runtime);

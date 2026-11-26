@@ -2668,7 +2668,8 @@ int main(int argc, char** argv) {
                 if (strikeFrame) {
                     break;  // the strike's frame shows its model alone (below)
                 }
-                if (!obj.visible || runtime->isRemoved(&obj)) {
+                // `dead`, not isRemoved() (its linear scan): as on the 3DS.
+                if (!obj.visible || obj.dead) {
                     continue;
                 }
                 const bool carried = runtime->rides().bomber() && &obj == runtime->rides().ridden();

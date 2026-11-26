@@ -1863,3 +1863,44 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   (`hw-logs/2026-11-25-emu-smoke-play-4bf1744c.log`).
 - **Player build:** `.git/worktrees/memory/hw-logs/play-<hash>.3dsx` / `.elf`.
 - **Commit:** this one (ledger only).
+
+## 2026-11-25 -- the object pass skips `dead`, not isRemoved's scan (branch perf/3ds-removed-scan)
+
+- **What:** `main_3ds.cpp`'s object pass (and `mdk_linux/src/main.cpp`'s twin)
+  tests `obj.dead` instead of `runtime->isRemoved(&obj)`. isRemoved walks
+  `removed_` (every object removed so far this level) once per visible slot per
+  presentation, so the cost grows with play. One token per frontend, no new
+  state; the gate `main_3ds_flow_test.sh` check 14 accepts either skip.
+- **Why it is the same skip:** remove() is the only writer of `dead = true` in a
+  running level and sets it as it appends to `removed_` (spawns and box spawns
+  start `dead = false`; the deque only grows, so a removed pointer never aliases
+  a live slot). The other writer is a save's `"Dead"` field, on a fresh runtime;
+  neither the port (script_snapshot.cpp, `!dead` filter) nor the C#
+  (ScriptRuntime.Snapshot.cs:45) saves a dead object, so it is false in every
+  real save -- and a hand-made `"Dead": true` would draw nothing either way,
+  because ObjectView::addObject returns on `obj.dead`. Gameplay callers of
+  isRemoved are unchanged (not measured here).
+- **Cost measured on the host** (Linux build with temporary counters, removed
+  before the commit; `--headless --god --fixed-step`, walk
+  `forward+fire` 2 min, 7200 frames): removed objects and pointer comparisons
+  per presentation at the end -- L3 217 / 51k, L5 749 / 575k, L7 66 / 5k,
+  L8 400 / 167k. `dead == isRemoved` held on all 4.4M visible-slot queries.
+  The 3DS build's isRemoved loop is 6 instructions a pointer (ldr, add, cmp,
+  beq, cmp, bne; disassembled from this branch's mdk.elf); at about 6 cycles
+  each pointer L5's 575k is ~3.5M cycles, ~13 ms at 268 MHz, and L8's 167k
+  ~4 ms (estimates from instruction counts, not a console measurement). Payoff bar: over 0.3 ms (1% of a 30 Hz frame) -- crossed after
+  about a minute of play on L3, L5 and L8.
+- **Test:** vm_tests `FrontendDeadSkipMatchesIsRemoved` (an attached chute
+  removed first, a repeated removal; every slot's dead == isRemoved; a dead
+  object not in `removed_` draws nothing, a live one draws).
+- **Evidence:** `make -C tests/scripts test` all suites pass (the new vm test
+  included; main_3ds_flow 22 checks / 64 arms red); `tools/check.sh` ALL GATES
+  PASSED, gates_frames PASS on this branch's Linux build (pinned frames
+  unchanged); clean `make -C mdk_3ds`, no compiler warnings, no harness strings.
+  Player build: `.git/worktrees/perf-removed-scan/hw-logs/play-removed-scan.3dsx`
+  (md5 8b8acd5ddb1e607c94876660fdc31d9c) / `.elf` (88a288c7b8c668357e8cebab3773f185).
+- **Not verified:** a console timing of the gain; Mandarine was not run (the
+  emulator slot was held by other projects' instances all session).
+- **Lines:** +4/-1 main_3ds.cpp (3 comment), +2/-1 Linux main.cpp, +50 vm test,
+  +6/-3 gate. No new state.
+- **Commit:** this one.

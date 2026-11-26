@@ -1265,10 +1265,12 @@ def adjudicate(text, quiet=False):
     #     `!obj.Visible`, and the C#'s list has already dropped its removed objects
     #     while this port keeps them in the deque for pointer stability — so a pass
     #     that walks the deque without skipping them draws corpses and dead pickups.
+    #     `obj.dead` is the same skip without isRemoved's scan (remove() sets it as it
+    #     appends; vm_tests FrontendDeadSkipMatchesIsRemoved pins the equivalence).
     body = op["body"] if op else ""
     say(CHK["objects-skip-invisible-and-removed"],
         bool(re.search(r"![ \t]*obj\.visible", body))
-        and bool(re.search(r"isRemoved\(&obj\)", body)),
+        and bool(re.search(r"isRemoved\(&obj\)|obj\.dead\b", body)),
         "the deque holds removed objects the C# has already unlisted; without both "
         "skips the pass draws what the oracle does not")
 
@@ -2243,8 +2245,9 @@ def arm_objects_draws_removed(text):
     """Drop the skip, so the deque's removed objects are drawn. The C# has already
     unlisted them; this port keeps them in place for pointer stability."""
     mutated, n = re.subn(
-        r"if[ \t]*\([ \t]*![ \t]*obj\.visible[ \t]*\|\|[ \t]*runtime->isRemoved"
-        r"\(&obj\)[ \t]*\)[ \t]*\{[ \t]*\n[ \t]*continue[ \t]*;[ \t]*\n[ \t]*\}[ \t]*\n",
+        r"if[ \t]*\([ \t]*![ \t]*obj\.visible[ \t]*\|\|[ \t]*"
+        r"(?:runtime->isRemoved\(&obj\)|obj\.dead)"
+        r"[ \t]*\)[ \t]*\{[ \t]*\n[ \t]*continue[ \t]*;[ \t]*\n[ \t]*\}[ \t]*\n",
         "", text)
     return mutated if n else text
 

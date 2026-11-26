@@ -2338,7 +2338,11 @@ int main(int argc, char** argv) {
                 if (strikeFrame) {
                     break;  // the strike's frame shows its model alone (below)
                 }
-                if (!obj.visible || runtime->isRemoved(&obj)) {
+                // `dead`, not isRemoved(): remove() is the only writer of
+                // dead=true in a running level and sets it as it appends to
+                // removed_, so the two agree here -- and isRemoved scans every
+                // removal so far, per visible slot, per presentation.
+                if (!obj.visible || obj.dead) {
                     continue;
                 }
                 const bool carried = runtime->rides().bomber() && &obj == runtime->rides().ridden();
