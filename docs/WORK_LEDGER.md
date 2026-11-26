@@ -3005,3 +3005,27 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     flashes,push,camroll}` goldens at d5bb66ec. `sniper_probe` also writes the wheel's
     notches to `Input.ZoomWheel` when the C# has it (upstream 1618b8c3 zooms through it
     while sniping); it still reproduces `L3_sniper`/`L7_sniper` at d5bb66ec and at 47395c03.
+  - **d14ed0b5, run objects newest first, per arena.** Spawns go to the front of the
+    object list (`push_front`, the original's 0x45fd4c), and the tick runs Kurt's arena's
+    objects, then the active second arena's (as it is by then), each once
+    (`runArenaObjects`, `MdkObject::ran_this_tick`). LEVEL7 DANT_6's cannon XD6GUN blew up
+    as soon as Kurt came near because it checked its XG count before they counted
+    themselves. Knock-on fixes: `touchDamage`'s snapshot of the list now indexes the old
+    entries behind any it spawns; a save's restore appends its boxes (`spawnBox(...,
+    atBack)`) so the list keeps the saved order, as the C#'s `Objects.AddRange`.
+    **Goldens: 367 moved** (the list order is in every table): 365 equal the oracle at
+    d14ed0b5 byte for byte, among them all `L*_t*` tables and scripts, the
+    pose/transform/blend/layout/draw/bound/runner dumps, rounds, holes, items, bomber,
+    hazards, platforms, ride, board, strike, cutscene, screen and the five saves. The five
+    saves were checked against d14ed0b5 with 6eb0963b's `town_total` save field taken
+    out of the C#: that field is the timer ring's (presentation, 1.2.3), not part of this
+    port. Two take the C++'s output: `L8_fire` (17 lines: one debris piece bounces one
+    step apart; a libm `Player::facing` scratch build equals the oracle byte for byte, so
+    it is the trig LUT, now visible under the new random order) and `L8_effects_storm`
+    (the C++ effects view over `L8_hazards_debris`, which equals the oracle). tick1's
+    hand-written `footing`/`walk` checks and vm_tests' synthetic spawn-order cases read the
+    list in its new order (the same objects and values). Also fixed in vm_tests:
+    47395c03's case compared -30 + 15.000001 with == -15.
+  - **Oracle tooling:** `table_probe` gained the pose, transform, blend, layout, draw,
+    bound and runner modes (all 25 such goldens reproduced at d5bb66ec); `rounds_probe`
+    calls `SniperRounds.Camera(i, 1f)` where the C# has upstream a73a5cd2's alpha.

@@ -1,41 +1,41 @@
 level=3 ticks=120 seed=1 objects=13 picks=3
 BOUND prefill=0
-  Q obj=0 count=3 queued=3 stream=150 hash=B7146801
-  Q obj=1 count=1 queued=1 stream=210 hash=99BABD78
-  Q obj=2 count=1 queued=1 stream=300 hash=B34561F3
-STREAM vertices=300
+  Q obj=0 count=1 queued=1 stream=324 hash=A71AE5A2
+  Q obj=1 count=1 queued=1 stream=648 hash=A71AE5A2
+  Q obj=2 count=2 queued=2 stream=744 hash=74F08795
+STREAM vertices=744
 BOUND prefill=261844
-  Q obj=0 count=3 queued=3 stream=261994 hash=B7146801
-  Q obj=1 count=1 queued=1 stream=262054 hash=99BABD78
-  Q obj=2 count=1 queued=1 stream=262144 hash=B34561F3
-STREAM vertices=262144
+  Q obj=0 count=1 queued=0 stream=261844 hash=811C9DC5
+  Q obj=1 count=1 queued=0 stream=261844 hash=811C9DC5
+  Q obj=2 count=2 queued=2 stream=261940 hash=74F08795
+STREAM vertices=261940
 BOUND prefill=261845
-  Q obj=0 count=3 queued=3 stream=261995 hash=B7146801
-  Q obj=1 count=1 queued=1 stream=262055 hash=99BABD78
-  Q obj=2 count=1 queued=0 stream=262055 hash=811C9DC5
-STREAM vertices=262055
+  Q obj=0 count=1 queued=0 stream=261845 hash=811C9DC5
+  Q obj=1 count=1 queued=0 stream=261845 hash=811C9DC5
+  Q obj=2 count=2 queued=2 stream=261941 hash=74F08795
+STREAM vertices=261941
 BOUND prefill=261994
-  Q obj=0 count=3 queued=3 stream=262144 hash=B7146801
-  Q obj=1 count=1 queued=0 stream=262144 hash=811C9DC5
-  Q obj=2 count=1 queued=0 stream=262144 hash=811C9DC5
-STREAM vertices=262144
+  Q obj=0 count=1 queued=0 stream=261994 hash=811C9DC5
+  Q obj=1 count=1 queued=0 stream=261994 hash=811C9DC5
+  Q obj=2 count=2 queued=2 stream=262090 hash=74F08795
+STREAM vertices=262090
 BOUND prefill=261995
-  Q obj=0 count=3 queued=2 stream=262109 hash=BCC350DD
-  Q obj=1 count=1 queued=0 stream=262109 hash=811C9DC5
-  Q obj=2 count=1 queued=0 stream=262109 hash=811C9DC5
-STREAM vertices=262109
+  Q obj=0 count=1 queued=0 stream=261995 hash=811C9DC5
+  Q obj=1 count=1 queued=0 stream=261995 hash=811C9DC5
+  Q obj=2 count=2 queued=2 stream=262091 hash=74F08795
+STREAM vertices=262091
 BOUND prefill=262054
-  Q obj=0 count=3 queued=1 stream=262132 hash=62F55BFD
-  Q obj=1 count=1 queued=0 stream=262132 hash=811C9DC5
-  Q obj=2 count=1 queued=0 stream=262132 hash=811C9DC5
-STREAM vertices=262132
+  Q obj=0 count=1 queued=0 stream=262054 hash=811C9DC5
+  Q obj=1 count=1 queued=0 stream=262054 hash=811C9DC5
+  Q obj=2 count=2 queued=1 stream=262108 hash=0D0A1A38
+STREAM vertices=262108
 BOUND prefill=262084
-  Q obj=0 count=3 queued=1 stream=262120 hash=12BD0945
-  Q obj=1 count=1 queued=0 stream=262120 hash=811C9DC5
-  Q obj=2 count=1 queued=0 stream=262120 hash=811C9DC5
-STREAM vertices=262120
+  Q obj=0 count=1 queued=0 stream=262084 hash=811C9DC5
+  Q obj=1 count=1 queued=0 stream=262084 hash=811C9DC5
+  Q obj=2 count=2 queued=1 stream=262138 hash=0D0A1A38
+STREAM vertices=262138
 BOUND prefill=262144
-  Q obj=0 count=3 queued=0 stream=262144 hash=811C9DC5
+  Q obj=0 count=1 queued=0 stream=262144 hash=811C9DC5
   Q obj=1 count=1 queued=0 stream=262144 hash=811C9DC5
-  Q obj=2 count=1 queued=0 stream=262144 hash=811C9DC5
+  Q obj=2 count=2 queued=0 stream=262144 hash=811C9DC5
 STREAM vertices=262144

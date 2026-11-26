@@ -98,10 +98,11 @@ bool ScriptRuntime::touchDamage(MdkObject* obj, int32_t targets, int32_t damage,
 
     if ((targets & kHurtsObjects) != 0) {
         // ListCopy<MdkObject>.Of(Objects): the objects as they are now. A kill below
-        // can spawn (the explosion); those land past `count` and are not visited.
+        // can spawn (the explosion); new objects go to the front (newest first), so the
+        // ones there before are the last `count`, and the new ones are not visited.
         const size_t count = objects_.size();
         for (size_t i = 0; i < count; i++) {
-            MdkObject* other = &objects_[i];
+            MdkObject* other = &objects_[objects_.size() - count + i];
             if (other == obj || other->dead || other->arena != obj->arena ||
                 (other->flags & kUntouchable) != 0) {
                 continue;
@@ -129,7 +130,7 @@ bool ScriptRuntime::touchDamage(MdkObject* obj, int32_t targets, int32_t damage,
 }
 
 MdkObject* ScriptRuntime::spawnBox(MdkObject* parent, const Vec3& position, const Vec3& size,
-                                   const std::string& texture, int32_t script) {
+                                   const std::string& texture, int32_t script, bool atBack) {
     // C# SpawnBox (ScriptRuntime.cs:1593): one model per size and texture.
     const formats::Model* model = nullptr;
     for (size_t i = 0; i < boxModelKeys_.size(); i++) {
@@ -159,8 +160,13 @@ MdkObject* ScriptRuntime::spawnBox(MdkObject* parent, const Vec3& position, cons
     obj.spawn_position = position;
     obj.previous_position = position;
     obj.restart = script;
-    objects_.push_back(obj);
-    MdkObject* created = &objects_.back();
+    // Newest first (upstream d14ed0b5), as spawn; a restore keeps the saved order.
+    if (atBack) {
+        objects_.push_back(obj);
+    } else {
+        objects_.push_front(obj);
+    }
+    MdkObject* created = atBack ? &objects_.back() : &objects_.front();
 
     // _boxes.RemoveAll(b => b.Dead); _boxes.Add(obj).
     size_t kept = 0;

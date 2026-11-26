@@ -1,13 +1,13 @@
 level=5 ticks=900 seed=1 currentArena=MUSE_1 objects=12
-000 type=XGEN arena=MUSE_1 pos=(1.5000,1.3000,-3.0000) yaw=0.0000 hp=300 flags=0x00000000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-001 type=XS arena=MUSE_1 pos=(-18.0011,-1019.9999,-279.9976) yaw=115.1132 hp=400 flags=0x00000004 dead=0 move=0/0 connects= path=0/0.0000/1.0000/0
-002 type=XS arena=MUSE_1 pos=(4.0011,-1019.9999,-279.9976) yaw=139.1455 hp=400 flags=0x00000004 dead=0 move=0/0 connects= path=0/0.0000/1.0000/0
-003 type=SW_DUMMY arena=MUSE_1 pos=(-38.0000,-988.0000,-291.5500) yaw=306.0003 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-004 type=XG arena=MUSE_1 pos=(-7.1177,-1007.0734,-293.0500) yaw=143.6125 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-005 type=XG arena=MUSE_1 pos=(2.6757,-1002.4916,-293.0500) yaw=157.8928 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-006 type=XG arena=MUSE_1 pos=(-10.5491,-1014.0187,-293.0400) yaw=136.8254 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-007 type=BOLT arena=MUSE_1 pos=(-37.8309,-981.6082,-292.0409) yaw=144.7809 hp=0 flags=0x000808A0 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-008 type=BOLT arena=MUSE_1 pos=(-31.0905,-987.9479,-290.1165) yaw=124.6172 hp=100 flags=0x000808A0 dead=0 move=61/0 connects= path=0/0.0000/1.0000/-1
-009 type=BOLT arena=MUSE_1 pos=(-21.9308,-994.6337,-285.7609) yaw=146.8986 hp=100 flags=0x000808A0 dead=0 move=61/0 connects= path=0/0.0000/1.0000/-1
-010 type=BOLT arena=MUSE_1 pos=(-20.8379,-995.9361,-288.7765) yaw=148.5497 hp=100 flags=0x000808A0 dead=0 move=61/0 connects= path=0/0.0000/1.0000/-1
-011 type=BOLT arena=MUSE_1 pos=(-1.5680,-1007.6512,-278.9389) yaw=145.7167 hp=100 flags=0x000808A0 dead=0 move=61/0 connects= path=0/0.0000/1.0000/-1
+000 type=BOLT arena=MUSE_1 pos=(-1.6334,-1007.7502,-278.9389) yaw=147.4249 hp=100 flags=0x000808A0 dead=0 move=61/0 connects= path=0/0.0000/1.0000/-1
+001 type=BOLT arena=MUSE_1 pos=(-21.8495,-994.4871,-285.7190) yaw=146.5563 hp=100 flags=0x000808A0 dead=0 move=61/0 connects= path=0/0.0000/1.0000/-1
+002 type=BOLT arena=MUSE_1 pos=(-27.8772,-992.4343,-288.9147) yaw=146.3455 hp=100 flags=0x000808A0 dead=0 move=61/0 connects= path=0/0.0000/1.0000/-1
+003 type=XG arena=MUSE_1 pos=(-9.1767,-640.0317,-261.1524) yaw=270.0000 hp=60 flags=0x0000000E dead=0 move=88/1 connects= path=0/0.0000/1.0000/-1
+004 type=XG arena=MUSE_1 pos=(-9.1767,-984.5912,-293.0400) yaw=270.0000 hp=60 flags=0x0000000E dead=0 move=88/1 connects= path=0/0.0000/1.0000/-1
+005 type=XG arena=MUSE_1 pos=(-10.8979,-1007.6602,-293.0500) yaw=138.3464 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+006 type=XG arena=MUSE_1 pos=(-6.2765,-1009.6788,-293.0500) yaw=140.9501 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+007 type=XG arena=MUSE_1 pos=(-11.2550,-1006.8643,-293.0500) yaw=139.0576 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+008 type=SW_DUMMY arena=MUSE_1 pos=(-38.0000,-988.0000,-291.5500) yaw=306.0003 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+009 type=XS arena=MUSE_1 pos=(4.0011,-1019.9999,-279.9976) yaw=139.1455 hp=400 flags=0x00000004 dead=0 move=0/0 connects= path=0/0.0000/1.0000/0
+010 type=XS arena=MUSE_1 pos=(-18.0011,-1019.9999,-279.9976) yaw=115.1132 hp=400 flags=0x00000004 dead=0 move=0/0 connects= path=0/0.0000/1.0000/0
+011 type=XGEN arena=MUSE_1 pos=(1.5000,1.3000,-3.0000) yaw=0.0000 hp=300 flags=0x00000000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1

@@ -1,8 +1,8 @@
 level=7 ticks=6 seed=1 currentArena=DANT_1 objects=7
-000 type=X7DOOR arena=DANT_1 pos=(0.0000,481.0000,15.0000) yaw=90.0000 hp=65000 flags=0x01108000 dead=0 move=0/0 connects=CDANT_1 path=0/0.0000/1.0000/-1
-001 type=BEAMS arena=DANT_1 pos=(-88.0000,839.0000,254.0000) yaw=270.0000 hp=65000 flags=0x00000828 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-002 type=BEAMS arena=DANT_1 pos=(158.0000,762.0000,285.0000) yaw=270.0000 hp=65000 flags=0x00000828 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+000 type=SW_H150 arena=DANT_1 pos=(-11.0000,-13.0000,-0.0500) yaw=0.0000 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+001 type=XTURBINE arena=DANT_1 pos=(50.0000,90.0000,10.0000) yaw=90.0000 hp=100 flags=0x00000008 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+002 type=XTURBINE arena=DANT_1 pos=(-50.0000,90.0000,10.0000) yaw=270.0000 hp=100 flags=0x00000008 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
 003 type=BEAMS arena=DANT_1 pos=(148.0000,762.0000,285.0000) yaw=270.0000 hp=65000 flags=0x00000820 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-004 type=XTURBINE arena=DANT_1 pos=(-50.0000,90.0000,10.0000) yaw=270.0000 hp=100 flags=0x00000008 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-005 type=XTURBINE arena=DANT_1 pos=(50.0000,90.0000,10.0000) yaw=90.0000 hp=100 flags=0x00000008 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
-006 type=SW_H150 arena=DANT_1 pos=(-11.0000,-13.0000,-0.0500) yaw=0.0000 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+004 type=BEAMS arena=DANT_1 pos=(158.0000,762.0000,285.0000) yaw=270.0000 hp=65000 flags=0x00000828 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+005 type=BEAMS arena=DANT_1 pos=(-88.0000,839.0000,254.0000) yaw=270.0000 hp=65000 flags=0x00000828 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+006 type=X7DOOR arena=DANT_1 pos=(0.0000,481.0000,15.0000) yaw=90.0000 hp=65000 flags=0x01108000 dead=0 move=0/0 connects=CDANT_1 path=0/0.0000/1.0000/-1

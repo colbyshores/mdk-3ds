@@ -3,7 +3,7 @@ s=1 feet64=29760,-384,-144832 snipe=0 sel=0 ammo5=0 clip=0/00000000 hp=100 shots
 s=2 feet64=29760,-384,-144832 snipe=0 sel=0 ammo5=0 clip=0/00000000 hp=100 shots=0 kills=0 objs=3 effects=0 cut=0 arena=MUSE_5 tgt=- strike=0 used=0 len=- off=00000000 toff=00000000 doff=7F800000 teeth=0 diving=0 scene=-
 s=3 feet64=29760,-384,-144832 snipe=0 sel=0 ammo5=0 clip=0/00000000 hp=100 shots=0 kills=0 objs=3 effects=0 cut=0 arena=MUSE_5 tgt=- strike=0 used=0 len=- off=00000000 toff=00000000 doff=7F800000 teeth=0 diving=0 scene=-
 s=4 feet64=29760,-384,-144832 snipe=0 sel=0 ammo5=0 clip=0/00000000 hp=100 shots=0 kills=0 objs=3 effects=0 cut=0 arena=MUSE_5 tgt=- strike=0 used=0 len=- off=00000000 toff=00000000 doff=7F800000 teeth=0 diving=0 scene=-
-  #0 XM5_FLAP hp=65000 ev=0 ht=0 dead=0 pos=00000000,00000000,00000000
+  #2 XM5_FLAP hp=65000 ev=0 ht=0 dead=0 pos=00000000,00000000,00000000
 s=5 feet64=29760,-384,-144832 snipe=0 sel=0 ammo5=0 clip=0/00000000 hp=100 shots=0 kills=0 objs=3 effects=0 cut=0 arena=MUSE_5 tgt=- strike=0 used=0 len=- off=00000000 toff=00000000 doff=7F800000 teeth=0 diving=0 scene=-
 s=6 feet64=29760,-384,-144832 snipe=0 sel=0 ammo5=0 clip=0/00000000 hp=100 shots=0 kills=0 objs=3 effects=0 cut=0 arena=MUSE_5 tgt=- strike=0 used=0 len=- off=00000000 toff=00000000 doff=7F800000 teeth=0 diving=0 scene=-
 s=7 feet64=29760,-384,-144832 snipe=0 sel=0 ammo5=0 clip=0/00000000 hp=100 shots=0 kills=0 objs=3 effects=0 cut=0 arena=MUSE_5 tgt=- strike=0 used=0 len=- off=00000000 toff=00000000 doff=7F800000 teeth=0 diving=0 scene=-

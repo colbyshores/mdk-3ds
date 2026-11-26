@@ -178,60 +178,22 @@ void ScriptRuntime::runTick() {
     updateSniperTarget();
     probeLap(&probeNow_.systems);
 
-    // Only Kurt's arena and the active second one update. On the first tick
-    // nothing has spawned yet, so this loop is empty; the controller below is
-    // what creates the level's objects.
+    // Only Kurt's arena, then the active second one (as it is by then), update, each
+    // arena's newest first (upstream d14ed0b5, C# 1.2.5: game_frame runs 0x43c7dc on
+    // each arena's list, and a new object goes at the head of its list, 0x45fd4c). One
+    // mixed list let LEVEL7 DANT_6's cannon look at its XG's count before they counted
+    // themselves. An object moved into the second arena on the way runs once. On the
+    // first tick nothing has spawned yet, so this is empty; the controller below is what
+    // creates the level's objects.
     std::vector<MdkObject*>& snapshot = tickObjects_;
     snapshot.clear();
     for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        it->ran_this_tick = false;
         snapshot.push_back(&(*it));
     }
-    for (size_t i = 0; i < snapshot.size(); i++) {
-        MdkObject* obj = snapshot[i];
-        if (obj->dead) {
-            continue;
-        }
-        bool live = obj->arena == currentArena_ || (secondActive_ && obj->arena == secondArena_);
-        if (!live) {
-            continue;
-        }
-        // A door's behaviour runs BEFORE its script (ScriptRuntime.cs:970-973), so
-        // the script's if_flag_clear sees the state the door engine just wrote.
-        if ((obj->flags & MdkObject::FlagDoor) != 0) {
-            updateDoor(obj);
-        }
-        // Where the object was before its script and motion (ScriptRuntime.cs:975): the
-        // platform carry below moves Kurt by the difference (package #3).
-        const Vec3 carriedFrom = obj->position;
-        const float carriedYaw = obj->yaw;
-        uint64_t probeObject = 0;
-        if (probeClock != nullptr) {
-            vm_.probeReset();
-            probeObject = probeClock();
-        }
-        vm_.run(obj);
-        const uint64_t probeScript = probeClock != nullptr ? probeClock() : 0;
-        // ObjectMotion.Update (ScriptRuntime.cs:976-979: `if (!obj.Dead) Motion.Update(obj)`),
-        // shared with the cutscene tick (motionUpdate below).
-        if (!obj->dead) {
-            motionUpdate(obj);
-        }
-        // Kurt moves and turns with the platform he stands on (ScriptRuntime.cs:982-986,
-        // after Motion.Update), for an effect too. Where motionUpdate returned early the
-        // object is dead (a removed thrown item, a cow on its fuse), which the carry skips.
-        carryKurt(obj, carriedFrom, carriedYaw);
-        if (probeClock != nullptr) {
-            const uint64_t now = probeClock();
-            probeNow_.objectsRun++;
-            if (now - probeObject > probeNow_.slowVm + probeNow_.slowMotion) {
-                probeName(probeNow_.slowType, obj->type_name);
-                probeNow_.slowVm = probeScript - probeObject;
-                probeNow_.slowMotion = now - probeScript;
-                probeNow_.slowOps = vm_.probeOps;
-                probeNow_.slowOpcode = vm_.probeOpcode;
-                probeNow_.slowOpcodeTime = vm_.probeOpcodeTime;
-            }
-        }
+    runArenaObjects(currentArena_);
+    if (secondActive_ && !secondArena_.empty() && secondArena_ != currentArena_) {
+        runArenaObjects(secondArena_);
     }
     probeLap(&probeNow_.objects);
 
@@ -345,6 +307,56 @@ void ScriptRuntime::motionUpdate(MdkObject* obj) {
             // Bank (ObjectMotion.cs:145), between Roll and PreviousPosition.
             motionBank(obj);
             obj->previous_position = obj->position;
+        }
+    }
+}
+
+// One arena's live objects of this tick's snapshot (0x43c7dc): the door, the script,
+// the motion and the platform's carry of Kurt, per object.
+void ScriptRuntime::runArenaObjects(const std::string arena) {
+    const std::vector<MdkObject*>& snapshot = tickObjects_;
+    for (size_t i = 0; i < snapshot.size(); i++) {
+        MdkObject* obj = snapshot[i];
+        if (obj->dead || obj->arena != arena || obj->ran_this_tick) {
+            continue;
+        }
+        obj->ran_this_tick = true;
+        // A door's behaviour runs BEFORE its script (ScriptRuntime.cs:970-973), so
+        // the script's if_flag_clear sees the state the door engine just wrote.
+        if ((obj->flags & MdkObject::FlagDoor) != 0) {
+            updateDoor(obj);
+        }
+        // Where the object was before its script and motion (ScriptRuntime.cs:975): the
+        // platform carry below moves Kurt by the difference (package #3).
+        const Vec3 carriedFrom = obj->position;
+        const float carriedYaw = obj->yaw;
+        uint64_t probeObject = 0;
+        if (probeClock != nullptr) {
+            vm_.probeReset();
+            probeObject = probeClock();
+        }
+        vm_.run(obj);
+        const uint64_t probeScript = probeClock != nullptr ? probeClock() : 0;
+        // ObjectMotion.Update (ScriptRuntime.cs:976-979: `if (!obj.Dead) Motion.Update(obj)`),
+        // shared with the cutscene tick (motionUpdate below).
+        if (!obj->dead) {
+            motionUpdate(obj);
+        }
+        // Kurt moves and turns with the platform he stands on (ScriptRuntime.cs:982-986,
+        // after Motion.Update), for an effect too. Where motionUpdate returned early the
+        // object is dead (a removed thrown item, a cow on its fuse), which the carry skips.
+        carryKurt(obj, carriedFrom, carriedYaw);
+        if (probeClock != nullptr) {
+            const uint64_t now = probeClock();
+            probeNow_.objectsRun++;
+            if (now - probeObject > probeNow_.slowVm + probeNow_.slowMotion) {
+                probeName(probeNow_.slowType, obj->type_name);
+                probeNow_.slowVm = probeScript - probeObject;
+                probeNow_.slowMotion = now - probeScript;
+                probeNow_.slowOps = vm_.probeOps;
+                probeNow_.slowOpcode = vm_.probeOpcode;
+                probeNow_.slowOpcodeTime = vm_.probeOpcodeTime;
+            }
         }
     }
 }

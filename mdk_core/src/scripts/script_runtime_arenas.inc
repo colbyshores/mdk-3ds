@@ -478,8 +478,10 @@ MdkObject* ScriptRuntime::spawn(MdkObject* parent, const std::string& type, cons
         obj.flags = kSpawnFlaggedFlags;
     }
 
-    objects_.push_back(obj);
-    MdkObject* created = &objects_.back();
+    // Newest first, like the arena lists (0x45fd4c; upstream d14ed0b5): next tick it runs
+    // before older objects (LEVEL7 DANT_6's XG count themselves before the cannon checks).
+    objects_.push_front(obj);
+    MdkObject* created = &objects_.front();
     // The Score-o-matic's enemies (ScriptRuntime.cs:1576), counted at creation; the
     // chain gun's kills are the other half of the same pair (chainGunHit).
     stats.countEnemy(type, GameStats::Created);

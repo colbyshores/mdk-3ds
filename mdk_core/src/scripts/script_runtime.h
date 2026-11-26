@@ -376,8 +376,10 @@ public:
     // is a box of `size` (model_create_box 0x404188, 8 corners, 12 triangles, not
     // drawn) named after the texture its sprite shows (FIRE, PULSE). No init script
     // runs. The box models are kept by (size, texture), as the C#'s _boxModels.
+    // A new box goes first in the list (newest first, upstream d14ed0b5); a save's restore
+    // passes `atBack` to rebuild the list in the saved order.
     MdkObject* spawnBox(MdkObject* parent, const Vec3& position, const Vec3& size,
-                        const std::string& texture, int32_t script);
+                        const std::string& texture, int32_t script, bool atBack = false);
     // C# Boxes (ScriptRuntime.cs:1647): the objects spawn_box made, dead ones too (skip
     // them); their model's name is the texture their sprite shows.
     const std::vector<MdkObject*>& boxes() const { return boxes_; }
@@ -1077,6 +1079,8 @@ private:
     // One receiver of command_objects (0x4405d0); true when it joined a formation.
     bool commandObject(MdkObject* sender, MdkObject* receiver, int32_t command, int32_t target,
                        const Vec3& destination, int32_t formationIndex);
+    // By value: Kurt's arena may change while the objects run.
+    void runArenaObjects(const std::string arena);
     void runControllers();
     // The DRAWN-LIST half of C# ScriptRuntime.UpdateArenas (ScriptRuntime.cs:648-699),
     // called at the oracle's own position in the tick (see runTick). The rest of that

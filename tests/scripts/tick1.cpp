@@ -10752,10 +10752,11 @@ int main(int argc, char** argv) {
                         runtime.update(1.0f / 30.0f);
                     }
                     // The two XG spawn at z=127.0 and fall; the oracle lands them at
-                    // 126.9500 and 126.9644 (their arena floors), which free-fall alone
-                    // would overshoot (126.8933).
+                    // 126.9644 and 126.9500 (their arena floors), which free-fall alone
+                    // would overshoot (126.8933). Newest first since upstream d14ed0b5, so
+                    // the list holds them in that order (golden/L3_t3.txt, 004 and 005).
                     int checked = 0;
-                    const float expectedZ[2] = {126.9500f, 126.9644f};
+                    const float expectedZ[2] = {126.9644f, 126.9500f};
                     int xi = 0;
                     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
                          it != runtime.objects().end(); ++it) {
@@ -10809,13 +10810,16 @@ int main(int argc, char** argv) {
                     for (int t = 0; t < 2; t++) {
                         runtime.update(1.0f / 30.0f);
                     }
-                    // The first two XGs (in table order) are commanded to move; the
-                    // oracle turns them to these yaws with move command 78 active.
-                    const float expectedYaw[2] = {84.5768f, 84.0f};
+                    // Two XGs are commanded to move; the oracle turns them to these yaws
+                    // with move command 78 active. Newest first since upstream d14ed0b5,
+                    // they are the second and third XG in the list (golden/L8_t2.txt, 003
+                    // and 004); the first, 002, has not been commanded yet.
+                    const float expectedYaw[2] = {84.0f, 84.5768f};
                     int xi = 0;
+                    int seen = 0;
                     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
                          it != runtime.objects().end() && xi < 2; ++it) {
-                        if (it->type_name != "XG") {
+                        if (it->type_name != "XG" || seen++ == 0) {
                             continue;
                         }
                         float yaw = it->yaw;

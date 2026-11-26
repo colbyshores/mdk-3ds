@@ -109,6 +109,8 @@ struct MdkObject {
     MdkObject* linked = nullptr;   // obj+0x2b8 (variable kind "other")
     MdkObject* leader = nullptr;   // obj+0x138
     bool dead = false;
+    // The tick's object loop ran it already (ScriptRuntime::runArenaObjects).
+    bool ran_this_tick = false;
     int32_t hidden_parts = 0;      // obj+0x2c8
     int32_t locked_parts = 0;      // obj+0x2cc (opcode 129)
     int32_t texture_frame = -1;    // -1 = by the level's clock

@@ -3,8 +3,8 @@ GVAR 0.0000 0.0000 0.0000 0.0000
 KURT health=100 hurt_flash=0.0000 invulnerable=0.0000 knock=0.0000 state=0 slots=0
 AUDIO voices=0 list=
 DEBRIS pieces=0 list=
-OBJ 000 type=SW_SGREN sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
-OBJ 001 type=XT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=3451 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 000 type=SW_KEY sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=2858 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret=2853 gres=2847 timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 001 type=6_DOOR sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=3246 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
 OBJ 002 type=XD sflags=0x00000804 vars=0.0000,0.0000,0.0000,0.0000 restart=6246 wait=0.0000 wresume=0 death=2890 cmdtgt=0 gret= gres= timers=10.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
-OBJ 003 type=6_DOOR sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=3246 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
-OBJ 004 type=SW_KEY sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=2858 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret=2853 gres=2847 timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 003 type=XT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=3451 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 004 type=SW_SGREN sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
