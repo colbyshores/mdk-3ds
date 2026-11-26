@@ -35,6 +35,7 @@
 
 #include "test_support.h"
 #include "stream_dump.h"
+#include "effects_dump.h"
 #include "skydive_dump.h"
 #include "save_dump.h"
 #include "audio/sound_bank.h"
@@ -4338,8 +4339,14 @@ bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* h
 // destination, path speed, flags, last hit), the bomb, the pieces and effects, the white
 // flash, the shake and the voices. It pins the combat and hazard opcodes (158, 159, 167, 172, 178, 184)
 // and path_speed_by_kurt's consumer.
+// L8_hazards_debris's schedule (the hazards table), the effects dump's storm.
+const char* const kEffectsStormSchedule =
+    "tp:1:GUNT_2:-209:480:40,run:3:XBANG:24840:0:105:0,fire:60-300,watch:XBANG,"
+    "watch:BOLT,watch:BIGBOLT,flying";
+
 bool kurtHazardsDump(int level, int steps, const std::string& schedule, const MdkData& data,
-                     const Bni* sprites, std::string* out, std::string* why) {
+                     const Bni* sprites, std::string* out, std::string* why,
+                     test::EffectsTrace* trace = nullptr) {
     if (!sprites) {
         *why = "no TRAVSPRT.BNI to take the frame counts from";
         return false;
@@ -4530,6 +4537,13 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
             *out += buffer;
         }
         *out += "\n";
+        if (trace != nullptr) {
+            test::effectsTraceStep(trace, levelData, runtime, player, step);
+        }
+    }
+    if (trace != nullptr) {
+        // effects_dump.h: the effects frames replace the hazards text.
+        test::effectsTraceEnd(trace, levelData, runtime, player, out);
     }
     return true;
 }
@@ -7737,6 +7751,18 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "effects") {
+            // `tick1 dump effects`: effects_dump.h, golden/L8_effects_storm.txt.
+            std::string got;
+            std::string why;
+            if (!kurtHazardsDump(8, 400, kEffectsStormSchedule, data, spritesArg, &got, &why,
+                                 test::effectsTraceNew())) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "hazards") {
             // `tick1 dump hazards <level> <steps> <schedule>`: kurtHazardsDump's text, the
             // C++ side of the hazards probe.
@@ -10050,6 +10076,28 @@ int main(int argc, char** argv) {
                 printf("FAIL %s: %s\n", c.name, firstDifference(got, expected).c_str());
                 failures++;
             }
+        }
+    }
+
+    // EffectsView::build over L8_hazards_debris's storm (effects_dump.h): the frames,
+    // culls and halos as bits, written by the build before the effects caches.
+    {
+        std::string expected;
+        std::string got;
+        std::string why;
+        if (!readText("golden/L8_effects_storm.txt", &expected)) {
+            printf("FAIL L8_effects_storm: no golden file\n");
+            failures++;
+        } else if (!kurtHazardsDump(8, 400, kEffectsStormSchedule, data, spritesArg, &got, &why,
+                                    test::effectsTraceNew())) {
+            printf("FAIL L8_effects_storm: %s\n", why.c_str());
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L8_effects_storm: the debris storm's effects frames, culls and halos, "
+                   "bit for bit\n");
+        } else {
+            printf("FAIL L8_effects_storm: %s\n", firstDifference(got, expected).c_str());
+            failures++;
         }
     }
 

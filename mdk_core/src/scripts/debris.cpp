@@ -170,6 +170,7 @@ void Debris::Piece::reset() {
     trailEvery = 0;
     trailTicks = 0;
     ticks = 0;
+    reach = -1.0f;
     center = Vec3{};
     velocity = Vec3{};
     orientation[0] = orientation[1] = orientation[2] = 0.0f;

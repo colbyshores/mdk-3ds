@@ -123,6 +123,7 @@ COMMON_SOURCES := \
 SOURCES := \
 	tick1.cpp \
 	stream_dump.cpp \
+	effects_dump.cpp \
 	skydive_dump.cpp \
 	save_dump.cpp \
 	$(CORE)/fall/fall_sim.cpp \

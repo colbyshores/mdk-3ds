@@ -96,6 +96,11 @@ public:
         float orientation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         float spin[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         int32_t ticks = 0;
+        // The effects view's culling radius (EffectsView::build): the longest corner,
+        // measured at the piece's first culled build -- the corners are written only
+        // when the piece is made. -1 = not measured yet (reset() puts it back). Drawing
+        // only; nothing in the simulation reads it.
+        float reach = -1.0f;
 
         bool isSpark() const { return names == nullptr; }
         void reset();

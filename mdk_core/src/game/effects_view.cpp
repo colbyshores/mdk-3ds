@@ -502,17 +502,21 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
     }
     const std::vector<scripts::Debris::Piece*>& pieces = scripts.debris().pieces();
     for (size_t p = 0; p < pieces.size(); p++) {
-        const scripts::Debris::Piece& piece = *pieces[p];
+        scripts::Debris::Piece& piece = *pieces[p];
         if (hasCullFrustum_ || tinyPixels_ > 0.0f) {
             // The piece's reach: its corners are offsets from its centre, turned by
-            // its orientation, which keeps their lengths.
-            float reach2 = 0.0f;
-            for (size_t k = 0; k < piece.corners.size(); k++) {
-                const Vec3& v = piece.corners[k];
-                const float d2 = v.x * v.x + v.y * v.y + v.z * v.z;
-                reach2 = mathMax(reach2, d2);
+            // its orientation, which keeps their lengths. Measured once per piece
+            // (Piece::reach; a NaN stays a NaN, and is kept).
+            if (piece.reach < 0.0f) {
+                float reach2 = 0.0f;
+                for (size_t k = 0; k < piece.corners.size(); k++) {
+                    const Vec3& v = piece.corners[k];
+                    const float d2 = v.x * v.x + v.y * v.y + v.z * v.z;
+                    reach2 = mathMax(reach2, d2);
+                }
+                piece.reach = sqrtf(reach2);
             }
-            const float reach = sqrtf(reach2);
+            const float reach = piece.reach;
             if (hasCullFrustum_ &&
                 frustumSphereOutside(cullFrustum_, piece.center, reach + cullMargin_)) {
                 continue;

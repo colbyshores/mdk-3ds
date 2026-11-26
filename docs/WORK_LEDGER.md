@@ -1950,4 +1950,49 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   (gates_frames PASS, smdh SKIP: no .cia). Mandarine NOT run: the machine's
   emulator slot was held by other projects' instances for the whole session (the
   one-instance rule), so there is no emulator boot of this build.
+## 2026-11-25 -- a debris piece's culling radius is measured once, not every frame (branch perf/3ds-effects-caches)
+
+- **Owner's direction:** two caches from the outside review's ticket D
+  (`.git/mdk-review/mdk_3ds_stereo_performance_spec.md`): the debris culling radius and
+  the final halo tint, each kept only if it is expected to save about 0.3 ms per
+  presented frame on the Old 3DS in a debris storm ("I didnt want to implement a bunch
+  of shit that adds complexity without payoff"). Nothing else from ticket D.
+- **What:** `Debris::Piece::reach` (debris.h), -1 until measured, put back to -1 by
+  `Piece::reset` (every `take()`, so a reused pool slot starts unmeasured).
+  `EffectsView::build` measures it at the piece's first culled build with the same loop
+  (corner order, `mathMax`, the squared length, `sqrtf`) and reads it after that. The
+  corners are written only where a piece is made (shatter, break-up, spark, all after
+  `take()`), so the radius cannot go stale. A NaN radius stays NaN and stays cached
+  (`NaN < 0` is false); 0 is a valid radius. The culls' margin, near-plane rule, zoom and
+  thresholds are untouched, as are the float flags. 18 lines of game code (+13 -8);
+  +4 bytes a piece on the 3DS (`sizeof(Piece)` 140 -> 144, measured with devkitARM),
+  2,400 bytes over the 600-piece pool; effects_view.o text +12 bytes.
+- **Why, measured first:** the storm (L8_hazards_debris: up to 361 pieces, 5,064 corners)
+  spent, before this change, 2.0 ns a corner (27 ns a piece) on the radius on the host
+  (Ryzen, -O2, `MDK_FX_BENCH`). On the ARM11 the loop (devkitARM 15.2 -O2 disassembly) is
+  three loads, a dependent vmul/vmla/vmla chain and two vcmp+vmrs+branch pairs (mathMax's
+  NaN test and compare) per corner, with nothing to overlap between corners: an
+  ESTIMATE of 35-55 cycles a corner, 0.66-1.04 ms per presented frame at the storm's
+  peak at 268 MHz (the host time times the ledger's 50-60x integer ratio gives 0.51-0.61
+  ms, its 130-190x whole-tick ratio 1.3-1.9 ms). It is at or above 0.3 ms for 116-140 of
+  the run's 400 steps (about two seconds of storm); ~0 ms with no debris. What is left a
+  piece is one load, compare and branch. Host build before/after (all six cameras,
+  mean over the run, three interleaved runs on a loaded machine): 31.8-39.4 -> 30.0-30.6 us.
+  Estimates, not a console measurement: the hardware appliance was with another agent.
+- **The halo tint cache was measured and NOT built:** three `powf` a glowing sprite cost
+  4 ns a call on the host; devkitARM's `powf` (libm armv6k/fpu, the optimized-routines
+  double-precision one) is ~80 instructions with a ~110-cycle chain of dependent f64
+  VFP operations, ~150 cycles a call: at the storm's 96 glowing sprites 0.16 ms per
+  presented frame (0.11 ms at the backend's 64), 0.06-0.22 ms by the host ratios. Under
+  the 0.3 ms bar, so dropped.
+- **Evidence:** `tick1 dump effects` / golden `tests/scripts/golden/L8_effects_storm.txt`
+  (new, in the `tick1` suite): the storm with six cameras every step (the 3DS culls at
+  the default and widest stereo margin, a 6-degree zoom, an eye inside the cloud through
+  the near plane, a frustum edge through the cloud, no cull), every vertex, draw and halo
+  hashed as bits. The golden was written by the build BEFORE the cache and matches after
+  it byte for byte; the only added line is `reach checked=48813 differ=0` (every measured
+  radius against the old loop, as bits, every step). It covers 17 pool slots reused with
+  another shape, zero-size and NaN-size sparks, halos measured late (pixels away at the
+  entry's making), a cleared view, and the other arenas' palettes (identical on level 8).
+  Non-vacuity: without the reset in `Piece::reset` it fails at s=100.
 - **Commit:** this one.
