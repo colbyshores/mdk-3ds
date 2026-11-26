@@ -2779,3 +2779,31 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     rebuild 0 warnings; `make -C tests/scripts test` exit 0, 996 PASS, 0 FAIL, 4 SKIP (the
     frame gate's oracle arms); worktree `tools/check.sh` ALL GATES PASSED.
 - **Commit:** this branch.
+
+## 2026-11-26 -- upstream presentation fixes ported to C++ (branch fix/upstream-presentation)
+
+The owner asked for "all of the upstream fixes but in C++". Upstream (`origin`, read only)
+fixed the C# after 1.1.1 (d5bb66ec, which this port is made from) up to 1.2.6. Each entry
+names the upstream commit it ports; the C# commit is the specification. The gameplay
+fixes are another agent's.
+
+### 5f9ea5f2 -- the sky's directions from the camera's axes (Linux)
+- **What:** the Vulkan sky's clip-to-direction matrix for the centre camera is built from
+  the camera's axes and projection (`skyDirections`), as upstream's `ViewCamera.SkyDirections`;
+  a stereo eye keeps the inverse (`skyInverse`, `RendererVk::eyeSide`).
+- **Why:** inverting rotation x projection in float put the screen triangle's corner
+  directions off one plane, by an error that changed with the camera's angle, so the sky
+  shook against the world while turning.
+- **The 3DS:** not applicable. Its sky is a dome mesh (`render/sky_dome.cpp`, ETC1 on main)
+  drawn through the world camera; there is no clip-to-direction inverse to correct.
+- **Golden:** the pinned frame L3_f1 changed (the sky). The oracle was re-captured from
+  upstream at 5f9ea5f2 (`tests/frames/capture_oracle.sh` gained `MDK_ORACLE_ROOT`, a C# tree
+  to build the oracle from; .NET 10.0.404 in the scratchpad, display :99 in the script's
+  private namespace). Measured at tolerance 0: upstream 5f9ea5f2 vs its parent 2.411% of
+  pixels; this C++ vs the 5f9ea5f2 oracle 0.051% (max 247, mean 0.0444), down from the
+  1.240% ceiling recorded against 1.1.1. The manifest was regenerated with
+  `regenerate_reference.sh` against that oracle.
+- **Evidence:** Linux build 0 warnings; `make -C tests/scripts test` all PASS except the
+  frame gate before the manifest was regenerated (it was the changed frame, confirmed by
+  rebuilding with the old path: CONTRACT CLEAN); after: FrameGate PASS, tick1 "All cases
+  match the oracle", `tools/check.sh` ALL GATES PASSED.
