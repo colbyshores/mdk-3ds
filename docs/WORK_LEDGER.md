@@ -2670,5 +2670,30 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     dotnet) and its v1.1.1 copy has the bug.
   - Linux build, `make -C tests/scripts test`, `make -C tests/formats` (200,624 checks, 0
     failures) and `tools/check.sh` all pass with zero warnings.
-  - Hardware: see below.
-- **Commit:** this one.
+  - Hardware: see the follow-up entry.
+- **Commit:** 419613a6.
+
+### The OLYM_4 cannon on the Old 3DS appliance (hardware follow-up)
+- **What:** one harness run on `old3ds-lan167` (Old 3DS, 268 MHz, L2 off, stereo per
+  config), `hw_cycle.sh --once`, FRESH, push verified (`bytes_out=234691660`). The build:
+  - Branch `throwaway/level2-cannons-hw`, which is 3f59a93a plus the harness cherry-pick
+    3fe09fde plus the 209 fix.
+  - That harness has no `AT=`/`ARENA=` wiring in `main_3ds.cpp`, so 49e3c824's two
+    blocks were copied in (throwaway only).
+  - Flags: `AUTOQUIT=90 LEVEL=6 FIXED=1 AT=-1732,92,-1260,90 ARENA=OLYM_4
+    WALK='fire@60-200;...;fire@600-900'`.
+  - `--capture` refused the payload: this harness base has no framebuffer capture. There is
+    no picture.
+- **Evidence:** `.git/worktrees/level2-cannons/hw-logs/`:
+  - `L6-cannon.session.log`: the walk's feet and arena at frames 60, 200, 240, 300, 400
+    and 600 are identical to the host dump's at the same steps
+    (`host-L6-cannon-platforms-dump.txt`). In OLYM_4 he stands on the cannon at 60 and is
+    still on it at 200. In COLYM_4 at 240 he is at (-1733.0, 157.5, -1249.2), and at 300
+    and 400 he is still flying. At 600 he is in OLYM_5 at z -1665.0.
+  - The music follows the arenas: ROCK_FS, then CORRIDOR for COLYM_4, then DUNE_M2 for
+    OLYM_5. The run exits clean after 3662 frames.
+  - `mdk-player-419613a6.3dsx`: the player build of the fix (no harness).
+- **Not seen on hardware:** the picture of the window shattering and of the flight (no
+  capture on this harness). Mounting by walking from the level's start was not run either:
+  the run teleports Kurt over the cannon.
+- **Commit:** this one (ledger only).
