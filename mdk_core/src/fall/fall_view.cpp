@@ -31,8 +31,15 @@ constexpr int32_t kBackQuads = 16;
 constexpr int32_t kQuadVertices = 6;
 constexpr int32_t kRadarVertices = 138;
 constexpr int32_t kTrailMissiles = 24;
-constexpr float kTrailWidth = 0.5f;
-constexpr float kTrailWiden = 1.5f;
+// A trail point's width by its age in ticks (0x491d64): the ribbon swells just
+// behind the missile, then tapers to nothing at the 32nd point (trailWidth).
+const float kTrailSwell[] = {1.0f, 1.25f, 1.2f, 1.1f, 1.05f, 1.0f};
+constexpr int32_t kTrailSwellCount = 6;
+// The trail's colours (0x410874's translucent table): white at 215/255, and over
+// the last 8 segments before the missile less and less blue (yellow) and more
+// opaque.
+constexpr int32_t kTrailAlpha = 215;
+constexpr int32_t kTrailYellowSegments = 8;
 constexpr float kRadarBaseFactor = -4.0f;
 constexpr float kRadarFirstAngle = 60.0f;
 constexpr float kDegrees = 3.14159265358979323846f / 180.0f;
@@ -53,8 +60,6 @@ constexpr float kEarthScaleX0 = 300.0f;
 constexpr float kEarthScaleX1 = 128.0f;
 constexpr float kEarthScaleY0 = 100.0f;
 constexpr float kEarthScaleY1 = 42.0f;
-// The trails' colour (approximated in the C#).
-const Colour kTrailColour = {0.8f, 0.8f, 0.8f, 0.35f};
 constexpr int32_t kPaletteBytes = 256 * 4;
 // The lean haze's screen pixels per texel: a 300 x 90 image.
 constexpr int32_t kLeanHazeStep = 2;
@@ -163,6 +168,27 @@ bool FallView::load(MdkRenderer renderer, const formats::Bni& bni, const formats
     if (!models_.load(renderer, bni, mti, palette_, effects_->base(), still, animated, animations)) {
         *why = "a model of FALL3D.BNI did not parse";
         return false;
+    }
+    // C# FallView: the trail's ends are the MISSILE model's leftmost and rightmost
+    // vertices (the first of each, as MinBy/MaxBy), or -x and +x without it.
+    trailLeft_ = Vec3f();
+    trailRight_ = Vec3f();
+    trailLeft_.x = -1.0f;
+    trailRight_.x = 1.0f;
+    if (const formats::Model* missile = models_.find("MISSILE")) {
+        bool first = true;
+        for (size_t p = 0; p < missile->partList.size(); p++) {
+            const std::vector<Vec3f>& vertices = missile->partList[p].vertices;
+            for (size_t v = 0; v < vertices.size(); v++) {
+                if (first || vertices[v].x < trailLeft_.x) {
+                    trailLeft_ = vertices[v];
+                }
+                if (first || vertices[v].x > trailRight_.x) {
+                    trailRight_ = vertices[v];
+                }
+                first = false;
+            }
+        }
     }
     if (!hud_.load(renderer, bni, palette_, effects_->base(), fti, big, small)) {
         *why = "the fall's HUD did not load";
@@ -716,39 +742,84 @@ void FallView::queueRadar(MdkRenderer renderer, const FallSim& sim) {
 
 namespace {
 
-// C# QueueTrails' band: along the last points of a missile, narrowing towards its
-// tail, as triangles into `points`; returns the points written.
-int32_t trailBand(const FallMissile& missile, const Vec3f& camera, Vec3f* points, int32_t capacity) {
+// C# FallView.TrailWidth: a trail point's width factor by its age in ticks, the
+// swell's (0-5), then down to 0 at the 32nd.
+float trailWidth(int32_t age) {
+    if (age < kTrailSwellCount) {
+        return kTrailSwell[age];
+    }
+    const int32_t taper = FallMissile::kTrailPoints - kTrailSwellCount;
+    return 1.0f - (float)(age - kTrailSwellCount) / (float)taper;
+}
+
+// C# FallView.TrailColour: segment k (1 to count - 1, the last one at the
+// missile) of a trail of `count` points, packed as the vertices' RGBA: white at
+// 215/255, the last 8 with blue 255 down to 31 and alpha 215 up to 250.
+uint32_t trailColour(int32_t k, int32_t count) {
+    const int32_t step = k - (count - kTrailYellowSegments);
+    int32_t blue = 255;
+    int32_t alpha = kTrailAlpha;
+    if (step >= 0) {
+        blue = (2040 - 255 * step) >> 3;
+        alpha = ((kTrailYellowSegments - step) * kTrailAlpha + 255 * step) >> 3;
+    }
+    return 0xFFu | 0xFF00u | ((uint32_t)blue << 16) | ((uint32_t)alpha << 24);
+}
+
+// Vector3.TransformNormal(v, m): v by the matrix's upper 3x3, row-vector.
+Vec3f turned(const Vec3f& v, const Mat4& m) {
+    Vec3f r;
+    r.x = v.x * m.m[0] + v.y * m.m[4] + v.z * m.m[8];
+    r.y = v.x * m.m[1] + v.y * m.m[5] + v.z * m.m[9];
+    r.z = v.x * m.m[2] + v.y * m.m[6] + v.z * m.m[10];
+    return r;
+}
+
+// C# QueueTrails' ribbon (0x439454; set up by 0x43911c, sampled by 0x4392a4,
+// upstream 04c25852): along the last 32 points of a missile, oldest first,
+// between its tail fins' tips as the missile was turned at each point, widened
+// by trailWidth. Writes each drawn segment's four corners (left, right at the
+// older point, right, left at the newer) and its colour; returns the segments.
+//
+//   tail ---- white (215/255) ---- last 8 segments: yellower, more opaque -> missile
+//   width x0 <---- tapering ---- x1, x1.05, x1.1, x1.2, x1.25 (swell), x1 at the missile
+int32_t trailRibbon(const FallMissile& missile, const Vec3f& camera, const Vec3f& left, const Vec3f& right,
+                    Vec3f* corners, uint32_t* colours) {
     const Vec3f* trail = missile.trail();
+    const Vec3f* headings = missile.trailHeadings();
     const int32_t count = missile.trailCount();
+    const Vec3f middle = scaled(add(left, right), 0.5f);
+    const Vec3f toLeft = add(left, scaled(middle, -1.0f));
+    const Vec3f toRight = add(right, scaled(middle, -1.0f));
+    Vec3f lefts[FallMissile::kTrailPoints];
+    Vec3f rights[FallMissile::kTrailPoints];
+    for (int32_t i = 0; i < count; i++) {
+        // The fins' tips around their middle, as turned then, scaled by the point's age.
+        const Mat4 turn = orient(headings[i]);
+        const Vec3f centre = add(trail[i], turned(middle, turn));
+        const float width = trailWidth(count - 1 - i);
+        lefts[i] = add(centre, scaled(turned(toLeft, turn), width));
+        rights[i] = add(centre, scaled(turned(toRight, turn), width));
+    }
     int32_t used = 0;
-    for (int32_t i = 0; i < count - 1; i++) {
-        const Vec3f a = trail[i];
-        const Vec3f b = trail[i + 1];
-        if (nearCamera(a, camera) || nearCamera(b, camera)) {
+    for (int32_t k = 1; k < count; k++) {
+        if (nearCamera(trail[k - 1], camera) || nearCamera(trail[k], camera)) {
             continue;
         }
-        Vec3f side;
-        side.x = b.y - a.y;
-        side.y = a.x - b.x;
-        if (side.x != 0.0f || side.y != 0.0f) {
-            const float length = sqrtf(side.x * side.x + side.y * side.y);
-            side.x = side.x / length;
-            side.y = side.y / length;
-        }
-        const float wa = kTrailWidth + kTrailWiden * (float)(count - i) / (float)FallMissile::kTrailPoints;
-        const float wb = kTrailWidth + kTrailWiden * (float)(count - i - 1) / (float)FallMissile::kTrailPoints;
-        const Vec3f quad[4] = {add(a, scaled(side, -wa)), add(a, scaled(side, wa)), add(b, scaled(side, wb)),
-                               add(b, scaled(side, -wb))};
-        const int32_t order[6] = {0, 1, 2, 0, 2, 3};
-        if (used + 6 > capacity) {
-            break;
-        }
-        for (int32_t k = 0; k < 6; k++) {
-            points[used++] = quad[order[k]];
-        }
+        corners[used * 4 + 0] = lefts[k - 1];
+        corners[used * 4 + 1] = rights[k - 1];
+        corners[used * 4 + 2] = rights[k];
+        corners[used * 4 + 3] = lefts[k];
+        colours[used] = trailColour(k, count);
+        used++;
     }
     return used;
+}
+
+// A packed vertex colour as the canvas's float colour.
+Colour colourOf(uint32_t rgba) {
+    return Colour{(float)(rgba & 0xFFu) / 255.0f, (float)((rgba >> 8) & 0xFFu) / 255.0f,
+                  (float)((rgba >> 16) & 0xFFu) / 255.0f, (float)(rgba >> 24) / 255.0f};
 }
 
 } // namespace
@@ -760,15 +831,20 @@ void FallView::queueTrails(MdkRenderer renderer, const FallSim& sim) {
     const Vec3f camera = sim.cameraPosition();
     const std::vector<FallMissile>& missiles = sim.missiles();
     scratch_.clear();
-    Vec3f points[FallMissile::kTrailPoints * kQuadVertices];
+    Vec3f corners[FallMissile::kTrailPoints * 4];
+    uint32_t colours[FallMissile::kTrailPoints];
+    const int32_t order[6] = {0, 1, 2, 0, 2, 3};
     for (size_t m = 0; m < missiles.size() && m < (size_t)kTrailMissiles; m++) {
-        const int32_t used = trailBand(missiles[m], camera, points, FallMissile::kTrailPoints * kQuadVertices);
-        for (int32_t i = 0; i < used; i++) {
-            Vertex v;
-            v.pos = Vec3{points[i].x, points[i].y, points[i].z};
-            v.uv = Vec2{0.0f, 0.0f};
-            v.colour = kVertexWhite;
-            scratch_.push_back(v);
+        const int32_t segments = trailRibbon(missiles[m], camera, trailLeft_, trailRight_, corners, colours);
+        for (int32_t q = 0; q < segments; q++) {
+            for (int32_t k = 0; k < 6; k++) {
+                const Vec3f& p = corners[q * 4 + order[k]];
+                Vertex v;
+                v.pos = Vec3{p.x, p.y, p.z};
+                v.uv = Vec2{0.0f, 0.0f};
+                v.colour = colours[q];
+                scratch_.push_back(v);
+            }
         }
     }
     if (scratch_.empty()) {
@@ -778,7 +854,8 @@ void FallView::queueTrails(MdkRenderer renderer, const FallSim& sim) {
     MeshDraw draw;
     draw.mesh = trailMesh_;
     draw.vertex_count = (int32_t)scratch_.size();
-    draw.material = flat(kTrailColour, Pass::Blended);
+    // The colour is the vertices' (C# Material.Flat(_effects.Apply(Vector4.One))).
+    draw.material = flat(Colour{1.0f, 1.0f, 1.0f, 1.0f}, Pass::Blended);
     memcpy(draw.world, Mat4::identity().m, sizeof(draw.world));
     mdk_render_draw_mesh(renderer, &draw);
 }
@@ -886,14 +963,13 @@ void FallView::canvasRadar(MdkRenderer renderer, const FallSim& sim, float width
 void FallView::canvasTrails(MdkRenderer renderer, const FallSim& sim, float width) {
     const Vec3f camera = sim.cameraPosition();
     const std::vector<FallMissile>& missiles = sim.missiles();
-    Vec3f points[FallMissile::kTrailPoints * kQuadVertices];
+    Vec3f corners[FallMissile::kTrailPoints * 4];
+    uint32_t colours[FallMissile::kTrailPoints];
     for (size_t m = 0; m < missiles.size() && m < (size_t)kTrailMissiles; m++) {
-        const int32_t used = trailBand(missiles[m], camera, points, FallMissile::kTrailPoints * kQuadVertices);
-        // A band's quad is its two triangles' corners 0, 1, 2 and 5 (trailBand's
-        // order 0 1 2, 0 2 3): one canvas quad a segment.
-        for (int32_t i = 0; i + 5 < used; i += 6) {
-            const Vec3f corners[4] = {points[i], points[i + 1], points[i + 2], points[i + 5]};
-            canvasPolygon(renderer, corners, 4, camera, width, kTrailColour);
+        // One canvas quad a segment, in the segment's colour.
+        const int32_t segments = trailRibbon(missiles[m], camera, trailLeft_, trailRight_, corners, colours);
+        for (int32_t q = 0; q < segments; q++) {
+            canvasPolygon(renderer, corners + q * 4, 4, camera, width, colourOf(colours[q]));
         }
     }
 }

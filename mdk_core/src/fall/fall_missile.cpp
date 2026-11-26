@@ -67,9 +67,11 @@ FallMissile::Event FallMissile::update(float dt, int32_t ticks, const formats::V
         if (trailCount_ == kTrailPoints) {
             for (int32_t j = 1; j < kTrailPoints; j++) {
                 trail_[j - 1] = trail_[j];
+                headings_[j - 1] = headings_[j];
             }
             trailCount_--;
         }
+        headings_[trailCount_] = velocity;
         trail_[trailCount_++] = position;
     }
 

@@ -52,6 +52,9 @@ public:
     // FallMissile.Trail: the last points, oldest first, for the smoke trail.
     int32_t trailCount() const { return trailCount_; }
     const formats::Vec3f* trail() const { return trail_; }
+    // FallMissile.TrailHeadings: the velocity at each trail point; the ribbon
+    // there keeps the missile's turn (0x4392a4, upstream 04c25852).
+    const formats::Vec3f* trailHeadings() const { return headings_; }
 
 private:
     enum Phase { Free, Homing, Passed };
@@ -63,6 +66,7 @@ private:
     float offsetX_ = 0.0f;
     float offsetY_ = 0.0f;
     formats::Vec3f trail_[kTrailPoints];
+    formats::Vec3f headings_[kTrailPoints];
     int32_t trailCount_ = 0;
     Phase phase_ = Free;
     // Ticks left free, or since it passed (a float in the C#).

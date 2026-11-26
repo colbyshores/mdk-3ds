@@ -281,6 +281,15 @@ void FallModels::build(const formats::Model& model, const std::vector<std::vecto
     }
 }
 
+const formats::Model* FallModels::find(const char* name) const {
+    for (size_t i = 0; i < entries_.size(); i++) {
+        if (entries_[i].name == name) {
+            return &entries_[i].model;
+        }
+    }
+    return nullptr;
+}
+
 void FallModels::draw(MdkRenderer renderer, const char* name, const Mat4& world, const char* animation,
                       int32_t frame, int32_t textureFrame, Pass pass) {
     Entry* entry = nullptr;

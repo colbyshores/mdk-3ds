@@ -177,6 +177,10 @@ private:
     int32_t backMesh_ = -1;
     int32_t radarMesh_ = -1;
     int32_t trailMesh_ = -1;
+    // The trail ribbon's ends in the missile's model space (0x43911c): its
+    // leftmost and rightmost vertices by x, the tips of its tail fins.
+    formats::Vec3f trailLeft_;
+    formats::Vec3f trailRight_;
     std::vector<Vertex> back_;
     std::vector<BackDraw> backDraws_;
     std::vector<Vertex> scratch_;

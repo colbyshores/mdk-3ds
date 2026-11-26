@@ -2835,3 +2835,18 @@ fixes are another agent's.
   itself, 12 differ, from upstream's other changes in between.
 - **Evidence:** vm_tests' new case (level 7 plays SING and TAUNT1 at 0x7FFF, once; every level
   has the fourth archive); tick1 "All cases match the oracle"; Linux build 0 warnings.
+
+### 04c25852 -- the fall's missile trails as the original
+- **What:** each missile keeps its velocity at each trail point (`FallMissile::trailHeadings`);
+  the ribbon runs between the tips of the MISSILE model's tail fins (its leftmost and rightmost
+  vertices) as the missile was turned at that point, swells just behind it (x1.25) and tapers
+  to nothing over 32 points; white at 215/255, the last 8 segments yellower and more opaque.
+  Both ways of drawing it: the desktop's mesh (per-vertex colour) and the 3DS's lean canvas
+  (one quad a segment, in its colour).
+- **Why:** the trails were a flat grey band (an approximation in the C#), fixed upstream from
+  the original (0x439454, 0x43911c, 0x4392a4, 0x491d64, 0x410874).
+- **Cost:** per frame, one `orient` (a normalize and two crosses) per trail point drawn: at
+  most 24 missiles x 32 points. Not measured on the console yet.
+- **Evidence:** Linux build 0 warnings; tick1 all cases match (no golden draws the trails; the
+  fall dumps hold the trail points, unchanged); a level 7 fall captured at frame 1500, desktop
+  and lean: the ribbons show white with yellow tips at the missiles.
