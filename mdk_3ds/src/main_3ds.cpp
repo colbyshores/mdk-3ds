@@ -231,6 +231,20 @@ int main(int argc, char** argv) {
     mdk::log3dsPrintf("main: FZ/DN ok (fpscr=0x%08lx)",
                       (unsigned long)mdk::vfpReadFpscr());
 
+    // NEW 3DS: ask for the 804 MHz clock and the L2 cache (one ptm:sysm call;
+    // libctru re-applies it each time the app wakes from HOME or an applet).
+    // A .3dsx launch starts at 268 MHz with L2 off, and so does the CIA
+    // (cia/mdk.rsf), so nothing gets the fast mode without asking. The Old 3DS
+    // is not asked. svcGetSystemTick keeps its 268 MHz rate in either mode, so
+    // the frame clock (clock_3ds.h) is unaffected.
+    bool isNew3ds = false;
+    APT_CheckNew3DS(&isNew3ds);
+    if (isNew3ds) {
+        osSetSpeedupEnable(true);
+    }
+    mdk::log3dsPrintf("main: %s 3DS, %s", isNew3ds ? "New" : "Old",
+                      isNew3ds ? "804 MHz + L2 requested" : "268 MHz (no speedup to request)");
+
     gfxInitDefault();
     // The top screen's parallax barrier. MDK's flat-display stereo modes do
     // not apply to the 3DS; the hardware's own stereoscopic is used

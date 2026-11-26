@@ -1903,4 +1903,51 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   emulator slot was held by other projects' instances all session).
 - **Lines:** +4/-1 main_3ds.cpp (3 comment), +2/-1 Linux main.cpp, +50 vm test,
   +6/-3 gate. No new state.
+## 2026-11-25 -- the New 3DS asks for 804 MHz + L2 (branch perf/3ds-n3ds-speedup)
+
+- **What:** `main_3ds.cpp`, after the log opens and before gfxInitDefault:
+  `APT_CheckNew3DS`, and on a New 3DS `osSetSpeedupEnable(true)`; one boot line,
+  `main: New 3DS, 804 MHz + L2 requested` or `main: Old 3DS, 268 MHz (no speedup
+  to request)`. 14 lines (6 of them comment), one local bool, no new state. The Old 3DS makes no
+  ptm:sysm call.
+- **Why:** nothing in the game asked for the fast mode. A .3dsx launch carries a
+  descriptor with the 804 MHz / L2 bits clear, and `mdk_3ds/cia/mdk.rsf` asks
+  `CpuSpeed: 268MHz`, `EnableL2Cache: false`, so the owner's New 3DS has been
+  running MDK at the Old clock. Sibling ports on the same console do the same
+  call (`../forsaken` main_3ds.cpp, `../t2k` applyNew3dsSpeedup).
+- **libctru 2.7.0, read from the linked `libctru.a`:** `osSetSpeedupEnable`
+  stores `__ctru_speedup` and calls `PTMSYSM_ConfigureNew3DSCPU(3)` through a
+  transient ptm:sysm session (nothing if the session cannot open);
+  `aptWaitForWakeUp` calls `__ctru_speedup_config` (three call sites), so the
+  request is re-applied after HOME / applet returns without a hook of ours.
+  `mdk.rsf` already lists `ptm:sysm`; it is left at 268 MHz / L2 off: the run-time
+  request covers both packages, and changing the exheader would be a second,
+  separately tested variant.
+- **Timing code:** the frame clock (`clock_3ds.h`), the stream clock, the
+  texture-upload budget and the audio timers all divide `svcGetSystemTick` by
+  `SYSCLOCK_ARM11`; the tick keeps its 268 MHz rate at 804 MHz (libctru's own
+  time base, and t2k's game clock does the same with the speedup on). No
+  cycle-counted busy loop exists in `mdk_3ds/src`; the waits are
+  `svcSleepThread`. Worker priorities and cores are untouched.
+- **Owner check (New 3DS, cannot be done here):** start MDK, get into a level,
+  open Rosalina (L + D-pad Down + Select) -> **New 3DS menu** while MDK runs. It
+  names the action each entry would take: "Set clock rate to 268MHz" and
+  "Disable L2 cache" mean the game is at 804 MHz with L2 on; "...to 804MHz" /
+  "Enable L2 cache" mean it is not. Close Rosalina without choosing. Repeat after
+  a HOME-menu round trip and after closing/opening the lid. `sdmc:/3ds/mdk/mdk.log`
+  should say `main: New 3DS, 804 MHz + L2 requested`. The game must run at the
+  same speed as before (a 3x-fast game would mean the tick rate moved).
+- **Not verified:** the actual clock (no console here; the appliance is the Old
+  3DS and is in use elsewhere); the lid-sleep path (libctru re-applies on
+  wake-up from HOME/applets; sleep is the owner's check above); the frame-time
+  gain.
+- **Evidence:** clean `make -C mdk_3ds` (devkitARM, libctru 2.7.0) with no
+  compiler warnings; the ELF links `osSetSpeedupEnable`, `__ctru_speedup_config`,
+  `APT_CheckNew3DS`; no harness strings. Player build:
+  `.git/worktrees/perf-n3ds-speedup/hw-logs/play-n3ds-speedup.3dsx`
+  (md5 162a3f3723fa5eab986a77484e6d7c61) / `.elf` (477add5cd2373d6a4b62cfdd474dbf0e).
+  `make -C tests/scripts test` all suites pass; `tools/check.sh` ALL GATES PASSED
+  (gates_frames PASS, smdh SKIP: no .cia). Mandarine NOT run: the machine's
+  emulator slot was held by other projects' instances for the whole session (the
+  one-instance rule), so there is no emulator boot of this build.
 - **Commit:** this one.
