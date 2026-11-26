@@ -35,7 +35,9 @@ Reference implementation: `../forsaken` (`regen_hd_textures_*.sh`,
 
 ## 2. Build side (`mdk_3ds/tools/build_hd_pack.*`, host)
 
-For every PNG under the mod tree:
+`build_hd_pack.sh` makes the HD mod (`hd_export/hd_tex_export`, then
+`build_hd_mod.py`: the C# generator's export, padding, Real-ESRGAN 2x and crop),
+then `hd_pack_convert.py` converts it. For every PNG under the mod tree:
 
 1. **Bleed the transparent texels' colour** before anything filters it. `tex3ds`'s
    gaussian mips and the ETC1 block fit both average colour across alpha-0
@@ -186,9 +188,14 @@ residency is part of the feature, in two steps:
 - **The pack source exists only locally, by design.** Upstream
   (github.com/nautilusbits/mdk-sdl, formerly nemo22/mdk-sdl) makes HD textures
   "locally on your GPU, from your copy of the game ... Nothing upscaled is
-  distributed"; none of its releases carries a pack. `build_hd_pack.sh` builds the
-  oracle, runs its `--upscale-textures` (it fetched Real-ESRGAN, 44 MB, itself)
-  and converts the result.
+  distributed"; none of its releases carries a pack. `build_hd_pack.sh` makes the
+  mod locally and converts it. Until 2026-11-26 it built the C# oracle and ran its
+  `--upscale-textures`; since then it needs no .NET: `hd_export/hd_tex_export`
+  (C++, mdk_core's loaders) reads the textures out of the game data and
+  `build_hd_mod.py` does the C# generator's padding, upscaling (the same pinned,
+  SHA-256 checked Real-ESRGAN release, 44 MB, fetched once) and cropping. Its
+  pre-upscale images and, with a fixed stand-in upscaler, its whole mod are pixel
+  for pixel the C#'s for levels 3-8 (docs/WORK_LEDGER.md, 2026-11-26).
 - Level 3: **578 textures** generated in 217 s on an RX 6600 (82 MB of PNG);
   converted at the 512 cap in 8 m 42 s on 16 cores: **400 ETC1A4** (every one has
   true alpha-0 texels in its source, palette index 0) and **178 ETC1**,
