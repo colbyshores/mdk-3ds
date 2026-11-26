@@ -2211,3 +2211,68 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   disk); tests/formats 200624 checks, 0 failures; tools/check.sh ALL GATES PASSED
   (gates_frames PASS on the Linux build, gates_smdh SKIP: no .cia).
 - **Commit:** this one (ledger only).
+
+## 2026-11-26 -- SHADOW REFRESH AUTO is about 15 Hz at any frame rate (branch perf/3ds-shadow-cadence): KEPT
+
+- **Owner's direction (verbatim "lets do C as well"):** with SHADOW REFRESH on AUTO,
+  redraw the sun map every 4th presentation at 60 fps and every 2nd at 30 (about 15 Hz
+  both), knowing moving shadows update half as often at 60. Manual 1-4 and the
+  immediate recasts unchanged.
+- **"Running at 60", defined by elapsed time, not by a mode:** AUTO recasts once two
+  presentations AND 3.5 vblanks (`kShadowAutoTicks` = 15,684,000 ticks of the 268 MHz
+  system tick, 58.5 ms) have passed since the last cast (`pica::shadowRefreshDue`). At 60
+  that is every 4th presentation (3 presentations = 50 ms < 58.5 <= 66.8), at 30 every
+  2nd (66.8 ms), slower than 30 still every 2nd (the old AUTO). Why time: the cap30Fps
+  setting says what the frame rate is allowed to be, not what it is (a New 3DS with FAST
+  3DS off, or a busy scene, runs uncapped at 30-45); a measured-rate mode would need
+  hysteresis for a rate wandering across the boundary. The time rule needs neither: a
+  wandering rate gets about 15 Hz, never fewer than one cast per 4 presentations nor more
+  than one per 2, and 3.5 vblanks leaves ~8 ms of clock jitter either side.
+- **What:** `pica::shadowRefreshDue(setting, framesSince, ticksSince)` (pica_matrix.{h,cpp},
+  host-compiled), called by `prepareShadows` in place of `frame - castFrame >= every`; one
+  new field, `shadowCastTick`. The moved/sunTurned/rigChanged/fresh/native recasts are
+  untouched. +31 -8 lines of game code (about 10 of them code, the rest comments), +57
+  lines of test.
+- **Host test (tests/scripts pica_matrix_tests, in vm_tests):** 120 simulated
+  presentations: at 60 fps every 4th (30 casts, also with the clock read 2 ms early/late),
+  at 30 and at 20 every 2nd, a rate wandering 1/2 vblanks gives 40 casts never more than 3
+  apart, 60 with a 6-vblank hitch never more than 4 apart, manual 1-4 every N at 60 and 30,
+  and the 3/4-vblank edges. Non-vacuity: with the old rule (`framesSince >= 2`) five checks
+  fail (the 60-fps, wobble, hitch and edge cases).
+- **What it is worth (old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, cap 30, HD
+  on from RomFS):** the Old 3DS holds 30, where AUTO does exactly what it did, so the
+  60-fps branch cannot be exercised there; the cost of a cast was measured instead, on
+  throwaway/halo-shadow-hw: each frame's GPU time (C3D_GetDrawingTime) charged to that
+  frame's cast/reuse class, prepareShadows+castShadows timed, and the cadence forced to
+  every 2nd / every 4th in alternating 256-frame blocks.
+
+  | scene | casters/frame | GPU, cast frame vs reuse frame | CPU prepare+cast, cast vs reuse | forced every-2 vs every-4 blocks, GPU mean |
+  |---|---|---|---|---|
+  | L8 start (sunlit, live 100%), `LEVEL=8 FIXED=1 WALK='turnright@300-420;turnleft@1200-1320;forward@1800-1900'` | 3.9 | 15.68 / 15.57 vs 14.82 / 14.80 ms: **+0.8 ms** | 0.41 vs 0.02 ms: **+0.39 ms** | 15.22 vs 15.00 ms (**-0.21 ms**) |
+  | L7 DANT_5 (bomber route of the halo entry), three runs | 3.1-3.3 | 14.0-14.2 vs 13.4-13.5 ms: +0.6-0.7 ms | 0.34-0.36 vs 0.02 ms | within the scene's own variation (+0.07 / -0.14 ms) |
+
+  So at 60 fps AUTO's change (every 2nd -> every 4th) removes one cast per 4 presentations:
+  about **0.2 ms GPU + 0.1 ms CPU per presented frame on average** at Old-3DS speeds in these
+  scenes, more with more casters. It does NOT make a cast frame cheaper: a frame that
+  misses 16.7 ms only because it casts now misses half as often, not never.
+  Logs: `.git/worktrees/halo-shadow-hw/hw-logs/2026-11-26-{l8-1,bomber2-1,bomber3-*}*`.
+- **What only the owner's New 3DS can show:** that AUTO takes the 60-fps branch in play
+  (cap off, FAST 3DS on), the saving at 60 in a GPU-bound stereo frame, and whether
+  moving casters (enemies, Kurt, doors) updating at 15 Hz instead of 30 are acceptable to
+  the eye. The New 3DS's GPU runs at the Old's clock, so the per-cast GPU cost above
+  should carry over; its CPU cost is about a third.
+- **The real AUTO path on the console (2026-11-26 05:4x, after the appliance came back):**
+  schedule unforced, cap off (`cap30Fps=0`), L8 start route above, same throwaway
+  instrumentation (`HWAB_SHADOW=0`, 9ffe711d). The Old 3DS ran mixed: 1,332 one-vblank and
+  1,709 two-vblank frames of 3,071 (mean 29.0 ms). AUTO cast 1,040 times (one per 2.95
+  presentations; 11.7 casts a second, immediate recasts included), where the old AUTO's
+  every-2nd rule would have cast ~1,535. A cast frame cost +0.84 ms GPU (15.67 vs 14.83 ms)
+  and +0.40 ms CPU (0.415 vs 0.018 ms), so here AUTO saved about 0.14 ms GPU + 0.06 ms
+  CPU per presented frame. Note the rate: with frames of 1 and 2 vblanks mixed, a cast
+  waits for 4-6 vblanks (8.6-15 Hz), so a wandering rate lands BELOW 15 Hz, not at it;
+  pure 60 is 15 Hz, pure 30 is 15 Hz. Log: `.git/worktrees/halo-shadow-hw/hw-logs/
+  2026-11-26-l8auto-3*` (FRESH, push verified, 247,980,288 bytes).
+- **Evidence:** tests/scripts `make test` passes (PicaMatrix PASS), tests/formats 200624
+  checks 0 failures, tools/check.sh ALL GATES PASSED (gates_frames PASS on the Linux build,
+  gates_smdh SKIP: no .cia); player .3dsx (devkitARM 15.2.0) 0 compiler warnings.
+- **Commit:** this one.

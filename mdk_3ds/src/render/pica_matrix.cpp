@@ -989,6 +989,13 @@ float sunShadowDepthBias(int32_t mapSize) {
     return sunShadowNormalOffset(mapSize) / (2.0f * kSunShadowReach);
 }
 
+bool shadowRefreshDue(int32_t setting, int32_t framesSince, uint64_t ticksSince) {
+    if (setting >= 1) {
+        return framesSince >= setting;
+    }
+    return framesSince >= 2 && ticksSince >= kShadowAutoTicks;
+}
+
 void sunCasterMatrix(const float sun[16], float out[16]) {
     // Row-vector layout: element [row * 4 + col]; a clip component is a COLUMN.
     for (int row = 0; row < 4; row++) {

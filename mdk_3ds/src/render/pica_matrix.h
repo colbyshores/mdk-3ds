@@ -1168,6 +1168,16 @@ constexpr int32_t kSunShadowPcMapSize = 2048;
 float sunShadowNormalOffset(int32_t mapSize);
 float sunShadowDepthBias(int32_t mapSize);
 
+// SHADOW REFRESH (config shadowMapRefresh): 1-4 redraws the sun map every that
+// many presentations; 0, AUTO, about 15 times a second at any frame rate -- once
+// two presentations AND 3.5 vblanks (kShadowAutoTicks of the 268 MHz system
+// tick) have passed since the last cast: every 4th presentation at 60 fps,
+// every 2nd at 30 or slower. Elapsed time, not the cap setting, so a New 3DS
+// that cannot hold 60 (FAST 3DS off) and a frame rate wandering across the
+// boundary need no mode. The immediate recasts (prepareShadows) are separate.
+constexpr uint64_t kShadowAutoTicks = 15684000u;   // 3.5 x 268111856 / 59.83 Hz
+bool shadowRefreshDue(int32_t setting, int32_t framesSince, uint64_t ticksSince);
+
 // World -> the CASTER pass's clip space: the sun matrix's x and y as they are
 // (a texture target's clip x, y are its s, t: glowLevelCorner), and its depth
 // d in [0, 1] as clip z = d - w, so the depth this backend's map stores

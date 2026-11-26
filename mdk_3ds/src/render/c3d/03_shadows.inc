@@ -276,12 +276,13 @@ static void prepareShadows(RendererC3D* r) {
     // 2026-11-19: the caster pass is ~4 ms of the Old 3DS's stereo frame). The
     // map is the sun's view of the casters around the camera: while the sun,
     // the box and the static world stand still it is the same picture, so it is
-    // redrawn every `every` frames, and AT ONCE when the map is new, the sun has
-    // turned, the camera has moved a sixteenth of the box's reach from where it
-    // was cast (the box's far edges are what that would move), or the native
-    // writes are still to be seen (end_frame's check needs a cast). A kept map
-    // keeps its matrices: the receivers sample it where it was cast.
-    const int every = r->toggles.shadowMapRefresh > 0 ? (int)r->toggles.shadowMapRefresh : 2;
+    // redrawn on the SHADOW REFRESH schedule (pica::shadowRefreshDue), and AT
+    // ONCE when the map is new, the sun has turned, the camera has moved a
+    // sixteenth of the box's reach from where it was cast (the box's far edges
+    // are what that would move), or the native writes are still to be seen
+    // (end_frame's check needs a cast). A kept map keeps its matrices: the
+    // receivers sample it where it was cast.
+    const uint64_t now = svcGetSystemTick();
     const float dx = r->cameraPos[0] - r->shadowCastCentre[0];
     const float dy = r->cameraPos[1] - r->shadowCastCentre[1];
     const float dz = r->cameraPos[2] - r->shadowCastCentre[2];
@@ -297,7 +298,9 @@ static void prepareShadows(RendererC3D* r) {
                           l.ground.r, l.ground.g, l.ground.b};
     const bool rigChanged = memcmp(rig, r->shadowCastRig, sizeof(rig)) != 0;
     r->shadowRecast = r->shadowMapFresh || moved || sunTurned || rigChanged ||
-                      r->frame - r->shadowCastFrame >= every ||
+                      mdk::pica::shadowRefreshDue(r->toggles.shadowMapRefresh,
+                                                  r->frame - r->shadowCastFrame,
+                                                  now - r->shadowCastTick) ||
                       (r->shadowNative && !r->shadowNativeVerified);
     if (r->shadowRecast) {
         float sun[16];
@@ -314,6 +317,7 @@ static void prepareShadows(RendererC3D* r) {
         mdk::pica::registers(map, r->shadowSunMtx);
         r->shadowMapFresh = false;
         r->shadowCastFrame = r->frame;
+        r->shadowCastTick = now;
         memcpy(r->shadowCastCentre, r->cameraPos, sizeof(r->shadowCastCentre));
         r->shadowCastSun[0] = l.sun_direction.x;
         r->shadowCastSun[1] = l.sun_direction.y;

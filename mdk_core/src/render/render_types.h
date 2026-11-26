@@ -304,7 +304,8 @@ struct EnhancedToggles {
 
     // NOT A TOGGLE: how often the 3DS redraws the sun shadow's map, in frames
     // (the map is the same picture while the sun and the static world stand
-    // still; only moving casters lag). 0 = automatic (every 2nd frame); 1-4 =
+    // still; only moving casters lag). 0 = automatic (about 15 Hz: every 4th
+    // frame at 60 fps, every 2nd at 30 -- pica::shadowRefreshDue); 1-4 =
     // every that many frames. It is redrawn at once whatever this says when the
     // camera has moved its box on, the sun has turned or the map is new. The PC
     // ignores it.
