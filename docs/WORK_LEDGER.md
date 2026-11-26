@@ -3031,3 +3031,22 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   no version string; it needs build plumbing (a version from git into both builds) first.
 - **a73a5cd2's step half and c881c9bc:** see their entries (the port does not blend Kurt or
   the follow camera between steps).
+
+### The interpolation's cost on the Old 3DS: NOT MEASURED (the appliance was held)
+- **Built, not run:** three level 8 profile payloads (`AUTOQUIT=90 LEVEL=8 PROFILE=1`, the
+  harness from throwaway/sky-etc1-hw 3fe09fde merged in on `throwaway/upstream-presentation-hw*`):
+  A = f20161a7 (before the interpolation), B = 306d7cf8 (ae746b5d + 7740deb1 + a73a5cd2's tick
+  half), C = 3028722f (this branch's tip). Kept, with the locked runner, in
+  `.git/worktrees/upstream-presentation/hw-logs/` (`hwrun_up.sh A_base_L8prof B_interp_L8prof
+  C_final_L8prof`, `hw_cycle.sh --profile` each under `.git/mdk-review/appliance.lock`).
+- **Why not run:** the appliance lock was held by the mip-root campaign from 14:04 to past
+  15:57; the runner waited and was stopped rather than left to take the lock unattended.
+- **Emulator (Mandarine r1.2.1, md5 0d2adab6, DISPLAY=:99, `emurun.sh`):** A and C both boot
+  level 8, draw the HUD (C: canary and ink in place) and then log no frame past 5 in 60-240 s
+  -- the same with the commit before the interpolation, so not this branch's; not timing
+  evidence either way.
+- **What to decide on the numbers:** each of the three is its own commit. If B costs the Old
+  3DS a refresh, the 3DS frontend can pass alpha 1 to `addObject`'s pose and
+  `EffectsView::build` (the transforms already blend) without touching Linux.
+- **Also checked:** Linux, level 3 at 150 s (`--god`, frame 9000): the timer ring shows an
+  emptied wedge from the right, counter-clockwise (235b1792).
