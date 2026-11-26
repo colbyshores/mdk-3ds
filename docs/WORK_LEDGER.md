@@ -2425,3 +2425,8 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   ALL GATES PASSED (smdh SKIP), player .3dsx 0 warnings. The fix itself is not
   yet re-measured on the console (the L3 set count should read 177 again).
 - **Commit:** this one.
+- **Addendum, second readback (frame 1213, FRESH):** hw-logs/after-cap1213-stereo.png
+  -- a farther, smaller explosion, again one whole upright frame with a clean edge,
+  identical frame in both eyes. No SL_BIG wound and no FIRE were in either picture
+  (not seen on hardware). The throwaway branches are deleted again; their patches,
+  the capture wiring included, are in hw-logs/throwaway-patches.
