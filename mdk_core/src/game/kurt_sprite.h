@@ -464,8 +464,9 @@ public:
     // its BSP leaf, so the board shows whole even where it dips into the slope
     // (uphill its feet lag a step under it, banked turns sink an edge); with a
     // depth buffer that part hid. As this sprite, it is scaled towards the eye:
-    // the same on screen, nearer than the floors the eye's rays to its box's
-    // eight corners cross inside the box (or up to a unit under it). `box` is the
+    // the same on screen, nearer than the floors the eye's rays to 18 points of
+    // its box (a 3 x 3 grid at its bottom and top) cross within the board's
+    // length of the point (03ee9031: it sinks deeper than it is thick). `box` is the
     // board model's bounds, `transform` the board's as drawn; the eye looks along
     // `forward`. Returns `transform`, scaled about the eye when a floor is met.
     static Mat4 boardPull(const formats::Box& box, const Mat4& transform, const Vec3& eye,

@@ -26,7 +26,6 @@
 #include "game/mod_images.h"
 #include "util/math_lut.h"
 #include "util/matrix.h"
-#include "util/system_numerics_inverse.h"
 
 namespace mdk {
 
@@ -1197,39 +1196,53 @@ Vec3 transformPoint(const Vec3& v, const float* m) {
 
 Mat4 KurtSprite::boardPull(const formats::Box& box, const Mat4& transform, const Vec3& eye,
                            const Vec3& forward, ArenaSpace* space) {
-    // Floors count where the rays cross them inside the box or this far under it.
-    const float kFloorBelow = 1.0f;
     // A corner on the eye's plane has no depth to pull to (6eb0963b).
     const float kMinDepth = 1e-3f;
-    float toBoard[16];
-    if (space == nullptr || !invertSystemNumericsMatrix4(transform.m, toBoard)) {
+    if (space == nullptr) {
         return transform;
     }
+    // Floors count where the rays cross them within the board's length of the
+    // point (03ee9031): the floor it sank into -- up to 2 under it, deeper than
+    // its 0.4 thickness -- and not a crest farther towards the eye.
+    const Vec3 low = transformPoint(Vec3{box.min.x, box.min.y, box.min.z}, transform.m);
+    const Vec3 high = transformPoint(Vec3{box.max.x, box.max.y, box.max.z}, transform.m);
+    const float reach = sqrtf((high.x - low.x) * (high.x - low.x) + (high.y - low.y) * (high.y - low.y) +
+                              (high.z - low.z) * (high.z - low.z));
+    // The box's points (03ee9031): a grid of 3 along x and y (min, middle, max),
+    // at its bottom and its top; the middles catch a bump under the board or a
+    // tube's floor, the ends and edges above it.
+    const float share[3] = {0.0f, 0.5f, 1.0f};
     float scale = 1.0f;
-    for (int32_t i = 0; i < 8; i++) {
-        // Corner i: bit 0 picks x, bit 1 y, bit 2 z of the box.
-        const Vec3 local{(i & 1) == 0 ? box.min.x : box.max.x, (i & 2) == 0 ? box.min.y : box.max.y,
-                         (i & 4) == 0 ? box.min.z : box.max.z};
-        const Vec3 corner = transformPoint(local, transform.m);
-        ArenaSpace::Floor floor;
-        if (!space->floorCrossing(formats::Vec3f{eye.x, eye.y, eye.z},
-                                  formats::Vec3f{corner.x, corner.y, corner.z}, &floor)) {
-            continue;
+    for (int32_t layer = 0; layer < 2; layer++) {
+        for (int32_t row = 0; row < 3; row++) {
+            for (int32_t column = 0; column < 3; column++) {
+                const Vec3 local{box.min.x + (box.max.x - box.min.x) * share[column],
+                                 box.min.y + (box.max.y - box.min.y) * share[row],
+                                 layer == 0 ? box.min.z : box.max.z};
+                const Vec3 point = transformPoint(local, transform.m);
+                ArenaSpace::Floor floor;
+                if (!space->floorCrossing(formats::Vec3f{eye.x, eye.y, eye.z},
+                                          formats::Vec3f{point.x, point.y, point.z}, &floor)) {
+                    continue;
+                }
+                const float dx = point.x - floor.point.x;
+                const float dy = point.y - floor.point.y;
+                const float dz = point.z - floor.point.z;
+                if (dx * dx + dy * dy + dz * dz > reach * reach) {
+                    continue;
+                }
+                const float depth = (point.x - eye.x) * forward.x + (point.y - eye.y) * forward.y +
+                                    (point.z - eye.z) * forward.z;
+                if (depth <= kMinDepth) {
+                    continue;
+                }
+                const float floorDepth = (floor.point.x - eye.x) * forward.x +
+                                         (floor.point.y - eye.y) * forward.y +
+                                         (floor.point.z - eye.z) * forward.z;
+                const float front = inFront(depth, true, floorDepth);
+                scale = front < scale ? front : scale;
+            }
         }
-        const Vec3 on = transformPoint(Vec3{floor.point.x, floor.point.y, floor.point.z}, toBoard);
-        if (on.x < box.min.x || on.x > box.max.x || on.y < box.min.y || on.y > box.max.y ||
-            on.z < box.min.z - kFloorBelow || on.z > box.max.z) {
-            continue;
-        }
-        const float depth = (corner.x - eye.x) * forward.x + (corner.y - eye.y) * forward.y +
-                            (corner.z - eye.z) * forward.z;
-        if (depth <= kMinDepth) {
-            continue;
-        }
-        const float floorDepth = (floor.point.x - eye.x) * forward.x + (floor.point.y - eye.y) * forward.y +
-                                 (floor.point.z - eye.z) * forward.z;
-        const float front = inFront(depth, true, floorDepth);
-        scale = front < scale ? front : scale;
     }
     if (scale == 1.0f) {
         return transform;

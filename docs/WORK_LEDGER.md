@@ -2986,3 +2986,16 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   byteOffset, a 2^31-1 byteOffset, a 65536-wide PNG; the negative byteOffset was accepted
   before the `asInt` fix): 200,662 checks, 0 failures. Linux and 3DS builds 0 warnings; tick1
   all cases match; `tools/check.sh` ALL GATES PASSED.
+
+### 03ee9031 -- the board pulled over floors it sank deeper into (not on the list; a27ca2f4's follow-up)
+- **What:** `KurtSprite::boardPull` probes 18 points of the board's box (a 3 x 3 grid at its
+  bottom and top) instead of its 8 corners, and a floor counts where a ray crosses it within
+  the board's length of the point, instead of inside the box (the 4x4 inverse goes).
+- **Why:** upstream found the board still vanished under the floor in 1.2.5 (MEAT_1 on the
+  flat, out of CMEAT_3's first bend, in the tubes): it is 0.4 thick and sinks up to 2, so
+  crossings inside the box missed it, and a tube's floor or a bump under its middle crossed
+  none of the corner rays. It finishes a27ca2f4, so it is ported with it.
+- **Cost:** while on the board, up to 18 floor crossings a frame (from 8).
+- **Evidence:** the same CMEAT_3 ride, 640x480: at frame 480 the board was half hidden with
+  the 8-corner pull and is whole now; Linux and 3DS builds 0 warnings; tick1 all cases match;
+  `tools/check.sh` ALL GATES PASSED. Not run on the console.
