@@ -5,6 +5,7 @@
 #include "game/hud_view.h"
 
 #include <cstdio>
+#include <cstring>
 
 #include "formats/bni.h"
 #include "formats/palette.h"
@@ -178,7 +179,10 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
         return false;
     }
 
-    loadImage(sprites, "SC_STAT", &panel_, palette);
+    modPanel_ = HdImage();
+    loadImage(sprites, "SC_STAT", &panel_, palette, &modPanel_);
+    modTimerPanel_ = modPanel_.rgba;
+    levelRgba_.assign(palette.rgba(), palette.rgba() + 256 * 4);
     // The timer's two panels, full and empty (the same size: the ring is stamped
     // from one into the other); without SC_BSTAT the ring stays full.
     formats::Texture full;
@@ -261,7 +265,7 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
 }
 
 void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* out,
-                        const formats::Palette& palette) {
+                        const formats::Palette& palette, HdImage* keep) {
     formats::Texture texture;
     if (!sprites.image(name, &texture)) {
         return;
@@ -295,6 +299,9 @@ void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* ou
             mdk_render_replace_image(renderer_, out->texture, palette_, image.width, image.height,
                                      image.rgba.data());
             out->arenaIndices.clear();   // the mod's picture is drawn, not the indices
+            if (keep != nullptr && image.frames == 1) {
+                *keep = image;
+            }
         }
     }
     out->w = (float)texture.width();
@@ -433,14 +440,57 @@ void HudView::updateTimer(float timeLeft) {
     if (angle < timerAngle_) {
         timerPanel_ = fullPanel_;
         timerAngle_ = 0.0f;
-        mdk_render_update_texture(renderer_, panel_.texture, panelWidth_, panelHeight_, timerPanel_.data());
+        uploadTimer();
     }
     if (angle <= timerAngle_ + kTimerStep) {
         return;
     }
     ringWipe(timerPanel_.data(), emptyPanel_.data(), panelWidth_, panelHeight_, timerAngle_, angle);
     timerAngle_ = angle;
+    uploadTimer();
+}
+
+void HudView::uploadTimer() {
     mdk_render_update_texture(renderer_, panel_.texture, panelWidth_, panelHeight_, timerPanel_.data());
+    // A mod's panel (C# UploadTimer): each of its pixels shows the panel pixel
+    // it covers, SC_BSTAT's colour where the ring was stamped.
+    const int32_t modWidth = modPanel_.width;
+    const int32_t modHeight = modPanel_.height;
+    if (modWidth <= 0 || modHeight <= 0 || modPanel_.rgba.size() < (size_t)modWidth * (size_t)modHeight * 4) {
+        return;
+    }
+    const uint8_t* colours = levelRgba_.data();
+    // The panel pixel under mod pixel (x, y) is (x * panelWidth_ / modWidth,
+    // y * panelHeight_ / modHeight), stepped here without a divide per pixel
+    // (AGENTS.md R11: the ARM11 has no integer divide): each coordinate keeps
+    // its floor and remainder as x or y moves on by one.
+    int32_t panelY = 0;
+    int32_t yRemainder = 0;
+    for (int32_t y = 0; y < modHeight; y++) {
+        const int32_t row = panelY * panelWidth_;
+        int32_t panelX = 0;
+        int32_t xRemainder = 0;
+        for (int32_t x = 0; x < modWidth; x++) {
+            const int32_t at = row + panelX;
+            const size_t pixel = ((size_t)y * (size_t)modWidth + (size_t)x) * 4;
+            const uint8_t* from = timerPanel_[(size_t)at] == fullPanel_[(size_t)at]
+                                      ? modPanel_.rgba.data() + pixel
+                                      : colours + (size_t)timerPanel_[(size_t)at] * 4;
+            memcpy(modTimerPanel_.data() + pixel, from, 4);
+            xRemainder += panelWidth_;
+            while (xRemainder >= modWidth) {
+                xRemainder -= modWidth;
+                panelX++;
+            }
+        }
+        yRemainder += panelHeight_;
+        while (yRemainder >= modHeight) {
+            yRemainder -= modHeight;
+            panelY++;
+        }
+    }
+    mdk_render_replace_image(renderer_, panel_.texture, panel_.palette >= 0 ? panel_.palette : palette_,
+                             modWidth, modHeight, modTimerPanel_.data());
 }
 
 void HudView::drawImage(const Image& image, float x, float y, const Colour& tint) {

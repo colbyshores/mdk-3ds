@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "game/bomber_overlay.h"
+#include "game/hd_key.h"
 #include "game/messages.h"
 #include "game/sniper_overlay.h"
 #include "render/render.h"
@@ -141,8 +142,11 @@ private:
     // cannot make the texture at all without the bytes (it expands the indices on
     // the CPU, renderer_c3d.cpp). Passing nullptr here used to work on Linux and
     // refused every HUD image on the 3DS.
+    // `keep`, when given, receives the mod's picture that replaced the image.
     void loadImage(const formats::Bni& sprites, const char* name, Image* out,
-                   const formats::Palette& palette);
+                   const formats::Palette& palette, HdImage* keep = nullptr);
+    // The stamped panel to the GPU, and over a mod's panel (upstream 5b338e44).
+    void uploadTimer();
     void drawImage(const Image& image, float x, float y, const Colour& tint);
     void drawNumber(int32_t value, float centreX, float y);
     void drawInventory(const HudState& state);
@@ -175,6 +179,12 @@ private:
     int32_t panelWidth_ = 0;
     int32_t panelHeight_ = 0;
     float timerAngle_ = 0.0f;
+    // A mod's SC_STAT picture (RGBA, any size; the enhanced look's canvas draws
+    // it instead of the indices), the stamped copy of it, and the level's
+    // colours the stamped pixels take (C# _colours). Empty without a mod panel.
+    HdImage modPanel_;
+    std::vector<uint8_t> modTimerPanel_;
+    std::vector<uint8_t> levelRgba_;
     Messages messages_;
     SniperOverlay sniper_;
     BomberOverlay bomber_;
