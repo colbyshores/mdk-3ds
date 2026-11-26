@@ -92,6 +92,7 @@
 #include "game/object_draw.h"
 #include "game/object_view.h"
 #include "game/player.h"
+#include "game/loading_screen.h"
 #include "game/sniper_view.h"
 #include "render/material_resolver.h"
 #include "render/render.h"
@@ -471,13 +472,24 @@ int main(int argc, char** argv) {
         }
         mdk::heapProbe("menus-done");
     }
-    // C# Play: the loading screen's one frame, then the level (package #20c).
-    mdk::showLoadingScreen3ds(renderer, flow.state().level, frame);
     // Set when the level is left for the main menu (the START menu's MAIN MENU,
     // or a level that ends into the menu).
     bool toMenu = false;
-    mdk::log3dsPrintf("level loop: level %d", (int)flow.state().level);
     const MdkScope levelScope = mdk_render_mark(renderer);
+    // C# Play: the loading screen, then the level (package #20c). The C# draws it
+    // once, the bar empty; the 3DS load takes seconds, so the bar moves at the
+    // load's steps below and through the HD set's hold, then the screen is freed
+    // before play. The fractions are the steps' share of a measured Old 3DS load
+    // (docs/WORK_LEDGER.md, the loading bar).
+    std::unique_ptr<mdk::LoadingScreen> loading(new mdk::LoadingScreen());
+    mdk::showLoadingScreen3ds(renderer, flow.state().level, frame, loading.get());
+    const double loadStart = mdk::nowSeconds();
+    auto loadingBar = [&](float progress) {
+        mdk::drawLoadingScreen3ds(renderer, *loading, progress, frame);
+        mdk::log3dsPrintf("loading: bar %d%% at %.0f ms", (int)(progress * 100.0f + 0.5f),
+                          (mdk::nowSeconds() - loadStart) * 1000.0);
+    };
+    mdk::log3dsPrintf("level loop: level %d", (int)flow.state().level);
     bool nextLevel = false;
     {
     // ---------------------------------------------------------------------
@@ -581,6 +593,7 @@ int main(int argc, char** argv) {
         mdk::log3dsPrintf("data: %s", data.dir().c_str());
         if (mdk::LevelData::load(&level, &data, flow.state().level)) {
             mdk::heapProbe("level-data");
+            loadingBar(0.15f);
             // The name-keyed orig index needs the loaded level (arena name ->
             // palette), so it is built here, not with the pack itself.
             if (hdSource.orig &&
@@ -720,6 +733,7 @@ int main(int argc, char** argv) {
                 menuReady = mdk::loadMenuFonts3ds(renderer, data, &menuBig, &menuSmall, &hud);
             }
             mdk::heapProbe("assets");
+            loadingBar(0.35f);
         } else {
             mdk::log3dsPrintf("level %d: FAILED to load", (int)flow.state().level);
         }
@@ -810,6 +824,7 @@ int main(int argc, char** argv) {
         mdk::log3dsPrintf("audio: the level's SNI archives did not load -- no sounds");
     }
     mdk::heapProbe("post-audio");
+    loadingBar(0.45f);
     // KURT'S LEVEL ANIMATIONS: the level's SNI archives carry the wind tunnels' slide
     // (K_SLIP, K_SLIDE, K_FSLIDE, K_BSLIDE) and the snowboard's frames (C# Viewer:
     // KurtSprite.Add over SoundBank.Animation; the Linux frontend's same loop). Without
@@ -837,6 +852,7 @@ int main(int argc, char** argv) {
     // being made 16-bit.
     if (kurtSpriteReady) {
         mdk::loadKurtFrames3ds(&kurtSprite, enhancedToggles, flow.state().level);
+        loadingBar(0.55f);
     }
     mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
     // THE OUTPUT (SPEC.md 8). The level mixes on the DSP (audio_dsp_3ds.h): every
@@ -1406,6 +1422,7 @@ int main(int argc, char** argv) {
     // the low point), so 7 MiB.
     // The last level's copies are given back first, so the heap read below is
     // this level's (mdk_render_pin_hd_set frees what nothing links any more).
+    loadingBar(0.6f);
     mdk_render_pin_hd_set(renderer, nullptr, nullptr, 0);
     if (hdSource.pack && hdSource.byname) {
         hdSetCap = mdk::pinHdSet3ds(renderer, flow.state().level, origByName, hdShapes);
@@ -1425,8 +1442,11 @@ int main(int argc, char** argv) {
                                         mdk::requestPackedSurface, &warmAsk, &cursor)) {
             }
         }
-        mdk::holdHdSet3ds(renderer, "loading screen");
+        mdk::holdHdSet3ds(renderer, "loading screen", loading.get(), 0.6f, frame);
     }
+    loadingBar(1.0f);
+    loading->release(renderer);
+    loading.reset();
     mdk::heapProbe("loop");
     mdk::log3dsPrintf("loop: entering main loop");
     // THE PAUSE MENU'S FALLBACK. Without the menu's fonts there is no menu to
@@ -1577,7 +1597,7 @@ int main(int argc, char** argv) {
                     // THE HD SET BACK ON: held for, like the loading screen
                     // (spec 3.2) -- the menu stays up while the set is read.
                     if (!hdWas && enhancedToggles.enableHdTextures && hdSetCap > 0) {
-                        mdk::holdHdSet3ds(renderer, "toggled on");
+                        mdk::holdHdSet3ds(renderer, "toggled on", nullptr, 0.0f, frame);
                     }
                     // THE SKY FOLLOWS THE HD TOGGLE: its ETC1 slices with it on,
                     // the 16-bit expansion with it off, never both (buildSky3ds).

@@ -13,6 +13,7 @@
 #include <set>
 
 #include "formats/kurt_pack.h"
+#include "menu_screens_3ds.h"
 #include "platform/clock_3ds.h"
 #include "platform/log_3ds.h"
 #include "render/render_c3d_hd_set.h"
@@ -689,10 +690,14 @@ int32_t pinHdSet3ds(MdkRenderer renderer, int32_t level, const OrigByName& origB
 // THE HOLD for the level's HD set (spec 3.2): the backend reads and imports while
 // this thread waits, the applet loop served throughout (HOME, sleep, power); then
 // the set's one-line summary. `why` names the moment ("loading screen", "toggled on").
-void holdHdSet3ds(MdkRenderer renderer, const char* why) {
+// With `loading`, its bar moves from `from` to full as the set lands: a frame
+// each time the count moves (at most one a 50 ms slice).
+void holdHdSet3ds(MdkRenderer renderer, const char* why, const LoadingScreen* loading,
+                  float from, uint32_t frameIndex) {
     const double hold0 = mdk::nowSeconds();
     int32_t made = 0;
     int32_t pending = mdk_render_hd_set_pending(renderer);
+    const int32_t pending0 = pending;
     // A wait that makes nothing for a second (no file read or imported, the
     // count unchanged: what is left cannot be read) ends the hold, as does a
     // minute in all, or the applet loop saying stop.
@@ -705,6 +710,10 @@ void holdHdSet3ds(MdkRenderer renderer, const char* why) {
         const int32_t before = pending;
         made += slice;
         pending = mdk_render_hd_set_pending(renderer);
+        if (loading && pending != before) {
+            const float landed = (float)(pending0 - pending) / (float)pending0;
+            drawLoadingScreen3ds(renderer, *loading, from + (1.0f - from) * landed, frameIndex);
+        }
         if (slice == 0 && pending == before) {
             idle++;
             svcSleepThread(50000000LL);

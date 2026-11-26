@@ -28,6 +28,8 @@
 
 namespace mdk {
 
+struct LoadingScreen;
+
 extern const char kHdPackRoot[];
 extern const char kKurtPackPath[];
 extern const char kOrigPackRoot[];
@@ -101,6 +103,8 @@ void loadKurtFrames3ds(KurtSprite* kurtSprite, const EnhancedToggles& toggles, i
 int32_t pinHdSet3ds(MdkRenderer renderer, int32_t level, const OrigByName& origByName,
                     const std::map<std::string, uint32_t>& hdShapes);
 // Wait on the loading screen (or the pause menu) until the set is resident.
-void holdHdSet3ds(MdkRenderer renderer, const char* why);
+// With `loading` (null otherwise) its bar goes from `from` to full as the set lands.
+void holdHdSet3ds(MdkRenderer renderer, const char* why, const LoadingScreen* loading,
+                  float from, uint32_t frameIndex);
 
 } // namespace mdk

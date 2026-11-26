@@ -68,6 +68,18 @@ bool LoadingScreen::load(MdkRenderer renderer, const formats::MdkData& data, int
     return true;
 }
 
+void LoadingScreen::release(MdkRenderer renderer) {
+    if (fontView && fontView->ready()) {
+        mdk_render_release_texture(renderer, fontView->texture());
+    }
+    fontView.reset();
+    if (image.ready()) {
+        mdk_render_release_texture(renderer, image.texture);
+        mdk_render_release_palette(renderer, image.palette);
+    }
+    image = PalettedImage();
+}
+
 // C# Colour(palette, index): the entry's RGB, opaque.
 static Colour colourOf(const uint8_t* rgba, int32_t index) {
     Colour c;
