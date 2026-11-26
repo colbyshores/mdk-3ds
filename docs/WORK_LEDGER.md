@@ -2935,3 +2935,8 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     ledge check to 2 s for this change. That script tests the C# app in `src/` (1.1.1),
     not our C++, so there is nothing to port; the C++ ledge goldens above already follow
     the chute-at-the-top arc.
+  - **8a3740ac, keep Kurt's gun in his right hand strafing left.** `KurtSprite::draw`
+    mirrors only the left roll (the 1996 demo's K_ROLLL); K_SIDE is no longer mirrored on
+    a left strafe, as the original (damp_animate 0x4646a4, damp_sprite_draw) never does.
+    No golden covers the sprite's quad; the build and both host suites pass. The 3DS and
+    Linux draw Kurt through this one function, so both change together.

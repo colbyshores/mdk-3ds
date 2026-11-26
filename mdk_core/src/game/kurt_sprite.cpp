@@ -463,11 +463,10 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
 
     const Vec3 right = normalize(cross(forward, up));
     // K_ROLLL and K_ROLLR are the same file, a roll to the right: mirrored
-    // for the left. A left strafe mirrors K_SIDE too.
-    const float flip = (player.state() == Kurt::Side && player.strafeSpeed < 0.0f) ||
-                               player.state() == Kurt::RollLeft
-                           ? -1.0f
-                           : 1.0f;
+    // for the left. A left strafe does NOT mirror K_SIDE (upstream 8a3740ac): the
+    // original plays its frames forward whichever way he strafes and blits them
+    // unflipped, so the gun stays in his right hand.
+    const float flip = player.state() == Kurt::RollLeft ? -1.0f : 1.0f;
     Quad at;
     at.feet = feet;
     at.right = scale(right, pixel * flip);
