@@ -2947,3 +2947,27 @@ fixes are another agent's.
   640x480) A/B with the pull switched off by a temporary hack: at frame 480 the board is
   hidden under the floor without the pull and whole with it (2,684 pixels differ, all on the
   board). Not run on the console.
+
+### 235b1792, f0fa4c17, 5b338e44, 6eb0963b -- the HUD's timer ring and colours
+(Written on `fix/upstream-hud` by a helper agent in its own worktree, cherry-picked here in
+upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
+- **What:**
+  - 235b1792: the mission timer ring around the health empties as the town's time runs out
+    (SC_BSTAT stamped over SC_STAT's indices once per degree; `ScriptRuntime` keeps the town's
+    total and `townTimeLeft()`; both frontends fill `HudState.timeLeft`).
+  - f0fa4c17: the HUD's sprites take Kurt's arena's colours 64-175 (`HudView::enter`, a
+    pointer compare a frame; on an arena change only the images whose indices reach 64-175
+    are remade -- one 38x48 icon on the retail data), so the dog's icon is not magenta.
+  - 5b338e44: a mod's SC_STAT picture (Linux enhanced look) is re-stamped with the ring.
+  - 6eb0963b (its timer and HUD parts; its FloorPull guard is in a27ca2f4's entry): saves keep
+    the town's total (`"town_total"`), older saves take the difficulty's, the share is clamped.
+- **Not like upstream:** a clamp instead of the float wrap loop (T2); the ring's cotangent
+  through the trig table (R6); no per-pixel divide in the mod restamp (R11).
+- **Known gaps:** with the 3DS HD set covering SC_STAT the stamp is skipped (the HD rule), so
+  the ring stays full there; the sniper and bomber overlays keep the level's palette.
+- **Goldens:** the seven `L*_save_*.txt` gained the `"town_total"` key (sizes grown by its
+  length, hashes over it; script-checked against the 1.1.1 goldens); tick1 also loads each
+  save without the key (the older format).
+- **Evidence:** on the helper's branch and again on this stack: Linux and 3DS builds 0
+  warnings; tick1 all cases match; tests/formats 200,650 / 0; `tools/check.sh` ALL GATES
+  PASSED. Not checked by eye; not run on the console.
