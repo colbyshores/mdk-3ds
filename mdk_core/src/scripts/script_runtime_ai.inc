@@ -417,7 +417,11 @@ void ScriptRuntime::updateChain(MdkObject* link) {
         // The C# sets the yaw first, so the link's own reference point 0 is the
         // one with the NEW yaw and the old position.
         Vec3 from = current->reference_point(0);
-        Vec3 to = previous->reference_point(1);
+        // Upstream 94bf1d0b (C# 1.2.0): a leader with fewer than two reference points
+        // carries the chain on its only one (LEVEL7's ship XE has just the hook under
+        // it, and its bomb or soldiers hung from its centre, inside it).
+        const int hook = previous->model != nullptr && previous->model->referencePoints.size() < 2 ? 0 : 1;
+        Vec3 to = previous->reference_point(hook);
         current->position.x += to.x - from.x;
         current->position.y += to.y - from.y;
         current->position.z += to.z - from.z;

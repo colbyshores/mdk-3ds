@@ -2909,3 +2909,8 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     the tick tables (`golden/L*_t*.txt`, `L*_t*_script.txt`) and reproduces 15 of them at
     d5bb66ec byte for byte (5 tables and 3 scripts named in its header, plus 7 spot
     checks). `tick1 dump table|script <level> <ticks>` prints the C++ side.
+  - **94bf1d0b, hang chains from a one-point leader's hook.** The chain update hangs a
+    link from its leader's second reference point, or from its only one when the leader's
+    model has fewer than two (LEVEL7's ship XE: its hook). One golden moved,
+    `L7_plat_tank` (an XE chain in DANT_3 next to the tank), equal to the oracle at
+    94bf1d0b byte for byte.
