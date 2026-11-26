@@ -2922,3 +2922,16 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     and script states from t720, `L8_fire`, `L8_fire_run`, four `L8_items_*`,
     `L8_rounds_ship`, `L3_screen_hmo3`, `L8_sniper_hud_ship`, `L6_plat_gun`, `L7_ride_xd2`,
     `L4_board_end`, five `L7_bomber_*`, `L8_end_level`, and four `*_hazards_*`.
+  - **a91c0870, follow the jump's arc in its frames.** `Player::animateJump`: the first 10
+    frames of the jump (7 of the running jump) play one a tick, then each frame waits for
+    the vertical speed to drop to its threshold (0x492030), and past the last comes the
+    fall. Reaching the top in those frames sets `_pastJumpTop`, which lets held jump open
+    the chute at once (it waited ~0.4 s for -16 u/s before, issue #17 upstream). A jump no
+    longer falls through the state machine's speed test, only through its frames. Nine
+    goldens moved, all equal to the oracle at a91c0870 byte for byte: `L3_kurt_steps`,
+    `L8_items_air`, `L7_ride_lost`, `L3_wind_shaft`, `L8_wind_fan`, `L6_ledge_climb`,
+    `L4_ledge_climb`, `L4_ledge_short`, `L6_ledge_letgo`.
+  - **224d1144** (upstream's next gameplay commit) only moves `tests/kurt_moves_test.sh`'s
+    ledge check to 2 s for this change. That script tests the C# app in `src/` (1.1.1),
+    not our C++, so there is nothing to port; the C++ ledge goldens above already follow
+    the chute-at-the-top arc.

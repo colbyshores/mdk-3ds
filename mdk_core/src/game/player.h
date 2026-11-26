@@ -553,6 +553,7 @@ private:
     void updateSpecial(float delta);
     void updateDeath(float delta);
     void animate(float delta);
+    void animateJump(float delta);
     void footstep(int32_t previous, int32_t current);  // C# Kurt.Footstep
     void updateChuteSound();                           // C# Kurt.UpdateChuteSound
     void stopChuteSound();                             // C# Kurt.StopChuteSound
@@ -569,6 +570,9 @@ private:
     float _stateTime = 0.0f;
     // How long Kurt has been off the floor (s; upstream 3f9315c5's _airFor).
     float _airFor = 0.0f;
+    // A jump's frames went past its top (0x573a48, upstream a91c0870): held jump may open
+    // the chute without waiting to fall faster than kFallStartSpeed.
+    bool _pastJumpTop = false;
     float _animationFrame = 0.0f;
     bool _chuteClosing = false;
     bool _died = false;  // the C#'s Died event, once per death; see died() above

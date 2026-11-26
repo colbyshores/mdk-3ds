@@ -77,7 +77,7 @@ void Player::updateAir(bool jumpHeld, float delta) {
         _jumpTicksLeft = std::max(0, _jumpTicksLeft - (int)std::ceil(delta * kTicks));
     }
 
-    if (!chuteOpen && jumpHeld && verticalSpeed < kFallStartSpeed) {
+    if (!chuteOpen && jumpHeld && (verticalSpeed < kFallStartSpeed || _pastJumpTop)) {
         chuteOpen = true;
         playSound("CHUTEOUT");
     } else if (chuteOpen && !jumpHeld && !_inUpdraft) {

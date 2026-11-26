@@ -68,6 +68,15 @@ const float kJumpSpeed = 40.0f;
 const int kJumpHoldTicks = 6;
 const float kJumpReleasePenalty = 3.333f;
 const float kFallStartSpeed = -16.0f;
+// Upstream a91c0870 (C# 1.2.0): the jumps' frames (0x4646a4). The first ones play one a
+// tick, then frame n waits for the vertical speed to drop to kJumpSpeeds[n] (0x492030;
+// the running jump's 0x492074 is the same to frame 12); past the last comes the fall.
+const int kJumpTimedFrames = 10;
+const int kJumpFrames = 16;
+const int kRunJumpTimedFrames = 7;
+const int kRunJumpFrames = 12;
+const float kJumpSpeeds[kJumpFrames] = {25.0f, 26.0f, 27.0f, 20.0f, 15.0f, 13.0f, 9.0f, 6.6f,
+                                        4.0f,  0.2f,  -3.0f, -6.3f, -10.0f, -14.0f, -17.0f, -20.0f};
 const float kChuteGravity = 21.33f;
 const float kChuteFallSpeed = -8.0f;
 const float kChuteBrake = 256.0f;

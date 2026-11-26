@@ -6,6 +6,9 @@
 void Player::updateState(float forward, float strafe, float delta) {
     _stateTime += delta;
     _airFor = onFloor ? 0.0f : _airFor + delta;
+    if (onFloor || (verticalSpeed > 0.0f && !chuteOpen)) {
+        _pastJumpTop = false;
+    }
 
     // C# UpdateCombatState's first arm (Kurt.Combat.cs:371): health zero on a floor is
     // the death state. The knock-down, get-up and throw arms below are the C#'s next
@@ -88,11 +91,10 @@ void Player::updateState(float forward, float strafe, float delta) {
         } else if (verticalSpeed > 0.0f &&
                    state() != Kurt::Jump && state() != Kurt::RunJump && state() != Kurt::Fall) {
             setState(std::fabs(forwardSpeed) > kMovingSpeed ? Kurt::RunJump : Kurt::Jump);
-        } else if (verticalSpeed < kFallStartSpeed &&
-                   ((state() != Kurt::Jump && state() != Kurt::RunJump) || done) &&
-                   (_airFor >= kFallGrace || state() == Kurt::Jump ||
-                    state() == Kurt::RunJump || state() == Kurt::Fall)) {
+        } else if (verticalSpeed < kFallStartSpeed && state() != Kurt::Jump &&
+                   state() != Kurt::RunJump && (_airFor >= kFallGrace || state() == Kurt::Fall)) {
             // Upstream 3f9315c5: a running or standing Kurt falls only after kFallGrace.
+            // A jump falls when its frames run out (animateJump, upstream a91c0870).
             setState(Kurt::Fall);
         }
     } else if (state() == Kurt::Jump || state() == Kurt::RunJump || state() == Kurt::Fall ||
@@ -203,8 +205,33 @@ void Player::animate(float delta) {
         // No guard: a missing K_TRN45 leaves the frame at zero, as the C#'s
         // multiply by frameCount(Turn) == 0 does.
         _animationFrame = yaw / kTurnFrameDegrees * (float)frameCount(Kurt::Turn);
+    } else if (state() == Kurt::Jump || state() == Kurt::RunJump) {
+        animateJump(delta);
     } else {
         _animationFrame += kTicks * delta;
+    }
+}
+
+// Upstream a91c0870 (C# 1.2.0 Kurt.AnimateJump, 0x4646a4): a jump's frames are timed,
+// then follow the vertical speed down through its top, then the fall. Played through by
+// time, the jump ended while Kurt still rose and he hung on its last frame until he fell
+// fast enough, the only time the chute could open (issue #17).
+void Player::animateJump(float delta) {
+    const bool standing = state() == Kurt::Jump;
+    const int timed = standing ? kJumpTimedFrames : kRunJumpTimedFrames;
+    const int frames = standing ? kJumpFrames : kRunJumpFrames;
+    if (_animationFrame < (float)timed) {
+        _animationFrame = std::min(_animationFrame + kTicks * delta, (float)timed);
+        return;
+    }
+    int frame = (int)_animationFrame;
+    while (frame < frames && verticalSpeed <= kJumpSpeeds[frame]) {
+        frame++;
+    }
+    _animationFrame = (float)frame;
+    _pastJumpTop = _pastJumpTop || verticalSpeed <= 0.0f;
+    if (frame >= frames) {
+        setState(Kurt::Fall);
     }
 }
 
