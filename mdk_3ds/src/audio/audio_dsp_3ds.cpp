@@ -17,6 +17,7 @@
 #include "audio/dsp_adpcm.h"
 #include "audio/voice_binding.h"
 #include "platform/log_3ds.h"
+#include "platform/side_core_3ds.h"
 #include "platform/vfp_fpscr.h"
 
 namespace mdk {
@@ -191,6 +192,7 @@ float g_lowPassE = 0.0f;  // exp(-2 pi fc / fs) at the DSP's rate
 LightLock g_lock;
 LightEvent g_wake;
 Thread g_thread = nullptr;
+int32_t g_workerCore = -2;  // where the worker runs (side_core_3ds.h)
 bool g_exit = false;      // guarded by g_lock
 bool g_suspended = false; // guarded by g_lock: the system is suspended / asleep
 int32_t g_resumeGrace = 0;  // guarded by g_lock: ticks after a resume with no restart
@@ -1037,16 +1039,28 @@ bool audioDspOpen() {
     aptHook(&g_aptCookie, onAptHook, nullptr);
     s32 priority = 0x30;
     svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-    // One ABOVE the main thread (a smaller number is a higher priority), on the
-    // application core: the worker sleeps 25 ms at a time and must not wait for a
-    // busy frame to yield, which is Forsaken's 0x28 against its 0x30 main.
+    // OFF THE MAIN THREAD'S CORE (side_core_3ds.h): core 2 on a New 3DS, the
+    // application's one system-core thread on an Old 3DS. Measured 2026-11-25 on
+    // the Old 3DS appliance: on the main thread's core, a track's start and a
+    // prime's reads ran inside the door-crossing frame (the worker preempts main),
+    // adding to it. One ABOVE the main thread's priority still (a smaller number
+    // is a higher priority), for the fallback onto the main thread's core: there
+    // the worker sleeps 25 ms at a time and must not wait for a busy frame to
+    // yield, which is Forsaken's 0x28 against its 0x30 main.
     const s32 workerPriority = priority > 0x18 ? priority - 1 : priority;
-    g_thread = threadCreate(audioDspWorker, nullptr, kWorkerStackBytes, workerPriority, -2, false);
+    g_workerCore = offMainCore3ds(true);
+    g_thread = threadCreate(audioDspWorker, nullptr, kWorkerStackBytes, workerPriority,
+                            g_workerCore, false);
+    if (!g_thread && g_workerCore != -2) {
+        g_workerCore = -2;
+        g_thread = threadCreate(audioDspWorker, nullptr, kWorkerStackBytes, workerPriority, -2,
+                                false);
+    }
     g_live = true;
     log3dsPrintf("audio: dsp voices=%d music=ch%d+ch%d (crossfade) effects=ndsp 0-%d; arena %u B "
                  "linear (samples, PCM8 for 8-bit), music DSP-ADPCM from %s, %d x %d x %d "
                  "ADPCM frames = %u B linear, %d primes; "
-                 "worker %s prio 0x%X stack %u tick 25 ms; music low-pass biquad %.0f Hz "
+                 "worker %s core %d prio 0x%X stack %u tick 25 ms; music low-pass biquad %.0f Hz "
                  "(e=%.6f at %.1f Hz); no limiter; linear free after %u B. The `audio: frame=` "
                  "sink ledger counts the software sink and reads 0 in this mode: read `audio: dsp`",
                  (int)VoiceBinder::kEffectChannels, (int)kMusicNdsp[0], (int)kMusicNdsp[1],
@@ -1054,7 +1068,7 @@ bool audioDspOpen() {
                  g_musicFolder[0] ? g_musicFolder : "(no folder)",
                  (int)VoiceBinder::kMusicChannels, (int)kMusicBuffers, (int)kMusicBufFrames,
                  (unsigned)kMusicBytes, (int)kMusicPrimes, g_thread ? "started" : "FAILED (music will stop)",
-                 (unsigned)workerPriority, (unsigned)kWorkerStackBytes, (double)kMusicCutoff,
+                 (int)g_workerCore, (unsigned)workerPriority, (unsigned)kWorkerStackBytes, (double)kMusicCutoff,
                  (double)g_lowPassE, (double)NDSP_SAMPLE_RATE, (unsigned)linearSpaceFree());
     return true;
 }
