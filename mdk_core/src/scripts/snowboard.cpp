@@ -440,9 +440,11 @@ void Snowboard::nudge(const Vec3& to, float kurtX, float kurtY) {
     if (nx == 0.0f && ny == 0.0f) {
         return;
     }
+    // Through Kurt's shove, which collides (upstream 6ccc0cf4, its C++ 2.0): the path can
+    // run inside a bank (MEAT_4, y 9360), and a step written straight into the feet put
+    // Kurt in it, over no floor, and the second board run ended in MEAT_4.
     const float n = length2(nx, ny);
-    kurt_.feet = Vec3{kurt_.feet.x + nx / n * kUnstickStep, kurt_.feet.y + ny / n * kUnstickStep,
-                      kurt_.feet.z + 0.0f};
+    kurt_.shove(Vec3{nx / n * kUnstickStep, ny / n * kUnstickStep, 0.0f});
 }
 
 Vec3 Snowboard::pathPoint(float t) {

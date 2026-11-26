@@ -3064,3 +3064,12 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     rest (platform probe, `tp:1:OLYM_4:-1732:92:-1260:0,fire:60-210,jump:250-251`) is the
     same in the oracle before and after this commit and in our C++; the flying-gun case of
     upstream's unit test was not reproduced in a probe.
+  - **6ccc0cf4 (upstream's C++ 2.0 only), the second snowboard run no longer ends in
+    MEAT_4.** `Snowboard::nudge` moves a stuck Kurt through `Player::shove`, which collides,
+    instead of writing the step into his feet: since e1fde558 the board sticks against
+    MEAT_4's bank (y 9360) and the raw nudge put Kurt inside it, over no floor. Upstream
+    notes the C# 1.2.6 has the same bug, so the oracle is the C# 1.2.6 (1094e273) with
+    exactly this change made in `Snowboard.Nudge` (`_kurt.Shove(...)`) in scratch.
+    `L4_board_end` equals that oracle byte for byte and still ends in MEAT_5's box;
+    `L4_board_ride` takes the C++'s output (one camera z 1/64 apart, the view's trig LUT,
+    as at e1fde558).
