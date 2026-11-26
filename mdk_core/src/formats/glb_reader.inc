@@ -452,7 +452,15 @@ private:
             return false;
         }
 
-        offset += byteOffset;
+        // A crafted file's numbers (upstream 09f2e511): a negative count, offset or
+        // stride, or an offset past the int's end, is refused before it sizes a
+        // buffer or reads before the binary chunk.
+        const int64_t start = (int64_t)offset + (int64_t)byteOffset;
+        if (count < 0 || byteOffset < 0 || stride < 0 || start > binSize_) {
+            setError(error_, "glTF accessor out of range");
+            return false;
+        }
+        offset = (int32_t)start;
         if (stride == 0) {
             stride = size * components;
         }

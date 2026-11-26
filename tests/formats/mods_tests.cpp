@@ -22,6 +22,8 @@
 #include "game/mod_images.h"
 #include "game/mod_info.h"
 #include "formats/glb.h"
+
+#include <string.h>
 #include "formats/model.h"
 #include "game/mod_models.h"
 #include "game/part_fit.h"
@@ -878,6 +880,65 @@ MDK_TEST(modModelsLoadsLazilyFromFixture) {
     MDK_CHECK_STR_EQ(models.found()[0], "TEST");
     // Asked again: the same swap, not a second read.
     MDK_CHECK(models.of(model) == swap);
+}
+
+// A GLB with one edit to its JSON chunk: `from`'s first occurrence becomes `to`,
+// the chunk padded with spaces to four bytes and both lengths rewritten.
+std::vector<uint8_t> glbWithJson(const std::vector<uint8_t>& glb, const std::string& from,
+                                 const std::string& to) {
+    uint32_t jsonLength = 0;
+    memcpy(&jsonLength, glb.data() + 12, 4);
+    std::string json((const char*)glb.data() + 20, jsonLength);
+    const size_t at = json.find(from);
+    if (at == std::string::npos) {
+        return std::vector<uint8_t>();
+    }
+    json.replace(at, from.size(), to);
+    while (json.size() % 4 != 0) {
+        json.push_back(' ');
+    }
+    std::vector<uint8_t> out(glb.begin(), glb.begin() + 12);
+    const uint32_t length = (uint32_t)json.size();
+    out.insert(out.end(), (const uint8_t*)&length, (const uint8_t*)&length + 4);
+    out.insert(out.end(), glb.begin() + 16, glb.begin() + 20);
+    out.insert(out.end(), json.begin(), json.end());
+    out.insert(out.end(), glb.begin() + 20 + jsonLength, glb.end());
+    const uint32_t total = (uint32_t)out.size();
+    memcpy(out.data() + 8, &total, 4);
+    return out;
+}
+
+// Crafted mod files are refused, not read past (upstream 09f2e511): a negative
+// accessor count or offset in a GLB, and a PNG over 8192 pixels a side.
+MDK_TEST(craftedGlbAndPngAreRefused) {
+    std::vector<uint8_t> glb;
+    std::string error;
+    MDK_CHECK(mdk::formats::Glb::write(swapScene(), &glb, &error));
+    mdk::formats::Glb::Scene scene;
+    MDK_CHECK(mdk::formats::Glb::read(glb.data(), (int32_t)glb.size(), &scene, &error));
+    const char* const edits[][2] = {{"\"count\":", "\"count\":-"},
+                                    {"\"count\":", "\"byteOffset\":-4,\"count\":"},
+                                    {"\"count\":", "\"byteOffset\":2147483647,\"count\":"}};
+    for (int i = 0; i < 3; i++) {
+        const std::vector<uint8_t> crafted = glbWithJson(glb, edits[i][0], edits[i][1]);
+        MDK_CHECK(!crafted.empty());
+        mdk::formats::Glb::Scene refused;
+        MDK_CHECK(!mdk::formats::Glb::read(crafted.data(), (int32_t)crafted.size(), &refused, &error));
+    }
+
+    std::vector<uint8_t> png;
+    const std::vector<uint8_t> pixel = solid(1, 1, 255, 0, 0, 255);
+    MDK_CHECK(mdk::formats::Png::encode(1, 1, pixel.data(), (int32_t)pixel.size(),
+                                        mdk::formats::Png::Channels::Rgba, &png, &error));
+    mdk::formats::Png::Image image;
+    MDK_CHECK(mdk::formats::Png::decode(png.data(), (int32_t)png.size(), &image, &error));
+    // IHDR's width (big-endian, after the signature and the chunk's length and name).
+    png[16] = 0x00;
+    png[17] = 0x01;
+    png[18] = 0x00;
+    png[19] = 0x00;
+    MDK_CHECK(!mdk::formats::Png::decode(png.data(), (int32_t)png.size(), &image, &error));
+    MDK_CHECK(error.find("8192") != std::string::npos);
 }
 
 // The fixture root, made once for the file-backed cases above.

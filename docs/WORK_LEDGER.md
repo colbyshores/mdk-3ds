@@ -2971,3 +2971,18 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
 - **Evidence:** on the helper's branch and again on this stack: Linux and 3DS builds 0
   warnings; tick1 all cases match; tests/formats 200,650 / 0; `tools/check.sh` ALL GATES
   PASSED. Not checked by eye; not run on the console.
+
+### 09f2e511 -- crafted PNG and GLB files refused
+- **What:** PNGs over 8192 pixels a side are refused before the row arithmetic (int32
+  `width * bpp`, `(stride + 1) * height`) can overflow; a GLB accessor with a negative count,
+  byteOffset or stride, or an offset past the int's end, is refused before it sizes a buffer
+  or reads before the binary chunk. The chunk-length checks were already 64-bit here.
+- **Found on the way, fixed here:** the GLB reader's own JSON integer read (`glb_json.inc`
+  `asInt`) multiplied the sign in as a digit: "-4" read as 26. glTF has no legitimate negative
+  integers, so this only mattered for crafted files, which it let through.
+- **Why:** mods are downloaded files; upstream capped and bounded the decoders after crafted
+  sizes crashed them.
+- **Evidence:** tests/formats' new `craftedGlbAndPngAreRefused` (a negative count, a negative
+  byteOffset, a 2^31-1 byteOffset, a 65536-wide PNG; the negative byteOffset was accepted
+  before the `asInt` fix): 200,662 checks, 0 failures. Linux and 3DS builds 0 warnings; tick1
+  all cases match; `tools/check.sh` ALL GATES PASSED.

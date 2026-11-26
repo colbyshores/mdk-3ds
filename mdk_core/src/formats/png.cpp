@@ -236,6 +236,15 @@ bool Png::decode(const uint8_t* bytes, int32_t byteCount, Image* outImage, std::
         setError(outError, "PNG without a header");
         return false;
     }
+    // The widest and tallest read (upstream 09f2e511): 256 MB as RGBA8, far past
+    // any mod's HD image; larger sizes would overflow the row arithmetic below
+    // (width * bpp, (stride + 1) * height in int32) or exhaust memory. A mod is a
+    // downloaded file.
+    const int32_t kMaxSide = 8192;
+    if (width > kMaxSide || height > kMaxSide) {
+        setError(outError, "PNG over 8192 pixels a side");
+        return false;
+    }
 
     int32_t bpp = 0;
     switch (type) {
