@@ -53,6 +53,13 @@ float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+// C# FollowCamera.ClampLook (upstream 47395c03): the mouse's `look` kept from turning the
+// view past the look limits; the `automatic` pitch (arena, air, climb) alone may go past.
+float clampLook(float look, float automatic) {
+    return clampf(look, mathMin(follow_camera::kLookUpLimit - automatic, 0.0f),
+                  mathMax(follow_camera::kLookDownLimit - automatic, 0.0f));
+}
+
 Vec3 cross(const Vec3& a, const Vec3& b) {
     return Vec3{a.y * b.z - a.z * b.y,
                 a.z * b.x - a.x * b.z,
@@ -400,9 +407,8 @@ void FollowCamera::mouseLook(const Player& player, Input& input) {
 void FollowCamera::mouseLook(Input& input) {
     // C# FollowCamera.MouseLook's clamp, for a caller with no Player (the guards are
     // the overload above's).
-    _lookOffset = clampf(_lookOffset + input.takeMouseY() * follow_camera::kMouseDegrees,
-                         follow_camera::kMinPitch - _arenaPitch - _airPitch,
-                         follow_camera::kMaxPitch - _arenaPitch - _airPitch);
+    _lookOffset = clampLook(_lookOffset + input.takeMouseY() * follow_camera::kMouseDegrees,
+                            _aim.pitch);
 }
 
 void FollowCamera::updateAirTime(const Player& player, float delta) {
@@ -544,12 +550,12 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
         _airPitch = mathMax(_airPitch,
                             mathMin(_airTime * follow_camera::kAirPitchRate, follow_camera::kAirPitchMax));
     }
-    _lookOffset = clampf(_lookOffset, follow_camera::kMinPitch - _arenaPitch - _airPitch,
-                         follow_camera::kMaxPitch - _arenaPitch - _airPitch);
     // CameraTilt and CameraPivot live on the Player (C# Kurt.Ride), and CameraRoll
     // is read off it here exactly as the C# reads it off Kurt (FollowCamera.cs:139).
-    const float degrees =
-        _arenaPitch + _lookOffset + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt;
+    const float automatic =
+        _arenaPitch + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt;
+    _lookOffset = clampLook(_lookOffset, automatic);
+    const float degrees = automatic + _lookOffset;
     // C# FollowCamera.cs:137-139: Orient, UpdateShake, then Turn by the shake and the roll.
     // The shake's update reads nothing the placement writes, so it runs before the build
     // that does Point, Clear, Orient and Turn together.
@@ -563,7 +569,7 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     // pivot and the roll. The first step makes previous and current the same;
     // after that the previous one is the one before this step.
     const Aim aim{
-        _arenaPitch + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt,
+        automatic,
         player.cameraPivot,
         player.cameraRoll().roll()};
     if (!_haveAim) {

@@ -6161,6 +6161,22 @@ static bool nearFloat(float actual, float expected, float tolerance) {
 // recorded in the progress log instead. 2e-5 is that measurement plus room, and it is
 // still four orders below anything the eye resolves while failing every wrong sign, a
 // swapped sine and cosine, or a roll about the wrong axis, all of which are O(0.1).
+// Upstream 47395c03: the mouse look stops at -30 and 60 degrees (from a level aim, the
+// whole limit is the look's); before, -60 and 90.
+void testMouseLookStopsAtTheLookLimits() {
+    FollowCamera camera;
+    Input input;
+    input.mouseY = 1000.0f;   // 150 degrees down
+    camera.mouseLook(input);
+    CHECK(camera.lookOffset() == 60.0f);
+    input.mouseY = -2000.0f;  // 300 degrees up
+    camera.mouseLook(input);
+    CHECK(camera.lookOffset() == -30.0f);
+    input.mouseY = 100.0f;    // 15 down from the stop
+    camera.mouseLook(input);
+    CHECK(camera.lookOffset() == -15.0f);
+}
+
 void testCameraRollBanksTheFollowCamera() {
     const Vec3 feet{0.0f, 0.0f, 0.0f};
     const Vec3 facing{1.0f, 0.0f, 0.0f};
@@ -8679,6 +8695,8 @@ int main(int argc, char** argv) {
     printf("PASS SweepHalfHeightPropagatesNaNLikeTheOracle\n");
     testArrivalKeepsTheStuckCountTheOracleKeeps(&levelData, &cmi, &bank);
     printf("PASS ArrivalKeepsTheStuckCountTheOracleKeeps\n");
+    testMouseLookStopsAtTheLookLimits();
+    printf("PASS MouseLookStopsAtTheLookLimits\n");
     testCameraRollBanksTheFollowCamera();
     testFollowCameraBlendPlacesTheFrame();
     printf("PASS CameraRollBanksTheFollowCamera\n");

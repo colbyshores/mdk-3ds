@@ -2978,3 +2978,11 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     the stream probe at 8fceff8c byte for byte: `stream_L8_planet`, `stream_L8_death`.
     (The probe links the stream sources by `../../../src`; the oracle script places it
     under `tests/scripts/` for that, and it reproduces `stream_L8_planet` at d5bb66ec.)
+  - **47395c03, limit the mouse look to -30..60 degrees.** `FollowCamera` clamps the look
+    offset so the look and the automatic pitch (arena, fall, climb, ride tilt) together
+    stay within -30..60, the automatic part alone may go past (`clampLook`); before, the
+    range was -60..90. The view pitch is now `automatic + look`, the C#'s order. This is
+    the 3DS's look too: the circle pad/C-stick look feeds `Input::mouseY`, so on the 3DS
+    the look now stops at -30/60 (a behaviour change there, as upstream intends: past 60
+    Kurt's sprite lay flat behind the floor). No golden moved (none looks with the
+    mouse). New vm_tests case `MouseLookStopsAtTheLookLimits`.

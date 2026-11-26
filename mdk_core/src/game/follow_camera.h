@@ -45,11 +45,15 @@ constexpr float kDefaultPivot = 4.5f;
 // exactly 90 degrees.
 constexpr float kViewPitchLimit = 89.0f;  // degrees
 
-// The pitch smoothing (C# FollowCamera). The look offset is clamped to this
-// range once the arena pitch and the air tilt are taken off it.
+// The pitch smoothing (C# FollowCamera).
 constexpr float kMouseDegrees = 0.15f;    // degrees per mouse count
-constexpr float kMinPitch = -60.0f;
-constexpr float kMaxPitch = 90.0f;
+// Upstream 47395c03 (C# 1.2.3): the mouse's look stops at this pitch, counting the
+// arena's, the fall's and the climb's tilt (those alone may still go past). The
+// original's keys allow -60 to 90 degrees and spring back to 0; a held mouse look
+// further down laid Kurt's sprite flat under the camera behind the floor ahead, and
+// further up sank the camera to his feet, through a rising slope.
+constexpr float kLookUpLimit = -30.0f;
+constexpr float kLookDownLimit = 60.0f;
 constexpr float kTicks = 30.0f;           // the original's ticks per second
 // The arena pitch eases in by 0.85·old + 0.15·new per tick.
 constexpr float kPitchEase = 0.85f;
@@ -238,6 +242,8 @@ public:
     // read-only so the host harness can pin the oracle's exact rounding; no
     // gameplay path needs to read it back.
     float arenaPitch() const { return _arenaPitch; }
+    // The mouse's look (degrees down), for the tests.
+    float lookOffset() const { return _lookOffset; }
 
     // The air tilt, in degrees. Read-only for the same reason as arenaPitch(): the
     // host harness pins the oracle's NaN propagation at this camera's MathF.Max.
