@@ -120,6 +120,10 @@ Mat4 kurtTurn() {
     return multiply(rotationY(kHalfPi), rotationZ(kHalfPi));
 }
 
+Mat4 explosionTurn() {
+    return rotationY(-kHalfPi);
+}
+
 Mat4 rotationZ(float radians) {
     // Presentation trig through the table (AGENTS.md R6: one path on both targets).
     const float c = fastCos(radians);

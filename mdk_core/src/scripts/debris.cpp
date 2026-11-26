@@ -171,6 +171,7 @@ void Debris::Piece::reset() {
     trailTicks = 0;
     ticks = 0;
     reach = -1.0f;
+    ticked = false;
     center = Vec3{};
     velocity = Vec3{};
     orientation[0] = orientation[1] = orientation[2] = 0.0f;
@@ -446,6 +447,12 @@ bool Debris::hasPieces(const std::string& arena) const {
 void Debris::update(float ticks) {
     for (int32_t i = (int32_t)pieces_.size() - 1; i >= 0; i--) {
         Piece* piece = pieces_[i];
+        // A tick starts: frames until the next are drawn from here (upstream 7740deb1).
+        piece->ticked = true;
+        piece->tickedCenter = piece->center;
+        for (int k = 0; k < 4; k++) {
+            piece->tickedOrientation[k] = piece->orientation[k];
+        }
         float next[4];
         quaternionMultiplyNormalize(piece->orientation, piece->spin, next);
         for (int k = 0; k < 4; k++) {

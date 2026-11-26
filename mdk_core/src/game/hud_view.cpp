@@ -5,6 +5,7 @@
 #include "game/hud_view.h"
 
 #include <cstdio>
+#include <cstring>
 
 #include "formats/bni.h"
 #include "formats/palette.h"
@@ -12,6 +13,7 @@
 #include "formats/texture.h"
 #include "game/font_view.h"
 #include "game/mod_images.h"
+#include "util/math_lut.h"
 
 namespace mdk {
 
@@ -42,6 +44,9 @@ const float kSelectionH = 47.0f;
 const float kCountRise = 12.0f;
 const float kFlashMax = 255.0f;
 const float kHurtAlpha = 0.4f;
+// The arena's colours in the palette (C# Arena.PaletteColors at 64).
+const int32_t kArenaFirst = 64;
+const int32_t kArenaLast = 175;
 
 Colour paletteColour(const formats::Palette& palette, int32_t index) {
     const uint8_t* rgba = palette.rgba();
@@ -57,18 +62,140 @@ float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+// ---- The mission timer's ring (upstream 235b1792; C# TimerRing, 0x420cb0, 0x420d88) ----
+//
+// The time gone, as an angle counter-clockwise from the right, stamps the empty
+// panel's pixels (SC_BSTAT, its black ring) over the panel's from the centre
+// outwards. Each half of the panel is a fan of rows from its centre row, the
+// upper one for angles up to pi, the lower mirrored.
+//
+//        pi/2
+//    +----+----+
+//  pi+    o    +0   time gone 0 -> 2pi: empties anticlockwise from the right
+//    +----+----+
+//        3pi/2
+//
+// Cold: it runs once per degree of the town's time (a mission is minutes long).
+
+const float kPi = 3.14159265f;
+const float kTau = 6.28318531f;
+// The split at pi (0x420d5a: 0x40490fb1, just below it, for the upper half).
+const float kUpperEnd = 3.141582f;
+const int32_t kFixed = 16;
+// Slopes: near pi/2 a row goes straight up; near 0 or pi, a whole width a row.
+const float kNearUpLow = 1.570482f;
+const float kNearUpHigh = 1.571110f;
+const float kNearZero = 3.14159e-5f;
+const float kNearPi = 3.141561f;
+// The ring is stamped again once the time gone has moved this far (a degree).
+const float kTimerStep = kPi / 180.0f;
+
+// x moved per row, 16.16 (truncated, like the original's FPU setting).
+int32_t ringSlope(float angle, int32_t width) {
+    if (angle >= kNearUpLow && angle <= kNearUpHigh) {
+        return 0;
+    }
+    if (angle < kNearZero) {
+        return width << kFixed;
+    }
+    if (angle > kNearPi) {
+        return -(width << kFixed);
+    }
+    // The cotangent through the trig table (AGENTS.md R6: one path on both
+    // targets; the C#'s MathF.Tan differs in the last bits, which the 16.16
+    // truncation all but always hides).
+    // A slope past a whole width a row ends the fan in one row either way, so it
+    // is clamped there: the table's sine near 0 or pi cannot overflow the cast.
+    const float sine = fastSin(angle);
+    const float most = (float)(width << kFixed);
+    if (sine == 0.0f) {
+        return fastCos(angle) > 0.0f ? width << kFixed : -(width << kFixed);
+    }
+    const float slope = (float)(1 << kFixed) * fastCos(angle) / sine;
+    return (int32_t)(slope > most ? most : (slope < -most ? -most : slope));
+}
+
+// The rows between angles `high` and `low` of one half (0x420d88): every other
+// row from the centre, x moving by the cotangent per row.
+void ringFan(uint8_t* panel, const uint8_t* empty, int32_t width, int32_t height, float high, float low) {
+    int32_t row = -width;
+    // The lower half: the angles mirrored, rows going down.
+    if (high > kPi || low > kPi) {
+        const float mirroredHigh = kTau - low;
+        low = kTau - high;
+        high = mirroredHigh;
+        row = width;
+    }
+    const int32_t leftStep = ringSlope(high, width);
+    const int32_t rightStep = ringSlope(low, width);
+    const int32_t limit = width << kFixed;
+    int32_t left = (width >> 1) << kFixed;
+    int32_t right = left;
+    int32_t at = (height >> 1) * width;
+    for (int32_t y = 1; y < height; y += 2) {
+        left = left + leftStep > 0 ? left + leftStep : 0;
+        right += rightStep;
+        if (left >= limit || right < 0) {
+            return;
+        }
+        right = right < limit - 1 ? right : limit - 1;
+        for (int32_t x = left >> kFixed; x <= right >> kFixed; x++) {
+            const uint8_t pixel = empty[at + x];
+            if (pixel != 0) {
+                panel[at + x] = pixel;
+            }
+        }
+        at += row;
+    }
+}
+
+// Stamps the ring of `empty` into `panel` (indices of the same size) from angle
+// `from` to `to` (0x420cb0). The C# wraps both into 0-2pi with a loop; here they
+// are already in it (the time left is clamped), so they are clamped instead.
+void ringWipe(uint8_t* panel, const uint8_t* empty, int32_t width, int32_t height, float from, float to) {
+    from = clampf(from, 0.0f, kTau);
+    to = clampf(to, 0.0f, kTau);
+    if (from >= to) {
+        return;
+    }
+    if (to <= kPi || from >= kPi) {
+        ringFan(panel, empty, width, height, to, from);
+        return;
+    }
+    ringFan(panel, empty, width, height, kUpperEnd, from);
+    ringFan(panel, empty, width, height, to, kPi);
+}
+
 } // namespace
 
 bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
                    const formats::Palette& palette, ModImages* mods) {
     renderer_ = renderer;
     mods_ = mods;
+    arenaColours_ = nullptr;
+    arenaPalette_ = -1;
     palette_ = mdk_render_create_palette(renderer, palette.rgba());
     if (palette_ < 0) {
         return false;
     }
 
-    loadImage(sprites, "SC_STAT", &panel_, palette);
+    modPanel_ = HdImage();
+    loadImage(sprites, "SC_STAT", &panel_, palette, &modPanel_);
+    modTimerPanel_ = modPanel_.rgba;
+    levelRgba_.assign(palette.rgba(), palette.rgba() + 256 * 4);
+    // The timer's two panels, full and empty (the same size: the ring is stamped
+    // from one into the other); without SC_BSTAT the ring stays full.
+    formats::Texture full;
+    formats::Texture empty;
+    if (sprites.image("SC_STAT", &full) && sprites.image("SC_BSTAT", &empty) &&
+        full.width() == empty.width() && full.height() == empty.height()) {
+        panelWidth_ = full.width();
+        panelHeight_ = full.height();
+        const size_t size = (size_t)panelWidth_ * (size_t)panelHeight_;
+        fullPanel_.assign(full.indices(), full.indices() + size);
+        emptyPanel_.assign(empty.indices(), empty.indices() + size);
+        timerPanel_ = fullPanel_;
+    }
     loadImage(sprites, "SKULL", &skull_, palette);
     loadImage(sprites, "SNIP_TXT", &digits_, palette);
 
@@ -94,6 +221,8 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
                 icon.texture = mdk_render_create_index_texture(
                     renderer, frame.image.width(), frame.image.height() * frame.image.frameCount(),
                     frame.image.indices(), palette.rgba());
+                keepArenaIndices(&icon, frame.image.indices(), frame.image.width(),
+                                 frame.image.height() * frame.image.frameCount());
             }
             // A mod's image for this pickup frame (CanvasImages.FrameName).
             if (mods_ && !mods_->compressed() && icon.texture >= 0 &&
@@ -102,6 +231,7 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
                 if (mods_->image(name, frame.image, palette, &image)) {
                     mdk_render_replace_image(renderer, icon.texture, palette_, image.width,
                                              image.height, image.rgba.data());
+                    icon.arenaIndices.clear();   // the mod's picture is drawn, not the indices
                 }
             }
             icon.w = (float)frame.image.width();
@@ -135,7 +265,7 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
 }
 
 void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* out,
-                        const formats::Palette& palette) {
+                        const formats::Palette& palette, HdImage* keep) {
     formats::Texture texture;
     if (!sprites.image(name, &texture)) {
         return;
@@ -159,6 +289,7 @@ void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* ou
         out->texture = mdk_render_create_index_texture(renderer_, texture.width(),
                                                        texture.height() * texture.frameCount(),
                                                        texture.indices(), palette.rgba());
+        keepArenaIndices(out, texture.indices(), texture.width(), texture.height() * texture.frameCount());
     }
     // A mod's image for this picture (CanvasImages.Create): the enhanced
     // canvas draws it instead of the filtered index texture.
@@ -167,10 +298,71 @@ void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* ou
         if (mods_->image(name, texture, palette, &image)) {
             mdk_render_replace_image(renderer_, out->texture, palette_, image.width, image.height,
                                      image.rgba.data());
+            out->arenaIndices.clear();   // the mod's picture is drawn, not the indices
+            if (keep != nullptr && image.frames == 1) {
+                *keep = image;
+            }
         }
     }
     out->w = (float)texture.width();
     out->h = (float)texture.height();
+}
+
+void HudView::keepArenaIndices(Image* image, const uint8_t* indices, int32_t width, int32_t height) {
+    const size_t size = (size_t)width * (size_t)height;
+    for (size_t i = 0; i < size; i++) {
+        if (indices[i] >= kArenaFirst && indices[i] <= kArenaLast) {
+            image->arenaIndices.assign(indices, indices + size);
+            image->indexWidth = width;
+            image->indexHeight = height;
+            return;
+        }
+    }
+}
+
+void HudView::remake(Image* image, const formats::Palette& palette, int32_t paletteId) {
+    if (image->arenaIndices.empty() || image->texture < 0) {
+        return;
+    }
+    // The panel is made from its stamped copy, so the timer's ring stays.
+    const uint8_t* indices = image == &panel_ && !timerPanel_.empty() ? timerPanel_.data()
+                                                                       : image->arenaIndices.data();
+    const int32_t texture = mdk_render_create_index_texture(renderer_, image->indexWidth, image->indexHeight,
+                                                            indices, palette.rgba());
+    if (texture < 0) {
+        return;   // the old picture stays, in the level's colours
+    }
+    mdk_render_release_texture(renderer_, image->texture);
+    image->texture = texture;
+    image->palette = paletteId;
+}
+
+void HudView::enter(const formats::Palette& arena) {
+    if (&arena == arenaColours_ || renderer_ == nullptr) {
+        return;
+    }
+    arenaColours_ = &arena;
+    bool any = !panel_.arenaIndices.empty() || !skull_.arenaIndices.empty() || !digits_.arenaIndices.empty();
+    for (size_t i = 0; i < icons_.size() && !any; i++) {
+        any = !icons_[i].arenaIndices.empty();
+    }
+    if (!any) {
+        return;
+    }
+    const int32_t paletteId = mdk_render_create_palette(renderer_, arena.rgba());
+    if (paletteId < 0) {
+        return;
+    }
+    remake(&panel_, arena, paletteId);
+    remake(&skull_, arena, paletteId);
+    remake(&digits_, arena, paletteId);
+    for (size_t i = 0; i < icons_.size(); i++) {
+        remake(&icons_[i], arena, paletteId);
+    }
+    if (arenaPalette_ >= 0) {
+        mdk_render_release_palette(renderer_, arenaPalette_);
+    }
+    arenaPalette_ = paletteId;
 }
 
 void HudView::tick() { blink_ = (blink_ + 1) & kBlinkMask; }
@@ -221,6 +413,7 @@ void HudView::draw(MdkRenderer renderer, const HudState& state) {
     // The health panel at the bottom right; the number blinks when health is low.
     const float panelX = canvasWidth - (panel_.w + kPanelRight);
     const float panelY = kCanvasHeight - (panel_.h + kPanelBottom);
+    updateTimer(state.timeLeft);
     drawImage(panel_, panelX, panelY, Colour{1.0f, 1.0f, 1.0f, 1.0f});
     if (state.health > kLowHealth || blink_ < kBlinkOn) {
         const float centreX = panelX + (float)((int32_t)panel_.w >> 1);
@@ -235,6 +428,70 @@ void HudView::draw(MdkRenderer renderer, const HudState& state) {
     if (big_ != nullptr && small_ != nullptr && big_->ready() && small_->ready()) {
         messages_.draw(renderer_, *big_, *small_, canvasWidth);
     }
+}
+
+void HudView::updateTimer(float timeLeft) {
+    // C# UpdateTimer: the time gone stamped in once it moved a degree. Less gone
+    // than stamped (a game loaded): the full ring again.
+    if (timerPanel_.empty() || panel_.texture < 0) {
+        return;
+    }
+    const float angle = (1.0f - timeLeft) * kTau;
+    if (angle < timerAngle_) {
+        timerPanel_ = fullPanel_;
+        timerAngle_ = 0.0f;
+        uploadTimer();
+    }
+    if (angle <= timerAngle_ + kTimerStep) {
+        return;
+    }
+    ringWipe(timerPanel_.data(), emptyPanel_.data(), panelWidth_, panelHeight_, timerAngle_, angle);
+    timerAngle_ = angle;
+    uploadTimer();
+}
+
+void HudView::uploadTimer() {
+    mdk_render_update_texture(renderer_, panel_.texture, panelWidth_, panelHeight_, timerPanel_.data());
+    // A mod's panel (C# UploadTimer): each of its pixels shows the panel pixel
+    // it covers, SC_BSTAT's colour where the ring was stamped.
+    const int32_t modWidth = modPanel_.width;
+    const int32_t modHeight = modPanel_.height;
+    if (modWidth <= 0 || modHeight <= 0 || modPanel_.rgba.size() < (size_t)modWidth * (size_t)modHeight * 4) {
+        return;
+    }
+    // The arena's colours once entered (upstream 6eb0963b), the level's before.
+    const uint8_t* colours = arenaColours_ != nullptr ? arenaColours_->rgba() : levelRgba_.data();
+    // The panel pixel under mod pixel (x, y) is (x * panelWidth_ / modWidth,
+    // y * panelHeight_ / modHeight), stepped here without a divide per pixel
+    // (AGENTS.md R11: the ARM11 has no integer divide): each coordinate keeps
+    // its floor and remainder as x or y moves on by one.
+    int32_t panelY = 0;
+    int32_t yRemainder = 0;
+    for (int32_t y = 0; y < modHeight; y++) {
+        const int32_t row = panelY * panelWidth_;
+        int32_t panelX = 0;
+        int32_t xRemainder = 0;
+        for (int32_t x = 0; x < modWidth; x++) {
+            const int32_t at = row + panelX;
+            const size_t pixel = ((size_t)y * (size_t)modWidth + (size_t)x) * 4;
+            const uint8_t* from = timerPanel_[(size_t)at] == fullPanel_[(size_t)at]
+                                      ? modPanel_.rgba.data() + pixel
+                                      : colours + (size_t)timerPanel_[(size_t)at] * 4;
+            memcpy(modTimerPanel_.data() + pixel, from, 4);
+            xRemainder += panelWidth_;
+            while (xRemainder >= modWidth) {
+                xRemainder -= modWidth;
+                panelX++;
+            }
+        }
+        yRemainder += panelHeight_;
+        while (yRemainder >= modHeight) {
+            yRemainder -= modHeight;
+            panelY++;
+        }
+    }
+    mdk_render_replace_image(renderer_, panel_.texture, panel_.palette >= 0 ? panel_.palette : palette_,
+                             modWidth, modHeight, modTimerPanel_.data());
 }
 
 void HudView::drawImage(const Image& image, float x, float y, const Colour& tint) {
@@ -252,7 +509,7 @@ void HudView::drawImage(const Image& image, float x, float y, const Colour& tint
     q.u3 = 0.0f; q.v3 = 1.0f;
     q.colour = tint;
     q.texture = image.texture;
-    q.palette = palette_;
+    q.palette = image.palette >= 0 ? image.palette : palette_;
     mdk_render_canvas_quad(renderer_, &q);
 }
 
@@ -288,7 +545,7 @@ void HudView::drawNumber(int32_t value, float centreX, float y) {
         q.u3 = uL; q.v3 = 1.0f;
         q.colour = {1.0f, 1.0f, 1.0f, 1.0f};
         q.texture = digits_.texture;
-        q.palette = palette_;
+        q.palette = digits_.palette >= 0 ? digits_.palette : palette_;
         mdk_render_canvas_quad(renderer_, &q);
         x += kDigitWidth;
     }

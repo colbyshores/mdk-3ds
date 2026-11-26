@@ -134,6 +134,11 @@ const std::vector<std::vector<mdk::formats::Vec3f> >& mdk::scripts::MdkObject::p
     return bakedFrame(model, animation, animation_frame);
 }
 
+const std::vector<std::vector<mdk::formats::Vec3f> >& mdk::scripts::bakedPose(
+    const mdk::formats::Model* model, const mdk::formats::ModelAnimation* animation, int32_t frame) {
+    return bakedFrame(model, animation, frame);
+}
+
 void mdk::scripts::forgetPoseCaches() {
     g_restPoses.clear();
     g_baked.clear();

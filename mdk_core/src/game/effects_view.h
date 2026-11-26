@@ -139,7 +139,12 @@ public:
     // triangles its view placed (Placements: not the clip/Disabled triangles, a drawn
     // surface). The arena is every level's MTO arena here, so the view's test is the
     // same as the triangle's own: a triangle whose surface does not resolve is skipped.
-    void build(const scripts::ScriptRuntime& scripts, const Camera& camera, EffectsFrame* frame);
+    // `alpha` (upstream 7740deb1): how far the frame is from the last tick's start
+    // to now; below 1 the debris pieces and the sprite effects are drawn between
+    // their places (and a piece's turns) at the tick's start and now. Their
+    // sprites' frames stay at the tick rate. 1 draws them where they are.
+    void build(const scripts::ScriptRuntime& scripts, const Camera& camera, EffectsFrame* frame,
+               float alpha = 1.0f);
 
     // Start an arena's script-effect textures (the wound, the drops, the
     // bubble and its pop, the trail: scripts/effects.cpp's names) through

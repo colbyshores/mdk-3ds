@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "game/bomber_overlay.h"
+#include "game/hd_key.h"
 #include "game/messages.h"
 #include "game/sniper_overlay.h"
 #include "render/render.h"
@@ -64,6 +65,9 @@ struct HudState {
     float bomberCursorX = 0.0f;
     float bomberCursorY = 0.0f;
     int32_t bomberBombs = 0;
+    // C# HudState.TimeLeft (upstream 235b1792): the town's time left, 0-1
+    // (ScriptRuntime::townTimeLeft); the ring around the health empties by it.
+    float timeLeft = 1.0f;
 };
 
 class HudView {
@@ -77,6 +81,15 @@ public:
     // the enhanced look's canvas, the original keeps the index textures).
     bool load(MdkRenderer renderer, const formats::Bni& sprites, const formats::Palette& palette,
               ModImages* mods = nullptr);
+
+    // C# HudView.Enter (upstream f0fa4c17): Kurt's arena's palette. The HUD's
+    // sprites take its colours 64-175 (0x4709d8 sets them in the table 0x581c28
+    // they are drawn through); the dog's icon needs them, its 64-175 are magenta
+    // in the level's DTI. Cheap when the palette has not changed (a pointer
+    // compare); on a change, only the images whose indices reach 64-175 are made
+    // again through it -- on both backends, since the 3DS expands an index texture
+    // through its palette when it is made.
+    void enter(const formats::Palette& arena);
 
     // Advances the blink once a tick (the C# Tick).
     void tick();
@@ -109,7 +122,18 @@ private:
         float h = 0.0f;
         int32_t hotspotX = 0;
         int32_t hotspotY = 0;
+        // The palette it is drawn through (-1: palette_), and, for an image whose
+        // indices reach the arena's colours (64-175) and that is its expansion
+        // (not an HD or mod picture), its indices and size, to be made again by
+        // enter().
+        int32_t palette = -1;
+        std::vector<uint8_t> arenaIndices;
+        int32_t indexWidth = 0;
+        int32_t indexHeight = 0;
     };
+    // Keeps `indices` on `image` when they reach 64-175 (see Image).
+    static void keepArenaIndices(Image* image, const uint8_t* indices, int32_t width, int32_t height);
+    void remake(Image* image, const formats::Palette& palette, int32_t paletteId);
 
     // The palette is a parameter and not just the `palette_` id, because the two
     // backends need different things: the seam's index-texture call takes the
@@ -118,18 +142,28 @@ private:
     // cannot make the texture at all without the bytes (it expands the indices on
     // the CPU, renderer_c3d.cpp). Passing nullptr here used to work on Linux and
     // refused every HUD image on the 3DS.
+    // `keep`, when given, receives the mod's picture that replaced the image.
     void loadImage(const formats::Bni& sprites, const char* name, Image* out,
-                   const formats::Palette& palette);
+                   const formats::Palette& palette, HdImage* keep = nullptr);
+    // The stamped panel to the GPU, and over a mod's panel (upstream 5b338e44).
+    void uploadTimer();
     void drawImage(const Image& image, float x, float y, const Colour& tint);
     void drawNumber(int32_t value, float centreX, float y);
     void drawInventory(const HudState& state);
     void drawBar(int32_t health, int32_t max);
     void fillRect(float x, float y, float w, float h, const Colour& colour);
+    // The mission timer's ring (upstream 235b1792, 0x420830): the time gone is
+    // stamped into the panel once it has moved a degree.
+    void updateTimer(float timeLeft);
     void frameRect(float x, float y, float w, float h, const Colour& colour);
 
     MdkRenderer renderer_ = nullptr;
     ModImages* mods_ = nullptr;
     int32_t palette_ = -1;
+    // The arena's palette the HUD was last entered with, and its palette id (the
+    // images enter() made again are drawn through it); -1 before the first.
+    const formats::Palette* arenaColours_ = nullptr;
+    int32_t arenaPalette_ = -1;
     Image panel_;
     Image skull_;
     Image digits_;
@@ -137,6 +171,20 @@ private:
     Colour barFill_ = {0.0f, 0.0f, 0.0f, 1.0f};
     Colour barFrame_ = {0.0f, 0.0f, 0.0f, 1.0f};
     int32_t blink_ = 0;
+    // The mission timer: SC_STAT's indices, SC_BSTAT's (the empty ring), the
+    // panel as drawn with the time gone stamped in up to timerAngle_ (radians).
+    std::vector<uint8_t> fullPanel_;
+    std::vector<uint8_t> emptyPanel_;
+    std::vector<uint8_t> timerPanel_;
+    int32_t panelWidth_ = 0;
+    int32_t panelHeight_ = 0;
+    float timerAngle_ = 0.0f;
+    // A mod's SC_STAT picture (RGBA, any size; the enhanced look's canvas draws
+    // it instead of the indices), the stamped copy of it, and the level's
+    // colours the stamped pixels take (C# _colours). Empty without a mod panel.
+    HdImage modPanel_;
+    std::vector<uint8_t> modTimerPanel_;
+    std::vector<uint8_t> levelRgba_;
     Messages messages_;
     SniperOverlay sniper_;
     BomberOverlay bomber_;

@@ -25,6 +25,10 @@
 #                          fixed step and nothing on frame 1 draws on the
 #                          unseeded Random), and a later frame needs the
 #                          oracle's own --frames mode.
+#   MDK_ORACLE_ROOT        the C# tree the oracle is built from (default this
+#                          repository: C# 1.1.1). A checkout of upstream at a
+#                          fix the C++ ports (git worktree add --detach <dir>
+#                          <hash>) makes that fix's frame the reference.
 #   VK_ICD_FILENAMES       the lavapipe ICD, for a GPU-less host
 #
 # Why the namespace: /tmp/.X11-unix and /tmp/.X99-lock belong to another user
@@ -89,16 +93,17 @@ fi
 # Copied, not symlinked: the build writes obj/ and bin/ next to the sources,
 # and the repository's own src/ must stay untouched.
 mkdir -p "$SCRATCH"
+ORACLE_ROOT=${MDK_ORACLE_ROOT:-$ROOT}
 for item in src assets shaders Directory.Build.props; do
-    if [ ! -e "$ROOT/$item" ]; then
-        echo "capture_oracle: $ROOT/$item is missing" >&2
+    if [ ! -e "$ORACLE_ROOT/$item" ]; then
+        echo "capture_oracle: $ORACLE_ROOT/$item is missing" >&2
         exit 1
     fi
     rm -rf "${SCRATCH:?}/$item"
     # cp -R, not cp -a: the working tree lives on a mount that cannot carry the
     # source's mode/ownership, so -a spends a line of "Operation not supported"
     # per file and changes nothing.
-    cp -R "$ROOT/$item" "$SCRATCH/$item"
+    cp -R "$ORACLE_ROOT/$item" "$SCRATCH/$item"
 done
 
 # --- the shaders -----------------------------------------------------------

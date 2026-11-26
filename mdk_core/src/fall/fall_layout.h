@@ -65,6 +65,11 @@ void radarRing(const formats::Vec3f& basePoint, const formats::Vec3f& spot, floa
 // CreateRotationY(π/2) * CreateRotationZ(π/2).
 Mat4 kurtTurn();
 
+// FallView.ExplosionTurn: the explosion is pitched 90 degrees (+0x13c) before
+// its random yaw, CreateRotationY(-pi/2): EXPLODE is a fireball thin along x,
+// so this turns its face to the camera above (upstream 8bc42528).
+Mat4 explosionTurn();
+
 // System.Numerics' builders, row-vector convention (render_types.h's).
 Mat4 rotationZ(float radians);
 Mat4 scaling(float scale);

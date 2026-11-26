@@ -207,6 +207,31 @@ std::vector<std::string> levelNames(const MdkData& data, int level) {
 }
 
 // ---------------------------------------------------------------------------
+// The sounds the arenas carry (upstream 683a53ef): names no SNI archive has,
+// played once at full volume. LEVEL7's barricade soldiers (DANT_2) sing SING
+// and TAUNT1, which no archive of the level has.
+// ---------------------------------------------------------------------------
+void testTheArenasSoundsPlay(const MdkData& data) {
+    SoundBank bank;
+    check(SoundBank::forLevel(&bank, data, 7), "level 7's bank loads");
+    const char* const names[] = {"SING", "TAUNT1"};
+    for (int i = 0; i < 2; i++) {
+        SoundBank::Entry entry;
+        check(bank.get(names[i], &entry), "an arena's own sound plays", names[i]);
+        expect("at full volume", entry.volume, 0x7FFF);
+        check(!entry.looping, "once", names[i]);
+        check(entry.frames > 0 && entry.sound != nullptr, "with samples", names[i]);
+    }
+    // Every level finds some, and none of them is a name the three archives have.
+    for (int level = 3; level <= 8; level++) {
+        SoundBank levelBank;
+        check(SoundBank::forLevel(&levelBank, data, level), "the level's bank loads");
+        expect("the arenas' sounds are a fourth archive", levelBank.archiveCount(), 4);
+        printf("  level %d: the arenas' own sounds hold %zu bytes\n", level, levelBank.arenaSoundBytes());
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 2. The level's bank (music archive opened) answers as the whole-file bank.
 // ---------------------------------------------------------------------------
 void testTheLevelsBankIsTheWholeFilesBank(const MdkData& data) {
@@ -216,9 +241,10 @@ void testTheLevelsBankIsTheWholeFilesBank(const MdkData& data) {
         SoundBank whole;
         check(SoundBank::forLevel(&streamed, data, level), "the level's bank loads");
         check(wholeBank(&whole, data, level), "the whole-file bank loads");
-        expect("three archives", streamed.archiveCount(), 3);
+        // The three archives and the arenas' own sounds (upstream 683a53ef).
+        expect("four archives", streamed.archiveCount(), 4);
         // The music archive is the big one and it is not resident.
-        check(streamed.archiveBytes() * 3 < whole.archiveBytes(),
+        check((streamed.archiveBytes() - streamed.arenaSoundBytes()) * 3 < whole.archiveBytes(),
               "the level's bank holds less than a third of the archives' bytes");
         const std::vector<std::string> names = levelNames(data, level);
         for (size_t i = 0; i < names.size(); i++) {
@@ -1444,6 +1470,7 @@ int runAudioStreamTests(const formats::MdkData& data) {
     checks = 0;
     testAnOpenedArchiveIsTheWholeFile(data);
     testTheLevelsBankIsTheWholeFilesBank(data);
+    testTheArenasSoundsPlay(data);
     testThePrefetchReadsAStepACall(data);
     testMusicNobodyNeedsIsReleased(data);
     {

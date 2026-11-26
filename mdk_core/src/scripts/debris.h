@@ -101,6 +101,11 @@ public:
         // when the piece is made. -1 = not measured yet (reset() puts it back). Drawing
         // only; nothing in the simulation reads it.
         float reach = -1.0f;
+        // The place and turn at the start of the last tick (upstream 7740deb1):
+        // a frame until the next is drawn between them and now. False: new since.
+        bool ticked = false;
+        Vec3 tickedCenter;
+        float tickedOrientation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 
         bool isSpark() const { return names == nullptr; }
         void reset();

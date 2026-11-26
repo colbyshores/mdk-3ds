@@ -2457,6 +2457,11 @@ int main(int argc, char** argv) {
                 if (!obj.visible || obj.dead) {
                     continue;
                 }
+                // The ridden board is drawn after the objects, pulled in front of the
+                // floors under it (upstream a27ca2f4; below).
+                if (runtime->rides().onBoard() && &obj == runtime->rides().ridden()) {
+                    continue;
+                }
                 const bool carried = runtime->rides().bomber() && &obj == runtime->rides().ridden();
                 const float alpha =
                     &obj == runtime->rides().driven() || carried ? 1.0f : tickAlpha;
@@ -2476,8 +2481,23 @@ int main(int argc, char** argv) {
                         tinyEnemyHidden[objectSlot] = 0;
                     }
                 }
+                // The pose between its frames at the tick's alpha (upstream ae746b5d,
+                // Viewer's blend.PoseOf), the driven and carried ones too.
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
-                                     &objectStream, tinyHidden);
+                                     &objectStream, tinyHidden, tickAlpha);
+            }
+            // THE RIDDEN BOARD (upstream a27ca2f4, Viewer.DrawBoard): after the objects,
+            // scaled towards the eye in front of the floors its box dips under (the
+            // original draws an object after its leaf's floor, with no depth buffer).
+            if (!strikeFrame && runtime->rides().onBoard() && runtime->rides().ridden() != nullptr &&
+                runtime->rides().ridden()->visible && !runtime->rides().ridden()->dead &&
+                runtime->rides().ridden()->model != nullptr) {
+                const mdk::scripts::MdkObject& board = *runtime->rides().ridden();
+                const mdk::Mat4 pulled = mdk::KurtSprite::boardPull(
+                    board.model->bounds, board.transform_at(tickAlpha), sceneCamera.position,
+                    sceneCamera.forward, &space);
+                objectView.addObject(board, objectLook(board.arena), pulled, &objectStream, nullptr,
+                                     tickAlpha);
             }
             if (strikeFrame) {
                 // THE FULL-SCREEN STRIKE (package 14): the scene's model alone over the sky
@@ -2496,7 +2516,9 @@ int main(int argc, char** argv) {
             for (int32_t i = 0; i < mdk::scripts::SniperRounds::kSlots && !strikeFrame; i++) {
                 if (runtime->sniperRounds().visualFlying(i)) {
                     const mdk::scripts::MdkObject& round = runtime->sniperRounds().visual(i);
-                    objectView.addObject(round, objectLook(round.arena), round.transform(),
+                    // Between the last two ticks (upstream a73a5cd2); a new round where it is.
+                    objectView.addObject(round, objectLook(round.arena),
+                                         runtime->sniperRounds().visualTransform(i, tickAlpha),
                                          &objectStream);
                 }
             }
@@ -2593,7 +2615,7 @@ int main(int argc, char** argv) {
             // scene camera's zoom.
             effectsView.setTinyPieceCull((float)enhancedToggles.tinyDebrisPixels, kTopWidth,
                                          kTopHeight);
-            effectsView.build(*runtime, sceneCamera, &effectsFrame);
+            effectsView.build(*runtime, sceneCamera, &effectsFrame, runtime->tick_blend(pending));
             effectsDraw.draw(renderer, &surfaces, effectsFrame);
             if (effectsDraw.allocationFailed()) {
                 if (!effectsFailureLogged) {
@@ -2614,7 +2636,8 @@ int main(int argc, char** argv) {
             // (sniper_view.h): a watching camera's window is filled as an empty one.
             sniperView.draw(renderer, hud.sniper(), player, runtime.get(), elapsed, false,
                             objectView, &surfaces,
-                            objectLook(runtime ? runtime->currentArena() : std::string()));
+                            objectLook(runtime ? runtime->currentArena() : std::string()),
+                            runtime ? runtime->tick_blend(pending) : 1.0f);
             if (sniperView.allocationFailed()) {
                 if (!sniperClipFailureLogged) {
                     sniperClipFailureLogged = true;
@@ -2658,6 +2681,13 @@ int main(int argc, char** argv) {
             // lands, because the C# starts it empty and nothing here may invent it.
             mdk_render_canvas_begin(renderer);
             if (hudReady) {
+                // The HUD in Kurt's arena's colours (upstream f0fa4c17; a pointer compare
+                // unless the arena's palette changed).
+                if (runtime) {
+                    if (const mdk::formats::Arena* arena = level.arenaNamed(runtime->currentArena())) {
+                        hud.enter(level.paletteOf(arena));
+                    }
+                }
                 mdk::HudState state;
                 state.health = player.health();
                 state.dead = player.dead;
@@ -2678,6 +2708,8 @@ int main(int argc, char** argv) {
                     const mdk::scripts::ScriptRuntime::BarValues bar = runtime->bar();
                     state.barHealth = bar.health;
                     state.barMax = bar.max;
+                    // The town's time left: the ring around the health (upstream 235b1792).
+                    state.timeLeft = runtime->townTimeLeft();
                     // The XE bomber's sight (Viewer.cs:914, Rides.Bomber?.Shown; package
                     // #11), drawn by HudView through the canvas path like the rest.
                     mdk::scripts::Bomber::Sight sight;

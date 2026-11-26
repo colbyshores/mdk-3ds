@@ -32,12 +32,30 @@
 // link at all. See pose_cache.cpp.
 // ============================================================================
 
+#include <stdint.h>
+
+#include <vector>
+
+#include "formats/vector_types.h"
+
 namespace mdk {
+namespace formats {
+class Model;
+class ModelAnimation;
+} // namespace formats
+
 namespace scripts {
 
 // The C#'s MdkObject.ForgetPoses(): drop every cached rest pose and baked
 // animation frame.
 void forgetPoseCaches();
+
+// Frame `frame` of the model's animation as the shared cache bakes it (what
+// MdkObject::pose_parts() hands out; clamped into the animation). For
+// MdkObject::frames_at, which draws between two of them (upstream ae746b5d).
+const std::vector<std::vector<formats::Vec3f> >& bakedPose(const formats::Model* model,
+                                                           const formats::ModelAnimation* animation,
+                                                           int32_t frame);
 
 } // namespace scripts
 } // namespace mdk

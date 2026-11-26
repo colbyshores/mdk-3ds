@@ -247,6 +247,10 @@ struct RendererVk {
     // objects are created on the first stereo frame.
     mdk::StereoSettings stereo;
     mdk::Camera activeCamera;
+    // Which eye activeCamera is (-1 left, +1 right, 0 the centre camera). The
+    // sky builds its directions from the camera's axes only for the centre
+    // camera; an eye's shifted frustum keeps the inverse (drawSky).
+    float eyeSide = 0.0f;
     uint32_t clearColour = 0xFF000000u;
     // The frame's backdrop (MdkFrameParams::backdrop; the C#'s Renderer.Backdrop): the
     // sky is drawn only under Sky. Keep is drawn as Clear here (see drawSky).

@@ -79,8 +79,10 @@ public:
             }
         }
 
+        // From the first digit: the sign is not a digit (it read "-4" as 26 before
+        // a crafted file's negative count was tested, upstream 09f2e511).
         long long value = 0;
-        for (size_t k = 0; k < text.size(); k++) {
+        for (size_t k = i; k < text.size(); k++) {
             if (value > 2147483647LL) {
                 return false;
             }

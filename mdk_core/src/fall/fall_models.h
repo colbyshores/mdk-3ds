@@ -80,6 +80,10 @@ public:
     void draw(MdkRenderer renderer, const char* name, const Mat4& world, const char* animation,
               int32_t frame, int32_t textureFrame, Pass pass);
 
+    // FallModels.Find: a loaded model of FALL3D.BNI (its data: the trails' ends),
+    // or null.
+    const formats::Model* find(const char* name) const;
+
 private:
     // FallModels.Batch: triangles of a surface; `pen` is a flat colour's palette
     // index (-1 for a texture).

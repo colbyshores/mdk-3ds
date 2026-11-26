@@ -35,14 +35,15 @@ void putInset(MdkRenderer renderer, const Camera& camera, const SniperOverlay::R
 
 void SniperView::draw(MdkRenderer renderer, SniperOverlay& overlay, const Player& player,
                       scripts::ScriptRuntime* scripts, float delta, bool roundInsets,
-                      ObjectView& objects, SurfaceCache* surfaces, const ObjectLook& look) {
+                      ObjectView& objects, SurfaceCache* surfaces, const ObjectLook& look,
+                      float tickAlpha) {
     // C# SniperView.Draw (SniperView.cs:49-76), after the rounds in flight.
     if (!player.sniping()) {
         overlay.update(delta, nullptr);
         return;
     }
 
-    const SniperHud hud = hudOf(player, scripts);
+    const SniperHud hud = hudOf(player, scripts, tickAlpha);
     overlay.setRoundViewsDrawn(roundInsets);
     overlay.update(delta, &hud);
 

@@ -379,6 +379,92 @@ void forgetDescriptorSets(RendererVk* r, int32_t texture, int32_t palette) {
     }
 }
 
+// A stereo eye's clip-to-direction: the inverse of (rotation * projection),
+// which keeps the eye's shifted frustum (upstream 5f9ea5f2 keeps it for eyes).
+bool skyInverse(RendererVk* r, float c2d[16]) {
+    // The C#'s sky rotation is CreateLookAt(Zero, camera.Forward, camera.Up):
+    // the exact camera axes, NOT the view matrix's. The view matrix recomputes
+    // `position + forward - position`, and the position's float cancellation
+    // changes the forward ULP. Use the camera's stored exact axes.
+    const mdk::Vec3 forward = r->camera.forward;
+    const mdk::Vec3 up = r->camera.up;
+    // System.Numerics normalizes EVERY axis it derives, including zaxis =
+    // normalize(eye - target). `eye` is Zero here so the subtraction is exact,
+    // but `forward` is itself the result of a normalize and its length is not
+    // exactly one, so the division is a real last-bit step and not a no-op.
+    // Normalize divides by the length; it does not multiply by a reciprocal.
+    mdk::Vec3 zaxis{-forward.x, -forward.y, -forward.z};
+    const float zLen = sqrtf(zaxis.x * zaxis.x + zaxis.y * zaxis.y + zaxis.z * zaxis.z);
+    if (zLen <= 0.0f) {
+        return false;
+    }
+    zaxis.x /= zLen;
+    zaxis.y /= zLen;
+    zaxis.z /= zLen;
+    mdk::Vec3 right{up.y * zaxis.z - up.z * zaxis.y,
+                    up.z * zaxis.x - up.x * zaxis.z,
+                    up.x * zaxis.y - up.y * zaxis.x};
+    const float rightLen = sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
+    if (rightLen <= 0.0f) {
+        return false;
+    }
+    right.x /= rightLen;
+    right.y /= rightLen;
+    right.z /= rightLen;
+    const mdk::Vec3 trueUp{zaxis.y * right.z - zaxis.z * right.y,
+                           zaxis.z * right.x - zaxis.x * right.z,
+                           zaxis.x * right.y - zaxis.y * right.x};
+    float rotation[16];
+    rotation[0] = right.x;   rotation[1] = trueUp.x;  rotation[2] = zaxis.x;  rotation[3] = 0.0f;
+    rotation[4] = right.y;   rotation[5] = trueUp.y;  rotation[6] = zaxis.y;  rotation[7] = 0.0f;
+    rotation[8] = right.z;   rotation[9] = trueUp.z;  rotation[10] = zaxis.z; rotation[11] = 0.0f;
+    rotation[12] = 0.0f;     rotation[13] = 0.0f;     rotation[14] = 0.0f;    rotation[15] = 1.0f;
+    float rp[16];
+    mulMatrix(rotation, r->activeCamera.projection, rp);
+    return mdk::invertSystemNumericsMatrix4(rp, c2d);
+}
+
+// The centre camera's clip-to-direction, built from its axes and projection
+// (upstream 5f9ea5f2, ViewCamera.SkyDirections): (x, y, 1, 1) goes to
+// forward + right*x' + up*y', all on one plane. The shader blends the screen
+// triangle's corner directions across the pixels, which is right only for
+// corners in one plane; inverting rotation * projection in float (near 0.5,
+// far 20000) put them off it at clip depth 1 by an error that changed with
+// the camera's angle, and the sky shook by pixels when turning.
+bool skyDirections(const mdk::Camera& camera, float m[16]) {
+    const mdk::Vec3 f = camera.forward;
+    const float fLen = sqrtf(f.x * f.x + f.y * f.y + f.z * f.z);
+    if (fLen <= 0.0f) {
+        return false;
+    }
+    const mdk::Vec3 forward{f.x / fLen, f.y / fLen, f.z / fLen};
+    const mdk::Vec3 up0 = camera.up;
+    mdk::Vec3 right{forward.y * up0.z - forward.z * up0.y,
+                    forward.z * up0.x - forward.x * up0.z,
+                    forward.x * up0.y - forward.y * up0.x};
+    const float rLen = sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
+    if (rLen <= 0.0f) {
+        return false;
+    }
+    right.x /= rLen;
+    right.y /= rLen;
+    right.z /= rLen;
+    const mdk::Vec3 up{right.y * forward.z - right.z * forward.y,
+                       right.z * forward.x - right.x * forward.z,
+                       right.x * forward.y - right.y * forward.x};
+    const float* p = camera.projection;  // row-major: M11 p[0], M22 p[5], M31 p[8], M32 p[9]
+    const float sx = p[8] / p[0];
+    const float sy = p[9] / p[5];
+    m[0] = right.x / p[0];  m[1] = right.y / p[0];  m[2] = right.z / p[0];  m[3] = 0.0f;
+    m[4] = up.x / p[5];     m[5] = up.y / p[5];     m[6] = up.z / p[5];     m[7] = 0.0f;
+    m[8] = forward.x + right.x * sx + up.x * sy;
+    m[9] = forward.y + right.y * sx + up.y * sy;
+    m[10] = forward.z + right.z * sx + up.z * sy;
+    m[11] = 0.0f;
+    m[12] = 0.0f;           m[13] = 0.0f;           m[14] = 0.0f;           m[15] = 1.0f;
+    return true;
+}
+
 // The sky: one screen-filling triangle, drawn first, before the level. The
 // clip-to-direction matrix is the inverse of (rotation * projection) in the
 // row-vector convention, uploaded verbatim; the sky shader multiplies it on
@@ -403,47 +489,10 @@ void drawSky(RendererVk* r) {
         }
     }
 
-    // The C#'s sky rotation is CreateLookAt(Zero, camera.Forward, camera.Up):
-    // the exact camera axes, NOT the view matrix's. The view matrix recomputes
-    // `position + forward - position`, and the position's float cancellation
-    // changes the forward ULP. Use the camera's stored exact axes.
-    const mdk::Vec3 forward = r->camera.forward;
-    const mdk::Vec3 up = r->camera.up;
-    // System.Numerics normalizes EVERY axis it derives, including zaxis =
-    // normalize(eye - target). `eye` is Zero here so the subtraction is exact,
-    // but `forward` is itself the result of a normalize and its length is not
-    // exactly one, so the division is a real last-bit step and not a no-op.
-    // Normalize divides by the length; it does not multiply by a reciprocal.
-    mdk::Vec3 zaxis{-forward.x, -forward.y, -forward.z};
-    const float zLen = sqrtf(zaxis.x * zaxis.x + zaxis.y * zaxis.y + zaxis.z * zaxis.z);
-    if (zLen <= 0.0f) {
-        return;
-    }
-    zaxis.x /= zLen;
-    zaxis.y /= zLen;
-    zaxis.z /= zLen;
-    mdk::Vec3 right{up.y * zaxis.z - up.z * zaxis.y,
-                    up.z * zaxis.x - up.x * zaxis.z,
-                    up.x * zaxis.y - up.y * zaxis.x};
-    const float rightLen = sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
-    if (rightLen <= 0.0f) {
-        return;
-    }
-    right.x /= rightLen;
-    right.y /= rightLen;
-    right.z /= rightLen;
-    const mdk::Vec3 trueUp{zaxis.y * right.z - zaxis.z * right.y,
-                           zaxis.z * right.x - zaxis.x * right.z,
-                           zaxis.x * right.y - zaxis.y * right.x};
-    float rotation[16];
-    rotation[0] = right.x;   rotation[1] = trueUp.x;  rotation[2] = zaxis.x;  rotation[3] = 0.0f;
-    rotation[4] = right.y;   rotation[5] = trueUp.y;  rotation[6] = zaxis.y;  rotation[7] = 0.0f;
-    rotation[8] = right.z;   rotation[9] = trueUp.z;  rotation[10] = zaxis.z; rotation[11] = 0.0f;
-    rotation[12] = 0.0f;     rotation[13] = 0.0f;     rotation[14] = 0.0f;    rotation[15] = 1.0f;
-    float rp[16];
-    mulMatrix(rotation, r->activeCamera.projection, rp);
     float c2d[16];
-    if (!mdk::invertSystemNumericsMatrix4(rp, c2d)) {
+    const bool built = r->eyeSide == 0.0f ? skyDirections(r->activeCamera, c2d)
+                                          : skyInverse(r, c2d);
+    if (!built) {
         return;
     }
     // The clip points this matrix turns into rays went through the flipped

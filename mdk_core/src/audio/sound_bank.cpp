@@ -6,12 +6,158 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "formats/mdk_data.h"
 #include "formats/wav.h"
 
 namespace mdk {
 namespace audio {
+
+namespace {
+
+// An arena may name at most this many sounds (the original registers 16,
+// 0x4310cc); a count past it is not walked.
+const uint32_t kMaxArenaSounds = 64;
+// The SNI layout the arenas' sounds are gathered into (formats/sni.h): the
+// directory's count at 0x14, then 24-byte entries (name[12], flags u16,
+// volume u16, offset - 4, length).
+const int32_t kSniDirectory = 0x14;
+const int32_t kSniEntryBytes = 24;
+const int32_t kArenaDirectoryEntryBytes = 12;   // name[8], offset
+
+uint32_t le32(const std::vector<uint8_t>& b, size_t at) {
+    return (uint32_t)b[at] | (uint32_t)b[at + 1] << 8 | (uint32_t)b[at + 2] << 16 | (uint32_t)b[at + 3] << 24;
+}
+
+void put32(std::vector<uint8_t>* b, size_t at, uint32_t v) {
+    (*b)[at] = (uint8_t)v;
+    (*b)[at + 1] = (uint8_t)(v >> 8);
+    (*b)[at + 2] = (uint8_t)(v >> 16);
+    (*b)[at + 3] = (uint8_t)(v >> 24);
+}
+
+bool inArchives(const std::vector<formats::Sni>& archives, const std::string& name) {
+    for (size_t a = 0; a < archives.size(); a++) {
+        const std::vector<formats::Sni::Entry>& entries = archives[a].entries();
+        for (size_t e = 0; e < entries.size(); e++) {
+            // As SoundBank.Get: an entry that is not a sound (a sprite
+            // animation) leaves the name to the arenas.
+            if (entries[e].nameString() == name && archives[a].isSound(entries[e])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// THE ARENAS' OWN SOUNDS (upstream 683a53ef, SoundBank.ArenaSounds). Some sounds
+// live in the arenas of LEVELnO.MTO and in no SNI archive -- 85 names across the
+// six levels: LEVEL7's barricade soldiers' SING and TAUNT1 (DANT_2), LEVEL3's
+// tower boss's gun, LEVEL4's submarine -- and without them they played nothing.
+// The ones whose names no archive has (the first arena's when two share a name)
+// are read here, at the level's load, and gathered into one more SNI-shaped
+// archive (no name in it is in the others, so the search order does not
+// matter): played once, at full volume, as the C#
+// plays them. Only their own bytes are read (the MTO is 10 MB): 185-566 KB a
+// level, measured on the retail data. False (no archive) when the MTO cannot be
+// read; the level's other sounds play as before.
+bool arenaSounds(const formats::MdkData& data, int32_t level, const std::vector<formats::Sni>& archives,
+                 formats::Sni* out) {
+    char relative[96];
+    snprintf(relative, sizeof(relative), "TRAVERSE/LEVEL%d/LEVEL%dO.MTO", (int)level, (int)level);
+    const std::string path = data.pathOf(relative);
+    std::vector<uint8_t> head;
+    if (path.empty() || !data.readRangeAt(path, kSniDirectory, 4, &head)) {
+        return false;
+    }
+    const uint32_t arenaCount = le32(head, 0);
+    std::vector<uint8_t> directory;
+    if (arenaCount == 0 || arenaCount > 256 ||
+        !data.readRangeAt(path, kSniDirectory + 4, (int32_t)arenaCount * kArenaDirectoryEntryBytes, &directory)) {
+        return false;
+    }
+
+    struct Found {
+        std::string name;
+        int32_t offset;
+        int32_t length;
+    };
+    std::vector<Found> found;
+    for (uint32_t a = 0; a < arenaCount; a++) {
+        // Arena::parse's layout: its size field, then the buffer the offsets are
+        // relative to, whose first word is the models section's offset; the
+        // section's counts are 4 bytes into it.
+        const uint32_t arena = le32(directory, (size_t)a * kArenaDirectoryEntryBytes + 8);
+        std::vector<uint8_t> word;
+        if (arena > 0x7FFFFF00u || !data.readRangeAt(path, (int32_t)arena + 4, 4, &word)) {
+            continue;
+        }
+        const uint64_t base = (uint64_t)arena + 4 + le32(word, 0) + 4;
+        std::vector<uint8_t> counts;
+        if (base > 0x7FFFFF00u || !data.readRangeAt(path, (int32_t)base, 12, &counts)) {
+            continue;
+        }
+        const uint64_t animations = le32(counts, 0);
+        const uint64_t models = le32(counts, 4);
+        const uint32_t sounds = le32(counts, 8);
+        const uint64_t table = base + 12 + 12 * (animations + models);
+        std::vector<uint8_t> entries;
+        if (sounds == 0 || sounds > kMaxArenaSounds || table > 0x7FFFFF00u ||
+            !data.readRangeAt(path, (int32_t)table, (int32_t)sounds * kSniEntryBytes, &entries)) {
+            continue;
+        }
+        for (uint32_t i = 0; i < sounds; i++) {
+            const size_t at = (size_t)i * kSniEntryBytes;
+            char name[13] = {0};
+            memcpy(name, entries.data() + at, 12);
+            const uint64_t offset = base + le32(entries, at + 16);
+            const uint32_t length = le32(entries, at + 20);
+            bool taken = inArchives(archives, name);
+            for (size_t f = 0; f < found.size() && !taken; f++) {
+                taken = found[f].name == name;
+            }
+            if (taken || length == 0 || length > (uint32_t)formats::Sni::kMaxStreamedEntryBytes ||
+                offset > 0x7FFFFF00u) {
+                continue;
+            }
+            Found sound;
+            sound.name = name;
+            sound.offset = (int32_t)offset;
+            sound.length = (int32_t)length;
+            found.push_back(sound);
+        }
+    }
+    if (found.empty()) {
+        return false;
+    }
+
+    // The archive: its directory, then each sound's bytes as read.
+    size_t size = (size_t)kSniDirectory + 4 + found.size() * kSniEntryBytes;
+    for (size_t f = 0; f < found.size(); f++) {
+        size += (size_t)found[f].length;
+    }
+    std::vector<uint8_t> bytes(size, 0);
+    put32(&bytes, kSniDirectory, (uint32_t)found.size());
+    size_t at = (size_t)kSniDirectory + 4 + found.size() * kSniEntryBytes;
+    std::vector<uint8_t> wav;
+    for (size_t f = 0; f < found.size(); f++) {
+        const size_t entry = (size_t)kSniDirectory + 4 + f * kSniEntryBytes;
+        memcpy(bytes.data() + entry, found[f].name.c_str(), found[f].name.size() < 12 ? found[f].name.size() : 12);
+        bytes[entry + 14] = 0xFF;   // volume 0x7FFF: full (SoundMixer.FullVolume)
+        bytes[entry + 15] = 0x7F;
+        put32(&bytes, entry + 16, (uint32_t)(at - 4));   // an SNI offset counts from byte 4
+        put32(&bytes, entry + 20, (uint32_t)found[f].length);
+        if (!data.readRangeAt(path, found[f].offset, found[f].length, &wav)) {
+            return false;
+        }
+        memcpy(bytes.data() + at, wav.data(), wav.size());
+        at += wav.size();
+    }
+    return formats::Sni::parse(out, std::move(bytes));
+}
+
+} // namespace
 
 bool SoundBank::forLevel(SoundBank* out, const formats::MdkData& data, int32_t level) {
     char prefix[96];
@@ -42,11 +188,23 @@ bool SoundBank::forLevel(SoundBank* out, const formats::MdkData& data, int32_t l
         }
         archives.push_back(std::move(archive));
     }
-    return withArchives(out, std::move(archives));
+    // The arenas' own sounds, for the names no archive has.
+    formats::Sni arenas;
+    size_t arenaBytes = 0;
+    if (arenaSounds(data, level, archives, &arenas)) {
+        arenaBytes = arenas.bytes().size();
+        archives.push_back(std::move(arenas));
+    }
+    if (!withArchives(out, std::move(archives))) {
+        return false;
+    }
+    out->arenaSoundBytes_ = arenaBytes;
+    return true;
 }
 
 bool SoundBank::withArchives(SoundBank* out, std::vector<formats::Sni>&& archives) {
     out->archives_ = std::move(archives);
+    out->arenaSoundBytes_ = 0;
     out->cache_.clear();
     out->sounds_.clear();
     out->missing_.clear();

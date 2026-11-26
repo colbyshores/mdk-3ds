@@ -31,6 +31,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     if (stereoOn) {
         mdk::vk::setSceneOverride(&r->ctx, r->ctx.eyeFramebuffer[0]);
         r->activeCamera = eyeCamera(r, -1.0f);
+        r->eyeSide = -1.0f;
     } else {
         if (r->stereo.mode != mdk::StereoMode::Off) {
             refused("stereo frame: the eye targets or composite could not be "
@@ -38,6 +39,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
         }
         mdk::vk::setSceneOverride(&r->ctx, VK_NULL_HANDLE);
         r->activeCamera = r->camera;
+        r->eyeSide = 0.0f;
     }
     mdk::vk::setPresentImage(&r->ctx, VK_NULL_HANDLE);
     if (r->enhancedLook && ensureEnhanced(r)) {
@@ -194,6 +196,7 @@ void mdk_render_end_frame(MdkRenderer rr) {
         mdk::vk::endPass(&r->ctx);
 
         r->activeCamera = eyeCamera(r, 1.0f);
+        r->eyeSide = 1.0f;
         mdk::vk::beginPass(&r->ctx, r->ctx.eyeFramebuffer[1], r->ctx.renderPass,
                            r->clearColour);
         drawSky(r);
@@ -227,6 +230,7 @@ void mdk_render_end_frame(MdkRenderer rr) {
         mdk::vk::endPass(&r->ctx);
         r->replayingEyes = false;
         r->activeCamera = r->camera;
+        r->eyeSide = 0.0f;
 
         stereoFrame = true;
     }

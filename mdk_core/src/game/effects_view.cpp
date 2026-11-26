@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "formats/arena.h"
+#include "game/frame_blend.h"
 #include "game/level_data.h"
 #include "render/post_params.h"
 #include "scripts/debris.h"
@@ -37,6 +38,34 @@ Vec3 normalized(const Vec3& a) {
 }
 
 // Vector3.Transform(value, quaternion) of System.Numerics.
+// A debris piece's turn `alpha` of the way from the tick's start to now (upstream
+// 7740deb1's Quaternion.Slerp). Drawing only, and the turn between two ticks is
+// small: the normalised lerp, the short way round, stands in for the slerp (no
+// acos and sines per piece per frame on the ARM11, AGENTS.md R6).
+void orientationAt(const scripts::Debris::Piece& piece, float alpha, float out[4]) {
+    if (!piece.ticked || alpha >= 1.0f) {
+        for (int k = 0; k < 4; k++) {
+            out[k] = piece.orientation[k];
+        }
+        return;
+    }
+    const float* a = piece.tickedOrientation;
+    const float* b = piece.orientation;
+    const float dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    const float towards = dot < 0.0f ? -alpha : alpha;
+    float length2 = 0.0f;
+    for (int k = 0; k < 4; k++) {
+        out[k] = a[k] * (1.0f - alpha) + b[k] * towards;
+        length2 += out[k] * out[k];
+    }
+    if (length2 > 0.0f) {
+        const float inverse = 1.0f / sqrtf(length2);
+        for (int k = 0; k < 4; k++) {
+            out[k] *= inverse;
+        }
+    }
+}
+
 Vec3 transformByQuaternion(const Vec3& v, const float q[4]) {
     const Vec3 qv{q[0], q[1], q[2]};
     const Vec3 inner = add(cross(qv, v), scaled(v, q[3]));
@@ -481,7 +510,7 @@ bool EffectsView::spriteCulled(const SpriteEntry& entry, const Vec3& position,
 }
 
 void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& camera,
-                        EffectsFrame* frame) {
+                        EffectsFrame* frame, float alpha) {
     frame->reset();
     batchCount_ = 0;
 
@@ -503,6 +532,9 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
     const std::vector<scripts::Debris::Piece*>& pieces = scripts.debris().pieces();
     for (size_t p = 0; p < pieces.size(); p++) {
         scripts::Debris::Piece& piece = *pieces[p];
+        // Between the tick's start and now (upstream 7740deb1); a new piece where it is.
+        const Vec3 center = piece.ticked ? frame_blend::lerp(piece.tickedCenter, piece.center, alpha)
+                                         : piece.center;
         if (hasCullFrustum_ || tinyPixels_ > 0.0f) {
             // The piece's reach: its corners are offsets from its centre, turned by
             // its orientation, which keeps their lengths. Measured once per piece
@@ -518,22 +550,24 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
             }
             const float reach = piece.reach;
             if (hasCullFrustum_ &&
-                frustumSphereOutside(cullFrustum_, piece.center, reach + cullMargin_)) {
+                frustumSphereOutside(cullFrustum_, center, reach + cullMargin_)) {
                 continue;
             }
             if (tinyPixels_ > 0.0f &&
                 projectedPixelSize(camera, 2.0f * reach,
-                                   sphereNearDepth(camera, piece.center, reach), tinyWidth_,
+                                   sphereNearDepth(camera, center, reach), tinyWidth_,
                                    tinyHeight_) <= tinyPixels_) {
                 continue;
             }
         }
         const ObjectLook& look = lookOf(piece.arena);
+        float orientation[4];
+        orientationAt(piece, alpha, orientation);
         const int32_t triangles = (int32_t)piece.corners.size() / 3;
         for (int32_t t = 0; t < triangles; t++) {
-            const Vec3 a = transformByQuaternion(piece.corners[t * 3], piece.orientation);
-            const Vec3 b = transformByQuaternion(piece.corners[t * 3 + 1], piece.orientation);
-            const Vec3 c = transformByQuaternion(piece.corners[t * 3 + 2], piece.orientation);
+            const Vec3 a = transformByQuaternion(piece.corners[t * 3], orientation);
+            const Vec3 b = transformByQuaternion(piece.corners[t * 3 + 1], orientation);
+            const Vec3 c = transformByQuaternion(piece.corners[t * 3 + 2], orientation);
             Surface surface;
             if (piece.isSpark()) {
                 const int32_t index =
@@ -550,7 +584,7 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
             Batch& batch = batchFor(surface, look.palette);
             const float uvScaleX = surface.texture ? 1.0f / (float)surface.texture->width() : 0.0f;
             const float uvScaleY = surface.texture ? 1.0f / (float)surface.texture->height() : 0.0f;
-            const Vec3 world[3] = {add(piece.center, a), add(piece.center, b), add(piece.center, c)};
+            const Vec3 world[3] = {add(center, a), add(center, b), add(center, c)};
             for (int32_t k = 0; k < 3; k++) {
                 const Vec2 uv = piece.isSpark()
                                     ? Vec2{0.0f, 0.0f}
@@ -593,10 +627,16 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
             continue;
         }
         const float texel = effect.scale / scripts::Effects::kTexelsPerUnit;
-        if (spriteCulled(entry, effect.position, texel)) {
+        // Between the tick's start and now (upstream 7740deb1); a new one, or a
+        // wound whose object jumped, where it is.
+        const Vec3 at = effect.ticked && !frame_blend::jumped(effect.tickedPosition, effect.position,
+                                                              scripts::ScriptRuntime::kTick)
+                            ? frame_blend::lerp(effect.tickedPosition, effect.position, alpha)
+                            : effect.position;
+        if (spriteCulled(entry, at, texel)) {
             continue;
         }
-        queueSprite(entry, effect.position, texel, effect.frame(), right, up, forward, frame);
+        queueSprite(entry, at, texel, effect.frame(), right, up, forward, frame);
     }
 
     // spawn_box sprites (EffectsView.cs:66-76): as wide as the box, playing at 30

@@ -30,6 +30,7 @@
 #include "game/input.h"
 #include "game/loading_screen.h"
 #include "game/main_menu.h"
+#include "game/pause_menu.h"
 #include "game/save_prompt_screen.h"
 #include "game/movie_view.h"
 #include "game/viewer_saves.h"
@@ -285,6 +286,9 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     // first, while the bank it binds lives, then the screen's voices and renderer
     // scope -- when the flow leaves it.
     std::unique_ptr<fall::FallScreen> fall(new fall::FallScreen());
+    // START in the fall opens the pause menu, as in a level (upstream 75ec50e2; the
+    // original's abort prompt, 0x403cf8): the fall waits under it.
+    menu::PauseMenu fallPause;
     bool fallAudio = false;
     auto closeFall = [&]() {
         if (fallAudio) {
@@ -439,19 +443,29 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         flow::Event next = flow::Event::None;
         const bool halfRate = front->toggles != nullptr && front->toggles->movieHalfRate;
         if (screen == flow::Screen::Fall) {
-            // C# FallScreen.Frame: START skips (the C#'s Esc), the movement
+            // C# FallScreen.Frame: START (the C#'s Esc) opens the pause menu and the
+            // fall waits under it (upstream 75ec50e2); otherwise the movement
             // actions, the circle pad and the D-pad steer.
-            fall::FallSim::Input steer =
-                fall::FallScreen::steering(input, (pressed & KEY_START) != 0);
-            const int32_t padX = ((held & (KEY_CPAD_RIGHT | KEY_DRIGHT)) != 0 ? 1 : 0) -
-                                 ((held & (KEY_CPAD_LEFT | KEY_DLEFT)) != 0 ? 1 : 0);
-            const int32_t padY = ((held & (KEY_CPAD_UP | KEY_DUP)) != 0 ? 1 : 0) -
-                                 ((held & (KEY_CPAD_DOWN | KEY_DDOWN)) != 0 ? 1 : 0);
-            const int32_t x = steer.steerX + padX;
-            const int32_t y = steer.steerY + padY;
-            steer.steerX = x > 0 ? 1 : (x < 0 ? -1 : 0);
-            steer.steerY = y > 0 ? 1 : (y < 0 ? -1 : 0);
-            fall->frame(steer, elapsed);
+            if (fallPause.open()) {
+                next = fallPause.update(keys, elapsed);
+                if (!fallPause.open()) {
+                    log3dsPrintf("fall: the pause menu closes at %s", fall->status().c_str());
+                }
+            } else if ((pressed & KEY_START) != 0) {
+                fallPause.show();
+                log3dsPrintf("fall: the pause menu opens at %s", fall->status().c_str());
+            } else {
+                fall::FallSim::Input steer = fall::FallScreen::steering(input, false);
+                const int32_t padX = ((held & (KEY_CPAD_RIGHT | KEY_DRIGHT)) != 0 ? 1 : 0) -
+                                     ((held & (KEY_CPAD_LEFT | KEY_DLEFT)) != 0 ? 1 : 0);
+                const int32_t padY = ((held & (KEY_CPAD_UP | KEY_DUP)) != 0 ? 1 : 0) -
+                                     ((held & (KEY_CPAD_DOWN | KEY_DDOWN)) != 0 ? 1 : 0);
+                const int32_t x = steer.steerX + padX;
+                const int32_t y = steer.steerY + padY;
+                steer.steerX = x > 0 ? 1 : (x < 0 ? -1 : 0);
+                steer.steerY = y > 0 ? 1 : (y < 0 ? -1 : 0);
+                fall->frame(steer, elapsed);
+            }
         } else if (screen == flow::Screen::Menu) {
             next = mainMenu->frame(keys, elapsed);
             menuMusicFrame(elapsed);
@@ -519,6 +533,14 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         mdk_render_begin_frame(front->renderer, &params);
         if (screen == flow::Screen::Fall) {
             fall->draw(front->renderer);
+            if (fallPause.open()) {
+                // C# FallScreen.Paused: the fall as it stopped, the menu over it.
+                ScreenView pauseView;
+                pauseView.layoutInside(mdk_render_canvas_width(front->renderer), kCanvasHeight);
+                mdk_render_canvas_begin(front->renderer);
+                fallPause.draw(front->renderer, pauseView, ui->big, ui->small);
+                mdk_render_canvas_end(front->renderer);
+            }
             mdk_render_end_frame(front->renderer);
             // Game.Run: the device after the screen's frame (the DSP frame between
             // the mixer and the device, voice_binding.h); then FallScreen.Next.
@@ -526,7 +548,9 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
             mixer.update(elapsed);
             audioDspFrame(mixer);
             mixer.device().update(elapsed);
-            next = fall->next(&flow.state());
+            if (next == flow::Event::None) {
+                next = fall->next(&flow.state());
+            }
         } else {
         ScreenView view;
         view.layoutInside(mdk_render_canvas_width(front->renderer), kCanvasHeight);

@@ -96,6 +96,15 @@ public:
         float cameraDistance = 0.0f;
         Vec3 cameraPosition{};
         float watch = 0.0f;
+        // The flight at the start of the last tick (upstream a73a5cd2): a frame
+        // until the next draws the round and its camera between it and now.
+        // False: fired since.
+        bool ticked = false;
+        Vec3 tickedPosition{};
+        Vec3 tickedCamera{};
+        float tickedYaw = 0.0f;
+        float tickedPitch = 0.0f;
+        float tickedRoll = 0.0f;
     };
 
     explicit SniperRounds(ScriptRuntime& runtime) : runtime_(runtime) {}
@@ -106,8 +115,14 @@ public:
     // rounds chase `target`. False when all the slots are busy.
     bool fire(int32_t type, const Vec3& eye, float yaw, float pitch, MdkObject* target);
 
-    // C# Camera: what the camera of slot `index` shows.
-    RoundCamera camera(int32_t index) const;
+    // C# Camera: what the camera of slot `index` shows, `alpha` of the way from
+    // the last tick's start to now (upstream a73a5cd2; a new round where it is).
+    RoundCamera camera(int32_t index, float alpha = 1.0f) const;
+
+    // C# TransformOf (upstream a73a5cd2): slot `index`'s flying model as drawn
+    // `alpha` of the way from the last tick's start to now (a new round, or
+    // alpha 1: its own transform).
+    Mat4 visualTransform(int32_t index, float alpha) const;
 
     // C# GuideLastMortar, bomb_follow_path (opcode 28): the mortar round that just
     // hit a triangle group follows a path.

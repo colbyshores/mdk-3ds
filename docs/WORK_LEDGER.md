@@ -3194,3 +3194,274 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     hardware or in Mandarine** by this work: everything above is host-verified against
     the C# oracle; no 3DS-specific code changed.
 - **Commit:** branch `fix/upstream-gameplay`, ab4bbed0..a5e477b2 and this ledger commit.
+
+## 2026-11-26 -- upstream presentation fixes ported to C++ (branch fix/upstream-presentation)
+
+The owner asked for "all of the upstream fixes but in C++". Upstream (`origin`, read only)
+fixed the C# after 1.1.1 (d5bb66ec, which this port is made from) up to 1.2.6. Each entry
+names the upstream commit it ports; the C# commit is the specification. The gameplay
+fixes are another agent's.
+
+### 5f9ea5f2 -- the sky's directions from the camera's axes (Linux)
+- **What:** the Vulkan sky's clip-to-direction matrix for the centre camera is built from
+  the camera's axes and projection (`skyDirections`), as upstream's `ViewCamera.SkyDirections`;
+  a stereo eye keeps the inverse (`skyInverse`, `RendererVk::eyeSide`).
+- **Why:** inverting rotation x projection in float put the screen triangle's corner
+  directions off one plane, by an error that changed with the camera's angle, so the sky
+  shook against the world while turning.
+- **The 3DS:** not applicable. Its sky is a dome mesh (`render/sky_dome.cpp`, ETC1 on main)
+  drawn through the world camera; there is no clip-to-direction inverse to correct.
+- **Golden:** the pinned frame L3_f1 changed (the sky). The oracle was re-captured from
+  upstream at 5f9ea5f2 (`tests/frames/capture_oracle.sh` gained `MDK_ORACLE_ROOT`, a C# tree
+  to build the oracle from; .NET 10.0.404 in the scratchpad, display :99 in the script's
+  private namespace). Measured at tolerance 0: upstream 5f9ea5f2 vs its parent 2.411% of
+  pixels; this C++ vs the 5f9ea5f2 oracle 0.051% (max 247, mean 0.0444), down from the
+  1.240% ceiling recorded against 1.1.1. The manifest was regenerated with
+  `regenerate_reference.sh` against that oracle.
+- **Evidence:** Linux build 0 warnings; `make -C tests/scripts test` all PASS except the
+  frame gate before the manifest was regenerated (it was the changed frame, confirmed by
+  rebuilding with the old path: CONTRACT CLEAN); after: FrameGate PASS, tick1 "All cases
+  match the oracle", `tools/check.sh` ALL GATES PASSED.
+
+### 683a53ef -- the sounds the arenas carry
+- **What:** `SoundBank::forLevel` adds a fourth archive: the sounds embedded in LEVELnO.MTO's
+  arenas whose names none of the three SNI archives has (the first arena's when two share a
+  name), read at the level's load (only their own bytes: the directory, three small reads an
+  arena, then each WAV) and played once at full volume, as upstream's `SoundBank.ArenaSounds`.
+  `arenaSoundBytes()` reports what it holds.
+- **Why:** 68 names across the six levels played nothing, e.g. LEVEL7's barricade soldiers'
+  SING and TAUNT1 (DANT_2), LEVEL4's FLY, LEVEL5's SMASH, LEVEL8's XFORK.
+- **Cost:** resident bytes per level, measured on the retail data: L3 566,552, L4 299,732,
+  L5 304,238, L6 249,016, L7 185,680, L8 411,666. Decoded on first play like the other
+  archives' effects. The reads are at the level's load, on the thread that already reads
+  TRAVERSE.SNI and LEVELnS.SNI there; none in play. The load-time cost on the console is not
+  yet measured. **Flagged for the 3DS architecture (owner rule: loading belongs to the core-1
+  streaming worker):** these reads should move with the bank's other load reads when that
+  worker lands.
+- **Not like the original:** the original registers an arena's sounds when its stream
+  completes and drops them with it (0x41983c -> 0x4310cc, at most 16). Upstream (and this)
+  hold all of a level's at once.
+- **Goldens:** 42 tick1 cases changed (scripts now hear these sounds; some scripts wait on a
+  voice, so object counts and timings move too). The oracle was the C# 1.1.1 tree with only
+  683a53ef's SoundBank.cs applied, the probes passing `levelData.Arenas` as upstream's Viewer
+  does (.NET 10.0.404, scratchpad `up-tools/cases.sh`). 41 goldens are byte-identical to that
+  oracle; the 42nd, L8_effects_storm, is the C++'s own record over L8_hazards_debris's storm
+  (which matches the oracle) and was rewritten from the C++. Against upstream at 683a53ef
+  itself, 12 differ, from upstream's other changes in between.
+- **Evidence:** vm_tests' new case (level 7 plays SING and TAUNT1 at 0x7FFF, once; every level
+  has the fourth archive); tick1 "All cases match the oracle"; Linux build 0 warnings.
+
+### 04c25852 -- the fall's missile trails as the original
+- **What:** each missile keeps its velocity at each trail point (`FallMissile::trailHeadings`);
+  the ribbon runs between the tips of the MISSILE model's tail fins (its leftmost and rightmost
+  vertices) as the missile was turned at that point, swells just behind it (x1.25) and tapers
+  to nothing over 32 points; white at 215/255, the last 8 segments yellower and more opaque.
+  Both ways of drawing it: the desktop's mesh (per-vertex colour) and the 3DS's lean canvas
+  (one quad a segment, in its colour).
+- **Why:** the trails were a flat grey band (an approximation in the C#), fixed upstream from
+  the original (0x439454, 0x43911c, 0x4392a4, 0x491d64, 0x410874).
+- **Cost:** per frame, one `orient` (a normalize and two crosses) per trail point drawn: at
+  most 24 missiles x 32 points. Not measured on the console yet.
+- **Evidence:** Linux build 0 warnings; tick1 all cases match (no golden draws the trails; the
+  fall dumps hold the trail points, unchanged); a level 7 fall captured at frame 1500, desktop
+  and lean: the ribbons show white with yellow tips at the missiles.
+
+### c881c9bc -- the view upright looking straight down
+- **What:** `FollowCamera::blend` (the frames between steps) clamps the pitch to the steps'
+  +-89 degrees (`clampViewPitch`), as upstream's `ViewPitch`.
+- **Why:** looking all the way down, a frame between steps looked exactly 90 degrees down; the
+  view turned over and Kurt jumped from the middle of the screen to the top.
+- **Evidence:** Linux build 0 warnings; tick1 all cases match.
+
+### 8bc42528 -- the fall's explosions face the camera
+- **What:** the EXPLODE model is pitched 90 degrees (`explosionTurn`, CreateRotationY(-pi/2))
+  before its random yaw, and goes off at Kurt's position, not where the missile met his box.
+- **Why:** a missile hitting Kurt showed a thin yellow sliver beside him: the model is a flat
+  fireball thin along x, seen edge-on unpitched (original +0x13c; 0x411ee8 copies Kurt's
+  position).
+- **Goldens:** L3_skydive_slow, L6_skydive_chase, L8_skydive_hard (the explosions' positions)
+  rewritten from the C++ and byte-identical to the C# 1.1.1 oracle with 683a53ef, 04c25852 and
+  8bc42528 applied (fall_probe, scratchpad `up-tools`).
+- **Evidence:** Linux build 0 warnings; tick1 all cases match.
+
+### ae746b5d -- animations drawn between their frames
+- **What:** `MdkObject::remember` keeps the animation and its time; `MdkObject::frames_at`
+  (the C#'s FramesAt) names the two baked frames a frame between ticks draws between and the
+  share of the second (a loop goes on to its first frame; another animation, a restart or a
+  script-set frame snaps). `ObjectView::addObject` takes the tick's alpha and, below 1, lerps
+  the two frames vertex by vertex into one scratch pose it keeps (the stream consumes it at
+  once, so one scratch serves every object, where the C# keeps one per model). Both frontends
+  pass the tick's alpha for every object (the driven and carried ones too, as `PoseOf`).
+- **Why:** monsters, items and doors animated at 30 Hz on screens faster than the ticks.
+- **Not like upstream:** the vertex lerp is the plain `a + (b - a) * t` (drawing only; .NET's
+  fused form would be an `fmaf` call per coordinate on VFPv2); the C#'s `% count`s are
+  bounded subtractions (R11), and a time outside two counts is drawn as it is.
+- **Cost on the 3DS:** one lerp per vertex of each animated object drawn between ticks, and
+  the next frame baked (once) sooner. To be measured on the appliance against the commit
+  before it (see the interpolation measurement entry below).
+- **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match; tests/formats 200,650
+  checks, 0 failures; `tools/check.sh` ALL GATES PASSED (the R11 screen first flagged the
+  two `% count`s).
+
+### 7740deb1 -- flying pieces and effects drawn between ticks
+- **What:** each debris piece keeps its centre and turn, and each sprite effect its place,
+  at the start of the tick (`Debris::update`, `Effects::update`); `EffectsView::build` takes
+  the tick's alpha and draws them between that and now (culling at the drawn place). New ones,
+  and wounds whose object jumped, are drawn where they are; the sprites' frames stay at the
+  tick rate. Both frontends pass the tick's alpha (Linux: 1 under `--fixed-step`).
+- **Why:** sparks, shattered pieces, slime drops, wounds and bubbles moved at 30 Hz on faster
+  screens.
+- **Not like upstream:** a piece's turn is the normalised lerp (short way round) instead of
+  `Quaternion.Slerp`: the turn between two ticks is small, and the slerp's acos and sines per
+  piece per frame are libm calls on the ARM11 (AGENTS.md R6). Drawing only.
+- **Cost on the 3DS:** a lerp per piece and effect, and four multiply-adds and a square root
+  per piece; measured with the interpolation entry below.
+- **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match (L8_effects_storm builds
+  at alpha 1, unchanged); `tools/check.sh` ALL GATES PASSED.
+
+### a73a5cd2 -- the sniper rounds and their cameras drawn between ticks (the tick half)
+- **What:** each round keeps its place, camera, yaw, pitch and roll at the start of the tick
+  (`SniperRounds::update`; a new round is drawn where it is); `SniperRounds::visualTransform`
+  and `camera(index, alpha)` give the flying model and the round camera between that and now,
+  and both frontends pass the tick's alpha (`SniperView::draw`/`hudOf` take it).
+- **Why:** the rounds in flight and the views at the top of the scope moved at 30 Hz.
+- **Not done, the step half (the scope's zoom, tilt and clip timer between steps):** this port
+  draws Kurt and the camera at the last step -- upstream's step blending (FrameBlend's Kurt
+  pose, `FollowCamera.Blend`) is not ported and neither frontend calls `FollowCamera::blend`
+  (frame_blend.h) -- so blending the scope alone would draw it out of step with the view it
+  is in. It belongs with that subsystem if the owner wants frames above the step rate. The
+  same holds for c881c9bc, whose clamp is in `FollowCamera::blend` and has no caller yet.
+- **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match (the HUD and rounds
+  goldens use alpha 1); `tools/check.sh` ALL GATES PASSED.
+
+### 75ec50e2 -- the pause menu in the fall
+- **What:** Esc (Linux) or START (3DS) in the fall opens the pause menu (`menu::PauseMenu`:
+  Resume, Options, Main menu, Quit) and the fall waits under it, drawn as it stopped with the
+  menu over it; Esc/B or Resume goes on. The frontends no longer pass the press as the sim's
+  skip (`FallSim::Input::skip` stays, for the skydive probes' `skip:` schedules).
+- **Why:** the skip was the port's testing shortcut; the original opens its abort prompt
+  there (0x403cf8).
+- **3DS note:** the fall shows the C# pause menu, not the owner's level START menu (its toggles
+  and cheats are the level's); START or A picks the item, B resumes.
+- **Evidence:** Linux and 3DS builds 0 warnings; `fall_frontend_test.sh` case 2 now opens the
+  menu at 3 s and resumes at 3.5 s in the intro, with the same fall time at both and no
+  "Fall ended": PASS. Not run on the console.
+
+### a27ca2f4 (and 6eb0963b's FloorPull guard) -- the ridden board over the floor under it
+- **What:** `KurtSprite::boardPull` (C# FloorPull.Of): the eye's rays to the board model's eight
+  box corners; a floor they cross inside the box (or up to a unit under it) pulls the board
+  towards the eye by `inFront`, the same on screen; corners on the eye's plane are skipped
+  (6eb0963b). Both frontends skip the ridden board in the object loop and draw it after the
+  objects with the pulled transform (Viewer.DrawBoard).
+- **Why:** on LEVEL4's board runs the board sank into the slope (uphill Kurt's feet lag a step
+  under the floor, banked turns sink an edge); the original draws an object after its leaf's
+  floor with no depth buffer, so the board always shows whole.
+- **Cost:** while on the board only: one 4x4 inverse and up to eight floor crossings a frame.
+- **Evidence:** Linux and 3DS builds 0 warnings; tick1 all cases match; `tools/check.sh` ALL
+  GATES PASSED. LEVEL4 CMEAT_3 ride (`--ride=XSNOWB --at=420,4285,-570 --walk=forward@60-700`,
+  640x480) A/B with the pull switched off by a temporary hack: at frame 480 the board is
+  hidden under the floor without the pull and whole with it (2,684 pixels differ, all on the
+  board). Not run on the console.
+
+### 235b1792, f0fa4c17, 5b338e44, 6eb0963b -- the HUD's timer ring and colours
+(Written on `fix/upstream-hud` by a helper agent in its own worktree, cherry-picked here in
+upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
+- **What:**
+  - 235b1792: the mission timer ring around the health empties as the town's time runs out
+    (SC_BSTAT stamped over SC_STAT's indices once per degree; `ScriptRuntime` keeps the town's
+    total and `townTimeLeft()`; both frontends fill `HudState.timeLeft`).
+  - f0fa4c17: the HUD's sprites take Kurt's arena's colours 64-175 (`HudView::enter`, a
+    pointer compare a frame; on an arena change only the images whose indices reach 64-175
+    are remade -- one 38x48 icon on the retail data), so the dog's icon is not magenta.
+  - 5b338e44: a mod's SC_STAT picture (Linux enhanced look) is re-stamped with the ring.
+  - 6eb0963b (its timer and HUD parts; its FloorPull guard is in a27ca2f4's entry): saves keep
+    the town's total (`"town_total"`), older saves take the difficulty's, the share is clamped.
+- **Not like upstream:** a clamp instead of the float wrap loop (T2); the ring's cotangent
+  through the trig table (R6); no per-pixel divide in the mod restamp (R11).
+- **Known gaps:** with the 3DS HD set covering SC_STAT the stamp is skipped (the HD rule), so
+  the ring stays full there; the sniper and bomber overlays keep the level's palette.
+- **Goldens:** the seven `L*_save_*.txt` gained the `"town_total"` key (sizes grown by its
+  length, hashes over it; script-checked against the 1.1.1 goldens); tick1 also loads each
+  save without the key (the older format).
+- **Evidence:** on the helper's branch and again on this stack: Linux and 3DS builds 0
+  warnings; tick1 all cases match; tests/formats 200,650 / 0; `tools/check.sh` ALL GATES
+  PASSED. Not checked by eye; not run on the console.
+
+### 09f2e511 -- crafted PNG and GLB files refused
+- **What:** PNGs over 8192 pixels a side are refused before the row arithmetic (int32
+  `width * bpp`, `(stride + 1) * height`) can overflow; a GLB accessor with a negative count,
+  byteOffset or stride, or an offset past the int's end, is refused before it sizes a buffer
+  or reads before the binary chunk. The chunk-length checks were already 64-bit here.
+- **Found on the way, fixed here:** the GLB reader's own JSON integer read (`glb_json.inc`
+  `asInt`) multiplied the sign in as a digit: "-4" read as 26. glTF has no legitimate negative
+  integers, so this only mattered for crafted files, which it let through.
+- **Why:** mods are downloaded files; upstream capped and bounded the decoders after crafted
+  sizes crashed them.
+- **Evidence:** tests/formats' new `craftedGlbAndPngAreRefused` (a negative count, a negative
+  byteOffset, a 2^31-1 byteOffset, a 65536-wide PNG; the negative byteOffset was accepted
+  before the `asInt` fix): 200,662 checks, 0 failures. Linux and 3DS builds 0 warnings; tick1
+  all cases match; `tools/check.sh` ALL GATES PASSED.
+
+### 03ee9031 -- the board pulled over floors it sank deeper into (not on the list; a27ca2f4's follow-up)
+- **What:** `KurtSprite::boardPull` probes 18 points of the board's box (a 3 x 3 grid at its
+  bottom and top) instead of its 8 corners, and a floor counts where a ray crosses it within
+  the board's length of the point, instead of inside the box (the 4x4 inverse goes).
+- **Why:** upstream found the board still vanished under the floor in 1.2.5 (MEAT_1 on the
+  flat, out of CMEAT_3's first bend, in the tubes): it is 0.4 thick and sinks up to 2, so
+  crossings inside the box missed it, and a tube's floor or a bump under its middle crossed
+  none of the corner rays. It finishes a27ca2f4, so it is ported with it.
+- **Cost:** while on the board, up to 18 floor crossings a frame (from 8).
+- **Evidence:** the same CMEAT_3 ride, 640x480: at frame 480 the board was half hidden with
+  the 8-corner pull and is whole now; Linux and 3DS builds 0 warnings; tick1 all cases match;
+  `tools/check.sh` ALL GATES PASSED. Not run on the console.
+
+### The rest of the presentation list: already present, not applicable, not done
+- **bf9b3a53 (an intro splash too short for its palettes): already present.**
+  `IntroSplash` already refuses an INTRO1A entry shorter than the two 768-byte palettes
+  (`intro_splash.cpp`, `entry->size < kPaletteSize * 2`), as the splash that is missing.
+- **8c6c24cd (fill the loading bar as the level loads):** the 3DS is `fix/3ds-load-bar`'s
+  (e31d6f50, a11edd8b: the screen kept through the load, drawn at its steps and through the HD
+  hold, the steps' fractions from a measured level 4 load; upstream redraws at most every
+  100 ms from per-part fractions measured on a desktop). Not duplicated here. **Linux: not
+  done** -- a whole `--level=3/8 --frames 1` run, Vulkan start included, takes 0.8 s wall on
+  this machine, so a moving bar has nothing to show.
+- **bbd2fddb (the insets in both eyes): not applicable as written.** Upstream cleared the inset
+  list after the first eye. Linux clears it at the frame's start, but a stereo frame there
+  draws no insets at all (a stated refusal in `renderInsets`: a pre-existing gap, not this
+  bug). The 3DS's round-camera insets are `fix/3ds-bullet-cam`'s (f7e03bfb, once per eye).
+- **bb39a854 (2D screens whole on non-4:3 displays; the vertical field of view widened below
+  4:3) and 7e61858f (the fall's ground and haze on a near-square screen): not applicable.**
+  The 3DS's top screen is 5:3 (wider than 4:3: unchanged upstream) and the Linux window is
+  4:3 (1280x960; only `--true-aspect` captures change it). The safe-area half is Android's.
+- **e1eb36bb (the camera's arena over the other one): not done, for the owner.** Upstream
+  splits the depth range into two bands (the camera's arena, its objects and effects, Kurt and
+  the board in front; the other drawn arena behind), set per draw as the viewport's depth
+  range, and maps the enhanced look's screen passes' depth back. Here that means a band on
+  every queued draw in both backends, the 3DS queue not folding draws across bands, its depth
+  map (or MVP) per band, the Linux enhanced passes (occlusion, haze, shadows) remapped, and
+  half the depth precision for every draw on the 3DS. The case it fixes is LEVEL4's snowboard
+  ride end (MEAT_3's shell over CMEAT_1's floor). Owner decision: worth that, or a narrower fix
+  for that spot.
+- **25a11c52 (the version in the main menu's corner): not done -- a feature.** This port has
+  no version string; it needs build plumbing (a version from git into both builds) first.
+- **a73a5cd2's step half and c881c9bc:** see their entries (the port does not blend Kurt or
+  the follow camera between steps).
+
+### The interpolation's cost on the Old 3DS: NOT MEASURED (the appliance was held)
+- **Built, not run:** three level 8 profile payloads (`AUTOQUIT=90 LEVEL=8 PROFILE=1`, the
+  harness from throwaway/sky-etc1-hw 3fe09fde merged in on `throwaway/upstream-presentation-hw*`):
+  A = f20161a7 (before the interpolation), B = 306d7cf8 (ae746b5d + 7740deb1 + a73a5cd2's tick
+  half), C = 3028722f (this branch's tip). Kept, with the locked runner, in
+  `.git/worktrees/upstream-presentation/hw-logs/` (`hwrun_up.sh A_base_L8prof B_interp_L8prof
+  C_final_L8prof`, `hw_cycle.sh --profile` each under `.git/mdk-review/appliance.lock`).
+- **Why not run:** the appliance lock was held by the mip-root campaign from 14:04 to past
+  15:57; the runner waited and was stopped rather than left to take the lock unattended.
+- **Emulator (Mandarine r1.2.1, md5 0d2adab6, DISPLAY=:99, `emurun.sh`):** A and C both boot
+  level 8, draw the HUD (C: canary and ink in place) and then log no frame past 5 in 60-240 s
+  -- the same with the commit before the interpolation, so not this branch's; not timing
+  evidence either way.
+- **What to decide on the numbers:** each of the three is its own commit. If B costs the Old
+  3DS a refresh, the 3DS frontend can pass alpha 1 to `addObject`'s pose and
+  `EffectsView::build` (the transforms already blend) without touching Linux.
+- **Also checked:** Linux, level 3 at 150 s (`--god`, frame 9000): the timer ring shows an
+  emptied wedge from the right, counter-clockwise (235b1792).
