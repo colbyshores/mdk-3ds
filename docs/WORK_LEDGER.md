@@ -2956,3 +2956,10 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     start room: alive, the camera pushes him 5.33 away; dead, 0. With the check removed
     the dead run moves 5.33 too, so the case fails. `docs/OPEN_ITEMS.md`'s entry is
     closed.
+  - **dce8d904, keep Kurt's chute shut in a wind zone.** The wind zone's air arm calls
+    `Player::blow` (the pull down plus `_blown`), and `updateAir` neither opens the chute
+    nor keeps it open while `_blown`; `updateVertical` clears it after the fall. No golden
+    moved: none drops through a wind box in the air. Upstream's own case (COLYM_3 under
+    OLYM_3's hatch) did not reach the box in the wind probe either (Kurt starts in COLYM_2
+    there and the zone's arena script does not run), so this is checked by build and suites
+    only.

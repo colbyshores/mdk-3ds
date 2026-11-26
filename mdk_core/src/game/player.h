@@ -437,8 +437,15 @@ public:
     // C# Kurt.SlideAccel (slide_accel 0x468be0): adds a push (u/s per axis) to the
     // slide velocity over dt seconds.
     void slideAccel(const Vec2& push, float dt);
-    // C# Kurt.AddVerticalSpeed (Kurt.cs:278): wind zones and push_kurt.
+    // C# Kurt.AddVerticalSpeed (Kurt.cs:278): push_kurt.
     void addVerticalSpeed(float speed) { verticalSpeed += speed; }
+    // C# Kurt.Blow (upstream dce8d904): in a wind zone's box in the air (opcode 224 sets
+    // 0x573bec) the wind pulls him down and keeps his chute shut for his next step
+    // (damp_vertical 0x4694bc), so he lands in the box and slides instead of gliding past.
+    void blow(float dt) {
+        _blown = true;
+        verticalSpeed -= kSlideGravity * dt;
+    }
 
     // ---- Ledges (C# Kurt.Ledge.cs, damp_ledge_grab 0x469868; game/player_ledge.cpp) ----
     // The climb's tick counter (C# Kurt._climbTicks), for the goldens.
@@ -623,6 +630,8 @@ private:
     Vec2 _slidePush = {0.0f, 0.0f};
     float _slideAir = 0.0f;
     float _slideLeft = 0.0f;
+    // A wind zone blew on him since his last step (0x573bec, upstream dce8d904).
+    bool _blown = false;
     int32_t _slideVoice = 0;
     const char* _slideSound = "";
     // The frame's mouse X while sliding. The C# slide steers by input.MouseX inside the

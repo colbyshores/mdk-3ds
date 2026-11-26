@@ -64,6 +64,7 @@ void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
     // while Kurt is knocked down, which is the oracle's own exception.
     updateUpdraft(delta);
     fall(delta);
+    _blown = false;
     // health 0 on the floor is death (C# "health 0 --on the floor--> DEAD"). A
     // hard landing lands the same tick and fall-out forces OnFloor, so both die
     // now; a future mid-air damage source would wait for the landing, as in the C#.
@@ -77,12 +78,14 @@ void Player::updateAir(bool jumpHeld, float delta) {
         _jumpTicksLeft = std::max(0, _jumpTicksLeft - (int)std::ceil(delta * kTicks));
     }
 
-    if (!chuteOpen && jumpHeld && (verticalSpeed < kFallStartSpeed || _pastJumpTop)) {
+    // A wind zone keeps the chute shut (upstream dce8d904): LEVEL6's COLYM_3 slide starts
+    // only in the wind box under OLYM_3's hatch, and with the chute open Kurt glided past.
+    if (!chuteOpen && jumpHeld && !_blown && (verticalSpeed < kFallStartSpeed || _pastJumpTop)) {
         chuteOpen = true;
         playSound("CHUTEOUT");
-    } else if (chuteOpen && !jumpHeld && !_inUpdraft) {
+    } else if (chuteOpen && (_blown || (!jumpHeld && !_inUpdraft))) {
         // Kurt.cs:435: letting go of jump closes the chute -- unless a fan holds him,
-        // which keeps it open (UpdateUpdraft opened it).
+        // which keeps it open (UpdateUpdraft opened it); the wind closes it.
         chuteOpen = false;
     }
 

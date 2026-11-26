@@ -115,7 +115,7 @@ void ScriptRuntime::windZone(const std::string& arena, Wind wind, float yaw, flo
             const float radians = yaw * 3.14159265358979323846f / 180.0f;
             player_->slideAccel(Vec2{cosf(radians) * speed, sinf(radians) * speed}, kTick);
         } else {
-            player_->addVerticalSpeed(-Player::kSlideGravity * kTick);
+            player_->blow(kTick);
         }
         return;
     }
