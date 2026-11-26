@@ -655,12 +655,21 @@ uint32_t buildHdWindow3ds(int32_t level, const OrigByName& origByName,
 // THE WAIT for HD files (docs/3DS_ARCHITECTURE.md 4): the backend reads and
 // imports while this thread waits, the applet loop served throughout (HOME,
 // sleep, power), as the original's BSPShow loaded an arena before showing it.
+// With `loading` (the level start's), its bar moves from `from` to full as the
+// files land: `asked`, the files still to come when the wait starts, is the
+// level-start window's size (the last level's copies were given back before it
+// was set, so none of it is resident yet), and the bar is the share of it that
+// has landed. A frame is drawn when the count has moved, at most every quarter
+// second: a frame is time the streams' pumps do not run (MdkFrameParams::loading).
 double holdHdWindow3ds(MdkRenderer renderer, const char* const* paths, int32_t count,
-                       const char* why) {
+                       const char* why, const LoadingScreen* loading, float from,
+                       uint32_t frameIndex) {
     const double hold0 = mdk::nowSeconds();
     int32_t made = 0;
     int32_t pending = mdk_render_hd_pending(renderer, paths, count);
     const int32_t asked = pending;
+    int32_t drawnPending = pending;
+    double drawnAt = hold0;
     // A wait that makes nothing for a second (no file read or imported, the
     // count unchanged: what is left cannot be read) ends it, as does a minute in
     // all, or the applet loop saying stop.
@@ -673,6 +682,12 @@ double holdHdWindow3ds(MdkRenderer renderer, const char* const* paths, int32_t c
         const int32_t before = pending;
         made += slice;
         pending = mdk_render_hd_pending(renderer, paths, count);
+        if (loading && pending != drawnPending && mdk::nowSeconds() - drawnAt >= 0.25) {
+            drawnPending = pending;
+            drawnAt = mdk::nowSeconds();
+            const float landed = (float)(asked - pending) / (float)asked;   // asked > 0 here
+            drawLoadingScreen3ds(renderer, *loading, from + (1.0f - from) * landed, frameIndex);
+        }
         if (slice == 0 && pending == before) {
             idle++;
             svcSleepThread(50000000LL);

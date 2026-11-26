@@ -111,8 +111,10 @@ uint32_t buildHdWindow3ds(int32_t level, const OrigByName& origByName,
                           const LevelData& levelData, const formats::Cmi* cmi, HdWindow* out);
 // Wait (the applet loop served; the loading screen, the pause menu or the last
 // frame stays up) until none of `paths` -- null: the whole window -- is still to
-// come. `why` names the moment. Returns the milliseconds waited.
+// come. `why` names the moment. With `loading` (null otherwise) its bar goes
+// from `from` to full as the files land. Returns the milliseconds waited.
 double holdHdWindow3ds(MdkRenderer renderer, const char* const* paths, int32_t count,
-                       const char* why);
+                       const char* why, const LoadingScreen* loading = nullptr,
+                       float from = 0.0f, uint32_t frameIndex = 0);
 
 } // namespace mdk

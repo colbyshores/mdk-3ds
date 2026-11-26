@@ -487,9 +487,11 @@ int main(int argc, char** argv) {
     const MdkScope levelScope = mdk_render_mark(renderer);
     // C# Play: the loading screen, then the level (package #20c). The C# draws it
     // once, the bar empty; the 3DS load takes seconds, so the bar moves at the
-    // load's steps below and through the HD set's hold, then the screen is freed
-    // before play. The fractions are the steps' share of a measured Old 3DS load
-    // (level 4, HD on: ~12.6 s, the last 3.5 s the HD hold; docs/WORK_LEDGER.md).
+    // load's steps below and through the start window's HD wait, then the screen
+    // is freed before play. The fractions are the steps' share of a measured Old
+    // 3DS load (level 4, HD on: ~12.6 s, the last 3.5 s the HD hold; docs/
+    // WORK_LEDGER.md) -- measured with the level-wide pinned set, before the HD
+    // window; the window's shorter wait is not re-measured yet.
     // Each step is one frame, ~12 ms.
     std::unique_ptr<mdk::LoadingScreen> loading(new mdk::LoadingScreen());
     mdk::showLoadingScreen3ds(renderer, flow.state().level, frame, loading.get());
@@ -1431,7 +1433,7 @@ int main(int argc, char** argv) {
         leaveEvent = next;
     };
 
-    const float holdFrom = 0.72f;   // the bar when the HD set starts to land
+    const float holdFrom = 0.72f;   // the bar when the start window's HD files start to land
     loadingBar(holdFrom);
     // THE LEVEL'S HD SET, RESIDENT BEFORE THE LOADING SCREEN GOES (owner
     // 2026-11-24: "I dont want surface pop in"; docs/HD_TEXTURES_3DS_SPEC.md 3.2).
@@ -1485,7 +1487,8 @@ int main(int argc, char** argv) {
                                         mdk::requestPackedSurface, &warmAsk, &cursor)) {
             }
         }
-        mdk::holdHdWindow3ds(renderer, nullptr, 0, "loading screen");
+        mdk::holdHdWindow3ds(renderer, nullptr, 0, "loading screen", loading.get(), holdFrom,
+                             frame);
     }
     loadingBar(1.0f);
     loading->release(renderer);
