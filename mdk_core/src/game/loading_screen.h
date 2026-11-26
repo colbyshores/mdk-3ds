@@ -9,7 +9,9 @@
 // progress bar from x 10 to 590, y 290 to 310 (colour 3, framed by 4).
 //
 // The C#'s Play draws ONE frame of it, at progress 0, between the old screen's
-// teardown and the level's load (Game.cs:478-483); so do the frontends. The
+// teardown and the level's load (Game.cs:478-483); so does the Linux frontend.
+// The 3DS draws it again as its (much longer) load advances, so the bar moves
+// (menu_screens_3ds.h drawLoadingScreen3ds). The
 // LBBs exist for LEVEL3-8; without one the frame is black (the C#'s
 // `bytes.Length > PaletteSize` test). Not ported: the 1996 demo's screens (the
 // frontends do not load the beta demo).
@@ -61,6 +63,11 @@ struct LoadingScreen {
     // The frame's canvas: the picture, the text, the bar at `progress` (0-1)
     // and its frame. The view is laid out here (Fit.Height).
     void draw(MdkRenderer renderer, float canvasWidth, float progress) const;
+    // Give back what load() made (the picture, its palette, the font's atlas),
+    // for a frontend that keeps the screen through the load and frees it before
+    // play. The ids go; the scope's later release of them again is harmless
+    // (the 3DS backend's mdk_render_release, 05_resources.inc).
+    void release(MdkRenderer renderer);
 
     bool ready() const { return image.ready(); }
 

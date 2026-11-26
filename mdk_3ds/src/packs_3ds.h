@@ -29,6 +29,8 @@
 
 namespace mdk {
 
+struct LoadingScreen;
+
 extern const char kHdPackRoot[];
 extern const char kKurtPackPath[];
 extern const char kOrigPackRoot[];

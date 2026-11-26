@@ -48,6 +48,7 @@ namespace mdk {
 
 struct ControlBindings;
 struct EnhancedToggles;
+struct LoadingScreen;
 
 struct FrontScreens3ds {
     MdkRenderer renderer = nullptr;
@@ -78,9 +79,15 @@ struct FrontScreens3ds {
 // ends (Screen::None: Quit, aptMainLoop, the frame budget).
 flow::Screen runFrontScreens3ds(FrontScreens3ds* front);
 
-// C# Play's LoadingScreen.Show (package #20c, game/loading_screen.h): one frame
-// of LEVEL<level>'s loading screen before the level loads; it stays on the
-// screen through the load. Not a game frame (the run's frame count does not move).
-void showLoadingScreen3ds(MdkRenderer renderer, int32_t level, uint32_t frameIndex);
+// C# Play's LoadingScreen.Show (package #20c, game/loading_screen.h): LEVEL<level>'s
+// loading screen loaded into `loading` and drawn once, bar empty, before the level
+// loads. The caller keeps it through the load, draws it again as the load
+// advances (drawLoadingScreen3ds) and frees it before play (LoadingScreen::release).
+// Not game frames (the run's frame count does not move).
+void showLoadingScreen3ds(MdkRenderer renderer, int32_t level, uint32_t frameIndex,
+                          LoadingScreen* loading);
+// One frame of the loading screen with the bar at `progress` (0-1).
+void drawLoadingScreen3ds(MdkRenderer renderer, const LoadingScreen& loading, float progress,
+                          uint32_t frameIndex);
 
 } // namespace mdk

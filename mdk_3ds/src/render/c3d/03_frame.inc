@@ -67,6 +67,13 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     }
     r->inFrame = true;
     r->frame++;
+    // A LOADING SCREEN'S FRAME (MdkFrameParams::loading) is not one of the
+    // level's: it is not counted (frame 30's log, the HD copies' ages), and the
+    // texture pumps below wait for play.
+    const bool loadingFrame = params && params->loading;
+    if (loadingFrame) {
+        r->frame--;
+    }
     // The frustum belongs to an installed eye; a frame that has not installed
     // one yet has none (installEye sets it before each per-eye replay).
     r->frustumValid = false;
@@ -96,11 +103,13 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     r->frameStartUse = r->drawCounter + 1;
     settleDeferredTextures(r);
     settleDeferredMeshes(r);
-    pumpExpansions(r);
-    // The orig pack's reads before the HD stream's: a packed original is a
-    // surface about to draw, an HD copy only replaces one that already does.
-    pumpPackOriginals(r, previousFrameStart);
-    pumpHdTextures(r, previousFrameStart);
+    if (!loadingFrame) {
+        pumpExpansions(r);
+        // The orig pack's reads before the HD stream's: a packed original is a
+        // surface about to draw, an HD copy only replaces one that already does.
+        pumpPackOriginals(r, previousFrameStart);
+        pumpHdTextures(r, previousFrameStart);
+    }
     // THE STORES THE TEXTURES WERE MADE IN (EnhancedToggles::texture16): once a
     // level's textures are made (frame 30), then every 300 frames when more were
     // made since (an arena streamed in, an evicted texture made again). The

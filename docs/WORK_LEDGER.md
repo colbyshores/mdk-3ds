@@ -3571,4 +3571,44 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   - So the faithful cameras cost ~11 ms a frame in stereo while one watches: 30 fps is not held; off holds it. SCOPE IN 2D (one eye in the scope) should roughly halve the cost; its run (`onmono.3dsx`) never ran (below).
 - **Not verified:** no picture of the 3DS insets: the harness on this base has no `CAPTURE` (refused before the push), ATM `screenshot_auto` captured nothing, and the console dropped off the network (ARP incomplete, directed and broadcast discovery silent) between my last FRESH run (13:13) and the screenshot run (13:46), during another agent's appliance session; trap 8's discovery did not bring it back, so it needs power. Mandarine was not available (another project's two instances). The look on hardware, both eyes at the slider, SCOPE IN 2D's cost and the New 3DS are unmeasured.
 - **Upstream (origin/main, 1.2.x):** the round cameras' logic is unchanged since 1.1.1 except a73a5cd2 (cameras and rounds drawn between ticks: `SniperRounds.Camera(index, alpha)`, `TransformOf`), a presentation change the fix/upstream-presentation branch ports; it touches `SniperRounds::camera` and `SniperView::draw`'s callers, which this branch leaves alone. bbd2fddb (insets in both eyes) is the C#'s stereo fix; the 3DS draws its insets in each eye's replay already.
+
+### The loading bar moves (3DS)
+- **What (owner: "the loading screen bar doesn't show the loading progress"):**
+  the 3DS drew the loading screen ONCE, bar empty, and presented nothing else
+  until the level's first frame, so the bar sat at 0 through a ~12.6 s load.
+  That was a faithful port of the C# Play (`LoadingScreen.Show(_ui, level, 0f)`
+  once, Game.cs:480) -- the C# never moves the bar either; its load is short.
+  Now the 3DS keeps the screen through the load (made inside the level's scope,
+  freed with `LoadingScreen::release` before play) and draws it again at the
+  load's steps (level data 23%, start view 42%, assets 57%... 72%) and, while
+  the HD set's hold waits, from 72% to full as the set lands (at most a frame
+  every 0.25 s). Layout and colours are the C#'s, unchanged. Linux keeps the
+  C#'s one frame.
+- **The renderer side:** a loading frame (`MdkFrameParams::loading`) skips the
+  3DS backend's texture pumps and is not counted. Without that, the first
+  hardware run showed the step frames making the start arena's packed
+  originals BEFORE the HD set is sized: linear free at the set's choice fell
+  16,177,920 -> 15,424,256 B, 2.1 MB less after the hold, and frame 30's log
+  fired during the load. With it, all three are byte-identical to the base.
+- **Evidence** (`.git/worktrees/load-bar/hw-logs/`; `old3ds-lan167`, Old 3DS
+  268 MHz, L2 off, stereo per the slider, `AUTOQUIT=90 LEVEL=4 HDROMFS=1`, HD on,
+  harness on `throwaway/load-bar-hw` / base on `throwaway/load-bar-base`,
+  all cycles FRESH):
+  - `L4base.session.log` (3f59a93a + harness) vs `L4final.session.log` (this
+    fix): HD hold 3525 vs 3528 ms, 115 files both; linear free at the set
+    16,177,920 both, after it 8,432,512 both; frame 30's texture line identical.
+    The hold drew 13 loading frames in 181 ms. Step timestamps (`loading: bar`
+    lines) 2.9/5.4/7.1/8.3/8.6/9.0/9.1 s of 12.66 s match their fractions.
+    The ~8 step frames are ~12-14 ms each (by the hold's measured frames):
+    ~0.1 s of a 12.7 s load, not separately measured against the base.
+  - `L4-final-cap14.png`: the 14th loading frame read back on the console,
+    bar at ~84% mid-hold. (A capture's SD write stalls ~7 s inside the hold,
+    so capture runs are not timing runs; the slow holds of `L4-cap12*` are
+    that, not the bar.)
+  - Host: Linux build clean; 3DS player build 0 compiler warnings
+    (`player-load-bar.3dsx`); tests/scripts `make test` rc 0; tests/formats
+    200624 checks, 0 failures; tools/check.sh ALL GATES PASSED (gates_smdh SKIP).
+- **Not verified:** other levels on hardware (the fractions are level 4's; a
+  level's own split differs a little), HD off (no hold: the bar goes 72% -> full
+  at the end), the menu's HD-toggle hold (unchanged, draws no bar), Mandarine.
 - **Commit:** this one.

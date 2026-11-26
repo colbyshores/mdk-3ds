@@ -655,30 +655,33 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     return result;
 }
 
-// C# Play's LoadingScreen.Show (Game.cs:478-483): one frame, drawn and presented.
-// It stays on the screen through the level's load (nothing else is presented
-// until the level's first frame). Its resources are released at once; the
-// backend frees them at the next frame boundary (AGENTS.md P3).
-void showLoadingScreen3ds(MdkRenderer renderer, int32_t level, uint32_t frameIndex) {
-    const MdkScope scope = mdk_render_mark(renderer);
+// C# Play's LoadingScreen.Show (Game.cs:478-483): the screen loaded and its first
+// frame, the bar empty. It stays on the screen through the level's load; the
+// caller moves the bar (drawLoadingScreen3ds) and frees it before play.
+void showLoadingScreen3ds(MdkRenderer renderer, int32_t level, uint32_t frameIndex,
+                          LoadingScreen* loading) {
     const formats::MdkData data = formats::MdkData::find(formats::fileSystem());
-    std::unique_ptr<LoadingScreen> loading(new LoadingScreen());
     const bool ready = data.found() && loading->load(renderer, data, level);
+    drawLoadingScreen3ds(renderer, *loading, 0.0f, frameIndex);
+    log3dsPrintf("flow: the loading screen of level %d%s", (int)level,
+                 ready ? "" : " (no LOAD_n.LBB: black)");
+}
+
+// Without the LBB the frame is black, as the first one was.
+void drawLoadingScreen3ds(MdkRenderer renderer, const LoadingScreen& loading, float progress,
+                          uint32_t frameIndex) {
     MdkFrameParams params;
     params.elapsed = 0.0f;
     params.frame_index = frameIndex;
     params.clear_colour = 0xFF000000u;
     params.present = true;
     params.screenshot_path = nullptr;
+    params.loading = true;
     mdk_render_begin_frame(renderer, &params);
     mdk_render_canvas_begin(renderer);
-    loading->draw(renderer, mdk_render_canvas_width(renderer), 0.0f);
+    loading.draw(renderer, mdk_render_canvas_width(renderer), progress);
     mdk_render_canvas_end(renderer);
     mdk_render_end_frame(renderer);
-    log3dsPrintf("flow: the loading screen of level %d%s", (int)level,
-                 ready ? "" : " (no LOAD_n.LBB: black)");
-    loading.reset();
-    mdk_render_release(renderer, scope);
 }
 
 } // namespace mdk

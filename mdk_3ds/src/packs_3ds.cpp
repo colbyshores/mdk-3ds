@@ -13,6 +13,7 @@
 #include <set>
 
 #include "formats/kurt_pack.h"
+#include "menu_screens_3ds.h"
 #include "platform/clock_3ds.h"
 #include "platform/log_3ds.h"
 #include "render/render_c3d_hd_set.h"
