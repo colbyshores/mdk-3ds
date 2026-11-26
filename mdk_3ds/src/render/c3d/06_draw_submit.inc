@@ -111,7 +111,7 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     // A packed original pending at prepare had no rectangle then: it is made
     // now (above, or by the first eye), so the uv is the made texture's.
     if (p->texPending) {
-        compressedUv(r->textures[(size_t)draw->material.texture], &uvScaleX, &uvScaleY,
+        compressedUv(r->textures[(size_t)draw->material.texture], draw, &uvScaleX, &uvScaleY,
                      &uvOffsetX, &uvOffsetY);
     }
     setVsUniform(r, kDedupeUv, r->uvLocation, uvScaleX, uvScaleY, uvOffsetX, uvOffsetY);

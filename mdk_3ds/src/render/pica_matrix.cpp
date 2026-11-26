@@ -714,6 +714,21 @@ CompressedRect compressedFrameRect(int32_t realWidth, int32_t realHeight, int32_
     return rect;
 }
 
+CompressedUv compressedFrameUv(const CompressedRect& rect, int32_t frame, int32_t frameCount) {
+    CompressedUv uv;
+    uv.scaleX = rect.right - rect.left;
+    uv.offsetX = rect.left;
+    uv.scaleY = rect.bottom - rect.top;
+    uv.offsetY = rect.top;
+    if (frameCount > 1) {
+        // Exact when a frame is a whole number of rows: the span is rows over
+        // a power of two, so the quotient and the frame's multiple are too.
+        uv.scaleY = uv.scaleY / (float)frameCount;
+        uv.offsetY = rect.top + (float)frame * uv.scaleY;
+    }
+    return uv;
+}
+
 static int32_t potAtLeast8(int32_t value) {
     int32_t result = 8;
     while (result < value && result < 1024) {

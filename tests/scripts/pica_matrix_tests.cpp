@@ -1736,6 +1736,105 @@ void testTheCompressedKurtFrame() {
     PICA_CHECK(budget / mdk::pica::spriteFrameBytes(TexelFormat::Etc1A4, 52, 146, 0) == 64u);
 }
 
+// Which texel of a packed strip a quad's pixel centre (u, v in 0..1, v = 0 the
+// frame's top) reads under NEAREST through compressedFrameUv: the texel's value
+// is frame * 1000 + row in the frame + col * 100000 for the synthetic strip
+// (frames of frameH rows, image rows past frames * frameH are padding: -1).
+// tex3ds puts the image's top row at t = 1, so the row from the top is
+// paddedH - 1 - floor(t * paddedH).
+static int32_t sampleNumberedStrip(const mdk::pica::CompressedUv& uv, float u, float v,
+                                   int32_t paddedW, int32_t paddedH, int32_t frameH,
+                                   int32_t frames) {
+    const float s = u * uv.scaleX + uv.offsetX;
+    const float t = v * uv.scaleY + uv.offsetY;
+    const int32_t col = (int32_t)(s * (float)paddedW);
+    const int32_t row = paddedH - 1 - (int32_t)(t * (float)paddedH);
+    if (row < 0 || row >= frames * frameH) {
+        return -1;
+    }
+    return (row / frameH) * 1000 + (row % frameH) + col * 100000;
+}
+
+// A PACKED ANIMATED STRIP DRAWS ONE FRAME (spec ticket B). The renderer used to
+// send the strip's whole rectangle for every frame: a 32x960 SL_MED (30 frames
+// of 32x32, padded to 32x1024) drew (scaleY, offsetY) = (-0.9375, 1) whatever
+// the frame, all 30 frames squashed into one quad. Now frame f is the f-th
+// slice; every pixel of a quad drawn 1:1 reads its own frame, its own row in
+// the right orientation, and all four edges of the frame, never a neighbour.
+void testTheCompressedStripFrame() {
+    const mdk::pica::CompressedRect slMed = mdk::pica::compressedFrameRect(32, 960, 32, 1024);
+    const mdk::pica::CompressedUv f0 = mdk::pica::compressedFrameUv(slMed, 0, 30);
+    const mdk::pica::CompressedUv f1 = mdk::pica::compressedFrameUv(slMed, 1, 30);
+    const mdk::pica::CompressedUv f29 = mdk::pica::compressedFrameUv(slMed, 29, 30);
+    PICA_CHECK(f0.scaleY == -0.03125f && f1.scaleY == -0.03125f && f29.scaleY == -0.03125f);
+    PICA_CHECK(f0.offsetY == 1.0f && f1.offsetY == 0.96875f && f29.offsetY == 0.09375f);
+    PICA_CHECK(f0.scaleX == 1.0f && f0.offsetX == 0.0f);
+
+    // SL_MED (32x32 x 30 in 32x1024) and TRAIL, the debris smoke (64x64 x 11,
+    // 64x704 in 64x1024): every pixel centre of a 1:1 quad, frames first,
+    // second, middle and last.
+    struct Strip {
+        int32_t w, frameH, frames, paddedW, paddedH;
+    };
+    const Strip strips[2] = {{32, 32, 30, 32, 1024}, {64, 64, 11, 64, 1024}};
+    for (int32_t k = 0; k < 2; k++) {
+        const Strip& st = strips[k];
+        const mdk::pica::CompressedRect rect =
+            mdk::pica::compressedFrameRect(st.w, st.frameH * st.frames, st.paddedW, st.paddedH);
+        const int32_t pick[5] = {0, 1, st.frames / 2, st.frames / 2 + 1, st.frames - 1};
+        for (int32_t p = 0; p < 5; p++) {
+            const int32_t f = pick[p];
+            const mdk::pica::CompressedUv uv = mdk::pica::compressedFrameUv(rect, f, st.frames);
+            bool exact = true;
+            for (int32_t y = 0; y < st.frameH; y++) {
+                for (int32_t x = 0; x < st.w; x++) {
+                    const float u = ((float)x + 0.5f) / (float)st.w;
+                    const float v = ((float)y + 0.5f) / (float)st.frameH;
+                    const int32_t got = sampleNumberedStrip(uv, u, v, st.paddedW, st.paddedH,
+                                                            st.frameH, st.frames);
+                    if (got != f * 1000 + y + x * 100000) exact = false;
+                }
+            }
+            PICA_CHECK(exact);
+            // The extreme samples a quad can take (uv just over 0 and just under 1 on
+            // both axes) stay in the frame too: no bleed into frame f +- 1.
+            const float edge[2] = {0.0001f, 0.9999f};
+            for (int32_t a = 0; a < 2; a++) {
+                for (int32_t b = 0; b < 2; b++) {
+                    const int32_t got = sampleNumberedStrip(uv, edge[a], edge[b], st.paddedW,
+                                                            st.paddedH, st.frameH, st.frames);
+                    PICA_CHECK(got >= 0 && (got % 100000) / 1000 == f);
+                }
+            }
+            // A minified quad (a few pixels tall) and a magnified one (four
+            // pixels a texel) read only this frame as well.
+            const int32_t sizes[2] = {5, st.frameH * 4};
+            for (int32_t z = 0; z < 2; z++) {
+                bool inside = true;
+                for (int32_t y = 0; y < sizes[z]; y++) {
+                    const float v = ((float)y + 0.5f) / (float)sizes[z];
+                    const int32_t got = sampleNumberedStrip(uv, 0.5f, v, st.paddedW, st.paddedH,
+                                                            st.frameH, st.frames);
+                    if (got < 0 || (got % 100000) / 1000 != f) inside = false;
+                }
+                PICA_CHECK(inside);
+            }
+        }
+    }
+
+    // ONE FRAME IS THE RECTANGLE, bit for bit, whatever frame a draw names:
+    // Kurt's packed frames and every still texture draw exactly as before.
+    const mdk::pica::CompressedRect idle = mdk::pica::compressedFrameRect(52, 146, 64, 256);
+    const int32_t stillFrames[3] = {0, 1, 7};
+    for (int32_t i = 0; i < 3; i++) {
+        const mdk::pica::CompressedUv still = mdk::pica::compressedFrameUv(idle, stillFrames[i], 1);
+        PICA_CHECK(still.scaleX == idle.right - idle.left && still.offsetX == idle.left);
+        PICA_CHECK(still.scaleY == idle.bottom - idle.top && still.offsetY == idle.top);
+    }
+    const mdk::pica::CompressedUv none = mdk::pica::compressedFrameUv(idle, 0, 0);
+    PICA_CHECK(none.scaleY == idle.bottom - idle.top && none.offsetY == idle.top);
+}
+
 void testTheHdResidencyPolicy() {
     using mdk::pica::HdSlot;
     // THE VICTIM: the least recently drawn resident copy that the protected frame
@@ -2519,6 +2618,7 @@ int runPicaMatrixTests() {
     testTheSlicedFilterAndChain();
     testThe16BitStore();
     testTheCompressedKurtFrame();
+    testTheCompressedStripFrame();
     testTheStreamedPicture();
     testTheHdResidencyPolicy();
     testTheSunsShadow();

@@ -159,13 +159,17 @@ static C3D_TexEnv* stage0Variant(RendererC3D* r, int32_t index) {
 // tex3ds' convention, with no last-row flip on top -- the converters feed
 // tex3ds the image's top row first, as hd_pack_convert.py does, and tex3ds' top
 // is t = 1. ONE function for the prepare and for a packed original made at
-// submit (drawRecorded), so the two cannot drift.
-static void compressedUv(const C3dTexture& resource, float* scaleX, float* scaleY,
-                         float* offsetX, float* offsetY) {
-    *scaleX = resource.rect.right - resource.rect.left;
-    *offsetX = resource.rect.left;
-    *scaleY = resource.rect.bottom - resource.rect.top;
-    *offsetY = resource.rect.top;
+// submit (drawRecorded), so the two cannot drift. An animated strip's draw
+// takes its own frame's slice of the rectangle (pica::compressedFrameUv); one
+// frame is the whole rectangle.
+static void compressedUv(const C3dTexture& resource, const mdk::MeshDraw* draw, float* scaleX,
+                         float* scaleY, float* offsetX, float* offsetY) {
+    const mdk::pica::CompressedUv uv =
+        mdk::pica::compressedFrameUv(resource.rect, draw->frame, draw->material.frame_count);
+    *scaleX = uv.scaleX;
+    *offsetX = uv.offsetX;
+    *scaleY = uv.scaleY;
+    *offsetY = uv.offsetY;
 }
 
 // THE PREPARE (STEREO-REPLAY analogue): resolve one queue record for the
@@ -471,10 +475,10 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
         scaleY = hd->bottom - hd->top;
         offsetY = hd->top;
     } else if (resource.compressed) {
-        // A COMPRESSED texture is a tex3ds texture too: its image's rectangle
-        // (compressedUv). A packed original not made yet has no rectangle; its
-        // submit takes the made one's (drawRecorded).
-        compressedUv(resource, &scaleX, &scaleY, &offsetX, &offsetY);
+        // A COMPRESSED texture is a tex3ds texture too: its image's rectangle,
+        // or this draw's frame of it (compressedUv). A packed original not made
+        // yet has no rectangle; its submit takes the made one's (drawRecorded).
+        compressedUv(resource, draw, &scaleX, &scaleY, &offsetX, &offsetY);
     } else {
         // The PICA's t runs from the LAST memory row (pica::sceneUvFromTop has
         // the rule and the measurement). Every draw takes it, the canvas too:

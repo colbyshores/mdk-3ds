@@ -2211,3 +2211,63 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   disk); tests/formats 200624 checks, 0 failures; tools/check.sh ALL GATES PASSED
   (gates_frames PASS on the Linux build, gates_smdh SKIP: no .cia).
 - **Commit:** this one (ledger only).
+
+## 2026-11-25
+
+### A packed animated strip draws one frame, not the whole strip (spec ticket B, first part)
+- **What:** `compressedUv` (06_draw.inc), used by the prepare and by the
+  pending-at-submit path (06_draw_submit.inc), now takes the draw and returns its
+  frame's slice of the texture's rectangle through the new pure helper
+  `pica::compressedFrameUv` (scaleY = (bottom - top) / frames, offsetY = top +
+  frame * scaleY). A one-frame texture (Kurt's packed frames, every still packed
+  texture) keeps the rectangle bit for bit, whatever frame a draw names. HD copies,
+  indexed textures, the filter (an animated draw stays NEAREST) and the mip rule
+  (an animated draw stays at level 0) are untouched. No new state; +28 lines in
+  pica_matrix.{h,cpp}, +4 net in the two .inc files, +100 test lines.
+- **Why:** owner-approved fix. Before, every frame of a packed strip drew the
+  whole strip squashed into one quad: SL_MED (32x960 in 32x1024) sent
+  (scaleY, offsetY) = (-0.9375, 1) for frames 0, 1 and 29; now (-0.03125; 1,
+  0.96875, 0.09375). Affected: the effect sprites that are in the orig pack --
+  TRAIL (the debris smoke, 64x64x11), SL_MED, SL_SMA, BUBB, BUBB_POP, PULSE,
+  SB_MED, SB_SMA, M_COMM, BONEFLC -- and any arena surface with frameCount > 1,
+  which the arena draws at frame 0 as the C# does. The over-1024 strips
+  (EXPLODE, SL_BIG, FIRE) are not packed and are not touched here (later item).
+- **Frames cannot alias:** the effects/object submissions' consecutive-draw
+  shortcut caches only the texture id (the frame is set per draw); the backend's
+  coalescing compares the uv words, which now differ per frame (a pending record
+  too: its prepare-time uv is the frame's slice of the default rectangle); both
+  eyes replay the one prepared record, and the pending path recomputes from the
+  same draw->frame in each eye.
+- **Evidence:**
+  - Host: `testTheCompressedStripFrame` (tests/scripts pica_matrix_tests) samples
+    numbered synthetic strips (SL_MED and TRAIL geometry) under NEAREST through
+    the helper: every pixel of a 1:1 quad reads its own frame and row (orientation),
+    edge samples and minified/magnified quads stay in the frame. With the helper
+    forced to the old whole-rectangle answer it fails 68 checks; with the fix 0.
+  - Hardware, old3ds-lan167 (Old 3DS), throwaway/anim-frame-hw (main + harness +
+    SPRITES=1, a stream of TRAIL and slime drops in front of Kurt, LEVEL=3,
+    AUTOQUIT=90), atmctl stereo screenshots mid-run, both cycles FRESH: before,
+    TRAIL reads as stacked horizontal yellow/grey bars and the drop as a striped
+    blob ("lines through the smoke"); after, round puffs and a solid drop.
+    Captures in .git/worktrees/anim-frame/hw-logs/hw-ab.
+  - tests/formats 200624 checks 0 failures; tests/scripts make test; tools/check.sh
+    ALL GATES PASSED (smdh, frames SKIP); player .3dsx 0 compiler warnings.
+- **Not verified:** the ETC1A4 colour of frames whose height is not a multiple of
+  4 (BUBB 31, BUBB_POP 30, M_COMM 129) can mix two frames inside one 4x4 block --
+  a codec property of the existing pack, not sampling; no Mandarine run (the
+  machine's one emulator slot was taken).
+- **Commit:** this one.
+
+### The owner's "lines through the smoke": this bug, not screen-door
+- **Finding:** the debris smoke is TRAIL (64x64 x 11 frames, 11 ticks, spawned
+  by one debris piece in four). Its strip (64x704 -> 64x1024) is in the orig pack
+  as ETC1A4, so it drew all 11 frames squashed into one quad: ~11 thin horizontal
+  slivers with the background between them. The art itself is solid (0.17%
+  isolated texels, no dither). The C# drew sprites at Pass.DoubleSided, which is
+  not blended (Renderer.cs blends only Blended/Overlay): an index-0 cut-out with
+  depth write, the original's colour key -- so the hard edges are authentic, and
+  there is no screen-door transparency anywhere. Blending is unchanged (not asked).
+- **Evidence:** decoded frames and the simulated squash in
+  .git/worktrees/anim-frame/hw-logs (TRAIL_frames.png, TRAIL_correct_vs_bug.png);
+  the hardware before/after above.
+- **Commit:** this one (the fix above).

@@ -915,6 +915,19 @@ struct CompressedRect {
 CompressedRect compressedFrameRect(int32_t realWidth, int32_t realHeight, int32_t textureWidth,
                                    int32_t textureHeight);
 
+// ONE FRAME of a compressed texture's rectangle: the uv transform a draw sends
+// (uv' = uv * scale + offset). A packed animated strip stacks its frameCount
+// frames top to bottom in the rectangle, so frame f is the f-th of frameCount
+// equal slices of the span bottom - top. One frame (Kurt's, every still
+// texture) is the rectangle itself, the frame number ignored, as before.
+struct CompressedUv {
+    float scaleX;
+    float scaleY;
+    float offsetX;
+    float offsetY;
+};
+CompressedUv compressedFrameUv(const CompressedRect& rect, int32_t frame, int32_t frameCount);
+
 // What one Kurt frame costs resident, by store (the sprite residency's bytes and
 // the figures the A/B is reported in): the frame's padded size in RGBA8
 // (texture16=0), RGBA5551 (texture16=1: an index texture's alpha is 0/255), or
