@@ -2195,3 +2195,19 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   Left for a deliberate refactor (a state struct for the frontends, opcode
   groups for the VM), which is not code movement.
 - **Commit:** this one (ledger only, with the last split).
+
+### cleanup/split-large-files rebased onto main f2490d62 (the hitch fix and title music)
+- **What:** the seven split commits replayed onto f2490d62; main had not touched
+  any split file, so only this ledger conflicted (both sides kept). The pre-rebase
+  branch is kept as `cleanup/split-large-files-on-08f80f9c`. No new split: no file
+  main changed crosses 1500 lines (main_3ds.cpp 2916, Linux main.cpp 3162 -- both
+  left whole as before; audio_dsp_3ds.cpp 1288, menu_screens_3ds.cpp 660).
+- **Evidence:** clean 3DS release builds, same devkitARM, of main (detached
+  worktree) and of this branch: mdk.elf md5 20748e39 for both, equal to the
+  coordinator's reference play-main-f2490d62.elf; all 177 objects byte-identical,
+  no path-dependent difference. Clean Linux build and 3DS build 0 compiler
+  warnings; tests/scripts `make test` passes (C3dFrame, LinuxRefusalReport and
+  the rest; the frame gate's oracle-pixel fidelity arms SKIP, no reference on
+  disk); tests/formats 200624 checks, 0 failures; tools/check.sh ALL GATES PASSED
+  (gates_frames PASS on the Linux build, gates_smdh SKIP: no .cia).
+- **Commit:** this one (ledger only).
