@@ -2890,3 +2890,10 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   - **Oracle tooling:** `tests/scripts/kurt_probe` is new. The driver that made
     `L3_kurt_steps`/`L3_kurt_lethal` (`/tmp/kilo/oracle/Driver`) was not kept; this probe
     replays `dumpKurt`'s schedule and reproduces both goldens byte for byte at d5bb66ec.
+  - **93743b33, home the fall's missiles once per tick.** `FallMissile::home` blends with
+    keep = 0.8^(dt × 30) instead of 0.8 per frame. The frame's dt is the frontend's elapsed
+    time (60 fps and up on Linux, 30 or less on the 3DS), so the steering now matches the
+    original's per-tick rate at any frame rate. Six goldens moved, all equal to the oracle at
+    93743b33 byte for byte (the 1/30 s cases too: `(1 - keep) × 250` rounds differently from
+    the old folded 50): `L6_skydive_chase`, `L8_skydive_hard`, `L3_skydive_slow`,
+    `L7_skydive_skip`, `L6_fallview_chase`, `L8_fallview_hard`.

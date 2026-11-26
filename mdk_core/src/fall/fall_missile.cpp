@@ -14,12 +14,13 @@ constexpr float kSpeed = 250.0f;
 constexpr int32_t kFreeTicks = 60;
 constexpr float kPassHeight = 5.0f;
 constexpr int32_t kGoneTicks = 60;
-// Homing: v = 0.8 v + 0.2 × 250 × unit(aim − position). The C# writes
-// `(1f - Homing) * Velocity + Homing * Speed * towards`, and both factors are
-// constant expressions the compiler folds, so they are folded here too.
+// Homing: v = keep v + (1 - keep) × 250 × unit(aim − position), keep = 0.8 per 1/30 s
+// tick. Upstream 93743b33 (C# 1.2.0): the original blends once per tick; blended once
+// per frame, the steering was far stiffer at 60 fps and up, and a missile that missed
+// locked on and hovered by Kurt. So keep = 0.8^(dt × 30).
 constexpr float kHoming = 0.2f;
 constexpr float kKeep = 1.0f - kHoming;
-constexpr float kPull = kHoming * kSpeed;
+constexpr float kTicksPerSecond = 30.0f;
 // Below 0.75 × Kurt's height it climbs 3 times as fast.
 constexpr float kBoostHeight = 0.75f;
 constexpr float kBoost = 3.0f;
@@ -81,14 +82,14 @@ FallMissile::Event FallMissile::update(float dt, int32_t ticks, const formats::V
             }
             return EventNone;
         case Homing:
-            return home(kurt);
+            return home(kurt, dt);
         default:
             ticks_ += (float)ticks;
             return ticks_ > (float)kGoneTicks ? EventGone : EventNone;
     }
 }
 
-FallMissile::Event FallMissile::home(const formats::Vec3f& kurt) {
+FallMissile::Event FallMissile::home(const formats::Vec3f& kurt, float dt) {
     // C# FallMissile.Home.
     const float dz = kurt.z - position.z;
     if (dz <= -kPassHeight) {
@@ -106,8 +107,11 @@ FallMissile::Event FallMissile::home(const formats::Vec3f& kurt) {
         towards = formats::Vec3f{towards.x / length, towards.y / length, towards.z / length};
     }
 
-    velocity = formats::Vec3f{kKeep * velocity.x + kPull * towards.x, kKeep * velocity.y + kPull * towards.y,
-                              kKeep * velocity.z + kPull * towards.z};
+    // The C#'s MathF.Pow; a handful of missiles per frame, not a hot path (AGENTS.md 2).
+    const float keep = powf(kKeep, dt * kTicksPerSecond);
+    const float pull = (1.0f - keep) * kSpeed;
+    velocity = formats::Vec3f{keep * velocity.x + pull * towards.x, keep * velocity.y + pull * towards.y,
+                              keep * velocity.z + pull * towards.z};
     return EventNone;
 }
 
