@@ -691,13 +691,16 @@ int32_t pinHdSet3ds(MdkRenderer renderer, int32_t level, const OrigByName& origB
 // this thread waits, the applet loop served throughout (HOME, sleep, power); then
 // the set's one-line summary. `why` names the moment ("loading screen", "toggled on").
 // With `loading`, its bar moves from `from` to full as the set lands: a frame
-// each time the count moves (at most one a 50 ms slice).
+// when the count has moved, at most every quarter second (a frame is time the
+// pumps do not run).
 void holdHdSet3ds(MdkRenderer renderer, const char* why, const LoadingScreen* loading,
                   float from, uint32_t frameIndex) {
     const double hold0 = mdk::nowSeconds();
     int32_t made = 0;
     int32_t pending = mdk_render_hd_set_pending(renderer);
     const int32_t pending0 = pending;
+    int32_t drawnPending = pending;
+    double drawnAt = hold0;
     // A wait that makes nothing for a second (no file read or imported, the
     // count unchanged: what is left cannot be read) ends the hold, as does a
     // minute in all, or the applet loop saying stop.
@@ -710,7 +713,9 @@ void holdHdSet3ds(MdkRenderer renderer, const char* why, const LoadingScreen* lo
         const int32_t before = pending;
         made += slice;
         pending = mdk_render_hd_set_pending(renderer);
-        if (loading && pending != before) {
+        if (loading && pending != drawnPending && mdk::nowSeconds() - drawnAt >= 0.25) {
+            drawnPending = pending;
+            drawnAt = mdk::nowSeconds();
             const float landed = (float)(pending0 - pending) / (float)pending0;
             drawLoadingScreen3ds(renderer, *loading, from + (1.0f - from) * landed, frameIndex);
         }

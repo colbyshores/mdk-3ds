@@ -480,7 +480,8 @@ int main(int argc, char** argv) {
     // once, the bar empty; the 3DS load takes seconds, so the bar moves at the
     // load's steps below and through the HD set's hold, then the screen is freed
     // before play. The fractions are the steps' share of a measured Old 3DS load
-    // (docs/WORK_LEDGER.md, the loading bar).
+    // (level 4, HD on: ~12.6 s, the last 3.5 s the HD hold; docs/WORK_LEDGER.md).
+    // Each step is one frame, ~12 ms.
     std::unique_ptr<mdk::LoadingScreen> loading(new mdk::LoadingScreen());
     mdk::showLoadingScreen3ds(renderer, flow.state().level, frame, loading.get());
     const double loadStart = mdk::nowSeconds();
@@ -593,7 +594,7 @@ int main(int argc, char** argv) {
         mdk::log3dsPrintf("data: %s", data.dir().c_str());
         if (mdk::LevelData::load(&level, &data, flow.state().level)) {
             mdk::heapProbe("level-data");
-            loadingBar(0.15f);
+            loadingBar(0.23f);
             // The name-keyed orig index needs the loaded level (arena name ->
             // palette), so it is built here, not with the pack itself.
             if (hdSource.orig &&
@@ -664,6 +665,7 @@ int main(int argc, char** argv) {
                 // its textures pumped from the resident MTO (arena_views.h) --
                 // with no SD read anywhere in play (game/level_data.cpp).
                 const int32_t viewsBuilt = arenaViews.sync(startArenaName, std::string());
+                loadingBar(0.42f);
                 // The start arena's textures are NOT made here: linear must
                 // stay free for Kurt's animation pack (which streams in as
                 // animations are used), the fonts, and the audio sink -- making
@@ -690,6 +692,7 @@ int main(int argc, char** argv) {
                     arena = nullptr;
                 }
                 mdk::heapProbe("arena-view");
+                loadingBar(0.57f);
             }
             // Kurt's frames are loaded whether the arena view worked or not: the
             // sprite is his, not the arena's, and a level with no arena geometry
@@ -733,7 +736,7 @@ int main(int argc, char** argv) {
                 menuReady = mdk::loadMenuFonts3ds(renderer, data, &menuBig, &menuSmall, &hud);
             }
             mdk::heapProbe("assets");
-            loadingBar(0.35f);
+            loadingBar(0.66f);
         } else {
             mdk::log3dsPrintf("level %d: FAILED to load", (int)flow.state().level);
         }
@@ -824,7 +827,7 @@ int main(int argc, char** argv) {
         mdk::log3dsPrintf("audio: the level's SNI archives did not load -- no sounds");
     }
     mdk::heapProbe("post-audio");
-    loadingBar(0.45f);
+    loadingBar(0.68f);
     // KURT'S LEVEL ANIMATIONS: the level's SNI archives carry the wind tunnels' slide
     // (K_SLIP, K_SLIDE, K_FSLIDE, K_BSLIDE) and the snowboard's frames (C# Viewer:
     // KurtSprite.Add over SoundBank.Animation; the Linux frontend's same loop). Without
@@ -852,7 +855,7 @@ int main(int argc, char** argv) {
     // being made 16-bit.
     if (kurtSpriteReady) {
         mdk::loadKurtFrames3ds(&kurtSprite, enhancedToggles, flow.state().level);
-        loadingBar(0.55f);
+        loadingBar(0.71f);
     }
     mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
     // THE OUTPUT (SPEC.md 8). The level mixes on the DSP (audio_dsp_3ds.h): every
@@ -1404,6 +1407,8 @@ int main(int argc, char** argv) {
         leaveEvent = next;
     };
 
+    const float holdFrom = 0.72f;   // the bar when the HD set starts to land
+    loadingBar(holdFrom);
     // THE LEVEL'S HD SET, RESIDENT BEFORE THE LOADING SCREEN GOES (owner
     // 2026-11-24: "I dont want surface pop in"; docs/HD_TEXTURES_3DS_SPEC.md 3.2).
     // Streaming per surface cannot promise a copy before its surface is seen: the
@@ -1422,7 +1427,6 @@ int main(int argc, char** argv) {
     // the low point), so 7 MiB.
     // The last level's copies are given back first, so the heap read below is
     // this level's (mdk_render_pin_hd_set frees what nothing links any more).
-    loadingBar(0.6f);
     mdk_render_pin_hd_set(renderer, nullptr, nullptr, 0);
     if (hdSource.pack && hdSource.byname) {
         hdSetCap = mdk::pinHdSet3ds(renderer, flow.state().level, origByName, hdShapes);
@@ -1442,7 +1446,7 @@ int main(int argc, char** argv) {
                                         mdk::requestPackedSurface, &warmAsk, &cursor)) {
             }
         }
-        mdk::holdHdSet3ds(renderer, "loading screen", loading.get(), 0.6f, frame);
+        mdk::holdHdSet3ds(renderer, "loading screen", loading.get(), holdFrom, frame);
     }
     loadingBar(1.0f);
     loading->release(renderer);

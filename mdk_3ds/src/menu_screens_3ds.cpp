@@ -652,6 +652,7 @@ void drawLoadingScreen3ds(MdkRenderer renderer, const LoadingScreen& loading, fl
     params.clear_colour = 0xFF000000u;
     params.present = true;
     params.screenshot_path = nullptr;
+    params.loading = true;
     mdk_render_begin_frame(renderer, &params);
     mdk_render_canvas_begin(renderer);
     loading.draw(renderer, mdk_render_canvas_width(renderer), progress);

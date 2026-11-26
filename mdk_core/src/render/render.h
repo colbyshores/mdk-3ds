@@ -97,6 +97,11 @@ struct MdkFrameParams {
     mdk::Backdrop backdrop = mdk::Backdrop::Sky;
     bool present = true;          // false for a frame the frontend does not show
     const char* screenshot_path = nullptr;   // Linux only; nullptr elsewhere
+    // A loading screen's frame, drawn while a level loads (the 3DS's moving bar):
+    // the 3DS backend draws and presents it but neither counts it nor runs its
+    // between-frame texture pumps, which would otherwise make the level's
+    // textures before the load has sized the HD set (and slow the HD hold).
+    bool loading = false;
 };
 
 // ---------------------------------------------------------------------------
