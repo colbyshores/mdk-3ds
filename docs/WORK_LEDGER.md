@@ -2620,3 +2620,66 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Not tested on hardware:** toggling HD in the pause menu (the remake path;
   the harness's HDFLIP does not go through the menu), levels other than 3.
 - **Commit:** this one (ledger only).
+
+## 2026-11-26 -- the README and the build, for an end user with their own MDK (branch build/docs)
+
+- **What:**
+  - `README.md` rewritten for the C++ port (it still described the C# port): what the port is,
+    the prerequisites in one place, the 3DS and Linux build steps, installing, the default
+    controls, the music, today's HD pack steps (marked as pending the C++ texture tool, which
+    is being written on `build/hd-pack-native`; `build_hd_pack.sh` was not touched), tests,
+    layout. Upstream credit (nautilusbits/mdk-sdl, mdk-godot), contributors and licence kept.
+    The Legal section now says that `mdk_3ds/music/` is the exception to "no game data here".
+  - `tools/check_prereqs.sh 3ds|linux`: one line per missing item, exit 1. `make -C mdk_3ds`
+    runs it (order-only `prereqs`) before compiling, so a missing package or missing game data
+    fails in the first second, not after the compile.
+  - `stage_romfs.sh`: no game data, a failed Kurt conversion or a failed arena conversion now
+    stop the build (before: a warning and a degraded `.3dsx`). `MDK_ARENA_ETC1=0` /
+    `MDK_KURT_ETC1=0` still skip a conversion on purpose. Without `mdk_3ds/music` the music is
+    converted from the user's own data (`music_dsp_convert.py <data> <data> build-music/`,
+    host compiler via `HOST_CC`, since the 3DS Makefile exports `CC=arm-none-eabi-gcc`).
+  - `MDK` was committed as a symlink to `/mnt/nas/Development/mdk-sdl/MDK` (0fec7245): untracked
+    (the owner's data folder untouched); `.gitignore` `/MDK/` -> `/MDK`, which also matches a
+    symlink.
+  - `mdk_linux/third_party/{vulkan,volk}` were also committed as absolute symlinks into the
+    owner's checkout, so a fresh clone could not configure: the pinned copies (VK_HEADER_VERSION
+    360, volk 360, with their licences; 2 MB) are now committed, as the third_party README
+    always said. The stale `.gitignore` lines (a `fetch_third_party.sh` that does not exist) went.
+- **Why:** owner, 2026-11-26: "update the documentation and build process, update the readme
+  accordingly"; the goal was a fresh clone that builds end to end from the README.
+- **Evidence (fresh clone of this branch into the scratchpad, /tmp, a different filesystem from
+  the data, so the RomFS is copied, not hard-linked; data given only as `MDK_DATA_DIR`):**
+  - Without data: `make -C mdk_3ds` stops at `prereqs` with `MISSING: game data: no <clone>/MDK`.
+  - `make -C mdk_3ds -j16`: 887 s wall at nice 19 on a machine at load average 20-140 (other
+    agents), 0 compiler warnings; `mdk.3dsx` 234,688,932 B; 1,030 arena images + 10 sky slices,
+    455 Kurt frames, 0 failed; 50 music tracks.
+  - `cmake -S mdk_linux -B build-linux && cmake --build build-linux -j16`: 2.3 s + 81.7 s,
+    0 warnings. `build-linux/mdk` on `DISPLAY=:99` (Xvfb, lavapipe) reached the main menu and
+    ran 660 frames until the 25 s timeout.
+  - Music absent (`mdk_3ds/music` moved aside): rebuild 46.5 s, 47 tracks (23 MB), `.3dsx`
+    188,206,836 B. Every generated track is byte-identical to a standalone run; the 11 tracks
+    the committed set took from the original data are byte-identical to the committed files;
+    the other 36 differ (the committed ones are the fan soundtrack), and the soundtrack's 3
+    extra names (level 3 AMB_DRIP, H9WATER; level 7 TRACK12) are absent.
+  - Failure paths: `TEX3DS=/nonexistent` with an empty work dir stops at Kurt (and with
+    `MDK_KURT_ETC1=0`, at the arenas) with `stage_romfs: ERROR: ...` and make exit 2; both
+    opt-outs together stage 117 files and exit 0; a missing host C compiler with no
+    `mdk_3ds/music` stops at `prereqs`.
+  - In the fresh clone: `make -C tests/formats` 200,624 checks, 0 failures;
+    `make -C tests/scripts test` exit 0, 996 PASS, 0 FAIL, 4 SKIP (the frame gate's oracle
+    arms: no oracle frames in /tmp/mdk-frame-reference), 2,913 s under load.
+    In the worktree: `tools/check.sh` ALL GATES PASSED (smdh and frames SKIP: no .cia, no
+    Linux binary there).
+- **Not verified:** the `.3dsx` was not run (no console and no emulator in this task), neither
+  with the committed music nor with the generated music; the `.cia` path; the HD pack steps
+  (documented from the script, not run); `dkp-pacman -S 3ds-dev 3ds-zlib` on a clean machine
+  (the package list is from `pacman -Q` here); SDL3 from a distribution package.
+- **What it would take to drop the committed music** (owner's decision; nothing deleted, no
+  history rewritten): the build already generates the original-data set when the folder is
+  absent, so it is `git rm -r mdk_3ds/music` plus the README sentence. The cost to players: the
+  fan soundtrack (36 replaced tracks, 3 extra) is gone unless they supply it themselves --
+  `music_dsp_convert.py <soundtrack> <data> <out>` already takes it as its first argument, and a
+  `MDK_SOUNDTRACK_DIR` hook in `stage_romfs.sh` would be one line. ffmpeg with libsoxr becomes a
+  build prerequisite. The files stay in the public fork's history either way; removing them
+  from history is a separate, destructive decision.
+- **Commit:** this branch.

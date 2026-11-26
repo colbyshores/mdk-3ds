@@ -24,8 +24,9 @@ The port is a work in progress.
 
 ## Prerequisites
 
-Linux (the build is tested on Ubuntu 24.04, x86-64). Nothing here needs root except the
-system packages.
+Linux, x86-64. The steps below were checked from a fresh clone on Pop!_OS 24.04 (an Ubuntu
+24.04 derivative) with g++ 13, CMake 3.28, Python 3.13, SDL 3.5 (built from source) and
+devkitARM r67. Nothing here needs root except installing packages.
 
 **For both builds**
 
@@ -67,8 +68,8 @@ make -C mdk_3ds -j"$(nproc)"
 Instead of `MDK_DATA_DIR` you can copy or link your MDK folder to `MDK` in the clone
 (`ln -s /path/to/MDK MDK`).
 
-The result is `mdk_3ds/mdk.3dsx` (about 120 MB). The first build takes a few minutes; most of it
-is converting the game's textures for the 3DS (into `build-arena-etc1/` and `build-kurt-etc1/`,
+The result is `mdk_3ds/mdk.3dsx` (about 235 MB with the committed music). The first build takes
+10 to 15 minutes; most of it is converting the game's textures for the 3DS (into `build-arena-etc1/` and `build-kurt-etc1/`,
 which `make clean` keeps, so later builds only convert what changed).
 
 The build stops with an error, instead of making a broken `.3dsx`, when a prerequisite or the
