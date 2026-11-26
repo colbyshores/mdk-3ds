@@ -2999,3 +2999,35 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
 - **Evidence:** the same CMEAT_3 ride, 640x480: at frame 480 the board was half hidden with
   the 8-corner pull and is whole now; Linux and 3DS builds 0 warnings; tick1 all cases match;
   `tools/check.sh` ALL GATES PASSED. Not run on the console.
+
+### The rest of the presentation list: already present, not applicable, not done
+- **bf9b3a53 (an intro splash too short for its palettes): already present.**
+  `IntroSplash` already refuses an INTRO1A entry shorter than the two 768-byte palettes
+  (`intro_splash.cpp`, `entry->size < kPaletteSize * 2`), as the splash that is missing.
+- **8c6c24cd (fill the loading bar as the level loads):** the 3DS is `fix/3ds-load-bar`'s
+  (e31d6f50, a11edd8b: the screen kept through the load, drawn at its steps and through the HD
+  hold, the steps' fractions from a measured level 4 load; upstream redraws at most every
+  100 ms from per-part fractions measured on a desktop). Not duplicated here. **Linux: not
+  done** -- a whole `--level=3/8 --frames 1` run, Vulkan start included, takes 0.8 s wall on
+  this machine, so a moving bar has nothing to show.
+- **bbd2fddb (the insets in both eyes): not applicable as written.** Upstream cleared the inset
+  list after the first eye. Linux clears it at the frame's start, but a stereo frame there
+  draws no insets at all (a stated refusal in `renderInsets`: a pre-existing gap, not this
+  bug). The 3DS's round-camera insets are `fix/3ds-bullet-cam`'s (f7e03bfb, once per eye).
+- **bb39a854 (2D screens whole on non-4:3 displays; the vertical field of view widened below
+  4:3) and 7e61858f (the fall's ground and haze on a near-square screen): not applicable.**
+  The 3DS's top screen is 5:3 (wider than 4:3: unchanged upstream) and the Linux window is
+  4:3 (1280x960; only `--true-aspect` captures change it). The safe-area half is Android's.
+- **e1eb36bb (the camera's arena over the other one): not done, for the owner.** Upstream
+  splits the depth range into two bands (the camera's arena, its objects and effects, Kurt and
+  the board in front; the other drawn arena behind), set per draw as the viewport's depth
+  range, and maps the enhanced look's screen passes' depth back. Here that means a band on
+  every queued draw in both backends, the 3DS queue not folding draws across bands, its depth
+  map (or MVP) per band, the Linux enhanced passes (occlusion, haze, shadows) remapped, and
+  half the depth precision for every draw on the 3DS. The case it fixes is LEVEL4's snowboard
+  ride end (MEAT_3's shell over CMEAT_1's floor). Owner decision: worth that, or a narrower fix
+  for that spot.
+- **25a11c52 (the version in the main menu's corner): not done -- a feature.** This port has
+  no version string; it needs build plumbing (a version from git into both builds) first.
+- **a73a5cd2's step half and c881c9bc:** see their entries (the port does not blend Kurt or
+  the follow camera between steps).
