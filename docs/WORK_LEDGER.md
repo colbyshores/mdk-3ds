@@ -2665,3 +2665,42 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Not verified here:** Mandarine (other projects' instances were running; one
   instance max). Hardware: see the follow-up entry.
 - **Commit:** this one.
+
+### The decal depth pull on the Old 3DS appliance (hardware follow-up, INCOMPLETE)
+- **What:** A/B of ad997c4f against its base 3f59a93a on `old3ds-lan167` (CFGU
+  model 0, 268 MHz, L2 off, stereo on), harness 3fe09fde cherry-picked on
+  `throwaway/decal-zfight-hw` plus the AT/ARENA/GOD/NOCLIP start aids ported
+  from `harness/3ds-profiling` (the main-based harness lacked them), scene
+  `LEVEL=7 ARENA=DANT_7 AT=520,4420,-110,90 GOD=1 NOCLIP=1 AUTOQUIT=90`
+  (the room under DANT_7's ceiling tube lights; Linux view of the same spot:
+  `--level=7 --arena=DANT_7 --at=520,4420,-110,90`). This harness has no
+  framebuffer capture, so the pictures were to be ATM screenshots.
+- **What happened:**
+  - First pass: AT/ARENA were not wired on this harness, so Kurt started in
+    DANT_1 (`.git/worktrees/decal-zfight/hw-logs/first-try-no-AT/`).
+  - Second pass: Kurt was teleported, but without noclip he fell through the
+    unloaded floor. Both builds ran 90 s cleanly (FRESH, 5294 frames each), but
+    the screenshots show an empty void (`second-try-fell/`). The profiles of that
+    pass (steady 16.884 ms vs 16.890 ms, both vsync-bound) therefore measure no
+    layered draws. They are NOT the cost of the fix.
+  - Third pass, with noclip: the base build ran FRESH (Kurt held at the spot,
+    `hw-before-shot.session.log`). During the fix build's run (pushed 13:22,
+    verified `bytes_out=234688444`) the console stopped answering HTTP, and by
+    13:54 it was ARP-dead (`hw-after-shot.cycle.txt`: 48 failed pulls). The next
+    lock holder (bullet-cam) found it ARP-dead too and did not push. Trap 8 was
+    followed once: directed discovers for 2 min, no answer, ping dead. It needs
+    physical power. It is NOT established whether the fix build caused this.
+    Its run log is on the card (`sdmc:/3ds/mdk/mdk.log` or `mdk.prev.log`), and
+    so are the six screenshot sets (`shot_0000000d`-`0f` before, the next three
+    after, per `atm.log`). Pull those before anything else touches the console.
+  - The ATM screenshot quota was exhausted by stale sets at the start. They were
+    retrieved to `.git/mdk-review/atm-retrieved-2026-11-26/` and purged; the
+    purge deleted 32 sets, about 18 of them beyond the truncated listing and not
+    retrieved (README there).
+- **Still owed:** the before/after look in DANT_7 on hardware, the frame cost
+  with the decals in view, and an answer on the hang. Next step: power the
+  console, pull `mdk.log`/`mdk.prev.log` and the shot sets, and rerun
+  `after-shot.3dsx` and `after-profile.3dsx` (kept in hw-logs).
+  Mandarine: not run, because other projects' instances held the
+  one-instance limit all session.
+- **Commit:** this one (ledger only).
