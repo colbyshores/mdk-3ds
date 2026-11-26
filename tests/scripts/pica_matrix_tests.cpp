@@ -113,6 +113,32 @@ bool allEqual(const float* a, const float* b, int n) {
     return true;
 }
 
+// SHADOW REFRESH: 120 presentations, each `vblanks[i % n]` vblanks long, the
+// clock read up to `jitter` ticks either side of the vblank (alternating), the
+// helper asked once a presentation as prepareShadows asks it. Returns the casts
+// and writes the largest gap between two casts in presentations.
+int shadowCasts(int32_t setting, const int* vblanks, int n, int64_t jitter, int* widest) {
+    const int64_t vblank = 4481145;   // 268111856 / 59.831
+    int64_t clock = 0;
+    int castFrame = -1000;
+    int64_t castTick = 0;
+    int casts = 0;
+    *widest = 0;
+    for (int frame = 0; frame < 120; frame++) {
+        const int64_t now = clock + ((frame & 1) ? jitter : -jitter) + 10 * vblank;
+        if (mdk::pica::shadowRefreshDue(setting, frame - castFrame, (uint64_t)(now - castTick))) {
+            if (casts > 0 && frame - castFrame > *widest) {
+                *widest = frame - castFrame;
+            }
+            castFrame = frame;
+            castTick = now;
+            casts++;
+        }
+        clock += vblank * vblanks[frame % n];
+    }
+    return casts;
+}
+
 bool allNear(const float* a, const float* b, int n, float tol) {
     for (int i = 0; i < n; i++) {
         const float d = a[i] > b[i] ? a[i] - b[i] : b[i] - a[i];
@@ -2346,6 +2372,37 @@ void testTheSunsShadow() {
     }
 
     // --- the guards: the PC's, scaled to the map's texel ---
+    // --- SHADOW REFRESH: AUTO is about 15 Hz, manual 1-4 is every N presentations ---
+    {
+        const int at60[1] = {1};
+        const int at30[1] = {2};
+        const int at20[1] = {3};
+        const int wobble[2] = {1, 2};          // 40 fps, across the boundary
+        const int hitch[4] = {1, 1, 1, 6};     // 60 fps with a long frame
+        int widest = 0;
+        // 60 fps: every 4th (120 / 4), with the clock read 2 ms early or late.
+        PICA_CHECK(shadowCasts(0, at60, 1, 0, &widest) == 30 && widest == 4);
+        PICA_CHECK(shadowCasts(0, at60, 1, 536000, &widest) == 30 && widest == 4);
+        // 30 fps (the cap, or an Old 3DS uncapped): every 2nd, as AUTO always was.
+        PICA_CHECK(shadowCasts(0, at30, 1, 0, &widest) == 60 && widest == 2);
+        PICA_CHECK(shadowCasts(0, at30, 1, 536000, &widest) == 60 && widest == 2);
+        // Slower than 30: never rarer than every 2nd presentation.
+        PICA_CHECK(shadowCasts(0, at20, 1, 0, &widest) == 60 && widest == 2);
+        // Wandering between 60 and 30: about 15 Hz, never two presentations apart.
+        PICA_CHECK(shadowCasts(0, wobble, 2, 0, &widest) == 40 && widest == 3);
+        // A long frame now and then at 60: still never more than 4 presentations apart.
+        PICA_CHECK(shadowCasts(0, hitch, 4, 0, &widest) == 30 && widest == 4);
+        // Manual 1-4: every that many presentations whatever the frame rate.
+        for (int every = 1; every <= 4; every++) {
+            PICA_CHECK(shadowCasts(every, at60, 1, 0, &widest) == 120 / every && widest == every);
+            PICA_CHECK(shadowCasts(every, at30, 1, 0, &widest) == 120 / every && widest == every);
+        }
+        // The edges: 3 vblanks are not enough, 4 are; one presentation never is.
+        PICA_CHECK(!mdk::pica::shadowRefreshDue(0, 3, 3u * 4481145u));
+        PICA_CHECK(mdk::pica::shadowRefreshDue(0, 4, 4u * 4481145u));
+        PICA_CHECK(!mdk::pica::shadowRefreshDue(0, 1, 100u * 4481145u));
+        PICA_CHECK(mdk::pica::shadowRefreshDue(0, 1000, 0x7FFFFFFFFFFFull));
+    }
     PICA_CHECK(mdk::pica::sunShadowNormalOffset(mdk::pica::kSunShadowPcMapSize) == 0.5f);
     PICA_CHECK(mdk::pica::sunShadowNormalOffset(512) == 2.0f);
     PICA_CHECK(mdk::pica::sunShadowNormalOffset(256) == 4.0f);

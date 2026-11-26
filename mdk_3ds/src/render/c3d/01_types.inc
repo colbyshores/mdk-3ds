@@ -847,6 +847,7 @@ struct RendererC3D {
     bool shadowRecast = false;      // this frame redraws the map (prepareShadows)
     bool shadowMapFresh = false;    // the map was (re)made and holds nothing yet
     int shadowCastFrame = -1000;    // the frame it was last drawn
+    uint64_t shadowCastTick = 0;    // ... and the system tick then (AUTO's clock)
     float shadowCastCentre[3] = {0.0f, 0.0f, 0.0f};
     float shadowCastSun[3] = {0.0f, 0.0f, 0.0f};
     // The rest of what the map was cast for: the reach, and the rig's sky and
