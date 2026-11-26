@@ -36,12 +36,13 @@ namespace solids {
 // through) -- C# Solids.Footing.
 enum Footing { kWall, kPlatform, kFloor };
 
-// C# Solids.Solid: a part's box in the world, its object, and whether Kurt may
-// stand on it.
+// C# Solids.Solid: a part's box in the world, its object, whether Kurt may stand on
+// it, and the part (its triangles are what Kurt stands on, upstream e1fde558).
 struct Solid {
     formats::Box box;
     scripts::MdkObject* owner;
     Footing footing;
+    int part = 0;
 };
 
 // C# Solids.PlatformReach: a ray from 3 above the feet to 3 below finds the platform.
@@ -52,8 +53,10 @@ const float kPlatformReach = 3.0f;
 // false when no box was hit. Boxes Kurt is already inside are ignored.
 bool walk(Vec a, Vec b, Vec half, const std::vector<Solid>& solids, Vec* end);
 
-// C# Solids.Platform: the top of the highest platform under the feet, within
-// reach of the ray from 3 above to `bottom` (at least 3 below). False for none.
+// C# Solids.Platform: the highest platform surface under the feet, met by the ray
+// from 3 above to `bottom` (at least 3 below): the part's posed triangles
+// (damp_platform_floor 0x41d2c4 casts at them, 0x414668; upstream e1fde558), or the
+// box's top for an owner without a model. False for none.
 bool platform(Vec feet, float bottom, const std::vector<Solid>& solids, float* top,
               scripts::MdkObject** owner);
 

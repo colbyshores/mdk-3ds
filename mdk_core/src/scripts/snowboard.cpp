@@ -407,7 +407,14 @@ void Snowboard::followPath(const Vec3& previous, float dt) {
         }
     }
 
+    // Upstream e1fde558 (C# 1.2.6): a board stuck where the path time cannot move on
+    // (against a wall beside the path) is nudged towards the path ahead too.
+    const float moved = length2(kurt_.feet.x - previous.x, kurt_.feet.y - previous.y);
+    const bool stuck = speed_ >= kSlow && dt > 0.0f && moved / dt < kUnstickSpeed;
     if (t == start) {
+        if (stuck) {
+            nudge(pathPoint(t + kPathAhead), kurtX, kurtY);
+        }
         return;
     }
 
@@ -420,15 +427,22 @@ void Snowboard::followPath(const Vec3& previous, float dt) {
      * bit; it steers the board (gameplay), once per step (cold). measured n/a (corpus
      * empty). Verified 2026-11-20. */
     pathHeading_ = radiansToDegrees(atan2f(ahead.y - here.y, ahead.x - here.x));
-    const float moved = length2(kurt_.feet.x - previous.x, kurt_.feet.y - previous.y);
-    if (speed_ >= kSlow && dt > 0.0f && moved / dt < kUnstickSpeed) {
-        // Vector2.Normalize(here - kurt) * UnstickStep: v / v.Length(), then the step.
-        const float nx = here.x - kurtX;
-        const float ny = here.y - kurtY;
-        const float n = length2(nx, ny);
-        kurt_.feet = Vec3{kurt_.feet.x + nx / n * kUnstickStep, kurt_.feet.y + ny / n * kUnstickStep,
-                          kurt_.feet.z + 0.0f};
+    if (stuck) {
+        nudge(here, kurtX, kurtY);
     }
+}
+
+// C# Snowboard.Nudge (upstream e1fde558): a stuck Kurt a step towards `to` from where he
+// was at the step's start (kurtX, kurtY): Vector2.Normalize(way) * UnstickStep.
+void Snowboard::nudge(const Vec3& to, float kurtX, float kurtY) {
+    const float nx = to.x - kurtX;
+    const float ny = to.y - kurtY;
+    if (nx == 0.0f && ny == 0.0f) {
+        return;
+    }
+    const float n = length2(nx, ny);
+    kurt_.feet = Vec3{kurt_.feet.x + nx / n * kUnstickStep, kurt_.feet.y + ny / n * kUnstickStep,
+                      kurt_.feet.z + 0.0f};
 }
 
 Vec3 Snowboard::pathPoint(float t) {

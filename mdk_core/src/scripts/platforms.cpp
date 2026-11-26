@@ -115,6 +115,7 @@ const std::vector<solids::Solid>& ScriptRuntime::solidsWithin(const formats::Box
             solid.box = worldBounds(obj, parts[i].box);
             solid.owner = obj;
             solid.footing = footing;
+            solid.part = (int)i;
             solidsWithin_.push_back(solid);
         }
     }

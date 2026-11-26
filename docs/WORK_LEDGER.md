@@ -3045,3 +3045,15 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     `Player::facing` scratch build equals the oracle). Upstream's companion 84ad71e4
     (stretch a spawn_box sprite over its box, so a bone draws 9x6, not 9x5) is a drawing
     change and is left to the presentation work.
+  - **e1fde558, stand Kurt on platforms' triangles, not boxes.** `solids::platform` takes
+    the part's posed triangles under the feet (`MdkObject::floorAt`: the segment in model
+    space against the part's triangles, either side, Moller-Trumbore as the C# writes it;
+    damp_platform_floor 0x41d2c4 casts at them, 0x414668); a box only selects the
+    candidates, and `Solid` carries its part. On LEVEL3's hover ship XGS Kurt stood level
+    with the fins, 2.6 above the deck. The same commit nudges a snowboard stuck where the
+    path time cannot advance towards the path ahead (`Snowboard::nudge`). Eight goldens
+    moved; seven equal the oracle at e1fde558 byte for byte (`L3_plat_keeper`,
+    `L7_plat_tank`, `L6_plat_gun`, `L4_board_off` -- which matches the oracle again --,
+    `L4_board_lost`, `L4_board_dead`, `L4_board_end`). `L4_board_ride` takes the C++'s
+    output: one line, the follow camera's z one 1/64 apart at a yaw of 159.1 (the view's
+    trig LUT; the feet and every other column equal the oracle).

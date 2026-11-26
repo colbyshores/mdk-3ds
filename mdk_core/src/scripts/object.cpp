@@ -6,6 +6,7 @@
 #include "formats/model.h"
 #include "game/frame_blend.h"
 #include "scripts/script_runtime.h"
+#include "util/system_numerics_inverse.h"
 
 // The pose caches are NOT here. They are in scripts/pose_cache.cpp, which is
 // the translation unit whose header the game layer is allowed to call; see that
@@ -304,6 +305,64 @@ mdk::Vec3 mdk::scripts::MdkObject::partCenter(int index) const {
     float s = sinf(radians);
     return Vec3{position.x + (centreX * c - centreY * s),
                 position.y + (centreX * s + centreY * c), position.z + centreZ};
+}
+
+// Where (0..1) the segment a -> a + ab crosses the triangle, either side (Moller-Trumbore,
+// as the C#'s MdkObject.Crossing writes it: each term divided by the determinant).
+static bool segmentCrossing(const mdk::Vec3& a, const mdk::Vec3& ab, const mdk::formats::Vec3f& v0,
+                            const mdk::formats::Vec3f& v1, const mdk::formats::Vec3f& v2,
+                            float* t) {
+    const mdk::Vec3 e1{v1.x - v0.x, v1.y - v0.y, v1.z - v0.z};
+    const mdk::Vec3 e2{v2.x - v0.x, v2.y - v0.y, v2.z - v0.z};
+    const mdk::Vec3 p{ab.y * e2.z - ab.z * e2.y, ab.z * e2.x - ab.x * e2.z, ab.x * e2.y - ab.y * e2.x};
+    const float det = e1.x * p.x + e1.y * p.y + e1.z * p.z;
+    if (std::fabs(det) < 1e-9f) {
+        return false;
+    }
+    const mdk::Vec3 s{a.x - v0.x, a.y - v0.y, a.z - v0.z};
+    const float u = (s.x * p.x + s.y * p.y + s.z * p.z) / det;
+    const mdk::Vec3 q{s.y * e1.z - s.z * e1.y, s.z * e1.x - s.x * e1.z, s.x * e1.y - s.y * e1.x};
+    const float v = (ab.x * q.x + ab.y * q.y + ab.z * q.z) / det;
+    const float hit = (e2.x * q.x + e2.y * q.y + e2.z * q.z) / det;
+    if (u < 0.0f || v < 0.0f || u + v > 1.0f || hit < 0.0f || hit > 1.0f) {
+        return false;
+    }
+    *t = hit;
+    return true;
+}
+
+bool mdk::scripts::MdkObject::floorAt(int part, const Vec3& from, const Vec3& to, float* z) const {
+    const std::vector<std::vector<mdk::formats::Vec3f> >& pose = pose_parts();
+    if (part < 0 || static_cast<size_t>(part) >= pose.size()) {
+        return false;
+    }
+    const mdk::Mat4 world = transform();
+    float inverse[16];
+    if (!invertSystemNumericsMatrix4(world.m, inverse)) {
+        return false;
+    }
+    const mdk::Vec3 a = transformByMatrix(from.x, from.y, from.z, inverse);
+    const mdk::Vec3 b = transformByMatrix(to.x, to.y, to.z, inverse);
+    const mdk::Vec3 ab{b.x - a.x, b.y - a.y, b.z - a.z};
+    const std::vector<mdk::formats::Vec3f>& vertices = pose[static_cast<size_t>(part)];
+    const std::vector<int32_t>& indices = model->partList[static_cast<size_t>(part)].triangleIndices;
+    bool found = false;
+    float nearest = 0.0f;
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        float t = 0.0f;
+        if (segmentCrossing(a, ab, vertices[(size_t)indices[i]], vertices[(size_t)indices[i + 1]],
+                            vertices[(size_t)indices[i + 2]], &t) &&
+            (!found || t < nearest)) {
+            nearest = t;
+            found = true;
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    *z = transformByMatrix(a.x + ab.x * nearest, a.y + ab.y * nearest, a.z + ab.z * nearest,
+                           world.m).z;
+    return true;
 }
 
 int32_t mdk::scripts::MdkObject::findPart(const std::string& name) const {

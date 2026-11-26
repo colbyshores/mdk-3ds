@@ -297,6 +297,10 @@ struct MdkObject {
     // the part's vertices in the current pose, through transform() (upstream 3005da70);
     // the rest-pose part box's mean, scaled and turned by yaw, when it has no vertices.
     Vec3 partCenter(int index) const;
+    // Where the segment `from` -> `to` (world) first meets the part's posed triangles,
+    // either side: its world z in `*z` (the C#'s ISurface.Floor, 0x414668 in model
+    // space; upstream e1fde558). False when it meets none.
+    bool floorAt(int part, const Vec3& from, const Vec3& to, float* z) const;
     // The first part with this name, case-insensitively (the C#'s FindPart); -1.
     int32_t findPart(const std::string& name) const;
 

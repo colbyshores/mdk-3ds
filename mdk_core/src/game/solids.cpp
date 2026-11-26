@@ -5,6 +5,8 @@
 
 #include "game/solids.h"
 
+#include "scripts/object.h"
+
 namespace mdk {
 namespace solids {
 
@@ -110,8 +112,8 @@ bool walk(Vec a, Vec b, Vec half, const std::vector<Solid>& solids, Vec* endOut)
 
 bool platform(Vec feet, float bottom, const std::vector<Solid>& solids, float* top,
               scripts::MdkObject** owner) {
-    // C# Solids.Platform (Solids.cs:67-85): the highest box top inside the ray, ties
-    // to the first (`b.Top >= box.Max.Z` skips an equal one).
+    // C# Solids.Platform (1.2.6): the highest surface the ray meets, ties to the first
+    // (`b.Top >= z` skips an equal one). The box only selects the candidates.
     bool have = false;
     float bestTop = 0.0f;
     scripts::MdkObject* bestOwner = nullptr;
@@ -121,12 +123,26 @@ bool platform(Vec feet, float bottom, const std::vector<Solid>& solids, float* t
         const Solid& solid = solids[i];
         const formats::Box& box = solid.box;
         if (solid.footing == kWall || feet.x < box.min.x || feet.x > box.max.x ||
-            feet.y < box.min.y || feet.y > box.max.y || box.max.z > from || box.max.z < to ||
-            (have && bestTop >= box.max.z)) {
+            feet.y < box.min.y || feet.y > box.max.y || box.min.z > from || box.max.z < to) {
+            continue;
+        }
+        // C# Solids.Surface: the part's triangles, or the box's top.
+        float z = 0.0f;
+        if (solid.owner != nullptr && solid.owner->model != nullptr) {
+            if (!solid.owner->floorAt(solid.part, Vec3{feet.x, feet.y, from},
+                                      Vec3{feet.x, feet.y, to}, &z)) {
+                continue;
+            }
+        } else if (box.max.z <= from) {
+            z = box.max.z;
+        } else {
+            continue;
+        }
+        if (z < to || (have && bestTop >= z)) {
             continue;
         }
         have = true;
-        bestTop = box.max.z;
+        bestTop = z;
         bestOwner = solid.owner;
     }
     if (have) {
