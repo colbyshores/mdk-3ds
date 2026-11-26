@@ -1031,12 +1031,19 @@ public:
     // the OOT_L message and the global flag); the C# never raises GameOver for it,
     // so a flattened town does not end the game.
     int32_t townTicks = 0;
+    // C# TownTimeLeft (upstream 235b1792): the time left for the town, townTicks
+    // over the whole time it started with; 1 without a town (the last level). The
+    // HUD's timer ring empties by it.
+    float townTimeLeft() const { return townTotal_ == 0 ? 1.0f : (float)townTicks / (float)townTotal_; }
     // (C# AirStrike.UsedUp is airStrike().usedUp since package #14; a save carries it.)
     // The arenas' states in the order they were made (the C#'s Dictionary order,
     // which the save follows; arenas_ is a map and sorts).
     const std::vector<std::string>& arenaOrder() const { return arenaOrder_; }
 
 private:
+    // The town's whole time (C# _townTotal), townTimeLeft's denominator; 0
+    // without a town.
+    int32_t townTotal_ = 0;
     // FindConnections (ScriptRuntime.cs:856): pair the DTI type-6 connection
     // records of every arena by their id, so (arena, id) names the arena on the
     // other side of that doorway. Called once from the constructor, as the C# does.

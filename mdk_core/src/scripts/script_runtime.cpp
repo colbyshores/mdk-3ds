@@ -373,6 +373,7 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
         const int32_t difficulty = player_ != nullptr ? (int32_t)player_->combat().difficulty()
                                                       : (int32_t)Kurt::Normal;
         townTicks = kTownTicksByDifficulty[difficulty];
+        townTotal_ = townTicks;
     }
 }
 

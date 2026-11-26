@@ -12,6 +12,7 @@
 #include "formats/texture.h"
 #include "game/font_view.h"
 #include "game/mod_images.h"
+#include "util/math_lut.h"
 
 namespace mdk {
 
@@ -57,6 +58,110 @@ float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+// ---- The mission timer's ring (upstream 235b1792; C# TimerRing, 0x420cb0, 0x420d88) ----
+//
+// The time gone, as an angle counter-clockwise from the right, stamps the empty
+// panel's pixels (SC_BSTAT, its black ring) over the panel's from the centre
+// outwards. Each half of the panel is a fan of rows from its centre row, the
+// upper one for angles up to pi, the lower mirrored.
+//
+//        pi/2
+//    +----+----+
+//  pi+    o    +0   time gone 0 -> 2pi: empties anticlockwise from the right
+//    +----+----+
+//        3pi/2
+//
+// Cold: it runs once per degree of the town's time (a mission is minutes long).
+
+const float kPi = 3.14159265f;
+const float kTau = 6.28318531f;
+// The split at pi (0x420d5a: 0x40490fb1, just below it, for the upper half).
+const float kUpperEnd = 3.141582f;
+const int32_t kFixed = 16;
+// Slopes: near pi/2 a row goes straight up; near 0 or pi, a whole width a row.
+const float kNearUpLow = 1.570482f;
+const float kNearUpHigh = 1.571110f;
+const float kNearZero = 3.14159e-5f;
+const float kNearPi = 3.141561f;
+// The ring is stamped again once the time gone has moved this far (a degree).
+const float kTimerStep = kPi / 180.0f;
+
+// x moved per row, 16.16 (truncated, like the original's FPU setting).
+int32_t ringSlope(float angle, int32_t width) {
+    if (angle >= kNearUpLow && angle <= kNearUpHigh) {
+        return 0;
+    }
+    if (angle < kNearZero) {
+        return width << kFixed;
+    }
+    if (angle > kNearPi) {
+        return -(width << kFixed);
+    }
+    // The cotangent through the trig table (AGENTS.md R6: one path on both
+    // targets; the C#'s MathF.Tan differs in the last bits, which the 16.16
+    // truncation all but always hides).
+    // A slope past a whole width a row ends the fan in one row either way, so it
+    // is clamped there: the table's sine near 0 or pi cannot overflow the cast.
+    const float sine = fastSin(angle);
+    const float most = (float)(width << kFixed);
+    if (sine == 0.0f) {
+        return fastCos(angle) > 0.0f ? width << kFixed : -(width << kFixed);
+    }
+    const float slope = (float)(1 << kFixed) * fastCos(angle) / sine;
+    return (int32_t)(slope > most ? most : (slope < -most ? -most : slope));
+}
+
+// The rows between angles `high` and `low` of one half (0x420d88): every other
+// row from the centre, x moving by the cotangent per row.
+void ringFan(uint8_t* panel, const uint8_t* empty, int32_t width, int32_t height, float high, float low) {
+    int32_t row = -width;
+    // The lower half: the angles mirrored, rows going down.
+    if (high > kPi || low > kPi) {
+        const float mirroredHigh = kTau - low;
+        low = kTau - high;
+        high = mirroredHigh;
+        row = width;
+    }
+    const int32_t leftStep = ringSlope(high, width);
+    const int32_t rightStep = ringSlope(low, width);
+    const int32_t limit = width << kFixed;
+    int32_t left = (width >> 1) << kFixed;
+    int32_t right = left;
+    int32_t at = (height >> 1) * width;
+    for (int32_t y = 1; y < height; y += 2) {
+        left = left + leftStep > 0 ? left + leftStep : 0;
+        right += rightStep;
+        if (left >= limit || right < 0) {
+            return;
+        }
+        right = right < limit - 1 ? right : limit - 1;
+        for (int32_t x = left >> kFixed; x <= right >> kFixed; x++) {
+            const uint8_t pixel = empty[at + x];
+            if (pixel != 0) {
+                panel[at + x] = pixel;
+            }
+        }
+        at += row;
+    }
+}
+
+// Stamps the ring of `empty` into `panel` (indices of the same size) from angle
+// `from` to `to` (0x420cb0). The C# wraps both into 0-2pi with a loop; here they
+// are already in it (the time left is clamped), so they are clamped instead.
+void ringWipe(uint8_t* panel, const uint8_t* empty, int32_t width, int32_t height, float from, float to) {
+    from = clampf(from, 0.0f, kTau);
+    to = clampf(to, 0.0f, kTau);
+    if (from >= to) {
+        return;
+    }
+    if (to <= kPi || from >= kPi) {
+        ringFan(panel, empty, width, height, to, from);
+        return;
+    }
+    ringFan(panel, empty, width, height, kUpperEnd, from);
+    ringFan(panel, empty, width, height, to, kPi);
+}
+
 } // namespace
 
 bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
@@ -69,6 +174,19 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
     }
 
     loadImage(sprites, "SC_STAT", &panel_, palette);
+    // The timer's two panels, full and empty (the same size: the ring is stamped
+    // from one into the other); without SC_BSTAT the ring stays full.
+    formats::Texture full;
+    formats::Texture empty;
+    if (sprites.image("SC_STAT", &full) && sprites.image("SC_BSTAT", &empty) &&
+        full.width() == empty.width() && full.height() == empty.height()) {
+        panelWidth_ = full.width();
+        panelHeight_ = full.height();
+        const size_t size = (size_t)panelWidth_ * (size_t)panelHeight_;
+        fullPanel_.assign(full.indices(), full.indices() + size);
+        emptyPanel_.assign(empty.indices(), empty.indices() + size);
+        timerPanel_ = fullPanel_;
+    }
     loadImage(sprites, "SKULL", &skull_, palette);
     loadImage(sprites, "SNIP_TXT", &digits_, palette);
 
@@ -221,6 +339,7 @@ void HudView::draw(MdkRenderer renderer, const HudState& state) {
     // The health panel at the bottom right; the number blinks when health is low.
     const float panelX = canvasWidth - (panel_.w + kPanelRight);
     const float panelY = kCanvasHeight - (panel_.h + kPanelBottom);
+    updateTimer(state.timeLeft);
     drawImage(panel_, panelX, panelY, Colour{1.0f, 1.0f, 1.0f, 1.0f});
     if (state.health > kLowHealth || blink_ < kBlinkOn) {
         const float centreX = panelX + (float)((int32_t)panel_.w >> 1);
@@ -235,6 +354,26 @@ void HudView::draw(MdkRenderer renderer, const HudState& state) {
     if (big_ != nullptr && small_ != nullptr && big_->ready() && small_->ready()) {
         messages_.draw(renderer_, *big_, *small_, canvasWidth);
     }
+}
+
+void HudView::updateTimer(float timeLeft) {
+    // C# UpdateTimer: the time gone stamped in once it moved a degree. Less gone
+    // than stamped (a game loaded): the full ring again.
+    if (timerPanel_.empty() || panel_.texture < 0) {
+        return;
+    }
+    const float angle = (1.0f - timeLeft) * kTau;
+    if (angle < timerAngle_) {
+        timerPanel_ = fullPanel_;
+        timerAngle_ = 0.0f;
+        mdk_render_update_texture(renderer_, panel_.texture, panelWidth_, panelHeight_, timerPanel_.data());
+    }
+    if (angle <= timerAngle_ + kTimerStep) {
+        return;
+    }
+    ringWipe(timerPanel_.data(), emptyPanel_.data(), panelWidth_, panelHeight_, timerAngle_, angle);
+    timerAngle_ = angle;
+    mdk_render_update_texture(renderer_, panel_.texture, panelWidth_, panelHeight_, timerPanel_.data());
 }
 
 void HudView::drawImage(const Image& image, float x, float y, const Colour& tint) {

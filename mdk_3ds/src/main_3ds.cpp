@@ -2613,6 +2613,8 @@ int main(int argc, char** argv) {
                     const mdk::scripts::ScriptRuntime::BarValues bar = runtime->bar();
                     state.barHealth = bar.health;
                     state.barMax = bar.max;
+                    // The town's time left: the ring around the health (upstream 235b1792).
+                    state.timeLeft = runtime->townTimeLeft();
                     // The XE bomber's sight (Viewer.cs:914, Rides.Bomber?.Shown; package
                     // #11), drawn by HudView through the canvas path like the rest.
                     mdk::scripts::Bomber::Sight sight;

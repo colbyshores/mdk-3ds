@@ -64,6 +64,9 @@ struct HudState {
     float bomberCursorX = 0.0f;
     float bomberCursorY = 0.0f;
     int32_t bomberBombs = 0;
+    // C# HudState.TimeLeft (upstream 235b1792): the town's time left, 0-1
+    // (ScriptRuntime::townTimeLeft); the ring around the health empties by it.
+    float timeLeft = 1.0f;
 };
 
 class HudView {
@@ -125,6 +128,9 @@ private:
     void drawInventory(const HudState& state);
     void drawBar(int32_t health, int32_t max);
     void fillRect(float x, float y, float w, float h, const Colour& colour);
+    // The mission timer's ring (upstream 235b1792, 0x420830): the time gone is
+    // stamped into the panel once it has moved a degree.
+    void updateTimer(float timeLeft);
     void frameRect(float x, float y, float w, float h, const Colour& colour);
 
     MdkRenderer renderer_ = nullptr;
@@ -137,6 +143,14 @@ private:
     Colour barFill_ = {0.0f, 0.0f, 0.0f, 1.0f};
     Colour barFrame_ = {0.0f, 0.0f, 0.0f, 1.0f};
     int32_t blink_ = 0;
+    // The mission timer: SC_STAT's indices, SC_BSTAT's (the empty ring), the
+    // panel as drawn with the time gone stamped in up to timerAngle_ (radians).
+    std::vector<uint8_t> fullPanel_;
+    std::vector<uint8_t> emptyPanel_;
+    std::vector<uint8_t> timerPanel_;
+    int32_t panelWidth_ = 0;
+    int32_t panelHeight_ = 0;
+    float timerAngle_ = 0.0f;
     Messages messages_;
     SniperOverlay sniper_;
     BomberOverlay bomber_;
