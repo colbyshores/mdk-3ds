@@ -290,8 +290,9 @@ struct MdkObject {
     // itself when the model has no such point (index out of range). Used by the
     // attach motion (command 74) to hang a chute on its leader.
     Vec3 reference_point(int index) const;
-    // World position of the centre of a model part at rest (the C#'s PartCenter):
-    // the part box's mean, scaled and rotated about Z by yaw, at the position.
+    // World position of the centre of a model part (the C#'s PartCenter): the box of
+    // the part's vertices in the current pose, through transform() (upstream 3005da70);
+    // the rest-pose part box's mean, scaled and turned by yaw, when it has no vertices.
     Vec3 partCenter(int index) const;
     // The first part with this name, case-insensitively (the C#'s FindPart); -1.
     int32_t findPart(const std::string& name) const;
@@ -308,8 +309,7 @@ struct MdkObject {
     // Animation, pose_bounds(), sound_position(), distance_to(), part_center(),
     // and yaw_to() are implemented in ScriptRuntime, SoundMixer, or this class.
     // sound_position() and distance_to() are inlined/owned elsewhere, not members
-    // here. part_center() (rest-pose box centre) is not part_bounds()/pose_bounds()
-    // (current-pose boxes).
+    // here.
 
   private:
     // The C#'s RotationOf(roll, pitch, yaw): the same matrix rotation() builds,

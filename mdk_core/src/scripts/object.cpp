@@ -240,10 +240,40 @@ mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
     return Vec3{position.x + (x * c - y * s), position.y + (x * s + y * c), position.z + z};
 }
 
+// Vector3.Transform(position, matrix) as .NET computes it: row X times x, then Y and Z
+// fused in, then W (the same as sniper_rounds.cpp's transformPoint).
+static mdk::Vec3 transformByMatrix(float x, float y, float z, const float m[16]) {
+    return mdk::Vec3{std::fma(z, m[8], std::fma(y, m[4], x * m[0])) + m[12],
+                     std::fma(z, m[9], std::fma(y, m[5], x * m[1])) + m[13],
+                     std::fma(z, m[10], std::fma(y, m[6], x * m[2])) + m[14]};
+}
+
 mdk::Vec3 mdk::scripts::MdkObject::partCenter(int index) const {
     if (index < 0 || model == nullptr ||
         static_cast<size_t>(index) >= model->partList.size()) {
         return position;
+    }
+    // Upstream 3005da70 (C# 1.2.0): the centre of the part as drawn, in the current pose
+    // through the object's transform. The rest pose can leave an animated part far from
+    // where it is drawn: LEVEL7's boss XB1 rested his GUN at his feet, so every BIGBOLT
+    // started in the floor and died on its first tick.
+    const std::vector<std::vector<mdk::formats::Vec3f> >& pose = pose_parts();
+    if (static_cast<size_t>(index) < pose.size() && !pose[static_cast<size_t>(index)].empty()) {
+        const std::vector<mdk::formats::Vec3f>& vertices = pose[static_cast<size_t>(index)];
+        mdk::formats::Vec3f lo = vertices[0];
+        mdk::formats::Vec3f hi = vertices[0];
+        for (size_t i = 1; i < vertices.size(); i++) {
+            const mdk::formats::Vec3f& v = vertices[i];
+            lo.x = v.x < lo.x ? v.x : lo.x;
+            lo.y = v.y < lo.y ? v.y : lo.y;
+            lo.z = v.z < lo.z ? v.z : lo.z;
+            hi.x = v.x > hi.x ? v.x : hi.x;
+            hi.y = v.y > hi.y ? v.y : hi.y;
+            hi.z = v.z > hi.z ? v.z : hi.z;
+        }
+        const mdk::Mat4 world = transform();
+        return transformByMatrix((lo.x + hi.x) / 2.0f, (lo.y + hi.y) / 2.0f,
+                                 (lo.z + hi.z) / 2.0f, world.m);
     }
     const mdk::formats::Box& box = model->partList[static_cast<size_t>(index)].bounds;
     // The C#'s (bounds.Min + bounds.Max) / 2f * Scale: the mean scaled after.

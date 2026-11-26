@@ -8103,7 +8103,13 @@ int main(int argc, char** argv) {
                 runtime.update(1.0f / 30.0f);
             }
         }
-        if (what == "pose") {
+        if (what == "table") {
+            // `tick1 dump table|script <level> <ticks>`: the golden/L*_t*.txt and
+            // L*_t*_script.txt texts; the oracle twin is tests/scripts/table_probe.
+            printf("%s", dumpTable(level, ticks, runtime).c_str());
+        } else if (what == "script") {
+            printf("%s", dumpScript(level, ticks, runtime).c_str());
+        } else if (what == "pose") {
             printf("%s", dumpObjectPoses(level, ticks, runtime).c_str());
         } else if (what == "transform") {
             printf("%s", dumpObjectTransforms(level, ticks, runtime).c_str());

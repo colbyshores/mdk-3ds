@@ -2897,3 +2897,15 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     93743b33 byte for byte (the 1/30 s cases too: `(1 - keep) × 250` rounds differently from
     the old folded 50): `L6_skydive_chase`, `L8_skydive_hard`, `L3_skydive_slow`,
     `L7_skydive_skip`, `L6_fallview_chase`, `L8_fallview_hard`.
+  - **3005da70, fire projectiles from the posed part.** `MdkObject::partCenter` takes the
+    box of the part's vertices in the current pose through `transform()`, as the part is
+    drawn (the rest-pose box only when the part has no vertices). LEVEL7's boss XB1 had his
+    GUN at his feet at rest, so every BIGBOLT started in the floor. Twenty-one goldens
+    moved, all equal to the oracle at 3005da70 byte for byte: `L8_holes_guntam`,
+    `L6_holes_xb2`, `L7_bomber_mount`, `L7_bomber_bombs`, `L7_bomber_walk`, `L7_bomber_end`,
+    `L6_hazards_bomb`, and LEVEL5's tick tables `L5_t590` to `L5_t30000` and
+    `L5_t10000_script`.
+  - **Oracle tooling:** `tests/scripts/table_probe` is new. It rebuilds the lost driver of
+    the tick tables (`golden/L*_t*.txt`, `L*_t*_script.txt`) and reproduces 15 of them at
+    d5bb66ec byte for byte (5 tables and 3 scripts named in its header, plus 7 spot
+    checks). `tick1 dump table|script <level> <ticks>` prints the C++ side.
