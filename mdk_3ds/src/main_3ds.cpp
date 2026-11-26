@@ -669,7 +669,9 @@ int main(int argc, char** argv) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
                                       (int)startView->batchCount(), (int)startView->vertexCount(),
                                       (int)arena->triangleCount());
-                    skyRangeCount = mdk::buildSky3ds(renderer, level.dti(), &skyMesh, skyRanges);
+                    skyRangeCount = mdk::buildSky3ds(renderer, level.dti(), flow.state().level,
+                                                     enhancedToggles.enableHdTextures,
+                                                     &skyMesh, skyRanges);
                 } else {
                     mdk::log3dsPrintf("view: FAILED");
                     arena = nullptr;
@@ -1576,6 +1578,14 @@ int main(int argc, char** argv) {
                     // (spec 3.2) -- the menu stays up while the set is read.
                     if (!hdWas && enhancedToggles.enableHdTextures && hdSetCap > 0) {
                         mdk::holdHdSet3ds(renderer, "toggled on");
+                    }
+                    // THE SKY FOLLOWS THE HD TOGGLE: its ETC1 slices with it on,
+                    // the 16-bit expansion with it off, never both (buildSky3ds).
+                    if (hdWas != enhancedToggles.enableHdTextures && skyMesh >= 0) {
+                        mdk::releaseSky3ds(renderer, &skyMesh, skyRanges, &skyRangeCount);
+                        skyRangeCount = mdk::buildSky3ds(renderer, level.dti(), flow.state().level,
+                                                         enhancedToggles.enableHdTextures,
+                                                         &skyMesh, skyRanges);
                     }
                     mdk::saveToggles3ds(enhancedToggles);
                 } else if (action == mdk::EnhancedMenu::Action::Quit) {

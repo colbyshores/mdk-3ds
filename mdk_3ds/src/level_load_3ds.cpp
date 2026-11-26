@@ -4,6 +4,8 @@
 
 #include "level_load_3ds.h"
 
+#include <stdio.h>
+
 #include <memory>
 
 #include "formats/case_insensitive_path.h"
@@ -32,12 +34,37 @@ mdk::Lighting cachedLighting(
     return cache.back().second;
 }
 
+// THE SKY'S ETC1 SLICE (HD on): the build's copy of slice `k`
+// (mdk_3ds/tools/arena_etc1_convert.py convert_skies: the panorama de-dithered,
+// cut exactly as buildSkyDome cuts it, ETC1 with no mips), read whole at level
+// load. -1 when it is not there or does not import: the caller expands the
+// slice's indices as with HD off. 256 KiB of linear a slice, against 1 MiB for
+// the 16-bit expansion, and no 8-bit dither in the gradients.
+static MdkTextureId skySliceEtc1(MdkRenderer renderer, int32_t level, int32_t k, int32_t w,
+                                 int32_t h) {
+    const formats::FileSystem* fs = formats::fileSystem();
+    if (!fs || !fs->readFile) {
+        return -1;
+    }
+    char path[64];
+    snprintf(path, sizeof(path), "romfs:/orig/sky/level%d_%d.t3x", (int)level, (int)k);
+    std::vector<uint8_t> bytes;
+    if (!fs->readFile(fs->user, path, &bytes) || bytes.empty()) {
+        return -1;
+    }
+    return mdk_render_create_compressed_texture(renderer, w, h, bytes.data(),
+                                                (int32_t)bytes.size());
+}
+
 // THE SKY, as geometry (render/sky_dome.h): the level's panorama as a sphere
-// around the camera in slices, its two caps flat colours. Made once at level
-// load into `skyMesh` and `ranges` (at most 8); returns how many ranges.
-int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, MdkMeshId* skyMesh,
-                    SkyRange* ranges) {
+// around the camera in slices, its two caps flat colours. Made at level load
+// (and again when the HD toggle changes) into `skyMesh` and `ranges` (at most
+// 8); returns how many ranges. With `hd` a slice is its ETC1 copy and its
+// indices are never expanded; without, the original 16-bit expansion as before.
+int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, int32_t level, bool hd,
+                    MdkMeshId* skyMesh, SkyRange* ranges) {
     int32_t count = 0;
+    int32_t etc1 = 0;
     const uint8_t* pal = dti.palette().rgba();
     mdk::SkyDome dome;
     if (mdk::buildSkyDome(dti.sky(), pal, dti.skyWrapWidth(), dti.skyHorizonRow(),
@@ -47,11 +74,19 @@ int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, MdkMeshId* sk
                                          (int32_t)dome.vertices.size());
         for (const mdk::SkySlice& slice : dome.slices) {
             if (count >= 6) break;
-            SkyRange& r = ranges[count++];
-            r.texture = mdk_render_create_index_texture(
-                renderer, slice.storedWidth, dome.height, slice.indices.data(), pal);
-            // Drawn Original-shaded only (the PC's sky has no chain either).
-            mdk_render_mark_unmipped(renderer, r.texture);
+            SkyRange& r = ranges[count];
+            r.texture = hd ? skySliceEtc1(renderer, level, count, slice.storedWidth,
+                                          dome.height)
+                           : -1;
+            if (r.texture >= 0) {
+                etc1++;
+            } else {
+                r.texture = mdk_render_create_index_texture(
+                    renderer, slice.storedWidth, dome.height, slice.indices.data(), pal);
+                // Drawn Original-shaded only (the PC's sky has no chain either).
+                mdk_render_mark_unmipped(renderer, r.texture);
+            }
+            count++;
             r.first = slice.first;
             r.count = slice.count;
         }
@@ -67,18 +102,31 @@ int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, MdkMeshId* sk
         b.first = dome.bottomFirst;
         b.count = dome.bottomCount;
         mdk::log3dsPrintf("sky: %dx%d wrap=%d horizon=%d offset=%d -> %d slices, "
-                          "%d vertices, mesh=%d, index0 remapped %d texels to %d (d2=%d)",
+                          "%d vertices, mesh=%d, index0 remapped %d texels to %d (d2=%d), "
+                          "%d ETC1 slices (hd=%d)",
                           (int)dti.sky().width(), (int)dti.sky().height(),
                           (int)dti.skyWrapWidth(), (int)dti.skyHorizonRow(),
                           (int)dti.skyOffset(), (int)dome.slices.size(),
                           (int)dome.vertices.size(), (int)*skyMesh,
                           (int)dome.remappedTexels, (int)dome.remapTarget,
-                          (int)dome.remapDistance);
+                          (int)dome.remapDistance, (int)etc1, (int)hd);
     } else {
         mdk::log3dsPrintf("sky: none (the level's panorama cannot be built)");
     }
     // The dome's CPU copies die here: the renderer keeps its own.
     return count;
+}
+
+void releaseSky3ds(MdkRenderer renderer, MdkMeshId* skyMesh, SkyRange* ranges, int32_t* count) {
+    for (int32_t i = 0; i < *count; i++) {
+        mdk_render_release_texture(renderer, ranges[i].texture);
+        ranges[i] = SkyRange();
+    }
+    *count = 0;
+    if (*skyMesh >= 0) {
+        mdk_render_release_mesh(renderer, *skyMesh);
+        *skyMesh = -1;
+    }
 }
 
 // THE PAUSE MENU'S FONTS: MDKFONT.FTI's FONTBIG and FONTSML in its SYS_PAL

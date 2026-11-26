@@ -31,8 +31,13 @@ struct SkyRange {
     int32_t first = 0;
     int32_t count = 0;
 };
-int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, MdkMeshId* skyMesh,
-                    SkyRange* ranges);
+// The sky (level_load_3ds.cpp): with `hd` (the HD toggle) its slices come from
+// the build's de-dithered ETC1 copies, romfs:/orig/sky/level<L>_<k>.t3x, when
+// they are there, and from the palette expansion otherwise.
+int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, int32_t level, bool hd,
+                    MdkMeshId* skyMesh, SkyRange* ranges);
+// Gives back what buildSky3ds made (the HD toggle changed: the sky is made again).
+void releaseSky3ds(MdkRenderer renderer, MdkMeshId* skyMesh, SkyRange* ranges, int32_t* count);
 
 // The pause menu's fonts (MISC/MDKFONT.FTI), also handed to the HUD's messages.
 bool loadMenuFonts3ds(MdkRenderer renderer, const formats::MdkData& data, FontView* menuBig,

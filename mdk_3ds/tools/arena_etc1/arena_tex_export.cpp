@@ -60,6 +60,7 @@
 #include "formats/texture_archive.h"
 #include "game/hd_key.h"
 #include "game/level_data.h"
+#include "render/sky_dome.h"
 #include "test_support.h"
 
 namespace {
@@ -76,6 +77,65 @@ bool writeFile(const std::string& path, const std::vector<uint8_t>& bytes) {
 bool exists(const std::string& path) {
     struct stat st;
     return stat(path.c_str(), &st) == 0;
+}
+
+void expand(const uint8_t* indices, size_t count, const uint8_t* rgb, std::vector<uint8_t>* out) {
+    out->assign(count * 4u, 255);
+    for (size_t i = 0; i < count; i++) {
+        (*out)[i * 4 + 0] = rgb[indices[i] * 4 + 0];
+        (*out)[i * 4 + 1] = rgb[indices[i] * 4 + 1];
+        (*out)[i * 4 + 2] = rgb[indices[i] * 4 + 2];
+    }
+}
+
+// THE SKY (mdk_3ds/src/level_load_3ds.cpp buildSky3ds): the level's panorama
+// through the DTI's palette, cut by render/sky_dome.cpp's own buildSkyDome --
+// the code the 3DS runs -- so the converter's slices are the console's slices.
+// Written to <out>/sky/:
+//   level<L>.rgba        the wrap (wrapWidth x height), index 0 remapped as the
+//                        dome remaps it, alpha 255 (the sky is opaque);
+//   level<L>_<k>.rgba    slice k exactly as the 3DS uploads it (storedWidth x
+//                        height: the drawn columns and one neighbour each side);
+//   index.tsv            level, slice, firstColumn, storedWidth, height, wrapWidth.
+bool exportSky(const std::string& dir, FILE* index, int32_t levelNumber,
+               const mdk::formats::Dti& dti) {
+    const uint8_t* pal = dti.palette().rgba();
+    mdk::SkyDome dome;
+    if (!mdk::buildSkyDome(dti.sky(), pal, dti.skyWrapWidth(), dti.skyHorizonRow(),
+                           dti.skyOffset(), dti.skyTopColor(), dti.skyBottomColor(), &dome)) {
+        fprintf(stderr, "arena_tex_export: level %d has no sky dome, skipped\n", (int)levelNumber);
+        return true;
+    }
+    const int32_t wrap = dti.skyWrapWidth();
+    const int32_t height = dome.height;
+    std::vector<uint8_t> wrapIndices((size_t)wrap * (size_t)height);
+    for (int32_t y = 0; y < height; y++) {
+        for (int32_t x = 0; x < wrap; x++) {
+            uint8_t v = dti.sky().indices()[(size_t)y * (size_t)dti.sky().width() + (size_t)x];
+            wrapIndices[(size_t)y * (size_t)wrap + (size_t)x] =
+                v == 0 ? (uint8_t)dome.remapTarget : v;
+        }
+    }
+    std::vector<uint8_t> rgba;
+    char name[64];
+    snprintf(name, sizeof(name), "/level%d.rgba", (int)levelNumber);
+    expand(wrapIndices.data(), wrapIndices.size(), pal, &rgba);
+    if (!writeFile(dir + name, rgba)) {
+        fprintf(stderr, "arena_tex_export: cannot write %s%s\n", dir.c_str(), name);
+        return false;
+    }
+    for (size_t k = 0; k < dome.slices.size(); k++) {
+        const mdk::SkySlice& slice = dome.slices[k];
+        snprintf(name, sizeof(name), "/level%d_%d.rgba", (int)levelNumber, (int)k);
+        expand(slice.indices.data(), slice.indices.size(), pal, &rgba);
+        if (!writeFile(dir + name, rgba)) {
+            fprintf(stderr, "arena_tex_export: cannot write %s%s\n", dir.c_str(), name);
+            return false;
+        }
+        fprintf(index, "%d\t%d\t%d\t%d\t%d\t%d\n", (int)levelNumber, (int)k,
+                (int)slice.firstColumn, (int)slice.storedWidth, (int)height, (int)wrap);
+    }
+    return true;
 }
 
 } // namespace
@@ -110,6 +170,15 @@ int main(int argc, char** argv) {
         return 1;
     }
     fprintf(index, "# level\tarena\tname\twidth\theight\tframes\tkey\n");
+    const std::string skyDir = out + "/sky";
+    mkdir(skyDir.c_str(), 0755);
+    FILE* skyIndex = fopen((skyDir + "/index.tsv").c_str(), "w");
+    if (!skyIndex) {
+        fprintf(stderr, "arena_tex_export: cannot write %s/index.tsv\n", skyDir.c_str());
+        fclose(index);
+        return 1;
+    }
+    fprintf(skyIndex, "# level\tslice\tfirst_column\tstored_width\theight\twrap_width\n");
     std::set<std::string> writtenKeys;
     int32_t entries = 0;
     int32_t skipped = 0;
@@ -197,8 +266,14 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (!exportSky(skyDir, skyIndex, levels[l], level.dti())) {
+            fclose(index);
+            fclose(skyIndex);
+            return 1;
+        }
     }
     fclose(index);
+    fclose(skyIndex);
     printf("arena_tex_export: %d texture uses over %d levels, %d distinct images, %d skipped\n",
            (int)entries, (int)levels.size(), (int)writtenKeys.size(), (int)skipped);
     return 0;
