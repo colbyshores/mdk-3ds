@@ -101,16 +101,24 @@ static void drawGlowBillboards(RendererC3D* r) {
     // in the tint uniform it is already drawn with. 100 is 1.0f exactly, and
     // x * 1.0f is x: the shipped halos to the bit.
     const float strength = (float)r->toggles.glowStrength / 100.0f;
-    for (int32_t q = 0; q < r->glowQuadCount; q++) {
+    // ONE DRAW PER RUN of adjacent halos with the same colour bits: the same tint
+    // uniform, the same triangles in the same order, so the same pixels.
+    for (int32_t q = 0; q < r->glowQuadCount;) {
         const float* c = r->glowQuads[q].colour;
+        int32_t run = 1;
+        while (q + run < r->glowQuadCount &&
+               memcmp(r->glowQuads[q + run].colour, c, 3 * sizeof(float)) == 0) {
+            run++;
+        }
         setVsUniform(r, kDedupeTint, r->tintLocation, c[0] * strength, c[1] * strength,
                      c[2] * strength, 1.0f);
         if (r->boundProgram && r->boundProgram->geometryShader) {
-            C3D_DrawArrays(GPU_GEOMETRY_PRIM, q * 6, 6);
+            C3D_DrawArrays(GPU_GEOMETRY_PRIM, q * 6, run * 6);
         } else {
-            C3D_DrawArrays(GPU_TRIANGLES, q * 6, 6);
+            C3D_DrawArrays(GPU_TRIANGLES, q * 6, run * 6);
         }
-        r->billboardsDrawn++;
+        r->billboardsDrawn += run;
+        q += run;
     }
     r->tintIsWhite = false;
 }

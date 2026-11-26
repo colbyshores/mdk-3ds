@@ -2211,3 +2211,54 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   disk); tests/formats 200624 checks, 0 failures; tools/check.sh ALL GATES PASSED
   (gates_frames PASS on the Linux build, gates_smdh SKIP: no .cia).
 - **Commit:** this one (ledger only).
+
+## 2026-11-26 -- adjacent halos with the same tint are one draw per eye (branch perf/3ds-halo-batch): KEPT
+
+- **Owner's direction:** the outside review's ticket H halo batch
+  (`.git/mdk-review/mdk_3ds_stereo_performance_spec.md`), kept only if it saves about
+  0.3 ms of the Old 3DS frame in a real heavy-explosion scene; count first, drop it if
+  runs are rare.
+- **What:** `drawGlowBillboards` (06_glow_billboards.inc) draws each maximal run of
+  adjacent halos whose three colour floats are bit-equal (`memcmp`) as ONE
+  `C3D_DrawArrays(first * 6, run * 6)`, `GPU_GEOMETRY_PRIM` under the pass-through
+  program and `GPU_TRIANGLES` otherwise, as before. Same tint uniform (equal colour
+  bits times the same strength are the same bits), same vertex buffer, same triangles in
+  the same order, same program/blend/depth/texture state: the same pixels by
+  construction. `billboardsDrawn` still counts logical quads. +12 -4 lines, no new state.
+- **Counted first (host):** `tick1 dump effects` (the L8 debris storm, six cameras, 400
+  steps), the backend's first 64 halos per frame: 52,460 quads in 2,114 runs (24.8 per
+  run); the 64-quad peak is ONE run. A sprite's halo colour is per texture entry
+  (EffectsView::queueSprite), so an explosion's sprites share it and are queued together.
+- **Measured (old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, cap 30, HD on
+  from RomFS):** in-run A/B on throwaway/halo-shadow-hw (frames alternate batched /
+  one-each in pairs; the halo loop timed with svcGetSystemTick, both eyes).
+  Heavy-explosion route (repeatable, FIXED=1 so the run is deterministic: identical
+  counts in three runs): `make -C mdk_3ds AUTOQUIT=90 PROFILE=1 LEVEL=7 HDROMFS=1 FIXED=1
+  AT=100,2320,-60,90 ARENA=DANT_5 RIDE=XE TOGGLES='enableHdTextures=1;texture16=1;
+  kurtCompressed=1;cap30Fps=1;enableHaze=1;enableFiltering=1;enableMipmaps=1;
+  enableSkyShadows=1' WALK='forward@820-2600;turnright@1200-1260;turnleft@1800-1860;
+  fire@800-802;fire@860-862;...;fire@2480-2482'` (the bomber, a bomb every 60 frames; 29
+  fire segments; the harness needs the AT/ARENA/RIDE wiring of the throwaway branch).
+  Halos per frame: 14.4 quads both eyes in 2.2 runs (85% of draws removed), peak 41
+  quads/eye in 2 runs. Halo CPU per frame, one-each -> batched (two runs):
+
+  | halos/eye | frames | one-each | batched | saved |
+  |---|---|---|---|---|
+  | 24-47 (mean 35) | 15+15 | 0.839 / 0.802 ms | 0.107 / 0.114 ms | **0.69-0.73 ms** |
+  | 8-23 (mean 12) | 27+27 | 0.309 / 0.302 ms | 0.073 / 0.073 ms | 0.23 ms |
+  | 1-7 (mean 3) | 134+135 | 0.108 / 0.110 ms | 0.064 / 0.066 ms | 0.04 ms |
+  | all halo frames | 176+177 | 0.201 / 0.198 ms | 0.069 / 0.071 ms | 0.13 ms |
+
+  About 10.5 us of CPU per draw saved. GPU time (C3D_GetDrawingTime) on halo frames
+  without a shadow recast: 13.79 -> 13.68 ms and 13.80 -> 13.67 ms (n164 / n88, within
+  noise). Frame period unchanged: the Old 3DS holds the 30 fps cap here (98-99% of
+  frames 2 vblanks), so the saving is CPU headroom in explosion frames, not a faster
+  frame. Logs: `.git/worktrees/halo-shadow-hw/hw-logs/2026-11-26-bomber{-1,3-1,3-2}*`.
+- **Verdict:** kept -- 0.7 ms in the heavy-explosion frames for 12 lines and no state.
+- **Not verified:** a pixel comparison on the console or in Mandarine (the machine's
+  emulator slot was held by other projects' instances; the harness here has no capture
+  readback wired). Identity rests on the construction above. Not measured on a New 3DS.
+- **Evidence:** tests/scripts `make test` passes, tests/formats 200624 checks 0 failures,
+  tools/check.sh ALL GATES PASSED (gates_frames PASS on the Linux build, gates_smdh SKIP:
+  no .cia); player .3dsx (devkitARM 15.2.0) 0 compiler warnings.
+- **Commit:** this one.
