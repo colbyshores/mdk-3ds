@@ -2258,3 +2258,31 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
 - **Not verified here:** Mandarine (another project's instances were running);
   hardware: see the follow-up entry.
 - **Commit:** this one.
+
+### The ETC1 sky on the Old 3DS appliance (hardware follow-up)
+- **What:** level-3 runs on `old3ds-lan167` (CFGU model 0, 268 MHz, L2 off,
+  stereo on), this branch vs its base 72cfb30b, each with the harness
+  cherry-picked (565b08b3) on a throwaway branch (`throwaway/sky-etc1-hw`; the
+  base as a detached worktree), `AUTOQUIT=90 LEVEL=3`, HD toggle on (default),
+  pushed by `hw_cycle.sh` (FRESH both). The harness on this base has no
+  framebuffer capture (`CAPTURE` is wired in the render files it leaves out), so
+  the pictures are ATM screenshots taken ~45 s into each run.
+- **Evidence:** `.git/worktrees/sky-etc1/hw-logs/`:
+  - `hw_l3_base_vs_new.png`: the same level-3 start view, base vs new, with a 3x
+    sky zoom: the base's sky shows the dither speckle, the new one is smooth, same
+    colours and cloud shapes; no seam in view.
+  - `hw-new-l3.session.log`: `sky: ... 2 ETC1 slices (hd=1)`; linear consumed
+    between `mem[level-data]` and `mem[arena-view]` 712,832 B against the base's
+    188,544 B: the two ETC1 slices are 524,288 B, made at load. The base's two
+    16-bit slices are made at their first draw (after `mem[loop]`, so no probe
+    sees them): 2,097,152 B by the store's arithmetic. Frame 30's resident
+    texture bytes: 8,882,048 (new) vs 10,652,096 (base). This harness build
+    logs no in-play linear-free figure (the profile's linear-free minimum reads
+    0: its first-use counters are not on this base), so the 1.5 MiB saving is
+    the arithmetic, consistent with these readings, not a measured minimum.
+  - `hw-{new,base}-prof.cycle.txt` (`PROFILE=1`, OG): steady mean 25.10 ms vs
+    25.42 ms, p95 27.8 both; frame 1 484 ms vs 1075 ms (the base's first frame
+    includes the two sky expansions among other first-use work, not isolated).
+- **Not tested on hardware:** toggling HD in the pause menu (the remake path;
+  the harness's HDFLIP does not go through the menu), levels other than 3.
+- **Commit:** this one (ledger only).
