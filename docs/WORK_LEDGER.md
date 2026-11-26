@@ -2044,3 +2044,51 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
   (no restart) -> back -> `MAINSONG` again -> New Game -> briefing, fall (menu audio
   closed) -> level 7 `TRACK11 on ch23` -> MAIN MENU -> `MAINSONG` again.
 - **Commit:** this one.
+
+## 2026-11-25 -- the door-crossing hitch: SD log lines off the main thread; music and file workers off its core (branch perf/3ds-memory)
+
+- **Owner (relayed):** "very slight hitching again between areas" on 08f80f9c (New 3DS,
+  HD on), not on 4d9264f3; "I want that kind of stuff on the second core".
+- **Root cause, measured** (old3ds-lan167, 268 MHz, L2 off, stereo on; level 8, a
+  teleport-and-walk route through 12 arena changes, 6 of them walked corridor doors;
+  throwaway harness timing each slow frame's spans and its SD log lines):
+  - bisect 4d9264f3..08f80f9c: the extra time arrives with 71e4f946 (music streaming);
+    the 840 corridor entry is 140-155 ms on every build from it on (5 runs) against
+    94-127 ms on 4d9264f3 (3 runs);
+  - every log line is `fflush`ed to SD by its caller and costs it 10-20 ms; a door
+    crossing writes 3-5 lines: 21-46 ms of the entry frame on 4d9264f3, 44-93 ms on
+    08f80f9c, which adds `music: X for Y` (inside the simulation step: +10 ms sim on
+    every crossing) and the prime line, while its worker's reads share the card;
+  - not the cause: the 512 tier / 28 MiB linear (LINEAR24 run unchanged), the music
+    worker's CPU (MUSICOFF, MUSICTRICKLE, a lower-priority worker, deferring primes
+    250 ms: none removed it), MIPMAPS (4d9264f3 with MIPMAPS off still 90-144 ms).
+- **What:** `log3dsPrintf` queues the line (16 KiB) for a writer thread that writes and
+  flushes at once (a full queue is written by the caller; close joins and drains).
+  `side_core_3ds.h` picks a worker's core: 2 on a New 3DS, the one system-core slot
+  (APT_SetAppCpuTimeLimit) on an Old 3DS for the music worker, else today's default
+  core; every threadCreate retries on core -2 if refused. The music worker takes the
+  system core (Old) / core 2 (New); the file reader and the log writer take core 2 on
+  a New 3DS and stay on core 0 below main on an Old one (one app thread fits on core 1).
+- **Evidence** (corridor entry frames, ms; 33 = no frame over 45 ms):
+  4d9264f3 94/90/60 at 840/1130/1430 (MIPMAPS on), 144/136 (off); 08f80f9c 151/90/57,
+  180/124 (off); this branch 33 at all six crossings in 6 runs: MIPMAPS on x2, off x2,
+  music worker back on core 0 (log thread only), system-core share 10%. 0 music
+  underruns in every run. Frames over 45 ms per 90 s run: 91 (4d9264f3, spike lines
+  only) -> 29-33.
+- **No measured gain from the core moves on the Old 3DS walk:** the log writer alone
+  gives the same frames as all three changes (both 33 at every crossing; mean CPU busy
+  7.29 vs 7.33 ms). They are separate commits so they can be dropped.
+  System-core share: 10% and 30% measured the same, so 10%.
+- **Not verified:** a New 3DS on hardware (core 2: Mandarine, an emulated New 3DS,
+  ran all three threads there, menu and MAINSONG fine, `hw-logs/emu-smoke-a2aed4ff.txt`);
+  the CIA (cia/mdk.rsf AffinityMask 1, CanAccessCore2 true: the fallback covers a
+  refusal); HOME and lid sleep with a system-core thread (no remote HOME on the
+  appliance).
+- **Doorway texture work off main (assessed, not done):** with the log moved, no
+  corridor entry reached 45 ms with MIPMAPS on or off on this walk, so moving the
+  original expansion and mip-chain build off main would buy nothing measurable on the
+  Old 3DS; it would need the expansion state (source, palette, chain buffer) handed to
+  a worker, cancelled on eviction, and a wait when a draw needs it now. On an Old 3DS
+  the only free slot (core 1, 10-30%) is too small for it.
+- **Commits:** c93b2ede (log writer), 411bdc95 (music worker core), a2aed4ff (file
+  reader core), this one (10% share, ledger).

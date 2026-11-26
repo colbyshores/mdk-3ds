@@ -27,9 +27,11 @@
 namespace mdk {
 
 // The share of the system core's time the application asks for before its one
-// thread there (APT_SetAppCpuTimeLimit). Chosen by measurement on the Old 3DS
-// (docs/WORK_LEDGER.md, 2026-11-25): the music worker's reads need little CPU.
-constexpr uint32_t kSyscorePercent = 30;
+// thread there (APT_SetAppCpuTimeLimit). Measured on the Old 3DS appliance
+// (docs/WORK_LEDGER.md, 2026-11-25, level 8's door walk): 10% and 30% gave the
+// same frames and no music underrun -- the music worker's reads need little CPU
+// -- so the smaller share, which leaves the system its core.
+constexpr uint32_t kSyscorePercent = 10;
 
 // The core a worker should be made on: 2 on a New 3DS; 1 when `allowSyscore`
 // (only one thread asks: the music worker) and the system granted its share of
