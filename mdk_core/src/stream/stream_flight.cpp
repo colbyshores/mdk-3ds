@@ -117,7 +117,9 @@ Flight::Flight(StreamTube* tube, StreamTube::Kind kind, Kurt::Difficulty difficu
     if (kind == StreamTube::Gunter) {
         other_.t = kGuntaStart;
         other_.speed = kSpeed;
-        other_.yaw = kNeutralYaw;
+        // Gunter's yaw (90 at 0x433b50) never turns him: 0x435a34 takes the tube's frame
+        // (0x4366f4). Turned by it, he lay sideways across the tube (upstream 8fceff8c).
+        other_.yaw = 0.0f;
     } else {
         other_.t = kBonusStart;
         other_.speed = kBonusSpeed;

@@ -2972,3 +2972,9 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     the closed X4DOOR) was tried in the platform probe at five jump steps; the old and new
     oracle and our C++ end in the same place in each, so the exact on-the-face contact was
     not reproduced there. Checked by build and suites only.
+  - **8fceff8c, fly Gunter head first down the stream.** The Gunter tube's `other_` starts
+    with yaw 0 (the tube's frame unturned, 0x435a34/0x4366f4) instead of the 90 Kurt
+    uses, so he no longer lies sideways across the tube. Two goldens moved, both equal to
+    the stream probe at 8fceff8c byte for byte: `stream_L8_planet`, `stream_L8_death`.
+    (The probe links the stream sources by `../../../src`; the oracle script places it
+    under `tests/scripts/` for that, and it reproduces `stream_L8_planet` at d5bb66ec.)
