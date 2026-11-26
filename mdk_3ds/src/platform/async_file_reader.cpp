@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "platform/log_3ds.h"
+#include "platform/side_core_3ds.h"
 #include "platform/vfp_fpscr.h"
 
 namespace mdk {
@@ -101,13 +102,21 @@ bool AsyncFileReader::start() {
     exit_ = false;
     s32 priority = 0x30;
     svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-    // One below the main thread (a larger number is a lower priority), and on the
-    // application core (-2: the default core of the process).
+    // One below the main thread (a larger number is a lower priority), off the
+    // main thread's core when the console has a core to give (side_core_3ds.h:
+    // core 2 on a New 3DS; never the system core, whose one application thread
+    // is the music's), else on it (-2), where it runs while main waits.
     const s32 workerPriority = priority < 0x3F ? priority + 1 : priority;
-    thread_ = threadCreate(asyncFileReaderThread, this, kStackBytes, workerPriority, -2, false);
+    int32_t core = offMainCore3ds(false);
+    thread_ = threadCreate(asyncFileReaderThread, this, kStackBytes, workerPriority, core, false);
+    if (thread_ == nullptr && core != -2) {
+        core = -2;
+        thread_ = threadCreate(asyncFileReaderThread, this, kStackBytes, workerPriority, -2, false);
+    }
     running_ = thread_ != nullptr;
-    log3dsPrintf("hd: reader thread %s (priority 0x%X, stack %u)", running_ ? "started" : "FAILED",
-                 (unsigned)workerPriority, (unsigned)kStackBytes);
+    log3dsPrintf("hd: reader thread %s (core %d, priority 0x%X, stack %u)",
+                 running_ ? "started" : "FAILED", (int)core, (unsigned)workerPriority,
+                 (unsigned)kStackBytes);
     return running_;
 }
 
