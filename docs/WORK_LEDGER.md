@@ -2857,3 +2857,14 @@ fixes are another agent's.
 - **Why:** looking all the way down, a frame between steps looked exactly 90 degrees down; the
   view turned over and Kurt jumped from the middle of the screen to the top.
 - **Evidence:** Linux build 0 warnings; tick1 all cases match.
+
+### 8bc42528 -- the fall's explosions face the camera
+- **What:** the EXPLODE model is pitched 90 degrees (`explosionTurn`, CreateRotationY(-pi/2))
+  before its random yaw, and goes off at Kurt's position, not where the missile met his box.
+- **Why:** a missile hitting Kurt showed a thin yellow sliver beside him: the model is a flat
+  fireball thin along x, seen edge-on unpitched (original +0x13c; 0x411ee8 copies Kurt's
+  position).
+- **Goldens:** L3_skydive_slow, L6_skydive_chase, L8_skydive_hard (the explosions' positions)
+  rewritten from the C++ and byte-identical to the C# 1.1.1 oracle with 683a53ef, 04c25852 and
+  8bc42528 applied (fall_probe, scratchpad `up-tools`).
+- **Evidence:** Linux build 0 warnings; tick1 all cases match.

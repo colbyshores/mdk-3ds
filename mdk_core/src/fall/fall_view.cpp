@@ -640,7 +640,8 @@ void FallView::queueModels(MdkRenderer renderer, const FallSim& sim) {
     const std::vector<FallSim::Explosion>& explosions = sim.explosions();
     for (size_t i = 0; i < explosions.size(); i++) {
         const int32_t frame = (int32_t)explosions[i].ticks;
-        const Mat4 world = multiply(multiply(scaling(explosionScale(frame)), rotationZ(explosions[i].yaw)),
+        const Mat4 world = multiply(multiply(multiply(scaling(explosionScale(frame)), explosionTurn()),
+                                             rotationZ(explosions[i].yaw)),
                                     translation(explosions[i].position));
         models_.draw(renderer, "EXPLODE", world, nullptr, 0, frame, Pass::OnTop);
     }

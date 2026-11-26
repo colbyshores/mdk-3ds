@@ -654,7 +654,9 @@ void FallSim::hit(size_t index) {
     kurtPose_ = AnimHit;
     kurtFrame_ = 0.0f;
     Explosion explosion;
-    explosion.position = missiles_[index].position;
+    // On Kurt (0x411ee8 copies his position), not where the missile met his
+    // box, up to 4 units to his side (upstream 8bc42528).
+    explosion.position = kurtPosition_;
     explosion.yaw = random_.nextSingle() * kTau;
     explosions_.push_back(explosion);
     missiles_.erase(missiles_.begin() + (ptrdiff_t)index);
