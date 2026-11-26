@@ -117,19 +117,18 @@ static void prepareQueue(RendererC3D* r) {
     }
 }
 
-// The per-eye replay of the prepared array: thin submit only (see
-// drawRecorded), with the glow still drawn per eye at its slot.
-// THE SCENE WINDOW's scissor (mdk_render_set_scene_window): the canvas
-// rectangle through the canvas's own matrix (pica::canvasMatrix, the panel's
-// quarter turn included) into the eye target's pixels, grown by two pixels
-// and rounded outward, so every pixel the window shows is inside it.
-static void sceneWindowScissor(RendererC3D* r, u32* left, u32* top, u32* right, u32* bottom) {
+// A rectangle of the canvas (x, y, width, height) through the canvas's own
+// matrix (pica::canvasMatrix, the panel's quarter turn included) into the eye
+// target's pixels: its low and high corners.
+static void canvasRectOnTarget(RendererC3D* r, const float rect[4], float lo[2], float hi[2]) {
     float m[16];
     mdk::pica::canvasMatrix(m, mdk_render_canvas_width((MdkRenderer)r));
-    const float xs[2] = {r->sceneWindow[0], r->sceneWindow[0] + r->sceneWindow[2]};
-    const float ys[2] = {r->sceneWindow[1], r->sceneWindow[1] + r->sceneWindow[3]};
-    float lo[2] = {1e9f, 1e9f};
-    float hi[2] = {-1e9f, -1e9f};
+    const float xs[2] = {rect[0], rect[0] + rect[2]};
+    const float ys[2] = {rect[1], rect[1] + rect[3]};
+    lo[0] = 1e9f;
+    lo[1] = 1e9f;
+    hi[0] = -1e9f;
+    hi[1] = -1e9f;
     for (int i = 0; i < 2; i++) {
         for (int j = 0; j < 2; j++) {
             const float clipX = xs[i] * m[0] + ys[j] * m[4] + m[12];
@@ -142,6 +141,17 @@ static void sceneWindowScissor(RendererC3D* r, u32* left, u32* top, u32* right, 
             hi[1] = py > hi[1] ? py : hi[1];
         }
     }
+}
+
+// The per-eye replay of the prepared array: thin submit only (see
+// drawRecorded), with the glow still drawn per eye at its slot.
+// THE SCENE WINDOW's scissor (mdk_render_set_scene_window): the canvas
+// rectangle on the eye target, grown by two pixels and rounded outward, so
+// every pixel the window shows is inside it.
+static void sceneWindowScissor(RendererC3D* r, u32* left, u32* top, u32* right, u32* bottom) {
+    float lo[2];
+    float hi[2];
+    canvasRectOnTarget(r, r->sceneWindow, lo, hi);
     const int32_t x0 = (int32_t)floorf(lo[0]) - 2;
     const int32_t y0 = (int32_t)floorf(lo[1]) - 2;
     const int32_t x1 = (int32_t)ceilf(hi[0]) + 2;
@@ -150,6 +160,118 @@ static void sceneWindowScissor(RendererC3D* r, u32* left, u32* top, u32* right, 
     *top = (u32)(y0 < 0 ? 0 : y0);
     *right = (u32)(x1 > (int32_t)r->targetWidth ? (int32_t)r->targetWidth : x1);
     *bottom = (u32)(y1 > (int32_t)r->targetHeight ? (int32_t)r->targetHeight : y1);
+}
+
+// THE SCENE INSETS (the sniper's round cameras; C# Renderer.Insets.cs
+// RenderInset with InsetContent.Scene): each one draws the frame's scene records
+// again -- every pass but the canvas, as the C#'s does -- through its own
+// camera, into its own viewport, after the scene and the glow and before the
+// canvas (the C#'s UnderCanvas). The colour under it is kept and its depth
+// cleared (the C#'s BeginOver: LOAD the colour, CLEAR the depth). This target
+// has no rectangle depth clear (a target clear is the whole buffer), so the
+// depth is reset by a quad over the viewport at the far plane, depth test
+// ALWAYS, depth written and colour not (vault: forsaken
+// citro3d-missile-chase-cam-per-eye-scissored-clear). The eye's offset is the
+// scene's, as the C#'s View.Eye per inset. It leaves the scissor off.
+// The lit programs turn each face to the camera (mdk_c3d.g.pica): the inset's
+// camera while its records draw, the eye's again after. Their uniforms are
+// written at every bind from these rows, and now if one is bound.
+static void setLitCamera(RendererC3D* r, const float position[3]) {
+    for (int i = 0; i < 3; i++) {
+        r->litUniforms[4][i] = position[i];
+        r->shadowUniforms[4][i] = position[i];
+    }
+    if (r->boundProgram == &r->programLit) {
+        C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->cameraLocation, position[0], position[1],
+                      position[2], 1.0f);
+    } else if (r->boundProgram == &r->programShadow) {
+        C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowCameraLocation, position[0], position[1],
+                      position[2], 1.0f);
+    }
+}
+
+static void drawSceneInsets(RendererC3D* r) {
+    if (r->sceneInsetCount <= 0 || r->preparedGlowAt <= 0) {
+        return;
+    }
+    float frameVp[16];
+    float frameFrustum[6][4];
+    memcpy(frameVp, r->eyeVp, sizeof(frameVp));
+    memcpy(frameFrustum, r->frustum, sizeof(frameFrustum));
+    for (int32_t n = 0; n < r->sceneInsetCount; n++) {
+        const RendererC3D::SceneInset& inset = r->sceneInsets[n];
+        float lo[2];
+        float hi[2];
+        canvasRectOnTarget(r, inset.rect, lo, hi);
+        int32_t x0 = (int32_t)(lo[0] + 0.5f);
+        int32_t y0 = (int32_t)(lo[1] + 0.5f);
+        int32_t x1 = (int32_t)(hi[0] + 0.5f);
+        int32_t y1 = (int32_t)(hi[1] + 0.5f);
+        x0 = x0 < 0 ? 0 : x0;
+        y0 = y0 < 0 ? 0 : y0;
+        x1 = x1 > (int32_t)r->targetWidth ? (int32_t)r->targetWidth : x1;
+        y1 = y1 > (int32_t)r->targetHeight ? (int32_t)r->targetHeight : y1;
+        if (x1 <= x0 || y1 <= y0) {
+            continue;
+        }
+        C3D_SetViewport((u32)x0, (u32)y0, (u32)(x1 - x0), (u32)(y1 - y0));
+        C3D_SetScissor(GPU_SCISSOR_NORMAL, (u32)x0, (u32)y0, (u32)x1, (u32)y1);
+
+        // The depth reset: the quad's corners are already clip coordinates.
+        {
+            static const float kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            C3D_Mtx gpuMtx;
+            mdk::pica::registers(kIdentity, gpuMtx.m);
+            setVsMatrix(r, kDedupeMvp, r->mvpLocation, &gpuMtx);
+            r->matrixIsFrame = false;
+            leaveShadowLitStages(r);
+            // The geometry-stage rule (bindProgram): in geometry mode the
+            // pass-through program, as drawRecorded's unlit draws.
+            bindProgram(r, r->gsInList && r->passReady ? &r->programPass : &r->program);
+            r->litBound = false;
+            bindVertexBuffer(r, static_cast<const char*>(r->scratch) + kInsetQuadOffset);
+            C3D_CullFace(GPU_CULL_NONE);
+            r->cullMode = GPU_CULL_NONE;
+            const int alphaReference = r->alphaReference;
+            installAlphaTest(r, -1, false);   // off: no fragment of the quad is discarded
+            mdk::pica::DepthState reset;
+            reset.reset = true;
+            installDepthState(r, reset);
+            C3D_DrawArrays(r->boundProgram->geometryShader ? GPU_GEOMETRY_PRIM : GPU_TRIANGLES,
+                           0, 6);
+            // Back to states the caches describe.
+            installAlphaTest(r, alphaReference, false);
+            installDepthState(r, mdk::pica::depthStateForPass(mdk::Pass::Solid));
+            C3D_CullFace(kSolidCull);
+            r->cullMode = kSolidCull;
+        }
+
+        // The inset's camera in place of the eye's, for the matrix and the cull.
+        mdk::pica::eyeViewProjection(inset.view, inset.projection, r->eyeOffset, r->eyeVp);
+        {
+            float vpEngine[16];
+            mdk::pica::eyeViewProjectionEngine(inset.view, inset.projection, r->eyeOffset,
+                                               vpEngine);
+            mdk::pica::frustumPlanes(vpEngine, r->frustum);
+        }
+        C3D_Mtx gpuMtx;
+        mdk::pica::registers(r->eyeVp, gpuMtx.m);
+        setVsMatrix(r, kDedupeMvp, r->mvpLocation, &gpuMtx);
+        r->matrixIsFrame = true;
+        setLitCamera(r, inset.position);
+        for (int32_t i = 0; i < r->preparedGlowAt; i++) {
+            if (!r->prepared[(size_t)i].overlay) {
+                drawRecorded(r, &r->prepared[(size_t)i]);
+            }
+        }
+    }
+    // The eye's own matrix, cull, viewport and scissor again.
+    memcpy(r->eyeVp, frameVp, sizeof(frameVp));
+    memcpy(r->frustum, frameFrustum, sizeof(frameFrustum));
+    r->matrixIsFrame = false;
+    setLitCamera(r, r->cameraPos);
+    C3D_SetViewport(0, 0, r->targetWidth, r->targetHeight);
+    C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, r->targetWidth, r->targetHeight);
 }
 
 static void replayQueue(RendererC3D* r) {
@@ -172,11 +294,20 @@ static void replayQueue(RendererC3D* r) {
         }
         if ((int32_t)i == r->preparedGlowAt) {
             drawGlow(r);
+            // The record here is the canvas's first (every record from the glow's
+            // slot on is an Overlay one), so the scissor is already off, as the
+            // insets leave it.
+            drawSceneInsets(r);
         }
         drawRecorded(r, &r->prepared[i]);
     }
     if (r->preparedGlowAt == (int32_t)r->prepared.size()) {
         drawGlow(r);
+        if (clipped) {
+            C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, r->targetWidth, r->targetHeight);
+            clipped = false;
+        }
+        drawSceneInsets(r);
     }
     if (clipped) {
         C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, r->targetWidth, r->targetHeight);

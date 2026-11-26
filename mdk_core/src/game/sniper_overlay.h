@@ -37,11 +37,11 @@
 // panel can show (the owner's memory-over-texture-precision rule, 2026-11-19).
 // Linux keeps the default: the whole images, every texel, as the C#.
 //
-// THE ROUND CAMERAS ON THE 3DS. The C# leaves a watching camera's window to its
-// inset (a second scene pass into a sub-viewport). The 3DS draws no round-camera
-// insets (sniper_view.h says why), so a frontend that does not draw them calls
-// setRoundViewsDrawn(false) and a watching camera's window is filled as an empty
-// one instead of showing the scope's view through the mask's hole.
+// THE ROUND CAMERAS' WINDOWS. The C# leaves a watching camera's window to its
+// inset (a second scene pass into a sub-viewport); both frontends draw it. A
+// frontend that does not draw them calls setRoundViewsDrawn(false) and a
+// watching camera's window is filled as an empty one instead of showing the
+// scope's view through the mask's hole.
 //
 // Cold path: a few dozen canvas quads a frame in sniper mode (the iris, which
 // needs a strike target, is a span per row of its 280 rows).

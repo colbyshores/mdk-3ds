@@ -22,13 +22,10 @@
 // THE INSETS (render.h). A round camera is the frame's scene again through the
 // round's camera into its window (`Inset::scene`, under the canvas); the clip is
 // three models of its own through a fixed camera over the whole view (over the
-// canvas). The Vulkan backend draws both. The 3DS backend draws the clip and
-// NOT the round cameras: a round camera is a second pass of the whole scene into
-// a sub-viewport -- every arena batch and object submitted again, three times
-// over -- which the Old 3DS's frame does not have room for, and the backend has
-// no sub-rectangle depth clear to draw it with. The frontend then asks the
-// overlay to fill a watching camera's window as an empty one
-// (SniperOverlay::setRoundViewsDrawn). Owner-gated (docs/OPEN_ITEMS.md).
+// canvas). Both backends draw both; the 3DS draws a round camera as the frame's
+// scene records again through the round's camera (render.h). A frontend that
+// passes `roundInsets` false gets a watching camera's window filled as an empty
+// one (SniperOverlay::setRoundViewsDrawn).
 //
 // THE STRIKE. SniperView.Aim asks AirStrike.FindTarget (package #14's,
 // scripts/air_strike.h), and the full-screen strike (DrawStrike) is #14's
@@ -105,7 +102,7 @@ public:
 
     // C# SniperView.Draw after its first loop: out of sniper mode the overlay is
     // told so; in it, the overlay's state, the round cameras' insets (when
-    // `roundInsets`; the 3DS passes false, above) and the clip's inset, whose
+    // `roundInsets`, above) and the clip's inset, whose
     // models are laid out by `objects` in `look` (the C#'s LookOf(CurrentArena))
     // and drawn through this view's own stream. `scripts` may be null (a level
     // without its scripts): no cameras and no clip.

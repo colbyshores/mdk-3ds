@@ -269,6 +269,9 @@ struct DepthState {
     // Only the sun shadow's receive pass asks: it draws a surface a second time
     // over itself and must touch no pixel another surface won (kDepthShadowReceive).
     bool equal = false;
+    // The scene insets' depth reset (06_queue.inc drawSceneInsets): every fragment
+    // passes and writes its depth, and no colour.
+    bool reset = false;
 };
 
 // THE SUN SHADOW'S RECEIVE PASS: tested for equality, never written.

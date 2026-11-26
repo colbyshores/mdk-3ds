@@ -228,16 +228,31 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
         return;
     }
     c->insetOpen = false;
-    if (i->scene) {
-        if (!c->insetSceneRefused) {
-            c->insetSceneRefused = true;
-            mdk::log3dsPrintf("inset: a scene inset (a sniper round camera) is not drawn on "
-                              "this target");
-        }
-        return;
-    }
     // A ZERO-AREA inset draws nothing (render.h): its rectangle has no pixels.
     if (!(i->width > 0.0f) || !(i->height > 0.0f)) {
+        return;
+    }
+    // A Scene inset (a sniper round camera) is only recorded: each eye's replay
+    // draws the frame's scene again through its camera (drawSceneInsets).
+    if (i->scene) {
+        if (c->sceneInsetCount >= RendererC3D::kMaxSceneInsets) {
+            if (!c->insetSceneRefused) {
+                c->insetSceneRefused = true;
+                mdk::log3dsPrintf("inset: more than %d scene insets in a frame; the rest are "
+                                  "not drawn", (int)RendererC3D::kMaxSceneInsets);
+            }
+            return;
+        }
+        RendererC3D::SceneInset& inset = c->sceneInsets[c->sceneInsetCount++];
+        inset.rect[0] = i->x;
+        inset.rect[1] = i->y;
+        inset.rect[2] = i->width;
+        inset.rect[3] = i->height;
+        memcpy(inset.view, i->camera.view, sizeof(inset.view));
+        memcpy(inset.projection, i->camera.projection, sizeof(inset.projection));
+        inset.position[0] = i->camera.position.x;
+        inset.position[1] = i->camera.position.y;
+        inset.position[2] = i->camera.position.z;
         return;
     }
     // The inset camera's clip -> its rectangle of the canvas, in homogeneous

@@ -430,6 +430,20 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
         return nullptr;
     }
 
+    // THE SCENE INSETS' DEPTH QUAD (drawSceneInsets), written once: six corners
+    // over the whole clip square, just inside the far clip plane (the PICA's clip
+    // z runs [-w, 0], and 0 itself is the edge a rasteriser may reject). The
+    // stored depth z + 1 is the far value to within a few units of the buffer's
+    // 24 bits. The diagnostic uses the scratch's first 120 bytes.
+    {
+        static const float kZ = -1.0e-6f;
+        const float quad[6][5] = {{-1.0f, -1.0f, kZ, 0.0f, 0.0f}, {1.0f, -1.0f, kZ, 0.0f, 0.0f},
+                                  {1.0f, 1.0f, kZ, 0.0f, 0.0f},   {-1.0f, -1.0f, kZ, 0.0f, 0.0f},
+                                  {1.0f, 1.0f, kZ, 0.0f, 0.0f},   {-1.0f, 1.0f, kZ, 0.0f, 0.0f}};
+        float* at = static_cast<float*>(r->scratch) + kInsetQuadOffset / sizeof(float);
+        memcpy(at, quad, sizeof(quad));
+        GSPGPU_FlushDataCache(at, (u32)sizeof(quad));
+    }
     mdk::log3dsPrintf("renderer created: target=%p dvlb=%p numDVLE=%d scratch=%p",
                       (void*)r->targetLeft, (void*)r->dvlb, (int)r->dvlb->numDVLE, r->scratch);
     r->eyeSeparation = desc ? (float)desc->stereo.separation : 0.0f;

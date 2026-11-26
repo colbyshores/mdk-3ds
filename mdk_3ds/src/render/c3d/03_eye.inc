@@ -25,6 +25,7 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // world matrix composes it against this matrix instead of rebuilding the
     // whole chain per draw.
     mdk::pica::eyeViewProjection(r->view, r->projection, offset, r->eyeVp);
+    r->eyeOffset = offset;
     // THE PER-EYE FRUSTUM for drawRecorded's cull: the same eye matrix BEFORE
     // the PICA conversions (the conversions are right-multiplications by fixed
     // matrices, so the volume is the same and the engine's clip convention
