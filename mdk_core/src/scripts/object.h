@@ -286,7 +286,8 @@ struct MdkObject {
     float lift() const { return (flags & FlagRolling) != 0 ? height_offset : 0.0f; }
 
     // World position of a model reference point (the C#'s ReferencePoint): the
-    // point scaled and rotated about Z by yaw, added to the position; the position
+    // point (where the current animation frame has it, upstream a48e64c7) scaled and
+    // rotated about Z by yaw, added to the position; the position
     // itself when the model has no such point (index out of range). Used by the
     // attach motion (command 74) to hang a chute on its leader.
     Vec3 reference_point(int index) const;

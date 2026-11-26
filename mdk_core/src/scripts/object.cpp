@@ -223,7 +223,22 @@ mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
         static_cast<size_t>(index) >= model->referencePoints.size()) {
         return position;
     }
-    const mdk::formats::Vec3f& p = model->referencePoints[static_cast<size_t>(index)];
+    mdk::formats::Vec3f p = model->referencePoints[static_cast<size_t>(index)];
+    // Upstream a48e64c7 (C# 1.2.0): where the current animation frame has the point
+    // (animations keep each point's place per frame). LEVEL7's soldiers hanging in a
+    // chain (XG) raise the hand they hang by; rest-pose points bunched the chain up.
+    if (animation != nullptr && animation->frameCount > 0 &&
+        static_cast<size_t>(index) < animation->referencePoints.size()) {
+        const std::vector<mdk::formats::Vec3f>& frames =
+            animation->referencePoints[static_cast<size_t>(index)];
+        if (!frames.empty()) {
+            int32_t frame = animation_frame < 0 ? 0 : animation_frame;
+            if (frame > (int32_t)frames.size() - 1) {
+                frame = (int32_t)frames.size() - 1;
+            }
+            p = frames[(size_t)frame];
+        }
+    }
     float x = p.x * scale;
     float y = p.y * scale;
     float z = p.z * scale;

@@ -2914,3 +2914,11 @@ frame, the GPU's own `C3D_GetDrawingTime`. One run per cell: differences under
     model has fewer than two (LEVEL7's ship XE: its hook). One golden moved,
     `L7_plat_tank` (an XE chain in DANT_3 next to the tank), equal to the oracle at
     94bf1d0b byte for byte.
+  - **a48e64c7, hang chain links by their animated points.** `MdkObject::reference_point`
+    takes the point where the current animation frame has it (frame clamped to the
+    track), as the C# does; the rest-pose point only without an animation. It is every
+    reference point's reader (chains, attachments, wounds, shots from a point), so 46
+    goldens moved, all equal to the oracle at a48e64c7 byte for byte: LEVEL5's tick tables
+    and script states from t720, `L8_fire`, `L8_fire_run`, four `L8_items_*`,
+    `L8_rounds_ship`, `L3_screen_hmo3`, `L8_sniper_hud_ship`, `L6_plat_gun`, `L7_ride_xd2`,
+    `L4_board_end`, five `L7_bomber_*`, `L8_end_level`, and four `*_hazards_*`.

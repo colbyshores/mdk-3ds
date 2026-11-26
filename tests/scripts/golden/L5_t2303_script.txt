@@ -1,4 +1,4 @@
-SCRIPT level=5 ticks=2303 seed=1 currentArena=MUSE_1 objects=15 target_pos=-33.0000,-988.0000,-293.0000 target_yaw=284.0000 alien_target=-1
+SCRIPT level=5 ticks=2303 seed=1 currentArena=MUSE_1 objects=13 target_pos=-33.0000,-988.0000,-293.0000 target_yaw=284.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
 KURT health=0 hurt_flash=180.0000 invulnerable=0.0000 knock=100.0000 state=0 slots=0
 AUDIO voices=64 list=1:SPIT,2:SPIT,3:SPIT,4:LASER1,5:XU_JUMP,7:LASER3,8:XU_JUMP,10:LASER3,11:XU_JUMP,12:LASER1,13:XU_JUMP,14:RICO1,15:RICO1,16:RICO1,17:RICO1,18:RICO1,19:RICO1,21:RICO1,22:RICO1,23:RICO1,24:RICO1,25:RICO1,26:RICO1,27:RICO1,28:RICO1,29:XG_SPOT1,30:LASER2,31:RICO1,32:RICO1,33:XU_JUMP,34:RICO1,35:RICO1,36:RICO1,37:RICO1,39:RICO1,40:RICO1,41:RICO1,42:RICO1,43:RICO1,44:RICO1,45:RICO1,46:RICO1,47:RICO1,48:RICO1,49:LASER3,50:XU_JUMP,51:RICO1,52:RICO1,53:RICO1,54:RICO1,56:LASER2,57:XU_JUMP,58:RICO1,59:RICO1,60:RICO1,61:LASER1,62:XU_JUMP,64:XU_JUMP,65:RICO1,66:LASER3,67:RICO1,68:XU_JUMP,69:RICO1,169:XG_COCK
@@ -15,6 +15,4 @@ OBJ 008 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,1.0000 restart=7053 
 OBJ 009 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=17148 wait=0.0000 wresume=0 death=17192 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
 OBJ 010 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
 OBJ 011 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
-OBJ 012 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
-OBJ 013 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
-OBJ 014 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4801 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 012 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4801 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
