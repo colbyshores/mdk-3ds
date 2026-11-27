@@ -23,13 +23,12 @@
 namespace mdk {
 
 // What the stream needs from main_3ds.cpp: the renderer, the controls, the run's
-// frame count and budget, the lifecycle hook's resume flag (P1: the frame clock is
+// frame count (its own end is platform/run_end_3ds.h's), the lifecycle hook's resume flag (P1: the frame clock is
 // rebased on resume) and the heap probe for the log.
 struct Stream3dsFrontend {
     MdkRenderer renderer = nullptr;
     const ControlBindings* controls = nullptr;
     uint32_t* frame = nullptr;
-    uint32_t frameBudget = 0;
     volatile bool* resumePending = nullptr;
     void (*heapProbe)(const char* tag) = nullptr;
     // The settings' difficulty (C# StreamScreen: ui.Settings.Difficulty).

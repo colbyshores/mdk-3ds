@@ -3891,3 +3891,72 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   `fallApplied` can run; the 3DS `front->save` is `saveConfigNow`, the level's saver). Not run
   in Mandarine or on a console: the 3DS side is pinned by the source check only.
 - **Commit:** this one.
+### The Old 3DS "menu-exit hang" of 2026-11-26: not a menu exit; one run end for every frame loop
+- **Asked:** root-cause the hard hang of `old3ds-lan167` (no ping, no ARP, UDP `cmd reboot`
+  not consumed, physical power needed), on the hypothesis that quitting from the MAIN MENU
+  tears down with the menu's slide reads or music worker live.
+- **The session named as the hang is not one.** `sd-pull-1851/mdk.prev2.log` line 606 (the
+  only session on the card without `--- session end ---`) is the `L5a` cycle of
+  `throwaway/overnight-smoke-hw` at 09446445 (pushed ~08:17; built after 09446445 08:09 and
+  before ca63e48e's GOD=1 at 08:34; `.git/worktrees/overnight-smoke-hw/hw-logs/L5a-cap.out`).
+  Kurt died at frame 2279, the menu came up, its slides loaded at frame 2698 -- and that
+  harness never asks its deadline outside the level loop (`harnessAutoquitDue` is called only
+  in main_3ds.cpp's level loop on every 11-26 throwaway carrying the 7d86f347 port:
+  overnight-smoke, decal-zfight, combined, hd-bubble-base, mip-root, second-core-hw2;
+  `harness/3ds-profiling` and `fix/3ds-hd-only` do ask it in the menus and the stream). The
+  game sat in the menu: hw_cycle `TIMEOUT ... consecutive failed pulls=0`, "HTTP answers but no
+  new session end", and the next push (08:36) was received by the stub. The console was alive.
+- **A quit from the main menu was run on the appliance and was clean.** `throwaway/death-menu-hw`
+  14bd3a01 (which added the menus' autoquit), cycle A 12:15-12:28
+  (`.git/worktrees/death-menu-hw/hw-logs/A.session.log`): three deaths, the menu each time, the
+  last visit `menu: slides loaded at frame 4756 (8 loaded)` with MAINSONG on the worker, then
+  `exiting after 14258 frames ... harness autoquit`, `--- session end ---`, FRESH, and the next
+  lanes' cycles (12:32-13:21) ran normally.
+- **The real hard hang** began during `decal-zfight`'s `after-shot.3dsx` cycle (pushed 13:22,
+  push returned after 367 s, `hw-after-shot.cycle.txt`: 48 consecutive failed pulls from the
+  start of the poll; ARP-dead by 13:46, `bullet-cam/hw-logs/hw-shot2.cycle.txt`). That run
+  quit from INSIDE level 7, not from a menu, and its log on the card (sd-pull-1851 `mdk.log`,
+  5th session) is complete: `exiting after 4360 frames (5381 steps): harness autoquit`,
+  `--- session end ---`. HTTP had stopped answering while the game was still running; the ATM
+  `screenshot` requests sent mid-run came back "not committed within 30s" then "artifacts.txt
+  timed out" (`shots-after-{1,2,3}.json`). The overnight `restore-strips` wedge (~02:46,
+  WORK_LEDGER "the appliance stopped answering after the screenshot run") has the same shape:
+  mid-run ATM screenshot sets "not committed", then :8080 and :17491 dead. Ranked candidates:
+  (1) ATM/Rosalina's live capture path (`RosalinaMenu_CaptureScreenshotSet`, netload_stub
+  `sysmodules/rosalina/source/menus.c`) under a running MDK -- firmware, outside this repo;
+  (2) something in the run itself that kills the network sysmodules mid-run. Not proven:
+  no ATM log or crash dump from 13:30 has been read (both are on the card).
+- **Teardown audit (this tree and 09446445), no defect found:** every thread is joined before
+  exit (the streaming worker, or on 09446445 the log writer, the HD reader and the audio worker),
+  `ndspExit` runs on every open, the render targets' deletes and `C3D_Fini` wait for the GPU
+  queue (citro3d's `C3D_RenderTargetDelete` disassembled: `gxCmdQueueWait(-1)`), romfs is
+  released after its readers. An independent read-only review agent reached the same verdict.
+- **What was fixed** (the defect class behind the stranded session): the run's own end was a
+  field per loop (`FrontScreens3ds::frameBudget`, `Stream3dsFrontend::frameBudget`) and a
+  harness's deadline one call in the level loop. `platform/run_end_3ds.{h,cpp}`'s
+  `runEnded3ds(frame, &reason)` is now the one check the level loop, the front screens and the
+  stream all make; a harness adds its deadline there (`throwaway/menu-exit-hw` d4c41824 does).
+  `--frames` behaves as before (same position, reason, teardown).
+  `tests/scripts/run_end_test.sh` fails any `aptMainLoop()` frame loop in `mdk_3ds/src` without
+  the call and any per-loop `frameBudget` copy, and proves both on seeded copies of the tree
+  (against the unfixed tree it reports 8 failures).
+- **Evidence:**
+  - Linux build (RelWithDebInfo): 0 warnings. 3DS player build (`make -C mdk_3ds`): 0 warnings.
+  - `make -C tests/scripts test`: exit 0, 1004 PASS, 0 FAIL, 4 SKIP (frame-gate oracle arms);
+    RunEnd 3/3. `make -C tests/formats`: 200,670 checks, 0 failures. `tools/check.sh` (with
+    `MDK_DATA_DIR`): ALL GATES PASSED (gates_smdh SKIP, no .cia).
+  - Mandarine r1.2.1 (md5 0d2adab6), `DISPLAY=:99`, `emurun.sh --secs 150`, the only MDK
+    instance (a perfect_dark instance was up). Menu-only boot, `AUTOQUIT=60`:
+    - fixed (`fixed-menu60.3dsx`, md5 44e7d073): splash, MAINSONG, slides loaded at frame 724,
+      `audio: dsp close`, `exiting after 3477 frames (0 steps): harness autoquit`,
+      `reader: at stop`, `--- session end ---`;
+    - unfixed (`throwaway/combined-hw` 33b97b0a, `unfixed-menu60.3dsx`, md5 efb1221d): slides
+      loaded at frame 723, then 14 ten-second worker summaries in the menu and no exit -- the
+      L5a stranding reproduced. The emulator does not hang on either.
+- **Hardware: NOT RUN** (owner away; nobody can power-cycle the appliance). Payloads ready in
+  `.git/worktrees/menu-exit/hw-logs/`: `fixed-menu60.3dsx` (autoquit from the main menu after
+  the slides load) and `fixed-L5-death-menu120.3dsx` (the L5a scene: LEVEL=5, HDROMFS, the
+  L5a toggles, no god; Kurt's death, the menu, autoquit there at 120 s). `unfixed-menu60.3dsx`
+  is kept for the emulator only: on the console it would sit in the menu until a UDP reboot.
+  Before any of them: pull `/luma/atm/atm.log` and `/luma/dumps/arm11/` for 13:2x-13:4x.
+- **Commit:** 1fde4fbd (the fix and its test); this entry.
