@@ -491,8 +491,9 @@ bool ArenaSceneBuilder::step(int32_t maxTriangles) {
         // and was the first sync's whole cost when it ran unsliced. Measured on
         // the Old 3DS (L7 walk, DANT_2's build at the corridor crossing): 600
         // units are ~4 ms of overlap tests (DepthLayersBuilder counts a
-        // collected triangle as two units, its measured relative cost).
-        const int32_t kDepthWorkPerStep = 600;
+        // collected triangle as two units, its measured relative cost); 150
+        // keep a step near 1 ms, under the frontend's per-frame build budget.
+        const int32_t kDepthWorkPerStep = 150;
         if (!depth_.step(kDepthWorkPerStep)) {
             if (depth_.failed()) {
                 failure_ = Failure::InvalidData;

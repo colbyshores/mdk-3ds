@@ -4,6 +4,8 @@
 
 #include "formats/texture_archive.h"
 
+#include <algorithm>
+
 #include <string.h>
 
 #include "formats/bin_reader.h"
@@ -73,16 +75,38 @@ TextureArchive TextureArchive::parse(const uint8_t* bytes, int32_t byteCount, in
         archive.textures_.push_back(std::make_pair(name, texture));
     }
 
+    archive.index();
     return archive;
 }
 
-const Texture* TextureArchive::findTexture(const std::string& name) const {
-    for (const std::pair<std::string, Texture>& entry : textures_) {
-        if (entry.first == name) {
-            return &entry.second;
-        }
+void TextureArchive::index() const {
+    byName_.resize(textures_.size());
+    for (size_t i = 0; i < byName_.size(); i++) {
+        byName_[i] = (uint32_t)i;
     }
-    return nullptr;
+    const std::vector<std::pair<std::string, Texture>>& entries = textures_;
+    std::stable_sort(byName_.begin(), byName_.end(), [&entries](uint32_t a, uint32_t b) {
+        return entries[a].first < entries[b].first;
+    });
+    indexed_ = textures_.size();
+}
+
+const Texture* TextureArchive::findTexture(const std::string& name) const {
+    // By the sorted index, not a scan: a level's archive holds hundreds of
+    // names and the material resolver asks per surface -- the scan's compares
+    // were half of an object layout's first build (LEVEL8's GUNT_2 entry, host
+    // callgrind 2026-11-27). The same answer: the name's first entry.
+    if (indexed_ != textures_.size()) {
+        index();
+    }
+    const std::vector<std::pair<std::string, Texture>>& entries = textures_;
+    const std::vector<uint32_t>::const_iterator found = std::lower_bound(
+        byName_.begin(), byName_.end(), name,
+        [&entries](uint32_t i, const std::string& key) { return entries[i].first < key; });
+    if (found == byName_.end() || entries[*found].first != name) {
+        return nullptr;
+    }
+    return &entries[*found].second;
 }
 
 int32_t TextureArchive::findColor(const std::string& name) const {
@@ -103,6 +127,7 @@ void TextureArchive::add(const std::string& name, const Texture& texture) {
     }
 
     textures_.push_back(std::make_pair(name, texture));
+    index();
 }
 
 } // namespace formats

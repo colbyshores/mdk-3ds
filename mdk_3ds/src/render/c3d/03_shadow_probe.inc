@@ -96,8 +96,8 @@ static void testSampleShadowMap(RendererC3D* r, C3D_Tex* tex, C3D_RenderTarget* 
 //   * NATIVE: an 8x8 map SAMPLED (testSampleShadowMap, still clear), WRITTEN
 //     natively at depth 0.5, and SAMPLED AGAIN with every receiver behind it.
 // The ramp where it is exact; native writes where it is not and they work
-// (the console); the ramp otherwise, logged as neither. end_frame then reads
-// the real pass's map back once more in native mode.
+// (the console); the ramp otherwise, logged as neither. This is the whole
+// decision: play reads nothing back (03_frame.inc).
 static void testNativeShadowWrites(RendererC3D* r) {
     // A test that could not RUN (no VRAM or linear memory for it this time) is
     // tried again, up to three times, before the ramp is taken for the session:

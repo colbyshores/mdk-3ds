@@ -169,7 +169,7 @@ void objectModelSurfaces(const formats::Model& model, const ObjectLook& look,
 
 bool warmObjectStep(const formats::Arena& arena, const formats::Cmi* cmi,
                     const ObjectLook& look, const MaterialResolver& resolver,
-                    ObjectSurfaceFn start, void* user, size_t* cursor) {
+                    ObjectSurfaceFn start, void* user, size_t* cursor, ObjectView* layouts) {
     const size_t own = (size_t)arena.modelCount();
     const size_t global = cmi ? cmi->modelOffsets().size() : 0;
     if (start == nullptr || cursor == nullptr || *cursor >= own + global) {
@@ -191,6 +191,19 @@ bool warmObjectStep(const formats::Arena& arena, const formats::Cmi* cmi,
         }
     }
     if (model != nullptr) {
+        if (layouts != nullptr && at < own) {
+            // The arena's own pointer, drawn as is -- unless the CMI has a model
+            // of that name, which ScriptRuntime::findModel takes first: then
+            // this one is never drawn and its layout would only cost.
+            bool inCmi = false;
+            for (size_t g = 0; g < global && !inCmi; g++) {
+                const std::pair<std::string, int32_t>& entry = cmi->modelOffsets()[g];
+                inCmi = entry.second != 0 && entry.first == arena.modelName((int32_t)at);
+            }
+            if (!inCmi) {
+                layouts->preload(model, look);
+            }
+        }
         std::vector<Surface> surfaces;
         objectModelSurfaces(*model, look, resolver, &surfaces);
         for (size_t i = 0; i < surfaces.size(); i++) {

@@ -873,8 +873,6 @@ struct RendererC3D {
     bool shadowNativeTested = false;
     int32_t shadowNativeTestRuns = 0;  // tries that could not run (retried, up to 3)
     bool shadowNative = false;
-    bool shadowNativeVerified = false; // the real pass wrote texels (end_frame)
-    int32_t shadowNativeEmptyFrames = 0; // consecutive native frames that wrote none
     int32_t shadowMapAsked = 0;     // the config's shadowMapSize when the map was made or refused
     int32_t shadowMapSize = 0;      // the map's side: the config's (shadowMapSize) or 512, smaller while VRAM refuses
     C3D_Tex shadowTex;

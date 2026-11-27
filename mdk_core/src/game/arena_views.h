@@ -71,7 +71,7 @@ public:
         int32_t failed = 0;          // build attempts that failed
         int32_t orphansReleased = 0; // palettes the sweep gave back
         int32_t syncFinishes = 0;    // drawn views finished synchronously at sync (the guarantee)
-        int32_t buildSteps = 0;      // sliced build steps the sync pump ran
+        int32_t buildSteps = 0;      // sliced build steps run (sync's and the frontend's stepBuild)
     };
 
     // The sweep's period, and a failed build's retry period after its first
@@ -109,6 +109,15 @@ public:
                  const std::vector<std::string>& drawn, const std::vector<std::string>& hints);
     // The same with the drawn list the pair implies (tools and tests).
     int32_t sync(const std::string& current, const std::string& second);
+
+    // One more build step for the oldest view still building (sync takes one
+    // itself): the frontend calls it while its per-frame time budget lasts, so
+    // a large arena's build (LEVEL4's MEAT_5: 1,251 triangles) is spread in
+    // small steps under a bound instead of one large step a frame. With
+    // `sliceOnly`, only a scene slice is taken: the Mesh and Large steps are
+    // left to the next sync's own step, so they never stack on a frame's
+    // slices. False when no step was taken. Between frames, like sync.
+    bool stepBuild(bool sliceOnly);
 
     // Queue the drawn arenas' visible groups, in the list's order, the animated
     // textures at the frames setAnimatedTextures names (LevelView::draw).
