@@ -211,6 +211,16 @@ if [ -f "$ARENA_ETC1_DIR/manifest.txt" ]; then
     if [ -f "$ARENA_ETC1_DIR/byname.txt" ]; then
         ln "$ARENA_ETC1_DIR/byname.txt" "$OUT/orig/byname.txt" 2>/dev/null ||
             cp "$ARENA_ETC1_DIR/byname.txt" "$OUT/orig/byname.txt"
+        # THE NAME INDEX AS A TABLE (orig/byname.bin, mdk_core/src/formats/
+        # byname_index.h), made from the two files just staged, so it always
+        # matches them: the console reads its level's block instead of parsing
+        # byname.txt (2.5 s a level load on the Old 3DS). Its stamp is checked
+        # at load; a table that does not match is refused and byname.txt is
+        # parsed as before. A failed table stops the build.
+        if ! python3 "$HERE/byname_index.py" "$OUT/orig" >&2; then
+            echo "stage_romfs: ERROR: byname_index.py failed (see above)." >&2
+            exit 1
+        fi
     fi
     while IFS= read -r -d '' file; do
         rel="${file#"$ARENA_ETC1_DIR"/}"

@@ -543,6 +543,9 @@ int main(int argc, char** argv) {
     // files by content key, the orig files' original sizes. Level-load only.
     std::map<std::string, std::string> hdByKey;
     std::map<std::string, uint32_t> origDims;
+    // The orig manifest's size and hash, what romfs:/orig/byname.bin must have
+    // been built from (game/orig_byname.h).
+    mdk::OrigManifestStamp origStamp;
     // Every HD file's .t3x size and format (the HD window is sized from it).
     std::map<std::string, uint32_t> hdShapes;
     // THE HD WINDOW (hd_window_3ds.h, docs/3DS_ARCHITECTURE.md 4): every arena's
@@ -565,7 +568,7 @@ int main(int argc, char** argv) {
     if (mdk::loadHdPack(flow.state().level, &hdPack, &hdByKey, &hdShapes)) {
         hdSource.pack = &hdPack;
     }
-    if (mdk::loadOrigPack(flow.state().level, &origPack, &origDims)) {
+    if (mdk::loadOrigPack(flow.state().level, &origPack, &origDims, &origStamp)) {
         hdSource.orig = &origPack;
     }
     if (hdSource.pack || hdSource.orig) {
@@ -646,19 +649,17 @@ int main(int argc, char** argv) {
             loadingBar(0.23f);
             // The name-keyed orig index needs the loaded level (arena name ->
             // palette), so it is built here, not with the pack itself.
-            if (hdSource.orig &&
-                mdk::loadOrigByName(flow.state().level, level, hdByKey, origDims, &origByName)) {
+            if (hdSource.orig && mdk::loadOrigByName3ds(flow.state().level, level, origStamp,
+                                                         &hdByKey, origDims, &origByName)) {
                 hdSource.byname = &origByName;
-                mdk::log3dsPrintf("orig: byname index %d textures, %d with an HD copy",
-                                  (int)origByName.paths.size(), (int)origByName.hdPaths.size());
             }
-            // NO NAME INDEX, NO HD (spec 3.1): without byname.txt an HD file could
+            // NO NAME INDEX, NO HD (spec 3.1): without one an HD file could
             // only be found by hashing every texture in play, which the HD rule
             // forbids. Refused for the level, loudly; the textures take the orig
             // pack (or their expansion) as with no HD pack at all.
             if (hdSource.pack && !hdSource.byname) {
-                mdk::log3dsPrintf("hd: REFUSED for level %d: no name index (%s/byname.txt) "
-                                  "-- the HD pack is not used without it",
+                mdk::log3dsPrintf("hd: REFUSED for level %d: no name index (%s/byname.bin, "
+                                  "byname.txt) -- the HD pack is not used without it",
                                   (int)flow.state().level, mdk::kOrigPackRoot);
                 hdSource.pack = nullptr;
             }

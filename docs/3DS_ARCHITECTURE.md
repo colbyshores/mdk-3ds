@@ -116,6 +116,17 @@ owner first.
   still makes is the level's 2D art at load (63-68 textures, 2.65 MB, ~0.66 s
   on the Old 3DS, 1.57 MB of it the two font atlases) and 1x1 flat colours in
   play (256 bytes each). No new build-time pack was warranted.
+- **The orig pack's name index is a build-time table** (`romfs:/orig/byname.bin`,
+  `mdk_core/src/formats/byname_index.h`): `stage_romfs.sh` runs
+  `mdk_3ds/tools/byname_index.py` on the staged `byname.txt` and `manifest.txt`,
+  so a level load reads a 320-byte header and its level's block (~45 KB) and
+  parses nothing -- it was 2.53-2.64 s of main-core text parsing per load on the
+  Old 3DS. The table carries a stamp of its inputs (size and FNV-1a 64 of both);
+  one whose stamp is not the RomFS's, or that does not parse, is refused (logged
+  `orig: byname.bin REFUSED`) and the index is built from `byname.txt` as before,
+  with the same answers (`tests/formats/byname_index_tests.cpp`). What depends on
+  the loaded level (arena name -> palette) and on the SD card (the HD pack's
+  content keys) is still joined at load: map finds, no file read.
 - The movie stays a streamed texture.
 
 ## 6. GPU visibility

@@ -31,6 +31,7 @@ SOURCES := \
 	math_lut_tests.cpp \
 	mods_tests.cpp \
 	kurt_pack_tests.cpp \
+	byname_index_tests.cpp \
 	random_tests.cpp \
 	walk_script_tests.cpp \
 	$(CORE)/util/math_lut.cpp \
@@ -53,11 +54,13 @@ SOURCES := \
 	$(CORE)/formats/sprite_animation.cpp \
 	$(CORE)/formats/fti.cpp \
 	$(CORE)/formats/kurt_pack.cpp \
+	$(CORE)/formats/byname_index.cpp \
 	$(CORE)/formats/glb.cpp \
 	$(CORE)/formats/png.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/scripts/animated_textures.cpp \
 	$(CORE)/game/level_data.cpp \
+	$(CORE)/game/orig_byname.cpp \
 	$(CORE)/formats/font.cpp \
 	$(CORE)/game/enhanced_config.cpp \
 	$(CORE)/game/enhanced_menu.cpp \
