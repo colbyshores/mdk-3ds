@@ -3806,3 +3806,20 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   "same pixels as upstream" is argued, not measured; the ride itself (from its start) was not
   driven.
 - **Commits:** eaef0d79 (the fix, tests, this entry) and this ledger update.
+
+## 2026-11-27 -- fix-arena-entry-stutter recorded as merged; its content was already here (branch test/3ds-combined-11-26)
+
+- **What:** 20e2521f merges fix-arena-entry-stutter with `-s ours`: the tree is unchanged.
+- **Why:** each of its six commits is an older copy of a commit this branch (and main) already
+  has: c657187e = d0a80228 (the sky's per-palette linear table, the arena-entry stutter fix),
+  1d5b1382 = 4f92fe25 (scope zoom X/B, pause handoff), 8ec5e1fb = 6c10b4c6 (harness UNLOCK),
+  16b9f53b = 95da0680 and 85aaf3be = cbfe36d3 (instruments), 49e3c824 = dcb61d21 (ledger) --
+  same subjects, the newer copies in main's history. A content merge conflicted in 11 files
+  and would only have re-added the harness (harness_3ds.*, hw_cycle.sh, render_c3d_stats.h,
+  the profile instruments) that 930508e1 moved off this line to harness/3ds-profiling.
+- **Evidence:** `git merge-base --is-ancestor d0a80228` holds for main, this branch,
+  perf/3ds-hd-bubble and both sides of the 11-26 HD A/B, so the doorway worst frames measured
+  there (L7 CDANT_3->DANT_4 86-102 ms, L8 CGUNT_1->GUNT_2 173-207 ms) were taken WITH the sky
+  table; they come from elsewhere (L4's measured case: a synchronous view build, ~250 ms; see
+  perf/3ds-hd-bubble's ledger, 2026-11-27). No code changed, so no build or test was rerun.
+- **Commit:** 20e2521f (merge) and this one (ledger).
