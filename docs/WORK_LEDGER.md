@@ -3823,3 +3823,55 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   table; they come from elsewhere (L4's measured case: a synchronous view build, ~250 ms; see
   perf/3ds-hd-bubble's ledger, 2026-11-27). No code changed, so no build or test was rerun.
 - **Commit:** 20e2521f (merge) and this one (ledger).
+
+## 2026-11-27 -- the "L7 regression" on the combined tip: mostly a longer route; the real cost is the upstream object order and the pose blend (branch perf/3ds-l7-regression)
+
+- **What:** the combined tip had 481 frames over 33.3 ms on the L7 door walk against 211 for the
+  11-26 HD-window build (perf/3ds-hd-bubble's ledger, 2026-11-27). Bisected over the first-parent
+  merges on the appliance with one route and one instrument for every build: each payload is that
+  commit + throwaway/combined-hw 25180768's harness + a 5-second window of the frame's spans
+  (sim, with the runtime and Kurt inside it; GPU wait at frame begin; object pass; effects; frame
+  end; whole CPU frame). Branches throwaway/l7-{base,mid,bisect,tip}; logs
+  `.git/mdk-review/l7-view-logs/{base,mid,pres,tip}-L7.log`.
+- **Conditions:** old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, HD on, PROFILE OG,
+  `AUTOQUIT=244 LEVEL=7 HDROMFS=1 GOD=1 NOCLIP=1 PROFILE=1 ROUTE_START=8 HDIMPORTS=2` and the
+  hd-bubble campaign's L7 waypoint route (DANT_1 ... DANT_4 ... DANT_1, turbo out, walk back).
+  One run per build, every run FRESH.
+- **The 211 was a shorter run, not a faster build.** The 11-26 runs were built with a route
+  10 s shorter (autoquit 234 s against 244 s; the waypoint times are identical), and the extra
+  10 s are spent idle in a scene that runs at the 60/30 Hz edge (CPU 17.2 ms a frame, 5-9 frames
+  over 33.3 ms in every 5 s). On the same route the parent of the merges measures 438, not 211.
+  The L8 "improvement" (1,745 against 2,243) is the same artefact the other way: the two L8
+  routes differ in length (11,938 against 14,040 steps).
+- **Same route, whole run** (frames over 33.3 ms / mean ms / 2-vblank frames):
+  - e7dcd1a9 (perf/3ds-hd-bubble, the merges' parent): 438 / 18.19 / 946
+  - 49db95d9 (+ fix/upstream-gameplay): 471 / 18.26 / 993
+  - c5221a5b (+ fix/upstream-presentation): 504 / 18.32 / 1,024
+  - 92011514 (the tip: + decals, bullet cams, load bar, review fixes, ride-end depth): 478 / 18.36 / 1,046
+  - Run-to-run noise: the steady 150 s tail alone varies 172-205 over-33 frames between builds
+    whose spans there are equal, so differences under ~30 frames are not a measurement.
+- **Where the real cost is** (per-frame ms, same windows):
+  - **fix/upstream-gameplay, 615be6d4 (upstream d14ed0b5, objects run newest first, per arena):**
+    the 5 s Kurt spends in CDANT_3 by the DANT_3 door: script runtime 4.3 ms a frame on the
+    parent, 6.1 (gameplay) / 6.5 (presentation) / sim 8.4 (tip); frames over 33.3 ms in that
+    window 16 -> 43 / 48 / 52; the DANT_3->CDANT_3 crossing 8 -> 30 / 31 / 37. Host route probe
+    (the same waypoints through ScriptRuntime::update, callgrind): 3eb94e4c -> 615be6d4 raises
+    the runtime there from 18.5 to 30-34 us a tick, and the scripts call touchDamage 780 times
+    in the first 76 s against 152 (worldBounds/poseBounds of every same-arena object per call,
+    mdk_core/src/scripts/hazards.cpp:103-111). The objects now run in the original's order and
+    their scripts take the original's paths -- the fix's purpose (LEVEL7 DANT_6's cannon); the
+    cost is the game's, not a defect of the port.
+  - **fix/upstream-presentation, 07297dd3 (upstream ae746b5d, poses between their frames):**
+    the object pass in the steady DANT_4 scene 3.33 -> 3.66 ms a frame (ObjectView::addObject's
+    per-vertex lerp, mdk_core/src/game/object_view.cpp:465-483). It is absorbed by the vsync
+    wait there: frames over 33.3 ms in the tail 184 (parent) / 205 / 172 (tip), within noise.
+  - Decals, bullet cams, load bar, ride-end depth: nothing measurable (GPU command words per
+    frame unchanged, 7,224 vs 7,225; object pass and frame end equal within 0.1 ms).
+- **Not fixed (no measured gain):** passing alpha 1 to the 3DS object poses would give back the
+  0.32 ms of the object pass but no frames on this route; the d14ed0b5 cost is gameplay
+  fidelity. Candidate for a separate, measured branch: a per-tick cache of the objects' world
+  bounds in touchDamage (exact, so it keeps the oracle's hit set) -- not attempted under the
+  gameplay gate tonight.
+- **Recommendation:** no blocker for the merge to main from this measure; re-base the
+  door-walk A/Bs on one route file so two campaigns cannot differ in length again.
+- **Commit:** this one (ledger only; no code changed).
