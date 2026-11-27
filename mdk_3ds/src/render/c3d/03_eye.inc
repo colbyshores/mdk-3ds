@@ -111,6 +111,9 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // pica_matrix.h next to the constants; the ordering they imply is pinned
     // by `PASS PicaMatrix` because no picture on this host can show it.
     installDepthState(r, mdk::pica::depthStateForPass(mdk::Pass::Solid));
+    // The stencil off (installStencil): written every eye, as the depth state is.
+    r->stencilMode = -1;
+    installStencil(r, kStencilOff);
 
     // THE ALPHA TEST IS THE ORACLE'S DISCARD, and it is frame state: the
     // palette shader discards index 0 on every surface it draws, so the test is

@@ -132,7 +132,12 @@ bool ensureShadow(RendererVk* r) {
         refused("depth shader module: the frame renders without sun shadows");
         return false;
     }
-    for (int cull = 0; cull < 2; cull++) {
+    // [0-1]: back-face culled (Solid) and not; [2-3]: the same, keeping the
+    // FARTHER depth (GREATER_OR_EQUAL) -- the camera arena's cover step in the
+    // camera's depth (drawCameraDepth; render/draw_queue.h).
+    for (int variant = 0; variant < 4; variant++) {
+        const int cull = variant % 2;
+        const bool cover = variant >= 2;
         VkPipelineVertexInputStateCreateInfo vi = {};
         vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
         VkVertexInputBindingDescription binding = {};
@@ -171,7 +176,7 @@ bool ensureShadow(RendererVk* r) {
         ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
         ds.depthTestEnable = VK_TRUE;
         ds.depthWriteEnable = VK_TRUE;
-        ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        ds.depthCompareOp = cover ? VK_COMPARE_OP_GREATER_OR_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL;
         VkPipelineColorBlendStateCreateInfo cbs = {};
         cbs.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         cbs.attachmentCount = 0;
@@ -205,7 +210,7 @@ bool ensureShadow(RendererVk* r) {
         info.renderPass = r->shadowPass;
         info.subpass = 0;
         if (vkCreateGraphicsPipelines(device, r->pipeCache, 1, &info, nullptr,
-                                      &r->depthPipelines[cull]) != VK_SUCCESS) {
+                                      &r->depthPipelines[variant]) != VK_SUCCESS) {
             refused("shadow depth pipeline: the frame renders without sun shadows");
             return false;
         }
@@ -237,8 +242,13 @@ void drawShadowMap(RendererVk* r) {
     vkCmdSetViewport(cb, 0, 1, &viewport);
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
-    for (int32_t bucketIdx = 0; bucketIdx < mdk::kDrawQueuePassCount; bucketIdx++) {
-        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(bucketIdx);
+    // Every caster, the other arena's `back` draws too (render/draw_queue.h): the
+    // sun's map has no camera, so their order does not matter here.
+    for (int32_t slot = 0; slot < 2 * mdk::kDrawQueuePassCount; slot++) {
+        const std::vector<mdk::MeshDraw>& bucket =
+            slot < mdk::kDrawQueuePassCount
+                ? r->queue.backBucket(slot)
+                : r->queue.bucket(slot - mdk::kDrawQueuePassCount);
         for (size_t i = 0; i < bucket.size(); i++) {
             const mdk::MeshDraw& draw = bucket[i];
             if (draw.primitive != mdk::Primitive::Triangles) {
@@ -783,8 +793,17 @@ void drawCameraDepth(RendererVk* r) {
     mdk::vk::beginDepthPass(&r->ctx, r->viewDepthFramebuffer, r->shadowPass, w, h);
     vkCmdSetViewport(cb, 0, 1, &viewport);
     vkCmdSetScissor(cb, 0, 1, &scissor);
-    for (int32_t bucketIdx = 0; bucketIdx < mdk::kDrawQueuePassCount; bucketIdx++) {
-        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(bucketIdx);
+    // The scene's three steps (render/draw_queue.h): the other arena's `back`
+    // draws, the camera arena's `cover` draws' depth over them (GREATER_OR_EQUAL,
+    // depthPipelines[2-3]), every draw. Without back draws only the last runs.
+    for (int32_t slot = 0; slot < 3 * mdk::kDrawQueuePassCount; slot++) {
+        const int32_t step = slot / mdk::kDrawQueuePassCount;
+        const int32_t bucketIdx = slot % mdk::kDrawQueuePassCount;
+        if (step < 2 && !r->queue.hasBack()) {
+            continue;
+        }
+        const std::vector<mdk::MeshDraw>& bucket =
+            step == 0 ? r->queue.backBucket(bucketIdx) : r->queue.bucket(bucketIdx);
         for (size_t i = 0; i < bucket.size(); i++) {
             const mdk::MeshDraw& draw = bucket[i];
             if (draw.primitive != mdk::Primitive::Triangles) {
@@ -793,6 +812,9 @@ void drawCameraDepth(RendererVk* r) {
             if (draw.material.pass != mdk::Pass::Solid &&
                 draw.material.pass != mdk::Pass::DoubleSided &&
                 draw.material.pass != mdk::Pass::Mirror) {
+                continue;
+            }
+            if (step == 1 && (!draw.cover || draw.material.pass == mdk::Pass::Mirror)) {
                 continue;
             }
             if (draw.mesh < 0 || draw.mesh >= (int32_t)r->meshes.size() ||
@@ -815,7 +837,8 @@ void drawCameraDepth(RendererVk* r) {
             pc.frame_count = draw.material.frame_count > 0 ? draw.material.frame_count : 1;
             pc.frame = draw.frame;
 
-            VkPipeline pipeline = r->depthPipelines[draw.material.pass == mdk::Pass::Solid ? 0 : 1];
+            VkPipeline pipeline = r->depthPipelines[(draw.material.pass == mdk::Pass::Solid ? 0 : 1) +
+                                                    (step == 1 ? 2 : 0)];
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdPushConstants(cb, r->pipeLayout,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,

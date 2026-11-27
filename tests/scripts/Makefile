@@ -89,6 +89,7 @@ COMMON_SOURCES := \
 	$(CORE)/render/arena_scene.cpp \
 	$(CORE)/render/camera_builder.cpp \
 	$(CORE)/render/depth_pull.cpp \
+	$(CORE)/render/draw_queue.cpp \
 	$(CORE)/render/material_resolver.cpp \
 	$(CORE)/scripts/object.cpp \
 	$(CORE)/scripts/animated_textures.cpp \
@@ -229,6 +230,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh harness_aids_test.sh
 	@sh menu_frontend_test.sh
 	@sh stream_screen_test.sh
+	@sh arena_cover_test.sh
 	@sh fall_frontend_test.sh
 	@sh panel_geom_test.sh
 	@bash emurun_harness_test.sh

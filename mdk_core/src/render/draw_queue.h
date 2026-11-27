@@ -33,6 +33,33 @@
 // WHAT THE QUEUE DOES NOT DO: it does not batch by texture, and it does not
 // merge anything. The C# does not either -- `DrawOne` binds a pipeline and
 // issues one draw per command (Renderer.cs:1060-1110).
+//
+// THE CAMERA'S ARENA OVER THE OTHER ONE (upstream e1eb36bb, the original's
+// 0x41df35). While the other drawn arena may lie in front of the camera's
+// (game/arena_views.cpp), its batches and objects are marked `back` and go into
+// their own set of buckets; the camera arena's batches it may hide are marked
+// `cover` and stay in theirs (render_types.h MeshDraw). A backend then draws the
+// frame so that the camera's arena shows wherever its opaque (Solid,
+// DoubleSided) cover draws are drawn, and the depth buffer decides everything
+// else: the original's picture at full depth precision, where upstream split the
+// depth range into two bands. The two backends get there two ways, to one picture:
+//
+//   Vulkan (12_draw.inc; no stencil in its depth buffer)
+//     1. every back bucket, in pass order
+//     2. each opaque cover draw again, its depth only, at the far plane: the
+//        other arena's depth under it gives way
+//     3. every bucket, in pass order, as before
+//   Citro3D (06_queue.inc; DEPTH24_STENCIL8, and no draw added on the Old 3DS)
+//     1. the opaque cover draws, marking the stencil where they draw
+//     2. every back bucket, in pass order, only where the stencil is unmarked
+//     3. every bucket, in pass order, without the cover draws of step 1
+//
+// Without back draws only step 3 runs, and the frame is drawn as before. The
+// marks are made for the frame's camera: a sniper round camera's inset replays
+// them, and from its eye the box argument does not hold (both backends alike).
+// Not like upstream: the other arena's effects (sparks, debris, ropes) are not
+// marked, and Kurt and the camera arena's objects are depth-tested against the
+// other arena's geometry as before (upstream draws them over it).
 // ============================================================================
 
 #include <stdint.h>
@@ -87,12 +114,20 @@ public:
     int32_t total() const { return total_; }
 
     // The draws queued for one pass, in queue order. `pass` is a `Pass` value
-    // as an integer; an out-of-range index gives an empty bucket.
+    // as an integer; an out-of-range index gives an empty bucket. A `back` draw
+    // is not here: it is in backBucket.
     const std::vector<MeshDraw>& bucket(int32_t pass) const;
+
+    // The `back` draws of one pass, and whether there are any (the steps above
+    // run only then).
+    const std::vector<MeshDraw>& backBucket(int32_t pass) const;
+    bool hasBack() const { return backTotal_ > 0; }
 
 private:
     std::vector<MeshDraw> buckets_[kDrawQueuePassCount];
+    std::vector<MeshDraw> backBuckets_[kDrawQueuePassCount];
     int32_t total_ = 0;
+    int32_t backTotal_ = 0;
 };
 
 } // namespace mdk

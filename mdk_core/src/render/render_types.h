@@ -400,6 +400,19 @@ struct MeshDraw {
     float bounds_min[3] = {0.0f, 0.0f, 0.0f};
     float bounds_max[3] = {0.0f, 0.0f, 0.0f};
     bool cullable = false;
+    // THE CAMERA'S ARENA OVER THE OTHER ONE (upstream e1eb36bb; the original's
+    // 0x41df35). The original has no depth buffer: it draws the other drawn arena
+    // first and the camera's arena over it, so where their geometry overlaps on
+    // screen the camera's always shows (LEVEL4: MEAT_3's flat shell lies 2.3
+    // units above CMEAT_1's floor and, depth-tested, swallowed the tube and
+    // Kurt's legs). Set only while that can happen (game/arena_views.cpp): `back`
+    // on the other arena's batches and objects, `cover` on the camera arena's
+    // batches they may hide. The backends then draw the camera's arena over the
+    // other one wherever its opaque cover batches are drawn (render/draw_queue.h),
+    // at full depth precision: the bands upstream split the depth range into are
+    // not used. With neither set the frame is drawn exactly as before.
+    bool back = false;    // the other drawn arena's batch or object
+    bool cover = false;   // the camera's arena's batch, which covers it
 };
 
 // A sprite is a mesh drawn with the sprite shading (the enhanced look's

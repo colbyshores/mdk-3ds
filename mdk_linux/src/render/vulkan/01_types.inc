@@ -181,6 +181,11 @@ struct RendererVk {
     mdk::vk::Context ctx;
     bool ready = false;
     bool inFrame = false;
+    // mdk_render_set_back: the queued draws are the other arena's (MeshDraw::back).
+    bool queueBack = false;
+    // The viewport the scene's draws are recorded with (the frame's, or an
+    // inset's): drawBuckets' cover step narrows its depth range and puts it back.
+    VkViewport sceneViewport = {};
 
     // The camera, kept so the draw path can use it.
     mdk::Camera camera;
@@ -305,7 +310,7 @@ struct RendererVk {
     VkRenderPass shadowPass = VK_NULL_HANDLE;
     VkFramebuffer shadowFramebuffer = VK_NULL_HANDLE;
     VkShaderModule depthFragModule = VK_NULL_HANDLE;
-    VkPipeline depthPipelines[2] = {};
+    VkPipeline depthPipelines[4] = {};
     bool shadowReady = false;
     float sunMatrix[16] = {};
     float postClipToView[16] = {};

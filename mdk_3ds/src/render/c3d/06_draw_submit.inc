@@ -308,6 +308,9 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     if (r->depthTest != wantedDepth.test || r->depthWrite != wantedDepth.write) {
         installDepthState(r, wantedDepth);
     }
+    // The camera's arena over the other one (06_queue.inc prepareQueue): cached,
+    // so a frame without it writes nothing here.
+    installStencil(r, p->stencil);
 
     // THE PASS'S BLEND STATE, PER DRAW -- same shape and same reason as the two
     // above: `C3D_AlphaBlend` dirties the effect block on every call, so it is

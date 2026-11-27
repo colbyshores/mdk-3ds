@@ -2404,6 +2404,9 @@ int main(int argc, char** argv) {
         // The arenas the scripts say are drawn: Kurt's and the active second
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
         // the runtime's first tick has named one.
+        // The arena ArenaViews::draw drew `back` this frame ("" when none): its
+        // objects are drawn `back` too (mdk_render_set_back, below).
+        std::string layeredBack;
         if (arena && frameDrawn && !strikeFrame) {
             // The end of a level's torn triangles leave the arena's mesh first (the C#'s
             // LevelView.DrawEnd, Viewer.cs:703): its view swaps to a dynamic mesh and
@@ -2418,7 +2421,12 @@ int main(int argc, char** argv) {
                                       runtime->endLevel()->arena().c_str());
                 }
             }
-            arenaViews.draw(*frameDrawn);
+            // The camera's arena over the other drawn one (upstream e1eb36bb; the
+            // original's 0x490db4 and 0x41df35): ArenaViews::draw.
+            const std::string cameraArena =
+                runtime ? runtime->cameraArena(sceneCamera.position) : std::string();
+            layeredBack = arenaViews.draw(*frameDrawn, cameraArena, sceneCamera.position,
+                                         mdk::g_gameSettings.stereoSeparation);
         }
         // A sniper round camera watching its round (SniperView's insets, below)
         // sees the scene from the round, 90 degrees wide: the scope's frustum
@@ -2524,9 +2532,13 @@ int main(int argc, char** argv) {
                 }
                 // The pose between its frames at the tick's alpha (upstream ae746b5d,
                 // Viewer's blend.PoseOf), the driven and carried ones too.
+                // The other arena's objects with it, under its glass (upstream
+                // e1eb36bb bands them by arena too; render/draw_queue.h).
+                mdk_render_set_back(renderer, !layeredBack.empty() && obj.arena == layeredBack);
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
                                      &objectStream, tinyHidden, tickAlpha);
             }
+            mdk_render_set_back(renderer, false);
             // THE RIDDEN BOARD (upstream a27ca2f4, Viewer.DrawBoard): after the objects,
             // scaled towards the eye in front of the floors its box dips under (the
             // original draws an object after its leaf's floor, with no depth buffer).
