@@ -96,6 +96,7 @@
 #include "game/player.h"
 #include "game/loading_screen.h"
 #include "game/sniper_view.h"
+#include "render/camera_builder.h"
 #include "render/material_resolver.h"
 #include "render/render.h"
 #include "formats/ascii_case.h"
@@ -292,6 +293,11 @@ int main(int argc, char** argv) {
     desc.vsync = true;
     desc.enhanced_look = false;  // the 3DS shows the ORIGINAL look
     desc.enhanced_toggles = enhancedToggles;
+    // The stereo pair (config.ini stereo_separation / stereo_convergence, the
+    // pause menu's 3D DEPTH / 3D SCREEN DISTANCE); the level loop sets it again
+    // every frame (frameStereo) and puts the plain settings back after each.
+    desc.stereo.separation = mdk::g_gameSettings.stereoSeparation;
+    desc.stereo.convergence = mdk::g_gameSettings.stereoConvergence;
 
     MdkRenderer renderer = mdk_render_create(&desc);
     if (!renderer) {
@@ -1334,6 +1340,20 @@ int main(int argc, char** argv) {
     // follow camera's state, which follow.update places every step; this is what
     // the frame is drawn and heard through.
     mdk::Camera sceneCamera;
+    // THE FRAME'S STEREO PAIR: the settings' separation and convergence, the
+    // separation divided by the frame view's magnification over the follow
+    // camera's (camera_builder.h stereoSeparationForView: the scope's zoom, the
+    // strike's ~12-degree lens, a narrow cutscene camera). Handed to the renderer
+    // before each frame begins, and back to the plain settings after it ends (the
+    // screens drawn between level frames get those), and used by the object and
+    // effects culls, so both agree with the eyes. `stereoReference` is the follow
+    // camera's projection, fixed: its P00 is what "unmagnified" means.
+    mdk::StereoSettings frameStereo;
+    mdk::Camera stereoReference;
+    mdk::buildLookAtCamera(&stereoReference, mdk::Vec3{0.0f, 0.0f, 0.0f},
+                           mdk::Vec3{0.0f, 1.0f, 0.0f}, mdk::Vec3{0.0f, 0.0f, 1.0f},
+                           mdk::follow_camera::kFieldOfView, kAspect,
+                           mdk::follow_camera::kNear, mdk::follow_camera::kFar);
     if (playerReady) {
         mdk::buildFollowCamera(&camera, player.feet, player.facing(),
                                mdk::follow_camera::kDefaultPitch,
@@ -1705,7 +1725,8 @@ int main(int argc, char** argv) {
                 edges.confirm = (pressed & KEY_A) != 0;
                 edges.close = (pressed & (KEY_START | KEY_B | KEY_SELECT)) != 0;
                 const bool hdMenuWas = enhancedToggles.enableHdTextures;
-                const mdk::EnhancedMenu::Action action = menu.handle(edges, &enhancedToggles);
+                const mdk::EnhancedMenu::Action action =
+                    menu.handle(edges, &enhancedToggles, &mdk::g_gameSettings);
                 if (action == mdk::EnhancedMenu::Action::Changed) {
                     const bool hdWas = hdMenuWas;
                     mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
@@ -2021,6 +2042,9 @@ int main(int argc, char** argv) {
         if (playerReady && player.sniping() && !strikeFrame) {
             mdk::buildSniperCamera(&sceneCamera, player, kAspect);
         }
+        frameStereo.separation = mdk::stereoSeparationForView(
+            mdk::g_gameSettings.stereoSeparation, sceneCamera, stereoReference);
+        frameStereo.convergence = mdk::g_gameSettings.stereoConvergence;
         // C# Viewer.DrawScene (Viewer.cs:686-693): the listener stands at the frame's
         // view with the follow camera's right; in sniper mode the sounds are heard
         // through the scope (ScopeZoom, Kurt's line of sight and its up).
@@ -2479,6 +2503,7 @@ int main(int argc, char** argv) {
                 scopeMonoOn = wantMono;
             }
         }
+        mdk_render_set_stereo(renderer, &frameStereo);
         mdk_render_begin_frame(renderer, &params);
         mdk_render_set_camera(renderer, &sceneCamera);
 
@@ -2601,14 +2626,16 @@ int main(int argc, char** argv) {
             // objects and Kurt (Viewer.cs:705-706), and the effects
             // (Viewer.cs:707), draw below.
             const float tickAlpha = runtime->tick_blend(pending);
-            // The object cull for this frame: the centre frustum, with the
-            // sphere margin covering both stereo eyes (half the configured
-            // separation; the eyes are this frustum translated along the
-            // camera's right axis).
+            // The object cull for this frame: the centre frustum widened for
+            // the converged eyes' sideways shift, with the sphere margin
+            // covering their translation (half the frame's separation; the eyes
+            // sit that far along the camera's right axis). camera_builder.h
+            // buildStereoFrustum.
             mdk::Frustum objectFrustum;
-            if (!roundWatching && mdk::buildFrustum(sceneCamera, &objectFrustum)) {
-                objectView.setCullFrustum(&objectFrustum,
-                                          mdk::g_gameSettings.stereoSeparation * 0.5f);
+            if (!roundWatching &&
+                mdk::buildStereoFrustum(sceneCamera, frameStereo.separation * 0.5f,
+                                        frameStereo.convergence, &objectFrustum)) {
+                objectView.setCullFrustum(&objectFrustum, frameStereo.separation * 0.5f);
             } else {
                 objectView.setCullFrustum(nullptr, 0.0f);
             }
@@ -2796,9 +2823,10 @@ int main(int argc, char** argv) {
             // centre frustum and stereo margin, so a piece or sprite behind the
             // camera or off to the side is not built (the Linux build culls none).
             mdk::Frustum effectsFrustum;
-            if (!roundWatching && mdk::buildFrustum(sceneCamera, &effectsFrustum)) {
-                effectsView.setCullFrustum(&effectsFrustum,
-                                           mdk::g_gameSettings.stereoSeparation * 0.5f);
+            if (!roundWatching &&
+                mdk::buildStereoFrustum(sceneCamera, frameStereo.separation * 0.5f,
+                                        frameStereo.convergence, &effectsFrustum)) {
+                effectsView.setCullFrustum(&effectsFrustum, frameStereo.separation * 0.5f);
             } else {
                 effectsView.setCullFrustum(nullptr, 0.0f);
             }
@@ -2945,7 +2973,7 @@ int main(int argc, char** argv) {
                                 cheatSwitches);
             } else if (menu.open()) {
                 menu.draw(renderer, menuBig, menuSmall, mdk_render_canvas_width(renderer),
-                          enhancedToggles);
+                          enhancedToggles, &mdk::g_gameSettings);
             }
             if (showHint) {
                 const char* hint = "START: PAUSE / EFFECTS";
@@ -2957,6 +2985,14 @@ int main(int argc, char** argv) {
             mdk_render_canvas_end(renderer);
         }
         mdk_render_end_frame(renderer);
+        {
+            // The plain settings again for whatever draws before the next level
+            // frame (the menus, the stream, the stats screens): no magnification.
+            mdk::StereoSettings plain;
+            plain.separation = mdk::g_gameSettings.stereoSeparation;
+            plain.convergence = mdk::g_gameSettings.stereoConvergence;
+            mdk_render_set_stereo(renderer, &plain);
+        }
         frame++;
 
         if (frame == 1u) {

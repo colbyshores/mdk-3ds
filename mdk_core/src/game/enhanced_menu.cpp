@@ -7,6 +7,7 @@
 
 #include "game/enhanced_config.h"
 #include "game/font_view.h"
+#include "game/game_settings.h"
 
 namespace mdk {
 namespace {
@@ -25,66 +26,103 @@ const char* const kMapRefreshLabels[] = {"AUTO", "1", "2", "3", "4"};
 // 0 = off.
 const int32_t kTinyPixels[] = {0, 1, 2, 3};
 const char* const kTinyPixelLabels[] = {"OFF", "1 PX", "2 PX", "3 PX"};
+// THE STEREO ROWS' VALUES, in HUNDREDTHS of a game unit (Kind::Setting). 3D
+// DEPTH is the eyes' separation at full slider: 100% is the 3DS default
+// (GameSettings::kConsoleStereoSeparation, 1 unit) and 200% the parser's
+// ceiling (2 units). 3D SCREEN DISTANCE is where the eyes' pictures meet, the
+// panel's surface: Kurt stands ~8 units from the follow camera, 10 is the
+// default, and FAR (0) is infinity -- the parallel pair the 3DS drew before.
+const int32_t kStereoDepths[] = {25, 50, 75, 100, 125, 150, 175, 200};
+const char* const kStereoDepthLabels[] = {"25%",  "50%",  "75%",  "100%",
+                                          "125%", "150%", "175%", "200%"};
+const int32_t kStereoDistances[] = {400, 600, 800, 1000, 1200, 1500, 2000, 3000, 5000, 0};
+const char* const kStereoDistanceLabels[] = {"4", "6", "8", "10", "12", "15", "20", "30", "50",
+                                             "FAR"};
 
 // The setting rows, in order: the ten Enhanced Mode toggles in the config
 // file's order (SPEC.md 7.9's flag order), the frame cap, the look dials
-// (kLookDials' order), the shadow map's two choices, then the movies' rate. Constant-initialised
+// (kLookDials' order), the shadow map's two choices, then the movies' rate,
+// the 3DS draw culls and scope rows, and the two stereo rows. Constant-initialised
 // (addresses only), so no static-initialisation order is involved.
 const Item kItems[EnhancedMenu::kItemCount] = {
     {"SKY SHADOWS", Kind::Toggle, &EnhancedToggles::enableSkyShadows, nullptr, nullptr, nullptr,
-     nullptr, 0},
+     nullptr, 0, nullptr},
     {"FRAGMENT LIGHTS", Kind::Toggle, &EnhancedToggles::enableFragmentLights, nullptr, nullptr,
-     nullptr, nullptr, 0},
-    {"HAZE", Kind::Toggle, &EnhancedToggles::enableHaze, nullptr, nullptr, nullptr, nullptr, 0},
+     nullptr, nullptr, 0, nullptr},
+    {"HAZE", Kind::Toggle, &EnhancedToggles::enableHaze, nullptr, nullptr, nullptr, nullptr, 0, nullptr},
     {"MIRRORS", Kind::Toggle, &EnhancedToggles::enableMirrors, nullptr, nullptr, nullptr, nullptr,
-     0},
+     0, nullptr},
     {"GLOW", Kind::Toggle, &EnhancedToggles::enableGlowBillboards, nullptr, nullptr, nullptr,
-     nullptr, 0},
+     nullptr, 0, nullptr},
     {"FILTERING", Kind::Toggle, &EnhancedToggles::enableFiltering, nullptr, nullptr, nullptr,
-     nullptr, 0},
+     nullptr, 0, nullptr},
     {"MIPMAPS", Kind::Toggle, &EnhancedToggles::enableMipmaps, nullptr, nullptr, nullptr, nullptr,
-     0},
+     0, nullptr},
     {"HD TEXTURES", Kind::Toggle, &EnhancedToggles::enableHdTextures, nullptr, nullptr, nullptr,
-     nullptr, 0},
+     nullptr, 0, nullptr},
     {"LIGHTING", Kind::Toggle, &EnhancedToggles::enableLighting, nullptr, nullptr, nullptr,
-     nullptr, 0},
+     nullptr, 0, nullptr},
     {"EDGE SMOOTHING", Kind::Toggle, &EnhancedToggles::enableEdgeSmoothing, nullptr, nullptr,
-     nullptr, nullptr, 0},
+     nullptr, nullptr, 0, nullptr},
     {"30 FPS CAP", Kind::Toggle, &EnhancedToggles::cap30Fps, nullptr, nullptr, nullptr, nullptr,
-     0},
-    {"HAZE DENSITY", Kind::Slider, nullptr, &kLookDials[0], nullptr, nullptr, nullptr, 0},
-    {"GLOW STRENGTH", Kind::Slider, nullptr, &kLookDials[1], nullptr, nullptr, nullptr, 0},
-    {"SHADOW DARKNESS", Kind::Slider, nullptr, &kLookDials[2], nullptr, nullptr, nullptr, 0},
-    {"EXPOSURE", Kind::Slider, nullptr, &kLookDials[3], nullptr, nullptr, nullptr, 0},
-    {"TINT SATURATION", Kind::Slider, nullptr, &kLookDials[4], nullptr, nullptr, nullptr, 0},
+     0, nullptr},
+    {"HAZE DENSITY", Kind::Slider, nullptr, &kLookDials[0], nullptr, nullptr, nullptr, 0, nullptr},
+    {"GLOW STRENGTH", Kind::Slider, nullptr, &kLookDials[1], nullptr, nullptr, nullptr, 0, nullptr},
+    {"SHADOW DARKNESS", Kind::Slider, nullptr, &kLookDials[2], nullptr, nullptr, nullptr, 0, nullptr},
+    {"EXPOSURE", Kind::Slider, nullptr, &kLookDials[3], nullptr, nullptr, nullptr, 0, nullptr},
+    {"TINT SATURATION", Kind::Slider, nullptr, &kLookDials[4], nullptr, nullptr, nullptr, 0, nullptr},
     {"SHADOW MAP", Kind::Choice, nullptr, nullptr, &EnhancedToggles::shadowMapSize, kMapSizes,
-     kMapSizeLabels, 4},
+     kMapSizeLabels, 4, nullptr},
     {"SHADOW REFRESH", Kind::Choice, nullptr, nullptr, &EnhancedToggles::shadowMapRefresh,
-     kMapRefreshes, kMapRefreshLabels, 5},
+     kMapRefreshes, kMapRefreshLabels, 5, nullptr},
     // Package #20c, last so the rows above keep their numbers.
     {"MOVIES HALF RATE", Kind::Toggle, &EnhancedToggles::movieHalfRate, nullptr, nullptr, nullptr,
-     nullptr, 0},
+     nullptr, 0, nullptr},
     // The 3DS draw culls, after it so the rows above keep their numbers.
     {"TINY DEBRIS", Kind::Choice, nullptr, nullptr, &EnhancedToggles::tinyDebrisPixels,
-     kTinyPixels, kTinyPixelLabels, 4},
+     kTinyPixels, kTinyPixelLabels, 4, nullptr},
     {"TINY ENEMIES", Kind::Choice, nullptr, nullptr, &EnhancedToggles::tinyEnemyPixels,
-     kTinyPixels, kTinyPixelLabels, 4},
+     kTinyPixels, kTinyPixelLabels, 4, nullptr},
     {"SCOPE IN 2D", Kind::Toggle, &EnhancedToggles::scopeMono, nullptr, nullptr, nullptr, nullptr,
-     0},
+     0, nullptr},
     {"SCOPE CLIP", Kind::Toggle, &EnhancedToggles::scopeClip, nullptr, nullptr, nullptr, nullptr,
-     0},
+     0, nullptr},
     {"ROUND CAMERAS", Kind::Toggle, &EnhancedToggles::sniperRoundCams, nullptr, nullptr, nullptr,
-     nullptr, 0},
+     nullptr, 0, nullptr},
+    // THE STEREO PAIR (owner 2026-11-27: the 3D "doesn't pop"), last so the rows
+    // above keep their numbers. The game's settings, not toggles: config.ini's
+    // stereo_separation / stereo_convergence (game_settings.h formatConsole).
+    {"3D DEPTH", Kind::Setting, nullptr, nullptr, nullptr, kStereoDepths, kStereoDepthLabels, 8,
+     &GameSettings::stereoSeparation},
+    {"3D SCREEN DISTANCE", Kind::Setting, nullptr, nullptr, nullptr, kStereoDistances,
+     kStereoDistanceLabels, 10, &GameSettings::stereoConvergence},
 };
 
 bool isItemRow(int32_t row) {
     return row > EnhancedMenu::kResumeRow && row <= EnhancedMenu::kItemCount;
 }
 
+// A Setting row's value in hundredths, rounded (the values are never negative:
+// the parser clamps both stereo keys at 0).
+int32_t settingHundredths(const Item& item, const GameSettings& settings) {
+    const float value = settings.*(item.setting);
+    return value > 0.0f ? (int32_t)(value * 100.0f + 0.5f) : 0;
+}
+
 // The index of a choice's current value in its list; -1 when it is none of
-// them (a struct set by hand: the parser never leaves one).
-int32_t choiceIndex(const Item& item, const EnhancedToggles& toggles) {
-    const int32_t value = toggles.*(item.value);
+// them (a struct set by hand: the parser never leaves one; or a hand-edited
+// config.ini stereo value off the rows' grid).
+int32_t choiceIndex(const Item& item, const EnhancedToggles& toggles,
+                    const GameSettings* settings) {
+    int32_t value = 0;
+    if (item.kind == Kind::Setting) {
+        if (!settings) {
+            return -1;
+        }
+        value = settingHundredths(item, *settings);
+    } else {
+        value = toggles.*(item.value);
+    }
     for (int32_t i = 0; i < item.choiceCount; i++) {
         if (item.choices[i] == value) {
             return i;
@@ -95,7 +133,7 @@ int32_t choiceIndex(const Item& item, const EnhancedToggles& toggles) {
 
 // Step a slider or cycle a choice by `dir` (-1 left, +1 right). True when its
 // value changed.
-bool adjust(const Item& item, int32_t dir, EnhancedToggles* toggles) {
+bool adjust(const Item& item, int32_t dir, EnhancedToggles* toggles, GameSettings* settings) {
     if (item.kind == Kind::Slider) {
         int32_t& value = toggles->*(item.dial->field);
         const int32_t next = clampLookDial(*item.dial, value + dir * item.dial->step);
@@ -105,9 +143,36 @@ bool adjust(const Item& item, int32_t dir, EnhancedToggles* toggles) {
         value = next;
         return true;
     }
+    if (item.kind == Kind::Setting) {
+        // The next grid value in the direction pressed, and STOP at both ends (a
+        // slider's behaviour: wrapping from 200% depth to 25%, or from FAR to 4,
+        // would be a jolt on a parallax barrier). The grid is ascending; a
+        // trailing 0 is FAR (infinity), so it orders last. A hand-edited value
+        // off the grid steps to its nearest neighbour that way, never across.
+        if (!settings) {
+            return false;
+        }
+        const bool zeroIsFar = item.choiceCount > 0 && item.choices[item.choiceCount - 1] == 0;
+        const int32_t current = settingHundredths(item, *settings);
+        const int64_t currentKey = (current == 0 && zeroIsFar) ? INT64_MAX : current;
+        int32_t next = -1;
+        for (int32_t i = 0; i < item.choiceCount; i++) {
+            const int32_t at = dir > 0 ? i : item.choiceCount - 1 - i;
+            const int64_t key = (item.choices[at] == 0 && zeroIsFar) ? INT64_MAX : item.choices[at];
+            if ((dir > 0 && key > currentKey) || (dir < 0 && key < currentKey)) {
+                next = at;
+                break;
+            }
+        }
+        if (next < 0) {
+            return false;
+        }
+        settings->*(item.setting) = (float)item.choices[next] / 100.0f;
+        return true;
+    }
     if (item.kind == Kind::Choice) {
         // Wraps both ways; a value off the list goes to the first or the last.
-        int32_t index = choiceIndex(item, *toggles);
+        int32_t index = choiceIndex(item, *toggles, nullptr);
         if (index < 0) {
             index = dir > 0 ? 0 : item.choiceCount - 1;
         } else {
@@ -190,7 +255,7 @@ const char* EnhancedMenu::rowLabel(int32_t row) {
 }
 
 void EnhancedMenu::rowValue(int32_t row, const EnhancedToggles& toggles, char* out,
-                            int32_t size) {
+                            int32_t size, const GameSettings* settings) {
     if (!out || size <= 0) {
         return;
     }
@@ -202,18 +267,29 @@ void EnhancedMenu::rowValue(int32_t row, const EnhancedToggles& toggles, char* o
     if (item->kind == Kind::Slider) {
         snprintf(out, (size_t)size, "%d%%", (int)(toggles.*(item->dial->field)));
     } else if (item->kind == Kind::Choice) {
-        const int32_t index = choiceIndex(*item, toggles);
+        const int32_t index = choiceIndex(*item, toggles, nullptr);
         if (index >= 0) {
             snprintf(out, (size_t)size, "%s", item->choiceLabels[index]);
         } else {
             snprintf(out, (size_t)size, "%d", (int)(toggles.*(item->value)));
+        }
+    } else if (item->kind == Kind::Setting) {
+        if (!settings) {
+            return;
+        }
+        const int32_t index = choiceIndex(*item, toggles, settings);
+        if (index >= 0) {
+            snprintf(out, (size_t)size, "%s", item->choiceLabels[index]);
+        } else {
+            snprintf(out, (size_t)size, "%.2f", (double)(settings->*(item->setting)));
         }
     } else {
         snprintf(out, (size_t)size, "%s", toggles.*(item->flag) ? "ON" : "OFF");
     }
 }
 
-EnhancedMenu::Action EnhancedMenu::handle(const Input& input, EnhancedToggles* toggles) {
+EnhancedMenu::Action EnhancedMenu::handle(const Input& input, EnhancedToggles* toggles,
+                                          GameSettings* settings) {
     if (!open_ || !toggles) {
         return Action::None;
     }
@@ -260,7 +336,7 @@ EnhancedMenu::Action EnhancedMenu::handle(const Input& input, EnhancedToggles* t
         if (!(input.confirm || input.left || input.right)) {
             return Action::None;
         }
-        adjust(*item, 1, toggles);
+        adjust(*item, 1, toggles, settings);
         return Action::Changed;
     }
     // Left and right together cancel; A is one step forward on a choice and
@@ -272,11 +348,12 @@ EnhancedMenu::Action EnhancedMenu::handle(const Input& input, EnhancedToggles* t
     if (dir == 0) {
         return Action::None;
     }
-    return adjust(*item, dir, toggles) ? Action::Changed : Action::None;
+    return adjust(*item, dir, toggles, settings) ? Action::Changed : Action::None;
 }
 
 void EnhancedMenu::draw(MdkRenderer renderer, FontView& big, FontView& small,
-                        float canvasWidth, const EnhancedToggles& toggles) const {
+                        float canvasWidth, const EnhancedToggles& toggles,
+                        const GameSettings* settings) const {
     if (!open_ || !big.ready() || !small.ready()) {
         return;
     }
@@ -323,7 +400,7 @@ void EnhancedMenu::draw(MdkRenderer renderer, FontView& big, FontView& small,
             continue;
         }
         char value[16];
-        rowValue(row, toggles, value, (int32_t)sizeof(value));
+        rowValue(row, toggles, value, (int32_t)sizeof(value), settings);
         const Colour& valueColour =
             item->kind != Kind::Toggle ? kLevel : (toggles.*(item->flag) ? kOn : kOff);
         small.draw(renderer, value, px + kPanelW - 24.0f - (float)small.width(value) * 1.5f,

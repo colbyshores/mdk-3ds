@@ -517,8 +517,12 @@ struct RendererC3D {
     float view[16] = {0};
     float projection[16] = {0};
 
-    // The eyes' separation, in the game's units.
+    // The eyes' separation, in the game's units, and the view distance where
+    // their pictures meet (<= 0: infinity, the parallel pair). The game sets both
+    // (MdkRenderDesc::stereo, then mdk_render_set_stereo each frame); eyePlan
+    // freezes them for the frame at mdk_render_begin_frame.
     float eyeSeparation = 0.0f;
+    float eyeConvergence = 0.0f;
 
     DVLB_s* dvlb = nullptr;
     shaderProgram_s program;

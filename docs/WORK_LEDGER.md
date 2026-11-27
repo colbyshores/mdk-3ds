@@ -5037,3 +5037,103 @@ already has perf/3ds-view-prebuild's object warm over the bubble's hints).
 - **Not verified:** New 3DS; levels 4-6; HOME/sleep pressed during the scan (it makes no
   applet call for its ~1.7 s, exactly as before it moved).
 - **Commits:** 77c72890 (code) and this one (ledger).
+
+## 2026-11-27 -- the 3DS stereo converges: Kurt at the screen, the world behind it (branch fix/3ds-stereo-depth)
+
+- **What:**
+  - **The convergence.** Each eye's view-projection now gets the standard off-axis
+    (asymmetric-frustum) shift, `clip.x += shift * clip.w` with `shift = eyeOffset * P00 /
+    convergence` (`pica::stereoScreenShift`, applied in `eyeViewProjectionEngine`, i.e. in the
+    engine's clip space before the PICA depth remap and quarter turn). The plane `convergence`
+    units out has zero parallax; nearer comes out of the panel, farther goes behind it,
+    infinity (the sky dome) deepest. Left eye negative as before (`eyePlan`, `testTheEyeOffset`).
+    Same matrix as the C# oracle's `View.Eye` (Renderer.cs:92), the Vulkan `eyeCamera` and
+    Forsaken's `stereo_adjust`. Before this the 3DS eyes were parallel: zero parallax at
+    infinity, so the far world sat on the screen and only Kurt came slightly forward -- the
+    "doesn't pop" the owner reported.
+  - **Mono is bit-identical**: with the slider closed `eyePlan` gives offset 0 and the shift is
+    skipped, so every matrix is the old one (pinned with `allEqual`). Convergence `<= 0` (the
+    menu's FAR) is exactly the old parallel pair. The slider clamp and the one-pass mono plan
+    are unchanged; `EyePlan` now also freezes the convergence for the frame.
+  - **Defaults.** Convergence stays 10 units (the C#'s default, already in config). The 3DS's
+    separation becomes **1.0 unit** (`GameSettings::kConsoleStereoSeparation`, via
+    `GameSettings::console()`, which the 3DS's `g_gameSettings` starts from). The shared
+    default stays the C#'s 0.25: `tests/scripts/golden/menu_settings.txt` (C#-generated)
+    pins it, and the Linux build takes its stereo from the command line, never from these
+    settings -- Linux behaviour and goldens unchanged.
+  - **Two START-menu rows**, after ROUND CAMERAS (rows 25/26, so no row above moves):
+    **3D DEPTH** (25%..200% of 1 unit, stops at the ends) and **3D SCREEN DISTANCE** (4, 6, 8,
+    10, 12, 15, 20, 30, 50, FAR). A new `EnhancedMenu::Kind::Setting` steps a `GameSettings`
+    float through a fixed grid (hundredths). Saved to config.ini as the existing
+    `stereo_separation` / `stereo_convergence` keys (`formatConsole` now writes them), applied
+    live through a new seam call `mdk_render_set_stereo` (both backends; mode not taken).
+  - **Magnified views.** Both parallax terms scale with P00, so the scope (up to ~250x on a far
+    lock) or the strike's ~12-degree lens would split the picture by hundreds of pixels. The
+    frontend divides the separation by the frame view's P00 over the follow camera's
+    (`stereoSeparationForView`, reference built once from `follow_camera::kFieldOfView`):
+    every depth keeps the follow camera's on-screen disparity, and the scope's far scene sits
+    behind the crosshair at background depth. The plain settings go back after each level
+    frame, so screens drawn between frames are not left with a scope-scaled pair.
+  - **Culls.** Beyond the convergence distance an eye sees past the centre frustum's side
+    planes by a strip that widens with depth (8.3 px at infinity at the defaults), which a
+    sphere margin cannot cover. The object and effects culls use `buildStereoFrustum` (side
+    planes widened by the slide; margin half the separation for the eyes' translation). The
+    backend's per-eye cull already reads the shifted matrix.
+  - A hand-edited `stereo_convergence` below 1 (the parser allows 0..4000) is raised to 1 at
+    load (the C#'s MinConvergence; the near plane is 0.5).
+- **Why:** owner, 2026-11-27: the 3D effect "doesn't pop"; Forsaken's on the same hardware does.
+- **The numbers** (3DS follow camera: 71.5 deg vertical, 400x240, so P00 = 1/(tan 35.75 deg x
+  5/3) = 0.8336; disparity in top-screen pixels = sep x P00 x 200 x (1/C - 1/z), right eye
+  minus left, positive = behind the panel). Full slider, defaults (sep 1.0, C 10):
+
+  | depth z (units) | what | disparity, total | per eye |
+  |---|---|---|---|
+  | infinity / sky dome (10000) | the background | **+16.7 px** | 8.3 px |
+  | 30 | a far wall | +11.1 px | 5.6 px |
+  | 10 | the screen plane | 0 | 0 |
+  | ~8 | Kurt (follow_camera kDistance 8) | **-4.2 px** (in front) | 2.1 px |
+  | 4 | a wall with the camera pushed in | -25.0 px | 12.5 px |
+
+  16.7 px is 3.2 mm on the 3DS's 0.19 mm pixels, ~0.6 deg at 30 cm: inside the ~1 deg comfort
+  zone and the ~10-12 px-per-eye budget. Half slider halves every row. 3D DEPTH 200% doubles
+  them (33 px at infinity, ~1.2 deg: the ceiling).
+  **Why not Forsaken's ratio as is.** Forsaken: eye_sep 15 at full slider, focal 750, 90 deg
+  hfov (P00 = 1): disparity = 4 - 3000/z px, i.e. only +4 px at infinity, -6 px at 300 units
+  (4 ship radii), -16 px at 150. Its convergence plane sits deep INSIDE its tunnels, so its pop
+  is the walls coming out of the screen, a range of ~20 px over the scene. MDK's convergence
+  belongs at the FRONT of the scene (Kurt) with the world behind, so the same 15/750 = 0.02
+  ratio (sep 0.2 at C 10) would give 3.3 px at infinity and 0.8 px for Kurt -- flat. Matching
+  Forsaken's ~20 px range from Kurt to the horizon gives sep x 166.7 / 8 ~ 20, sep ~ 1.0. The
+  C#'s 0.25 gives a quarter of that range (5.2 px), which is what the owner saw.
+- **Checked against:** bullet-cam insets stay one-eye + copy at offset 0, convergence 0 (zero
+  parallax by design, unchanged); the ride-end stencil layering uses eye positions, not the
+  projection (unchanged; `eyeMargin` is still `max(separation, 1)` = 1 at the default); the
+  sky dome is a world mesh drawn through the eye matrix, so it takes the shift and sits at the
+  back; haze (clip.w), the depth pull and the lit camera (positions), the shadow map (cast
+  once before the eyes with the sun's matrix) and the canvas/HUD (its own clip-space matrix,
+  flat) do not read the shift.
+- **Tests (host):** `pica_matrix_tests` testTheConvergence (shift formula; mono and FAR
+  bit-identical; zero parallax at C across the picture and for a rotated, translated camera
+  with a non-vacuity check; the sign; the table's numbers; the shift lands before both PICA
+  conversions; the per-eye planes); `layer_tests` testStereoFrustum and
+  testStereoSeparationForView; `menu_tests` testConsoleStereo (console vs shared defaults,
+  the C# file text otherwise unchanged, config.ini round trip incl. FAR and an old file
+  without the lines, the rows' values, end stops, off-grid stepping, null settings); the
+  menu row counts in `tests/formats/lighting_tests.cpp`.
+- **Independent review** (read-only, separate agent): one defect, fixed -- the strike frame's
+  lens was not normalised (the scope-only magnification missed it: ~113 px at infinity); now
+  every frame view is normalised against the fixed follow-camera reference. Also taken: the
+  off-grid step goes to the nearest grid neighbour instead of wrapping to an end; the
+  convergence floor of 1; the plain settings restored after each level frame.
+- **Not verified:** comfort -- it needs the owner's eyes on a console with the slider; the
+  appliance's slider is fixed and was held by the final-pass agent. Defaults are expected to
+  be dialled in on hardware with the two rows. Mono frames draw a slightly wider cull strip
+  (~4% of the width, off-screen, so no pixel changes) -- unmeasured, expected noise.
+- **Checks:** Linux build (`cmake --build build-linux`) 0 warnings; `make -C tests/scripts
+  test` all cases match the oracle (PicaMatrix, ArenaLayering, MenusMatchTheOracle pass);
+  `tests/formats` 200,781 checks, 0 failures; `tools/check.sh` ALL GATES PASSED (smdh SKIP,
+  no .cia); 3DS build 0 compiler warnings (only make's pre-existing jobserver note).
+- **Hardware:** none. The appliance lock was held by the final-pass agent
+  (`throwaway/final-pass-hw`, from 07:59) for the whole session; host evidence only, as the
+  brief allowed. Nothing pushed to the owner's console.
+- **Commits:** 5e173490 (code, tests, checklist item "3D pop") and this one (ledger).

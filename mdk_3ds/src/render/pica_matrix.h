@@ -64,7 +64,9 @@ bool isIdentity(const float m[16]);
 // baked in, in the engine's row-major row-vector layout.
 //
 // `eyeOffset` moves the eye along its own right axis (the stereo pair); 0 for a
-// mono pass.
+// mono pass. `convergence` is the view distance where the two eyes' images meet
+// (zero parallax, the panel's surface); 0 or less is infinity, the parallel
+// pair. See `stereoScreenShift` for what it does to the matrix.
 //
 // THE THREE CONVENTIONS, which are the whole difficulty:
 //
@@ -107,17 +109,47 @@ bool isIdentity(const float m[16]);
 // so the conversions can be baked once per frame into the eye matrix and a
 // per-draw world composed against the result.
 void eyeViewProjection(const float view[16], const float projection[16],
-                       float eyeOffset, float out[16]);
+                       float eyeOffset, float convergence, float out[16]);
 
-// The per-eye view-projection BEFORE the PICA conversions: the eye offset and
-// the `view * projection` product only, in the engine's row-major row-vector
-// layout. The conversions are right-multiplications by fixed matrices, so this
+// THE CONVERGENCE: how far (in NDC x) one eye's picture is slid sideways so that
+// a point `convergence` in front of the camera lands on the same pixel in both
+// eyes. Zero when `eyeOffset` is zero (mono: no matrix changes, bit for bit) or
+// `convergence` is not positive (infinity: the parallel pair this backend drew
+// before 2026-11-27).
+//
+//     shift = eyeOffset * projectionX / convergence
+//
+// with `projectionX` the projection's x scale (element 0). The derivation, for
+// a perspective projection (clip.w = -z_view): the eye moved by `eyeOffset`
+// along its right axis sees a point straight ahead at depth C at x_view =
+// -eyeOffset, i.e. clip.x = -eyeOffset * P00 with clip.w = C. Adding
+// `shift * clip.w` to clip.x cancels that exactly at depth C, leaves the eye
+// translation's parallax for nearer points (in front of the panel) and adds a
+// parallax of `shift` for farther ones, tending to exactly `shift` at infinity
+// (behind the panel; the sky dome at 10000 units is there). This is the
+// standard asymmetric (off-axis) frustum -- the C# oracle's View.Eye
+// (Renderer.cs:92, M31 += shift * M11 / near), the Vulkan backend's eyeCamera
+// and Forsaken's stereo_adjust -- written as a horizontal image shift, which is
+// the same matrix and holds for an off-centre projection (the scope's) too.
+//
+// SIGN: the left eye has the NEGATIVE offset (`eyePlan`), so its picture moves
+// LEFT (negative NDC x) and the right eye's moves right: uncrossed disparity for
+// anything beyond the convergence distance, i.e. behind the panel.
+//
+// It is applied in the ENGINE's clip space, before both PICA conversions: the
+// depth remap leaves x and w alone and the quarter turn carries x along with
+// everything else, so the shift reaches the panel's horizontal axis.
+float stereoScreenShift(float eyeOffset, float projectionX, float convergence);
+
+// The per-eye view-projection BEFORE the PICA conversions: the eye offset, the
+// `view * projection` product and the convergence shift only, in the engine's
+// row-major row-vector layout. The conversions are right-multiplications by fixed matrices, so this
 // matrix and `eyeViewProjection`'s output describe the SAME world-space view
 // volume — and this one's planes come straight from the engine's clip
 // convention (NDC z [0,1], clip.w = -z_view > 0 in front). That is what the
 // per-eye frustum cull wants (c3d/06_draw.inc).
 void eyeViewProjectionEngine(const float view[16], const float projection[16],
-                             float eyeOffset, float out[16]);
+                             float eyeOffset, float convergence, float out[16]);
 
 // The six planes of the volume `vp` (an `eyeViewProjectionEngine` matrix), in
 // the order left, right, bottom, top, near, far. A point is inside a plane
@@ -740,14 +772,20 @@ float storedDepth(float zNdc);
 // LESS would reject the far plane and anything that touches it.
 bool depthPasses(const DepthState& state, float zNdc, float stored);
 
-// How many passes this frame draws, and the eye offset for each of them.
+// How many passes this frame draws, the eye offset for each of them, and the
+// distance where the two eyes' pictures meet (`eyeViewProjection`'s
+// `convergence`; frozen with the offsets so both eyes agree).
 struct EyePlan {
     int passes;
     float offset[2];
+    float convergence;
 };
 
-// The frame's eye plan, from the physical 3D slider (0..1) and the hardware's
-// maximum separation.
+// The frame's eye plan, from the physical 3D slider (0..1), the maximum
+// separation (config.ini stereo_separation, the pause menu's 3D DEPTH) and the
+// convergence distance (stereo_convergence, 3D SCREEN DISTANCE). The slider
+// scales the separation only: the convergence distance stays put, so the
+// slider changes how deep the picture is, not where the panel's surface is.
 //
 // THE CLAMP IS LOAD-BEARING. Mandarine's `osGet3DSliderState()` returns a
 // garbage value (~1.34e8) when it does not model the slider, and a sibling port
@@ -764,7 +802,7 @@ struct EyePlan {
 // It lives here rather than in the backend for the usual reason: the sign, the
 // clamp and the skip are the three things that can silently black the screen, and
 // renderer_c3d.cpp cannot be compiled on this host.
-EyePlan eyePlan(float slider, float separation);
+EyePlan eyePlan(float slider, float separation, float convergence);
 
 // ---------------------------------------------------------------------------
 // THE HAZE (Enhanced Mode, SPEC.md 7.9 `enableHaze`): the PC's

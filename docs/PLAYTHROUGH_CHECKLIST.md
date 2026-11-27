@@ -333,6 +333,27 @@ its fall; run the **Every fall** list (under "Every level") on at least one.
   - Where: die and Continue 10+ times, switch levels, load saves.
   - Right: no slowdown, no crash, no "out of memory".
   - Wrong: crashes or growing hitches after several reloads.
+- [ ] **3D pop (stereo convergence)** -- branch fix/3ds-stereo-depth
+  - What changed: the eyes now converge about 10 units out (just behind Kurt),
+    and they sit 1 unit apart at full slider, not 0.25. Before, both eyes looked
+    parallel: the far world sat on the screen and only Kurt came forward a little.
+  - Where: any level, slider all the way up, then halfway. Look at Kurt against
+    a long view (L7's open ground, L4's tube, a corridor that runs into the distance).
+  - Right: Kurt at or just in front of the screen; the arena runs back behind
+    it; the sky is deepest. The HUD and the bullet-cam windows stay flat on the
+    screen. Comfortable for minutes at full slider. In the scope the picture sits
+    behind the crosshair as one flat layer and does not tear apart when you zoom.
+  - Wrong: double images you cannot fuse; Kurt behind the screen; the sky in
+    front of the walls; a thing visible in one eye only at the left or right edge;
+    the scope splitting at high zoom; any change with the slider fully down.
+  - The two new START menu rows, below ROUND CAMERAS (both saved to config.ini):
+    - **3D DEPTH** (25%-200%, 100% = 1 unit): how deep the whole picture is.
+      Try 75% and 150%; note the most you can look at comfortably.
+    - **3D SCREEN DISTANCE** (4, 6, 8, 10, 12, 15, 20, 30, 50, FAR): where the
+      screen surface is, in game units (Kurt is ~8 out). Lower brings the world
+      out of the screen; FAR is the old parallel look, for an A/B.
+    - Both apply at once with the menu open. Note the pair you like; they become
+      the defaults.
 - [ ] **HOME and lid sleep** -- c95310c9 (never tested on a console)
   - Where: mid-level and in a fall: HOME and back; close and open the lid.
   - Right: picture, music and sounds come back; the game did not run on while away.

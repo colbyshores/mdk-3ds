@@ -22,7 +22,8 @@
 // file still carries it).
 //
 // THE 3DS writes the lines it shows (formatConsole: the volumes, the music
-// filter, the difficulty and gore) into its existing sdmc:/3ds/mdk/config.ini,
+// filter, the difficulty, gore and the stereo pair's separation and
+// convergence) into its existing sdmc:/3ds/mdk/config.ini,
 // after the Enhanced Mode toggles; each parser skips the other's keys
 // (enhanced_config.h: "Unknown keys and malformed lines are ignored", and the
 // C#'s Set has no default arm).
@@ -101,6 +102,9 @@ struct GameSettings {
     Graphics graphics = GraphicsOriginal;
     AntiAliasing antiAliasing = AntiAliasingOff;
     Stereo stereo = StereoOff;
+    // The C#'s defaults (Renderer.Stereo: 0.25 units apart, converging 10 units
+    // out), which the PC's flat stereo modes and the C# goldens keep. The 3DS
+    // starts from console() instead: its parallax barrier wants the wider pair.
     float stereoSeparation = 0.25f;
     float stereoConvergence = 10.0f;
     HeadTracking headTracking = HeadTrackingOff;
@@ -114,6 +118,20 @@ struct GameSettings {
     std::string upscalerUrl;
     std::string upscalerSha256;
 
+    // THE 3DS'S STEREO SEPARATION (the pause menu's 3D DEPTH at 100%), in the
+    // game's units. Kurt stands ~8 units in front of the follow camera
+    // (follow_camera.h kDistance); with the convergence at 10 he sits just in
+    // front of the panel and the world behind it. 1 unit at full slider puts
+    // infinity (the sky) 16.7 px apart between the eyes (8.3 px each way) on
+    // the 400-px top screen and Kurt 4.2 px in front -- the depth range
+    // Forsaken's stereo gives its tunnels, which the owner likes; the C#'s 0.25
+    // gives a quarter of it. Derivation: docs/WORK_LEDGER.md, 2026-11-27.
+    static constexpr float kConsoleStereoSeparation = 1.0f;
+
+    // The 3DS's starting settings: the C# defaults with the stereo separation
+    // above. config.ini lines override it as they override every default.
+    static GameSettings console();
+
     // C# Settings.Parse: the defaults, then each `name=value` line; unknown or bad
     // lines keep the defaults.
     static GameSettings parse(const char* text);
@@ -123,7 +141,8 @@ struct GameSettings {
     // C# Settings.Format: every line, in the C#'s order, newline-terminated.
     std::string format() const;
     // The lines the 3DS shows and keeps in config.ini (volumes, music filter,
-    // difficulty, gore), in Format's order and spelling.
+    // difficulty, gore, stereo separation and convergence), in Format's order
+    // and spelling.
     std::string formatConsole() const;
 
     // C# Settings.Apply's audio half (Game.cs Settings.Apply: MasterGain, the

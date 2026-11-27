@@ -1,4 +1,4 @@
-// 03_toggles.inc -- Enhanced Mode between frames: the haze, the HD-only originals, the toggles' setter, the 30 fps cap.
+// 03_toggles.inc -- Enhanced Mode between frames: the haze, the HD-only originals, the toggles' setter, the stereo setter, the 30 fps cap.
 // Part of renderer_c3d.cpp's single translation unit (see its header).
 // No include guards, no includes of its own; the order is load-bearing.
 
@@ -70,6 +70,18 @@ void mdk_render_set_enhanced_toggles(MdkRenderer rr, const mdk::EnhancedToggles*
     }
     mdk::pica::dialledLighting(r->rig, r->toggles, &r->lighting);
     applyFramePacing(r);
+}
+
+// The stereo pair's spacing and convergence (render.h). Plain stores: the frame's
+// eyePlan reads them at mdk_render_begin_frame, so a frame never mixes two
+// settings between its eyes.
+void mdk_render_set_stereo(MdkRenderer rr, const mdk::StereoSettings* stereo) {
+    RendererC3D* r = asC3d(rr);
+    if (!r || !stereo) {
+        return;
+    }
+    r->eyeSeparation = stereo->separation;
+    r->eyeConvergence = stereo->convergence;
 }
 
 // THE 30 FPS CAP (Enhanced Mode cap30Fps): citro3d's OWN frame pacing, not a

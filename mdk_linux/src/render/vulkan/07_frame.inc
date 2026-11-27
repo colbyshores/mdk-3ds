@@ -330,6 +330,18 @@ void mdk_render_set_enhanced_toggles(MdkRenderer rr, const mdk::EnhancedToggles*
     r->toggles = *toggles;
 }
 
+// The pair's spacing and convergence only; the mode (and so the targets) stays
+// what the frontend created (render.h). The Linux frontend sets both on the
+// command line and never calls this: its pictures are unchanged.
+void mdk_render_set_stereo(MdkRenderer rr, const mdk::StereoSettings* stereo) {
+    RendererVk* r = asVk(rr);
+    if (!r || !stereo) {
+        return;
+    }
+    r->stereo.separation = stereo->separation;
+    r->stereo.convergence = stereo->convergence;
+}
+
 // The PC's glow is its bloom (post.frag); the 3DS's billboards are not drawn
 // here (render.h).
 void mdk_render_set_glow_quads(MdkRenderer rr, const mdk::GlowQuad* quads, int32_t count) {

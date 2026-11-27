@@ -22,7 +22,9 @@ namespace mdk {
 // (game/game_settings.h's formatConsole; each parser skips the other's keys).
 // File-scope because the menus' option changes save the file from the screens
 // (menu_screens_3ds.cpp) as well as from the level's START menu.
-mdk::GameSettings g_gameSettings;
+// It starts from GameSettings::console(): the C# defaults with the 3DS's own
+// stereo separation (the parallax barrier's; the PC keeps the C#'s 0.25).
+mdk::GameSettings g_gameSettings = mdk::GameSettings::console();
 // The toggles the file is written with (main's own), for saveConfigNow.
 const mdk::EnhancedToggles* g_toggles = nullptr;
 
@@ -58,14 +60,24 @@ void loadConfig3ds(EnhancedToggles* toggles) {
     }
     if (read) {
         mdk::g_gameSettings.parseOver(configText);
+        // A hand-edited convergence nearer than 1 unit (the C#'s MinConvergence;
+        // the camera's near plane is 0.5) would slide each eye's picture by up to
+        // hundreds of pixels: 1 is the nearest the pair converges. The parser
+        // (the C#'s, shared) only clamps it to [0, 4000]; 0 stays FAR.
+        float& convergence = mdk::g_gameSettings.stereoConvergence;
+        if (convergence > 0.0f && convergence < 1.0f) {
+            convergence = 1.0f;
+        }
     }
     if (read && mdk::parseEnhancedConfig(configText, toggles)) {
         mdk::log3dsPrintf("config: sdmc:/3ds/mdk/config.ini loaded (game: master=%d music=%d "
-                          "effects=%d filter=%d difficulty=%s gore=%d)",
+                          "effects=%d filter=%d difficulty=%s gore=%d stereo=%.2f/%.1f)",
                           (int)mdk::g_gameSettings.masterVolume, (int)mdk::g_gameSettings.musicVolume,
                           (int)mdk::g_gameSettings.effectsVolume, (int)mdk::g_gameSettings.musicFilter,
                           mdk::GameSettings::difficultyName(mdk::g_gameSettings.difficulty),
-                          (int)mdk::g_gameSettings.gore);
+                          (int)mdk::g_gameSettings.gore,
+                          (double)mdk::g_gameSettings.stereoSeparation,
+                          (double)mdk::g_gameSettings.stereoConvergence);
     } else {
         if (read) {
             mdk::log3dsPrintf("config: config.ini did not parse; defaults kept");
@@ -124,7 +136,7 @@ void saveToggles3ds(const EnhancedToggles& toggles) {
                       "glow=%d filtering=%d mipmaps=%d hd=%d lighting=%d smoothing=%d "
                       "cap30=%d hazeDensity=%d glowStrength=%d shadowDarkness=%d "
                       "exposure=%d tintSaturation=%d shadowMapSize=%d "
-                      "shadowMapRefresh=%d (saved=%d)",
+                      "shadowMapRefresh=%d stereo=%.2f/%.1f (saved=%d)",
                       (int)toggles.enableSkyShadows,
                       (int)toggles.enableFragmentLights,
                       (int)toggles.enableHaze,
@@ -142,7 +154,9 @@ void saveToggles3ds(const EnhancedToggles& toggles) {
                       (int)toggles.exposure,
                       (int)toggles.tintSaturation,
                       (int)toggles.shadowMapSize,
-                      (int)toggles.shadowMapRefresh, (int)saved);
+                      (int)toggles.shadowMapRefresh,
+                      (double)mdk::g_gameSettings.stereoSeparation,
+                      (double)mdk::g_gameSettings.stereoConvergence, (int)saved);
 }
 
 // The pause menu's options pages (pause_menu.h's MenuItems hooks): a change
