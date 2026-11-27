@@ -6358,6 +6358,82 @@ bool crossingDump(int level, const MdkData& data, const Bni* sprites, std::strin
     return true;
 }
 
+// THE DOOR BUBBLE'S SECOND HOP (ScriptRuntime::doorBubbleArenas): LEVEL4's CMEAT_5
+// is 31 units door to door, so from MEAT_6 at its doorway the bubble must name the
+// arena past it, MEAT_5, after CMEAT_5 itself -- the view prebuild's lead (on the Old
+// 3DS MEAT_5's 148 build steps were otherwise finished synchronously as Kurt stepped
+// in, 257 ms, 2026-11-27). With a radius that reaches only the near doorway, the far
+// side is not named. Frontend residency only: no script state is read or written.
+int bubbleSecondHopCheck(const MdkData& data, const Bni* sprites) {
+    const int level = 4;
+    LevelData levelData;
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    audio::SoundBank bank;
+    if (!LevelData::load(&levelData, &data, level) || !data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size()) ||
+        !audio::SoundBank::forLevel(&bank, data, level) || sprites == nullptr) {
+        printf("FAIL L4_bubble_second_hop: the level did not load\n");
+        return 1;
+    }
+    bank.preload();
+    ArenaSpace space;
+    for (size_t i = 0; i < levelData.arenas().size(); i++) {
+        const Arena* arena = levelData.arenas()[i];
+        if (levelData.isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    audio::SoundMixer mixer(&bank);
+    Player player;
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    // The hardware route's start (AT=-126,13440,-1989,270 ARENA=MEAT_6): in MEAT_6,
+    // at its CMEAT_5 doorway.
+    runtime.teleportKurt("MEAT_6", Vec3{-126.0f, 13440.0f, -1989.0f}, 270.0f);
+    player.feet = Vec3{-126.0f, 13440.0f, -1989.0f};
+    runtime.update(1.0f / 30.0f);
+    std::vector<std::string> wide;
+    runtime.doorBubbleArenas(player.feet, 220.0f, &wide);
+    std::vector<std::string> narrow;
+    // 50 units: past the CMEAT_5 doorway (30-40 away, measured), short of MEAT_5's
+    // (60-80 away): the near connector alone.
+    runtime.doorBubbleArenas(player.feet, 50.0f, &narrow);
+    std::string got = "current=" + runtime.currentArena() + " wide=";
+    for (size_t i = 0; i < wide.size(); i++) {
+        got += (i ? "," : "") + wide[i];
+    }
+    got += " narrow=";
+    for (size_t i = 0; i < narrow.size(); i++) {
+        got += (i ? "," : "") + narrow[i];
+    }
+    size_t corridor = wide.size();
+    size_t room = wide.size();
+    for (size_t i = 0; i < wide.size(); i++) {
+        corridor = wide[i] == "CMEAT_5" ? i : corridor;
+        room = wide[i] == "MEAT_5" ? i : room;
+    }
+    bool narrowHasRoom = false;
+    bool narrowHasCorridor = false;
+    for (size_t i = 0; i < narrow.size(); i++) {
+        narrowHasRoom = narrowHasRoom || narrow[i] == "MEAT_5";
+        narrowHasCorridor = narrowHasCorridor || narrow[i] == "CMEAT_5";
+    }
+    if (runtime.currentArena() == "MEAT_6" && corridor < room && room < wide.size() &&
+        narrowHasCorridor && !narrowHasRoom) {
+        printf("PASS L4_bubble_second_hop: %s\n", got.c_str());
+        return 0;
+    }
+    printf("FAIL L4_bubble_second_hop: %s (want current=MEAT_6, CMEAT_5 then MEAT_5 at 220, "
+           "CMEAT_5 and no MEAT_5 at 50)\n", got.c_str());
+    return 1;
+}
+
 // The crossing goldens: one dump per level, compared to the oracle's recorded
 // assertions. Returns the number of failures; prints one PASS/FAIL line per level.
 std::string firstDifference(const std::string& got, const std::string& expected);  // below
@@ -7609,6 +7685,11 @@ int main(int argc, char** argv) {
         }
         fputs(got.c_str(), stdout);
         return 0;
+    }
+
+    // `tick1 bubble`: the door bubble's second hop alone (bubbleSecondHopCheck).
+    if (argc > 1 && std::string(argv[1]) == "bubble") {
+        return bubbleSecondHopCheck(data, spritesArg) == 0 ? 0 : 1;
     }
 
     // `tick1 crossing` — the doorway-crossing goldens on their own, which is what
@@ -10999,6 +11080,7 @@ int main(int argc, char** argv) {
     // gate suite. This line is here so the full suite cannot pass while the crossing
     // fails; it adds one case and changes no existing case's expectation.
     failures += crossingCheck(data, spritesArg);
+    failures += bubbleSecondHopCheck(data, spritesArg);
 
     // Dynamic scene updates (open item 1). The scene is built once but the
     // scripts change group state (group_set_state) and group material

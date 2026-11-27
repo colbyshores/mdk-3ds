@@ -921,11 +921,13 @@ public:
     const std::string& currentArena() const { return currentArena_; }
     // The door bubble (frontend residency, not game state): the arenas
     // through the current arena's doorways whose doorway box comes within
-    // `radius` of `position`, appended to `out` (deduped, current and
-    // empty excluded). Read-only: it changes no script state, so the
-    // drawn list's one writer rule is untouched -- the frontend uses it
-    // only to START residency work (views, warm, music) earlier than the
-    // scripts' own second-arena trigger would.
+    // `radius` of `position`, nearest first -- then the SECOND HOP, the arenas
+    // through those arenas' own doorways whose box is within `radius` too (a
+    // short connector's far side), nearest first -- appended to `out`
+    // (deduped, current and empty excluded). Read-only: it changes no script
+    // state, so the drawn list's one writer rule is untouched -- the frontend
+    // uses it only to START residency work (views, warm, music) earlier than
+    // the scripts' own second-arena trigger would.
     void doorBubbleArenas(const Vec3& position, float radius,
                           std::vector<std::string>* out) const;
     // C# SecondArena / SecondActive (ScriptRuntime.cs:259-260): the arena left

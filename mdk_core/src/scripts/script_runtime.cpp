@@ -615,6 +615,40 @@ bool crossesDoorway(const formats::Dti::Record& record, const Vec3& from, const 
     }
 }
 
+// The squared distance from `position` to a doorway record's box, clamped per
+// axis: inside the box is zero, which any radius admits.
+float doorwayDistance2(const formats::Dti::Record& record, const Vec3& position) {
+    float d2 = 0.0f;
+    const float p[3] = {position.x, position.y, position.z};
+    for (int j = 0; j < 3; j++) {
+        const float lo = record.position[j] < record.boxEnd[j] ? record.position[j]
+                                                               : record.boxEnd[j];
+        const float hi = record.position[j] < record.boxEnd[j] ? record.boxEnd[j]
+                                                               : record.position[j];
+        const float d = p[j] < lo ? lo - p[j] : (p[j] > hi ? p[j] - hi : 0.0f);
+        d2 += d * d;
+    }
+    return d2;
+}
+
+// `byDistance`'s names, nearest first, appended to `out` unless already there.
+void appendNearestFirst(std::vector<std::pair<float, std::string>>* byDistance,
+                        std::vector<std::string>* out) {
+    std::sort(byDistance->begin(), byDistance->end());
+    for (size_t i = 0; i < byDistance->size(); i++) {
+        bool seen = false;
+        for (size_t k = 0; k < out->size(); k++) {
+            if ((*out)[k] == (*byDistance)[i].second) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) {
+            out->push_back((*byDistance)[i].second);
+        }
+    }
+}
+
 }  // namespace
 
 void ScriptRuntime::doorBubbleArenas(const Vec3& position, float radius,
@@ -645,18 +679,7 @@ void ScriptRuntime::doorBubbleArenas(const Vec3& position, float radius,
             other->second == arena) {
             continue;
         }
-        // Distance from the position to the doorway box (clamped per
-        // axis): inside the box is zero, which any radius admits.
-        float d2 = 0.0f;
-        const float p[3] = {position.x, position.y, position.z};
-        for (int j = 0; j < 3; j++) {
-            const float lo = record.position[j] < record.boxEnd[j] ? record.position[j]
-                                                                   : record.boxEnd[j];
-            const float hi = record.position[j] < record.boxEnd[j] ? record.boxEnd[j]
-                                                                   : record.position[j];
-            const float d = p[j] < lo ? lo - p[j] : (p[j] > hi ? p[j] - hi : 0.0f);
-            d2 += d * d;
-        }
+        const float d2 = doorwayDistance2(record, position);
         if (d2 > radius2) {
             continue;
         }
@@ -664,19 +687,50 @@ void ScriptRuntime::doorBubbleArenas(const Vec3& position, float radius,
     }
     // Nearest first, so a caller bounding the hint count keeps the
     // doorways Kurt reaches soonest.
-    std::sort(byDistance.begin(), byDistance.end());
-    for (size_t i = 0; i < byDistance.size(); i++) {
-        bool seen = false;
-        for (size_t k = 0; k < out->size(); k++) {
-            if ((*out)[k] == byDistance[i].second) {
-                seen = true;
-                break;
-            }
+    appendNearestFirst(&byDistance, out);
+    // THE SECOND HOP: an arena through a doorway OF a first-hop arena whose box
+    // is within the radius too -- the far side of a short connector. LEVEL4's
+    // CMEAT_5 is 31 units door to door, so from MEAT_6 the bubble named only
+    // CMEAT_5 and MEAT_5's view started when Kurt stepped into the connector,
+    // too late for its 148 build steps: the guarantee finished it synchronously
+    // in the frame he entered MEAT_5 (257 ms, Old 3DS, 2026-11-27). Ranked after
+    // every first-hop name. Read from the DTI's own records (LevelData::
+    // entryNamed), not arenaRecords: the query builds no runtime cache for an
+    // arena Kurt is not in. byDistance is sorted now; an arena two doorways lead
+    // to is walked once.
+    std::vector<std::pair<float, std::string>> secondHop;
+    for (size_t f = 0; f < byDistance.size(); f++) {
+        const std::string& near = byDistance[f].second;
+        bool walked = false;
+        for (size_t g = 0; g < f && !walked; g++) {
+            walked = byDistance[g].second == near;
         }
-        if (!seen) {
-            out->push_back(byDistance[i].second);
+        if (walked) {
+            continue;
+        }
+        const formats::Dti::ArenaEntry* entry = level_->entryNamed(near);
+        if (entry == nullptr) {
+            continue;
+        }
+        for (size_t i = 0; i < entry->records.size(); i++) {
+            const formats::Dti::Record& record = entry->records[i];
+            if (record.type != kRecordConnection) {
+                continue;
+            }
+            std::map<std::pair<std::string, int32_t>, std::string>::const_iterator other =
+                connections_.find(std::make_pair(near, record.id));
+            if (other == connections_.end() || other->second.empty() ||
+                other->second == arena || other->second == near) {
+                continue;
+            }
+            const float d2 = doorwayDistance2(record, position);
+            if (d2 > radius2) {
+                continue;
+            }
+            secondHop.push_back(std::make_pair(d2, other->second));
         }
     }
+    appendNearestFirst(&secondHop, out);
 }
 
 std::string ScriptRuntime::crossedArena(const std::string& arena, const Vec3& from,
