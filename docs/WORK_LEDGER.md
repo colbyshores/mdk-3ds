@@ -3740,3 +3740,58 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   `tick1 probe 18000` reports nothing unimplemented on LEVEL3-8.
 - **Not done:** no code changed, and nothing was run on hardware or in the emulator.
 - **Commit:** this one.
+
+## 2026-11-26 -- script opcode parity with the C# (branch fix/opcodes-parity)
+
+Owner decision: the four opcodes `docs/OPCODE_WATCHLIST.md` lists as partial in our C++ are made
+to match the C# like for like, one commit each, in priority order. The C# is the authority (our
+`src/` 1.1.1 plus the upstream fixes this tree has taken); upstream's C++ only pointed at what
+was missing. Oracle: `tests/scripts/hazards_probe` built with .NET SDK 10.0.404 (scratch) against
+`git archive` of upstream's C# at v1.2.6 (it has every upstream fix this tree has taken) and
+against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new tokens are
+`rope:TYPE` (place, pitch, yaw, swing speed and plane, flags, rope colour and mask, and
+`RopeView.LinesOf`'s ends at 1/10000, plus an FNV-1a over the bits of every float) and, with
+133, `frames`.
+
+### 226 jump_to -- the LEVEL6 OLYM_6 pendulum swings
+- **What was wrong:** the VM set the pivot, speed, gain, plane and `FlagSwinging`, but no tick
+  code read them: XSWINGB hung still ~1985 units under its pivot, with no rope, and hit Kurt
+  only when he walked into it.
+- **What:** `ScriptRuntime::motionSwing` is `ObjectMotion.Swing` (0x43cfe8) operation for
+  operation, called where `ObjectMotion.Update` calls it (after the command, before gravity;
+  not for an object its command killed): w -= sin(pitch) * gain, pitch += w * gain, the object
+  at pivot + (h.x sin, h.y sin, -cos) * length, the plane turned towards the scripts' target by
+  at most 15 degrees (folded to +-90) at each turning point and the yaw moved there at 10 degrees
+  a second, rope colour 1, mask 1, points object and pivot. libm sinf/cosf (bit-identical to
+  .NET's MathF here, the fromAngle probe note), .NET's left-associative degrees-to-radians.
+  `MdkObject::rope_lines` is `RopeView.AddLines` (pair mode; FrameBlend.Carried for the end on
+  the object, blending off at alpha 1). `game/rope_view.{h,cpp}` draws them after the objects,
+  where Viewer.cs:705 does, on both frontends: Lines with a flat palette colour where the
+  backend has a line primitive (Vulkan; new capability `line_primitive`), and on the PICA200
+  (no line primitive, no vertex colour) a ~1.5-pixel camera-facing quad per line, textured with
+  an 8x8 RGBA texture of the colour (made the first time a colour is seen, freed with the level
+  scope; no file read, no per-frame import).
+- **Oracle:** new golden `L6_hazards_swing` (Kurt in the pendulum's path in OLYM_6, 1200 steps):
+  the C++ equals hazards_probe at v1.2.6 **byte for byte**, including the PENDHIT knock-down at
+  s=320. Against 1.1.1 + 683a53ef the `rope=` column (place, pitch, yaw, swing state, rope ends,
+  bit hash) is byte-identical on every line; the other columns part from s=130 (another
+  object's state: an upstream gameplay fix 1.1.1 lacks). 1.2.6 does not differ from 1.1.1 for
+  this opcode: `Swing`, the jump_to case and `RopeView`'s lines are unchanged, 1.2.x only puts
+  the rope draw in its arena's depth band. A 300-step run from Kurt's landing spot in OLYM_6
+  equals 1.2.6 byte for byte too. No existing golden moved: tick1 522 of 522 pass with the new one.
+- **Frames (Linux, headless, --fixed-step, 640x480, DISPLAY=:99, lavapipe):**
+  `pendulum_linux.png` in the session scratchpad (`opframes/`, frames 240, 330, 450 from
+  `--level=6 --arena=OLYM_6 --at=-1895,2857,-2048,85`): the white rope from the pivot ~2000 units
+  up down to the bob, at a different swing angle each frame.
+- **Cost on the 3DS:** one object a tick runs the swing (two sinf, one cosf, a few multiplies);
+  the rope is one draw of 6 vertices a frame while XSWINGB is drawn, from one 4096-vertex
+  dynamic mesh made the first frame a rope exists, plus one 8x8 RGBA8 texture per rope colour.
+  Nothing per frame touches a file.
+- **Not verified:** no hardware run (owner away; no appliance use) and no Mandarine run for this
+  commit. The 3DS quad's width is a judgement (C# lines are one pixel on the PC); it has not
+  been looked at on a console.
+- **Commit:** see `git log` (this entry's commit, "opcodes: 226 jump_to ...").
+- **Checks:** Linux build (RelWithDebInfo) 0 warnings; `make -C tests/scripts test` exit 0
+  (tick1 522/522); `make -C tests/formats` 200670 checks, 0 failures; `tools/check.sh` all
+  gates pass (smdh skipped: no .cia) after the swing's libm trig got its `@vfp-exempt R6` pin
+  (gameplay: the LUT would move a damaging object); `make -C mdk_3ds` 0 compiler warnings.

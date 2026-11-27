@@ -34,6 +34,11 @@ using KurtT = Mdk.Game.Kurt.Kurt;
 //   `flying`                     appends ` fly=P,E`: FNV-1a hashes of every debris piece's
 //                                centre, velocity and ticks and every effect's position,
 //                                velocity and life (2026-11-20, docs/DIVERGENCES.md D5).
+//   `rope:TYPE`                  appends ` rope=`: every live object of that type's place,
+//                                pitch, yaw, swing speed and plane (jump_to, opcode 226),
+//                                flags, rope colour and mask and RopeView.LinesOf's ends
+//                                (blending off), at 1/10000, and `#` an FNV-1a over the bits of
+//                                all those floats (2026-11-26, the opcode parity branch).
 // The goldens' schedules are in tick1.cpp's kHazardsCases table.
 //
 // HOW IT WAS BUILT AND RUN (2026-11-20, .NET SDK 10.0.404): as tests/scripts/items_probe -- copy
@@ -103,6 +108,7 @@ var drops = new List<(int Step, string Model, Vector3 Offset)>();
 var teleports = new List<(int Step, string Arena, Vector3 Position)>();
 var runs = new List<(int Step, string Model, int Pc, Vector3 Offset)>();
 var watched = new List<string>();
+var roped = new List<string>();
 var flying = false;
 foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries))
 {
@@ -126,6 +132,9 @@ foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries)
             continue;
         case "flying":
             flying = true;
+            continue;
+        case "rope":
+            roped.Add(parts[1]);
             continue;
     }
 
@@ -219,7 +228,43 @@ for (var step = 1; step <= steps; step++)
         $"opos={sx},{sy},{sz} kills={runtime.Stats.Kills} boxes={(boxes.Count == 0 ? "-" : string.Join(";", boxes))} " +
         $"watch={(watch.Count == 0 ? "-" : string.Join(";", watch))} " +
         $"bomb={(runtime.Items.Bomb is { Dead: false } ? 1 : 0)} pieces={runtime.Debris.Pieces.Count} effects={runtime.Effects.All.Count} " +
-        $"white={F(kurt.WhiteFlash)} shake={F(runtime.Shake)} voices={Voices()}" + (flying ? Flying() : ""));
+        $"white={F(kurt.WhiteFlash)} shake={F(runtime.Shake)} voices={Voices()}" + (flying ? Flying() : "")
+        + (roped.Count > 0 ? Ropes() : ""));
+}
+
+// The `rope:TYPE` token's column (tick1's kurtHazardsDump prints the same).
+string Ropes()
+{
+    var all = new List<string>();
+    foreach (var o in runtime.Objects)
+    {
+        if (o.Dead || !roped.Contains(o.TypeName))
+        {
+            continue;
+        }
+
+        var bits = 2166136261u;
+        foreach (var v in new[] { o.Position.X, o.Position.Y, o.Position.Z, o.Pitch, o.Yaw, o.SwingSpeed, o.SwingYaw })
+        {
+            bits = Fnv(bits, BitConverter.SingleToInt32Bits(v));
+        }
+
+        var ends = RopeView.LinesOf(o);
+        var text = new List<string>();
+        foreach (var e in ends)
+        {
+            text.Add($"{F(e.X)},{F(e.Y)},{F(e.Z)}");
+            bits = Fnv(bits, BitConverter.SingleToInt32Bits(e.X));
+            bits = Fnv(bits, BitConverter.SingleToInt32Bits(e.Y));
+            bits = Fnv(bits, BitConverter.SingleToInt32Bits(e.Z));
+        }
+
+        all.Add($"{o.TypeName}#{o.InstanceId}@{F(o.Position.X)},{F(o.Position.Y)},{F(o.Position.Z)}/p{F(o.Pitch)}/y{F(o.Yaw)}"
+            + $"/w{F(o.SwingSpeed)}/sy{F(o.SwingYaw)}/f{o.Flags:X}/c{o.RopeColor}/m{o.RopeMask:X}/l"
+            + (ends.Count == 0 ? "-" : string.Join("|", text)) + $"#{bits:X8}");
+    }
+
+    return " rope=" + (all.Count == 0 ? "-" : string.Join(";", all));
 }
 
 // The `flying` token's column: FNV-1a over every piece's centre, velocity and ticks, and every

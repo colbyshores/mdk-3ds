@@ -88,6 +88,7 @@
 #include "game/mod_images.h"
 #include "game/level_view.h"
 #include "game/effects_draw.h"
+#include "game/rope_view.h"
 #include "game/effects_view.h"
 #include "game/object_draw.h"
 #include "game/object_view.h"
@@ -951,6 +952,8 @@ int main(int argc, char** argv) {
     bool sniperClipFailureLogged = false;
     mdk::EffectsView effectsView(objectResolver, &level, mdk::Shading::Sprite);
     mdk::EffectsDraw effectsDraw;
+    // The objects' ropes (C# RopeView, Viewer.cs:705), as thin quads (no line primitive).
+    mdk::RopeView ropeView;
     mdk::EffectsFrame effectsFrame;
     mdk::ObjectStream objectStream;
     // The tiny-enemy cull's per-object state (kTinyKnown...) and hysteresis
@@ -2636,9 +2639,14 @@ int main(int argc, char** argv) {
             }
         }
         if (runtime && !strikeFrame) {
+            // C# RopeView.Draw (Viewer.cs:705): the objects' ropes after the objects,
+            // blended as they are. The PICA200 has no line primitive, so each line is
+            // a thin camera-facing quad in its arena's colour (game/rope_view.h).
+            ropeView.draw(renderer, *runtime, level, sceneCamera, runtime->tick_blend(pending));
+        }
+        if (runtime && !strikeFrame) {
             // The pieces and sprite effects, where the C# draws them:
-            // after the objects, before Kurt (Viewer.cs:707). The ropes
-            // and sniper scope the C# draws alongside are not ported.
+            // after the objects, before Kurt (Viewer.cs:707).
             // A refusal is reported like the object pass's, edge-triggered
             // and re-armed, but on this pass's own latch.
             // The effects cull (EffectsView::setCullFrustum): the object cull's

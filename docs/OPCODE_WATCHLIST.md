@@ -12,6 +12,17 @@ It does not say which side is right where both sides implement an opcode.
   `src/game/scripts/ScriptVm.cpp`.
 - **C# authority:** our `src/` (1.1.1, d5bb66ec) and upstream v1.2.6.
 
+## Fixed on `fix/opcodes-parity` (2026-11-26)
+
+Owner decision: match the C# like for like on all four partial opcodes. The fixes follow the
+**C# as the authority** (our `src/` 1.1.1 plus the upstream fixes this tree has already taken,
+checked against upstream's C# v1.2.6). Upstream's C++ was used only to find what was missing,
+never as the specification. Each fix's oracle comparison is in `docs/WORK_LEDGER.md`.
+
+| Op | Commit | What now matches the C# |
+|---|---|---|
+| 226 | (the commit that adds this row) | `ObjectMotion.Swing` runs every tick for a `FlagSwinging` object (pitch, place, plane turn), and its rope is drawn (`RopeView`, pair 0). `L6_hazards_swing` equals the C# oracle byte for byte for 1200 steps, through the PENDHIT knock-down. |
+
 ## Counts
 
 Both VMs dispatch the same **238** retail opcode labels. Our VM has no case that theirs lacks,
@@ -35,7 +46,7 @@ and no implementation handles it (see "Logged as unhandled" below).
 | LEVEL3: HMO_1, HMO_3, HMO_5, HMO_6, HMO_8 (11 boxes)<br>LEVEL4: MEAT_5 (2)<br>LEVEL5: MUSE_5 (2) | 159 | spawn_box | The box, its hazard and its sprite are all ported. The sprite is drawn at the image's own aspect, scaled by `max(sizeX, sizeZ)/width` (`game/effects_view.cpp:654-657`). | The image is stretched over the box's width and height, using separate X and Z texels (`src/game/objects/EffectsView.cpp:55-74`, upstream 84ad71e4). | 1.1.1 keeps the aspect. 1.2.x stretches it (84ad71e4: "LEVEL4's bones were 9 x 5 instead of 9 x 6"). | The FIRE and PULSE hazard boxes may draw squat or thin compared with their hazard box. The same draw path serves the sprite boxes that `spawn_flagged` makes for SW_EWJ and BONEFLC: the bones and worms on LEVEL4's snowboard run, and 2 EWJ in LEVEL8. A bone draws 9x5 instead of 9x6. This is cosmetic. |
 | LEVEL4: MEAT_3 (2 sites)<br>LEVEL7: DANT_5 (2 sites) | 133 | arena_texture_frame | The VM writes the frame into `runtime.animatedTextures` (`script_vm.cpp:2069`). Nothing reads it back: the level draw always passes `draw.frame = 0` (`game/level_view.cpp:357`). | `LevelView` draws `frames.FrameOf(arena, batch.Animated)` for each animated batch (`src/game/level/LevelView.cpp:113`). | `ScriptVm.cs:1042`. `LevelView.cs:143` draws the frame. | The **M_COMM** texture, the comm device's screen. The scripts set it to 6 frames/s (mode 1), and to 12 once it is hit. It should animate until the device is destroyed. In ours it stays frozen on frame 0. |
 | LEVEL5: MUSE_5 (4 sites)<br>LEVEL8: GUNT_10 (2 sites); object XBN, the dog (DOGHOWL) | 242 | set_2d0_block | The VM writes `rope_mask` and `rope_points`, and save/load keeps them (`script_vm.cpp:2399-2421`, `script_snapshot.cpp:473`). No frontend draws them, and nothing else reads `rope_mask`. | `RopeView` draws a line from each of reference points 1-4 to its point (`src/game/objects/RopeView.cpp:17-60`). | `ScriptVm.cs:1148`. `Objects/RopeView.cs` draws them. | The dog is held by **four tether lines**, which the script drops one at a time (the mask goes 4 lines, then 3, then 2, then 0) before the dog howls. In ours the lines are invisible, so the dog looks free from the start. The logic still runs. |
-| LEVEL6: OLYM_6; object XSWINGB, the pendulum | 226 | jump_to | The VM sets the pivot, speed and gain and raises `FlagSwinging` (`script_vm.cpp:2379-2385`). Nothing swings the object: no tick code reads the flag or the `swing_*` fields. | `ObjectMotion::Swing` runs each tick while the flag is set (`ObjectMotion.cpp:53-55`, `:480-511`). It also sets `RopeMask = 1` so that RopeView draws the pendulum's rope. | `ScriptVm.cs:1140`. `ObjectMotion.cs:86` and `Swing` at `:537`. | The **pendulum** (loop sound PENDULUM; PENDHIT on touch, through `touch_damage` and `if_touching_kurt`) hangs still about 2000 units under its pivot. It has no rope, and it hits Kurt only when he walks into it. In the original it swings across the path. This changes gameplay: expect the room to be easier, or a timing puzzle to be missing. |
+| LEVEL6: OLYM_6; object XSWINGB, the pendulum | 226 | jump_to | **Fixed (see "Fixed on fix/opcodes-parity").** Before: the VM sets the pivot, speed and gain and raises `FlagSwinging` (`script_vm.cpp:2379-2385`). Nothing swings the object: no tick code reads the flag or the `swing_*` fields. | `ObjectMotion::Swing` runs each tick while the flag is set (`ObjectMotion.cpp:53-55`, `:480-511`). It also sets `RopeMask = 1` so that RopeView draws the pendulum's rope. | `ScriptVm.cs:1140`. `ObjectMotion.cs:86` and `Swing` at `:537`. | The **pendulum** (loop sound PENDULUM; PENDHIT on touch, through `touch_damage` and `if_touching_kurt`) hangs still about 2000 units under its pivot. It has no rope, and it hits Kurt only when he walks into it. In the original it swings across the path. This changes gameplay: expect the room to be easier, or a timing puzzle to be missing. |
 
 ## Logged as unhandled when it runs
 

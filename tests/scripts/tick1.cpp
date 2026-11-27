@@ -4278,7 +4278,7 @@ std::vector<std::string> splitColons(const std::string& token) {
 bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* holds,
                           std::vector<ItemsGive>* gives, std::vector<HazardsTeleport>* teleports,
                           std::vector<HazardsRun>* runs, std::vector<std::string>* watched,
-                          bool* flying) {
+                          bool* flying, std::vector<std::string>* roped) {
     std::string items;
     size_t start = 0;
     while (start < schedule.size()) {
@@ -4323,6 +4323,11 @@ bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* h
                 return false;
             }
             *flying = true;
+        } else if (f[0] == "rope") {
+            if (f.size() != 2) {
+                return false;
+            }
+            roped->push_back(f[1]);
         } else {
             items += (items.empty() ? "" : ",") + token;
         }
@@ -4357,7 +4362,9 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
     std::vector<HazardsRun> runs;
     std::vector<std::string> watched;
     bool flying = false;
-    if (!parseHazardsSchedule(schedule, &holds, &gives, &teleports, &runs, &watched, &flying)) {
+    std::vector<std::string> roped;
+    if (!parseHazardsSchedule(schedule, &holds, &gives, &teleports, &runs, &watched, &flying,
+                              &roped)) {
         *why = "the schedule did not parse: " + schedule;
         return false;
     }
@@ -4535,6 +4542,48 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
             }
             snprintf(buffer, sizeof(buffer), " fly=%08X,%08X", pieces, effects);
             *out += buffer;
+        }
+        if (!roped.empty()) {
+            // The `rope:TYPE` token: per live object of that type, its place, pitch, yaw,
+            // the swing's speed and plane (jump_to, opcode 226), its flags, the rope's
+            // colour and mask and RopeView.LinesOf's ends (blending off), at 1/10000, and
+            // `#` an FNV-1a over the bits of every one of those floats, so a difference in
+            // the last bit fails too.
+            std::string rope;
+            for (size_t i = 0; i < objects.size(); i++) {
+                const scripts::MdkObject& o = objects[i];
+                if (o.dead ||
+                    std::find(roped.begin(), roped.end(), o.type_name) == roped.end()) {
+                    continue;
+                }
+                uint32_t bits = 2166136261u;
+                const float values[] = {o.position.x, o.position.y, o.position.z, o.pitch,
+                                        o.yaw, o.swing_speed, o.swing_yaw};
+                for (size_t k = 0; k < sizeof(values) / sizeof(values[0]); k++) {
+                    bits = fnvFloat(bits, values[k]);
+                }
+                snprintf(buffer, sizeof(buffer),
+                         "%s%s#%d@%.4f,%.4f,%.4f/p%.4f/y%.4f/w%.4f/sy%.4f/f%X/c%d/m%X/l",
+                         rope.empty() ? "" : ";", o.type_name.c_str(), o.instance_id,
+                         o.position.x, o.position.y, o.position.z, o.pitch, o.yaw,
+                         o.swing_speed, o.swing_yaw, (unsigned)o.flags, o.rope_color,
+                         (unsigned)o.rope_mask);
+                rope += buffer;
+                Vec3 ends[scripts::MdkObject::kMaxRopeEnds];
+                const int32_t count = o.rope_lines(1.0f, ends);
+                for (int32_t k = 0; k < count; k++) {
+                    snprintf(buffer, sizeof(buffer), "%s%.4f,%.4f,%.4f", k == 0 ? "" : "|",
+                             ends[k].x, ends[k].y, ends[k].z);
+                    rope += buffer;
+                    bits = fnvFloat(bits, ends[k].x);
+                    bits = fnvFloat(bits, ends[k].y);
+                    bits = fnvFloat(bits, ends[k].z);
+                }
+                snprintf(buffer, sizeof(buffer), "%s#%08X", count == 0 ? "-" : "", bits);
+                rope += buffer;
+            }
+            *out += " rope=";
+            *out += rope.empty() ? "-" : rope;
         }
         *out += "\n";
         if (trace != nullptr) {
@@ -10148,6 +10197,15 @@ int main(int argc, char** argv) {
              "tp:1:OLYM_2:-1574:-47:-708,watch:XBG_B1",
              "OLYM_2's XBG_B1 balls with COLYM_2 as the second arena: its fan's sparks (from "
              "s=22) are live there too"},
+            // The opcode parity branch (2026-11-26, docs/OPCODE_WATCHLIST.md): jump_to (226)
+            // swings OLYM_6's pendulum, and before the port it hung still. The golden is the
+            // C# oracle's (hazards_probe at v1.2.6, whose Swing, jump_to and RopeView lines
+            // equal 1.1.1's); the rope column also equals 1.1.1 + 683a53ef's byte for byte.
+            {"L6_hazards_swing", "golden/L6_hazards_swing.txt", 6, 1200,
+             "tp:1:OLYM_6:-1894:3154:-2048,rope:XSWINGB",
+             "OLYM_6's pendulum XSWINGB swings under its pivot (jump_to, 226; ObjectMotion."
+             "Swing), turns its plane at the turning points, draws its rope and knocks Kurt "
+             "down (PENDHIT)"},
         };
         for (size_t i = 0; i < sizeof(kHazardsCases) / sizeof(kHazardsCases[0]); i++) {
             const HazardsCase& c = kHazardsCases[i];

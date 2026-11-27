@@ -1249,6 +1249,9 @@ private:
     // Collected shrink is a later slice.
     void motionPickup(MdkObject* obj);
     void motionUpdraft(MdkObject* obj);
+    // ObjectMotion.Swing (0x43cfe8): a FlagSwinging object (jump_to, opcode 226)
+    // swings under its pivot, and its rope (pair 0) is set for the frontends to draw.
+    void motionSwing(MdkObject* obj);
     // Items.cs's private half (see items.cpp).
     friend class Twister;
     void itemsForget(MdkObject* obj);

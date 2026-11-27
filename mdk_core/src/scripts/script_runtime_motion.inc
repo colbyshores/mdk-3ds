@@ -188,6 +188,13 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
     // was set this tick by the VM (vm_.run ran before motionVelocity in runTick),
     // so the first step happens on the command tick exactly as the C#.
     updateCommand(obj);
+    // The pendulum (ObjectMotion.cs:86-89): after the command and before gravity,
+    // a FlagSwinging object (jump_to, opcode 226) swings under its pivot. The C#
+    // returns from Update for an object its command killed, so a dead one does not
+    // swing here either.
+    if (!obj->dead && (obj->flags & MdkObject::FlagSwinging) != 0) {
+        motionSwing(obj);
+    }
     // A just-spawned object is not moved on its spawn tick by the tick loop's
     // snapshot (the C# ListCopy at ScriptRuntime.cs:962): objects spawned during
     // the loop or by the controllers are appended after it and skipped. There is
@@ -267,6 +274,65 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
     if (obj->position.z < getArenaFloor(obj->arena) - 200.0f) {
         fallOut(obj);
     }
+}
+
+// ObjectMotion.Swing (ObjectMotion.cs:537-569, 0x43cfe8): the pendulum that jump_to
+// (opcode 226) starts. The pitch swings by w -= sin(theta) * k * t, theta += w * k * t
+// (t = 1 tick), and the object hangs swing_length below the pivot in the vertical
+// plane of its yaw:
+//
+//        pivot
+//          | \  rope
+//          |  \ theta = pitch
+//          |   * object
+//
+// At each turning point (the speed changes sign, or is zero) that plane turns
+// towards the scripts' target by at most 15 degrees, folded to +-90 (either side
+// of the plane will do), and the yaw goes there at 10 degrees a second. The rope
+// (RopeView's pair 0: the object, lifted 5, to the pivot) is the swing's to draw.
+//
+// Every operation is the C#'s, in its order: MathF.Sin/SinCos are libm sinf/cosf
+// (bit-identical on this host, the probe-checked fromAngle's note), the conversion
+// is .NET's left-associative degreesToRadians, and Math.Clamp/MoveToward are
+// clampf/moveToward. A LEVEL6 OLYM_6 pendulum (XSWINGB) is the only retail user, so
+// this runs for one object a tick: not a hot path (AGENTS.md section 2).
+/* @vfp-exempt R6 — the pendulum's swing (ObjectMotion.Swing) is gameplay: it places a
+ * damaging object, so it keeps the C# oracle's MathF.Sin/SinCos as glibc sinf/cosf
+ * (bit-identical on this machine, golden L6_hazards_swing) and .NET's left-associative
+ * DegreesToRadians; the fastSin/fastCos LUT would move the pendulum and where it hits Kurt.
+ * measured n/a (corpus empty). Verified 2026-11-26. */
+void ScriptRuntime::motionSwing(MdkObject* obj) {
+    const float kMaxTurn = 15.0f;
+    const float kQuarterTurn = 90.0f;
+    const float kHalfTurn = 180.0f;
+    const float kPlaneTurnSpeed = 10.0f;
+    const float kTicks = 1.0f;  // ObjectMotion.Ticks
+    const float oldSpeed = obj->swing_speed;
+    obj->swing_speed -= sinf(degreesToRadians(obj->pitch)) * obj->swing_gain * kTicks;
+    obj->pitch += obj->swing_speed * obj->swing_gain * kTicks;
+    const float radians = degreesToRadians(obj->pitch);
+    const float sine = sinf(radians);
+    const float cosine = cosf(radians);
+    const Vec3 heading = fromAngle(obj->yaw);
+    // pivot + new Vector3(h.X * sin, h.Y * sin, -cos) * length, per component.
+    obj->position.x = obj->swing_pivot.x + heading.x * sine * obj->swing_length;
+    obj->position.y = obj->swing_pivot.y + heading.y * sine * obj->swing_length;
+    obj->position.z = obj->swing_pivot.z + -cosine * obj->swing_length;
+    if (obj->swing_speed * oldSpeed <= 0.0f) {
+        obj->yaw = wrap360(obj->yaw);
+        float diff = wrapAngle(yawTo(obj, targetPosition_) - obj->yaw);
+        if (diff < -kQuarterTurn) {
+            diff += kHalfTurn;
+        } else if (diff > kQuarterTurn) {
+            diff -= kHalfTurn;
+        }
+        obj->swing_yaw = obj->yaw + clampf(diff, -kMaxTurn, kMaxTurn);
+    }
+    obj->yaw = moveToward(obj->yaw, obj->swing_yaw, kPlaneTurnSpeed * kTick);
+    obj->rope_color = 1;
+    obj->rope_mask = 1;
+    obj->rope_points[0] = obj->position;
+    obj->rope_points[1] = obj->swing_pivot;
 }
 
 // UpdatePickup (0x43d8f0), run after ApplyVelocity for a FlagPickup object: a

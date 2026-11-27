@@ -296,6 +296,46 @@ mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
     return Vec3{position.x + (x * c - y * s), position.y + (x * s + y * c), position.z + z};
 }
 
+// FrameBlend.Carried (FrameBlend.cs:102-111): a point on the object, moved with it
+// to the frame between ticks -- the blended place, and turned about it by how far
+// the blended yaw is from the tick's. Blending off (alpha >= 1) is the point itself.
+static mdk::Vec3 carriedPoint(const mdk::scripts::MdkObject& obj, float alpha, mdk::Vec3 point) {
+    if (alpha >= 1.0f) {
+        return point;
+    }
+    const mdk::Vec3 at = obj.position_at(alpha);
+    const float turn = obj.yaw_at(alpha) - obj.yaw;
+    // A render-only position (the rope's drawn end), no gameplay reads it. libm
+    // cosf/sinf as the C#'s CreateRotationZ; a handful of points a frame.
+    const float radians = turn * 3.14159265358979323846f / 180.0f;
+    const float c = cosf(radians);
+    const float s = sinf(radians);
+    const float x = point.x - obj.position.x;
+    const float y = point.y - obj.position.y;
+    const float z = point.z - obj.position.z;
+    return mdk::Vec3{at.x + (x * c - y * s), at.y + (x * s + y * c), at.z + z};
+}
+
+// RopeView.AddLines (Objects/RopeView.cs:47-70).
+int32_t mdk::scripts::MdkObject::rope_lines(float alpha, Vec3* out) const {
+    const int32_t kPairs = 2;
+    const float kPairLift = 5.0f;
+    const int32_t kAllLines = 0xFF;  // set_2d0_block's lines (opcode 242): not drawn yet
+    int32_t count = 0;
+    if (rope_mask == kAllLines) {
+        return count;
+    }
+    for (int32_t i = 0; i < kPairs; i++) {
+        if ((rope_mask & (1 << i)) != 0) {
+            mdk::Vec3 near = carriedPoint(*this, alpha, rope_points[(size_t)(i * 2)]);
+            near.z += kPairLift;  // + Vector3.UnitZ * PairLift
+            out[count++] = near;
+            out[count++] = rope_points[(size_t)(i * 2 + 1)];
+        }
+    }
+    return count;
+}
+
 // Vector3.Transform(position, matrix) as .NET computes it: row X times x, then Y and Z
 // fused in, then W (the same as sniper_rounds.cpp's transformPoint).
 static mdk::Vec3 transformByMatrix(float x, float y, float z, const float m[16]) {

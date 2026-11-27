@@ -301,6 +301,17 @@ struct MdkObject {
     // itself when the model has no such point (index out of range). Used by the
     // attach motion (command 74) to hang a chute on its leader.
     Vec3 reference_point(int index) const;
+    // The rope lines (obj+0x2d0; the C#'s RopeView.LinesOf, Objects/RopeView.cs),
+    // two ends per line, into `out` (room for kMaxRopeEnds), as a frame `alpha` of
+    // the way between ticks draws them: the ends on the object move with it
+    // (FrameBlend.Carried), the far ends stay where the tick left them. alpha >= 1
+    // is the C#'s blending Off (a fixed-step capture, the probes): the points as
+    // they are. Returns the number of ends written (0 for rope_mask 0).
+    //
+    //   bit 0, 1:   rope point 0 (+5 up) ---- rope point 1  (a swing's rope: object to pivot)
+    //               rope point 2 (+5 up) ---- rope point 3
+    static constexpr int32_t kMaxRopeEnds = 8;
+    int32_t rope_lines(float alpha, Vec3* out) const;
     // World position of the centre of a model part (the C#'s PartCenter): the box of
     // the part's vertices in the current pose, through transform() (upstream 3005da70);
     // the rest-pose part box's mean, scaled and turned by yaw, when it has no vertices.

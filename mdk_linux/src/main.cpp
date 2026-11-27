@@ -55,6 +55,7 @@
 #include "game/hud_view.h"
 #include "game/kurt_sprite.h"
 #include "game/effects_draw.h"
+#include "game/rope_view.h"
 #include "game/effects_view.h"
 #include "game/object_draw.h"
 #include "game/object_view.h"
@@ -1674,6 +1675,8 @@ int main(int argc, char** argv) {
     mdk::EffectsView effectsView(objectResolver, &level,
                                  enhancedLook ? mdk::Shading::Sprite : mdk::Shading::Original);
     mdk::EffectsDraw effectsDraw;
+    // The objects' ropes (C# RopeView, Viewer.cs:705): jump_to's pendulum rope (226).
+    mdk::RopeView ropeView;
     mdk::EffectsFrame effectsFrame;
     mdk::ObjectStream objectStream;
     std::map<std::string, mdk::ObjectLook> objectLooks;
@@ -2756,6 +2759,12 @@ int main(int argc, char** argv) {
             } else {
                 streamFailureLogged = false;
             }
+        }
+        if (runtime && !strikeFrame) {
+            // C# RopeView.Draw (Viewer.cs:705): the objects' ropes, after the objects and
+            // before the sniper view and the effects, blended as the objects are.
+            ropeView.draw(renderer, *runtime, level, sceneCamera,
+                          fixedStep ? 1.0f : runtime->tick_blend(pending));
         }
         if (playerReady && !strikeFrame) {
             // The rest of C# SniperView.Draw (Viewer.cs:706): the overlay's state, the
