@@ -3717,3 +3717,74 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   - The C# oracle covers the host goldens only; the 3DS frontends' behaviour (bar, insets, pull)
     is not oracle-checked.
 - **Commit:** the merges and fixes above, and this ledger commit.
+
+## 2026-11-27 -- LEVEL4's ride end: the camera's arena over the other one, at full depth precision (branch fix/l4-ride-end-depth)
+- **The bug (upstream e1eb36bb), and that this port showed it.** At the end of LEVEL4's
+  snowboard tube (CMEAT_1, by the doorway to MEAT_3) both arenas are drawn, and MEAT_3's flat
+  shell lies above CMEAT_1's floor. Depth-tested, the shell won: a flat dark grey plane covered
+  the tube's floor and walls and Kurt below the knees. Linux headless
+  (`--level=4 --arena=CMEAT_1 --at=62.35,2582.81,-392.90,90`, lavapipe, `DISPLAY=:99`, f517348b):
+  50,499 of 76,800 pixels differ from the fixed frame at 320x240 on EVERY frame from the
+  scripts' first tick (frame 30, 60, 120, 240, 480; frame 1 draws one arena and is identical);
+  walking back up the tube (`--walk=back@30-600`) 36,614-49,398 pixels at frames 60-480. It is
+  a place, not a moment: it lasts as long as Kurt and the camera are in that end of the tube
+  with MEAT_3 drawn (the ride itself was not reproduced; walking/standing there it never let
+  up). The 3DS shows it too: Mandarine r1.2.1 (md5 0d2adab6 checked, `emurun.sh`, `DISPLAY=:99`,
+  the only MDK instance) on `throwaway/l4-ride-end-hw-base` (throwaway/combined-hw 25180768,
+  `AUTOQUIT=60 FIXED=1 LEVEL=4 AT=62.35,2582.81,-392.90,90 ARENA=CMEAT_1
+  TOGGLES=enableLighting=0`): the same grey plane, Kurt cut at the knees.
+- **Not like upstream.** Upstream drew every draw in one of two halves of the depth range
+  (viewport min/max depth). Owner decision: no -- it halves the depth precision of every draw
+  on the 3DS. Instead, full precision everywhere, and the original's own rule (0x41df35: the
+  other arena first, the camera's arena over it) only where it can change a pixel:
+  - `ScriptRuntime::cameraArena` (upstream CameraArena, 0x490db4): Kurt's arena, or the second
+    one when the line from 3 units above his feet to the camera leaves through a doorway into it.
+  - `ArenaViews::draw` (both frontends): with two arenas drawn, the camera arena's box grown to
+    take in the eye (the stereo separation, at least 1 unit, around it). If no batch of the
+    other arena cuts it, nothing is marked and the frame is drawn exactly as before. If one
+    does, the other arena's batches (and, through the new `mdk_render_set_back`, its objects)
+    are queued `back`, and the camera arena's batches whose box-with-the-eye cuts the box around
+    those are `cover` (`render/arena_scene.h` gives the argument: a point that hides another
+    lies on the segment from the eye to it).
+  - `DrawQueue` keeps `back` draws in their own buckets. Vulkan: the back buckets, then each
+    opaque cover draw's depth at the far plane (viewport depth range [1,1]; no colour), then
+    every bucket as before; the enhanced look's camera-depth prepass does the same and the
+    sun's map reads both sets. Citro3D (D24S8): the opaque cover draws first, marking the
+    stencil; the back buckets only where it is unmarked; then the rest -- NO draw is added on
+    the 3DS, only order and a cached stencil state (set every eye; the round-camera insets'
+    depth reset clears the stencil too). One picture, two ways (`render/draw_queue.h`).
+- **Not done like upstream, recorded:** the other arena's effects, debris and ropes are not
+  marked; Kurt and the camera arena's objects stay depth-tested against the other arena
+  (upstream drew them over it); a round camera's inset replays the frame camera's marks.
+- **Independent review** (read-only agent over the first version): found that the other
+  arena's glass, drawn first with only its overlapping batches, was painted over by its own
+  walls drawn later (fixed: the whole other arena and its objects go first); that the Vulkan
+  cover depth came from another vertex program than the enhanced draw it must let through
+  (fixed: far plane); the stereo margin (fixed: from the separation); test gaps (fixed:
+  `LevelViewMarksTheLayers`, a camera-beyond-the-doorway case). The first version also added a
+  depth-only re-draw of the camera arena on the 3DS too; measured on Linux at doorways it is
+  +2..+45 draws and up to +58 % triangles in most two-arena frames (the boxes cut in 272 of 336
+  doorway teleports), so the 3DS was moved to the stencil, which adds none.
+- **How often it changes a frame:** 84 corridor doorways x 4 yaws (every level), teleported
+  onto the doorway, frame 40, 160x120, base vs fixed: 33 of 336 frames differ, every one with
+  two arenas drawn; pixel changes are the camera's arena drawn over the other where they
+  overlap. Unchanged: level 3 frame 1 (the pinned frame gate), levels 3/5/6/7/8 walking from
+  their starts (frames 1/300/900), LEVEL4's MEAT_7 doorway walk.
+- **Cost:** one arena-box test and a pass over the two views' batch boxes per frame with two
+  arenas drawn; nothing with one. 3DS: no extra vertices; one stencil-state change per phase
+  change, per eye. Linux: the cover draws' depth again (+0..45 draws). NOT MEASURED on the Old
+  3DS (no appliance).
+- **Tests:** `vm_tests` `ArenaLayering` (box arithmetic, the queue) and `CameraArenaLevel4`
+  (DepthBandTests' two data facts plus the camera out through CMEAT_1's doorway; a
+  `return currentArena_` mutation fails it); `tests/formats` `LevelViewMarksTheLayers`;
+  `tests/scripts/arena_cover_test.sh` (upstream's rides_test check: Kurt's dark legs at the
+  ride end, both looks: 0 / 0 on f517348b, 2937 / 2961 fixed, needs >= 1000);
+  `main_3ds_flow_test.sh`'s arena-draw pattern follows the new call.
+- **Checks** (`nice -n 19 ionice -c2 -n7`): Linux build 0 warnings; 3DS build (`make -C
+  mdk_3ds`) 0 warnings; `make -C tests/scripts test` exit 0, 1004 PASS, 0 FAIL, 4 SKIP (the
+  frame gate's oracle arms); `make -C tests/formats` 200,681 checks, 0 failures;
+  `tools/check.sh` ALL GATES PASSED (gates_smdh SKIP). (This worktree needed the usual
+  untracked `logs/ralph/disabled` park marker for gates_batch_integrity.)
+- **Not verified:** nothing on hardware; the stencil path ran only in Mandarine (below); no C#
+  oracle frame of e1eb36bb (no dotnet host on this machine), so "same pixels as upstream" is
+  argued, not measured; the ride itself (from its start) was not driven.

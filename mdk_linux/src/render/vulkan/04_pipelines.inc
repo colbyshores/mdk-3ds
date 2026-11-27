@@ -68,7 +68,13 @@ VkShaderModule createModule(mdk::vk::Context* ctx, const uint32_t* code, size_t 
 }
 
 // The C# CreatePipeline states, translated. key = pass*16 + blend*4 + prim.
-VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive) {
+//
+// `cover`: the camera arena's depth over the other arena's (render/draw_queue.h
+// step 2): no colour, the depth written where it is FARTHER than what is there
+// (GREATER_OR_EQUAL; drawBuckets narrows the depth range to the far plane, so
+// that is wherever the draw lies), so the other arena's depth under the camera's
+// arena gives way to it.
+VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive, bool cover) {
     VkPipelineVertexInputStateCreateInfo vi = {};
     vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     VkVertexInputBindingDescription binding = {};
@@ -120,8 +126,14 @@ VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive) {
     ds.depthWriteEnable = (pass != (int)mdk::Pass::Blended && pass != (int)mdk::Pass::Overlay &&
                            pass != (int)mdk::Pass::OnTop) ? VK_TRUE : VK_FALSE;
     ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    if (cover) {
+        ds.depthTestEnable = VK_TRUE;
+        ds.depthWriteEnable = VK_TRUE;
+        ds.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    }
 
-    const bool blended = (pass == (int)mdk::Pass::Blended || pass == (int)mdk::Pass::Overlay);
+    const bool blended = !cover &&
+                         (pass == (int)mdk::Pass::Blended || pass == (int)mdk::Pass::Overlay);
     VkPipelineColorBlendAttachmentState cb = {};
     cb.blendEnable = blended ? VK_TRUE : VK_FALSE;
     cb.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -131,8 +143,9 @@ VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive) {
     cb.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
     cb.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     cb.alphaBlendOp = VK_BLEND_OP_ADD;
-    cb.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    cb.colorWriteMask = cover ? 0
+                              : (VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
     VkPipelineColorBlendStateCreateInfo cbs = {};
     cbs.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     cbs.attachmentCount = 1;
@@ -186,7 +199,24 @@ VkPipeline getPipeline(RendererVk* r, int pass, int blend, int primitive) {
             return r->pipelines[i].pipeline;
         }
     }
-    VkPipeline p = createPipeline(r, pass, blend, primitive);
+    VkPipeline p = createPipeline(r, pass, blend, primitive, false);
+    PipelineVk entry;
+    entry.key = key;
+    entry.pipeline = p;
+    r->pipelines.push_back(entry);
+    return p;
+}
+
+// The cover pipeline of a Solid or DoubleSided draw (createPipeline's `cover`),
+// kept with the others under a key no pass/blend/primitive key reaches.
+VkPipeline getCoverPipeline(RendererVk* r, int pass) {
+    const int key = 1024 + pass;
+    for (size_t i = 0; i < r->pipelines.size(); i++) {
+        if (r->pipelines[i].key == key) {
+            return r->pipelines[i].pipeline;
+        }
+    }
+    VkPipeline p = createPipeline(r, pass, 0, 0, true);
     PipelineVk entry;
     entry.key = key;
     entry.pipeline = p;

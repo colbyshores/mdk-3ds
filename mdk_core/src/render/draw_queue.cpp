@@ -21,6 +21,8 @@ const int32_t kOtherReserve = 8;
 DrawQueue::DrawQueue() {
     for (int32_t i = 0; i < kDrawQueuePassCount; i++) {
         buckets_[i].reserve(i == (int32_t)Pass::Solid ? kSolidReserve : kOtherReserve);
+        // The other arena's batches, while two can overlap: an arena's worth.
+        backBuckets_[i].reserve(i == (int32_t)Pass::Solid ? kSolidReserve : kOtherReserve);
     }
 }
 
@@ -32,15 +34,22 @@ void DrawQueue::add(const MeshDraw& draw) {
     if (bucket < 0 || bucket >= kDrawQueuePassCount) {
         bucket = 0;
     }
-    buckets_[bucket].push_back(draw);
+    if (draw.back) {
+        backBuckets_[bucket].push_back(draw);
+        backTotal_++;
+    } else {
+        buckets_[bucket].push_back(draw);
+    }
     total_++;
 }
 
 void DrawQueue::reset() {
     for (int32_t i = 0; i < kDrawQueuePassCount; i++) {
         buckets_[i].clear();
+        backBuckets_[i].clear();
     }
     total_ = 0;
+    backTotal_ = 0;
 }
 
 const std::vector<MeshDraw>& DrawQueue::bucket(int32_t pass) const {
@@ -49,6 +58,14 @@ const std::vector<MeshDraw>& DrawQueue::bucket(int32_t pass) const {
         return kEmpty;
     }
     return buckets_[pass];
+}
+
+const std::vector<MeshDraw>& DrawQueue::backBucket(int32_t pass) const {
+    static const std::vector<MeshDraw> kEmpty;
+    if (pass < 0 || pass >= kDrawQueuePassCount) {
+        return kEmpty;
+    }
+    return backBuckets_[pass];
 }
 
 } // namespace mdk

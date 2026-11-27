@@ -10,6 +10,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     if (r->inFrame) {
         return;
     }
+    r->queueBack = false;
 
     uint32_t w = r->ctx.extent.width;
     uint32_t h = r->ctx.extent.height;
@@ -99,6 +100,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     viewport.maxDepth = 1.0f;
     VkRect2D scissor = {{0, 0}, {r->ctx.extent.width, r->ctx.extent.height}};
     vkCmdSetViewport(cb, 0, 1, &viewport);
+    r->sceneViewport = viewport;
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
     // The scene is deferred under the enhanced look without stereo: the
@@ -158,6 +160,7 @@ void mdk_render_end_frame(MdkRenderer rr) {
             viewport.maxDepth = 1.0f;
             VkRect2D scissor = {{0, 0}, r->ctx.extent};
             vkCmdSetViewport(cb, 0, 1, &viewport);
+            r->sceneViewport = viewport;
             vkCmdSetScissor(cb, 0, 1, &scissor);
         }
         drawSky(r);

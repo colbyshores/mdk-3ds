@@ -34,6 +34,10 @@ int mdk_test_palettesReleased = 0;
 int mdk_test_meshes = 0;
 int mdk_test_meshesReleased = 0;
 int mdk_test_meshDraws = 0;
+// Of those, the ones marked the other arena's / the camera arena's cover
+// (MeshDraw::back / cover; arena_view_tests.cpp's layering case).
+int mdk_test_backDraws = 0;
+int mdk_test_coverDraws = 0;
 // Index textures made from a null pixel pointer: each would be a texture made
 // of pixels that are away. Counted over EVERY creation, not sampled.
 int mdk_test_nullIndexTextures = 0;
@@ -129,9 +133,17 @@ void mdk_render_update_mesh(MdkRenderer, MdkMeshId, const mdk::Vertex* vertices,
     mdk_test_lastUpdate.assign(vertices, vertices + count);
 }
 
-void mdk_render_draw_mesh(MdkRenderer, const mdk::MeshDraw*) {
+void mdk_render_draw_mesh(MdkRenderer, const mdk::MeshDraw* draw) {
     mdk_test_meshDraws++;
+    if (draw != nullptr && draw->back) {
+        mdk_test_backDraws++;
+    }
+    if (draw != nullptr && draw->cover) {
+        mdk_test_coverDraws++;
+    }
 }
+
+void mdk_render_set_back(MdkRenderer, bool) {}
 
 MdkTextureId mdk_render_create_rgba_texture(MdkRenderer, int32_t, int32_t, const uint8_t*) {
     return 3;

@@ -37,6 +37,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->ready) return;
     if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry
+    r->queueBack = false;
 
     // EDGE SMOOTHING follows its toggle here, OUTSIDE the frame: the rebuild
     // deletes the eye targets, and C3D_RenderTargetDelete waits for the GPU queue

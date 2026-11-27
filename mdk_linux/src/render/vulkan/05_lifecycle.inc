@@ -370,8 +370,9 @@ void mdk_render_destroy(MdkRenderer rr) {
         destroyBufferPair(r->ctx.device, r->uniformRing[i], r->uniformRingMemory[i]);
         destroyBufferPair(r->ctx.device, r->lightBuffers[i], r->lightMemory[i]);
     }
-    if (r->depthPipelines[0]) vkDestroyPipeline(r->ctx.device, r->depthPipelines[0], nullptr);
-    if (r->depthPipelines[1]) vkDestroyPipeline(r->ctx.device, r->depthPipelines[1], nullptr);
+    for (int i = 0; i < 4; i++) {
+        if (r->depthPipelines[i]) vkDestroyPipeline(r->ctx.device, r->depthPipelines[i], nullptr);
+    }
     if (r->depthFragModule) vkDestroyShaderModule(r->ctx.device, r->depthFragModule, nullptr);
     if (r->shadowFramebuffer) vkDestroyFramebuffer(r->ctx.device, r->shadowFramebuffer, nullptr);
     if (r->shadowView) vkDestroyImageView(r->ctx.device, r->shadowView, nullptr);

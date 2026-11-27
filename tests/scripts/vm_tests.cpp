@@ -19,6 +19,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include <algorithm>
 #include <deque>
 #include <map>
 #include <memory>
@@ -71,6 +72,8 @@
 #include "sprite_tests.h"
 #include "system_numerics_tests.h"
 #include "util/math_lut.h"
+#include "render/arena_scene.h"
+#include "render/draw_queue.h"
 
 using namespace mdk;
 using namespace mdk::formats;
@@ -7777,6 +7780,164 @@ void testBankBudgetEvictsUnpinned(const MdkData& data) {
     CHECK(unbounded.soundsDecoded() == 2);
 }
 
+// ---- THE CAMERA'S ARENA OVER THE OTHER ONE (upstream e1eb36bb; its DepthBandTests.cs).
+// Upstream splits the depth range into bands; this port keeps full precision and
+// draws the other arena first, then the camera arena's depth over it (render/
+// draw_queue.h). These pin the parts that decide WHICH draws take part.
+
+// The box arithmetic (render/arena_scene.h): interiors cut, faces only touch.
+void testArenaLayerBoxes() {
+    const Vec3 lo = {0.0f, 0.0f, 0.0f};
+    const Vec3 hi = {10.0f, 10.0f, 10.0f};
+    // Overlapping interiors cut, either way round.
+    CHECK(boxesCut(lo, hi, Vec3{5.0f, 5.0f, 5.0f}, Vec3{15.0f, 15.0f, 15.0f}));
+    CHECK(boxesCut(Vec3{5.0f, 5.0f, 5.0f}, Vec3{15.0f, 15.0f, 15.0f}, lo, hi));
+    // A box inside another cuts it (the shell inside the tube's box).
+    CHECK(boxesCut(lo, hi, Vec3{2.0f, 2.0f, 2.0f}, Vec3{3.0f, 3.0f, 3.0f}));
+    // Two arenas meeting at a doorway's plane only touch: not marked.
+    CHECK(!boxesCut(lo, hi, Vec3{0.0f, 10.0f, 0.0f}, Vec3{10.0f, 20.0f, 10.0f}));
+    // Apart on one axis is apart.
+    CHECK(!boxesCut(lo, hi, Vec3{0.0f, 0.0f, 11.0f}, Vec3{10.0f, 10.0f, 12.0f}));
+    // A flat floor batch (no z extent) still cuts a box around it.
+    CHECK(boxesCut(Vec3{0.0f, 0.0f, 5.0f}, Vec3{10.0f, 10.0f, 5.0f}, lo, hi));
+
+    // The eye grows the box, by the stereo margin around it.
+    Vec3 gotLo;
+    Vec3 gotHi;
+    boxWithEye(lo, hi, Vec3{20.0f, 5.0f, -4.0f}, kLayerEyeMargin, &gotLo, &gotHi);
+    CHECK(gotLo.x == 0.0f && gotLo.y == 0.0f && gotLo.z == -4.0f - kLayerEyeMargin);
+    CHECK(gotHi.x == 20.0f + kLayerEyeMargin && gotHi.y == 10.0f && gotHi.z == 10.0f);
+    // A wider stereo separation grows it by that much instead.
+    boxWithEye(lo, hi, Vec3{20.0f, 5.0f, -4.0f}, 3.0f, &gotLo, &gotHi);
+    CHECK(gotHi.x == 23.0f && gotLo.z == -7.0f);
+    // An eye inside leaves the box as it was.
+    boxWithEye(lo, hi, Vec3{5.0f, 5.0f, 5.0f}, kLayerEyeMargin, &gotLo, &gotHi);
+    CHECK(gotLo.x == 0.0f && gotLo.y == 0.0f && gotLo.z == 0.0f);
+    CHECK(gotHi.x == 10.0f && gotHi.y == 10.0f && gotHi.z == 10.0f);
+    // A floor batch seen from above reaches up to the eye: a shell between the
+    // two cuts it, though it misses the flat floor's own box. This is the LEVEL4
+    // case (MEAT_3's shell 2.3 units over CMEAT_1's floor, the camera above both).
+    const Vec3 floorLo = {0.0f, 0.0f, 0.0f};
+    const Vec3 floorHi = {10.0f, 10.0f, 0.0f};
+    const Vec3 shellLo = {0.0f, 0.0f, 2.3f};
+    const Vec3 shellHi = {10.0f, 10.0f, 2.3f};
+    CHECK(!boxesCut(floorLo, floorHi, shellLo, shellHi));
+    boxWithEye(floorLo, floorHi, Vec3{5.0f, -3.0f, 5.0f}, kLayerEyeMargin, &gotLo, &gotHi);
+    CHECK(boxesCut(gotLo, gotHi, shellLo, shellHi));
+}
+
+// The queue keeps `back` draws apart and every other draw where it was.
+void testDrawQueueKeepsTheBackApart() {
+    DrawQueue queue;
+    CHECK(queue.empty() && !queue.hasBack());
+    MeshDraw front;
+    front.mesh = 1;
+    front.material.pass = Pass::Solid;
+    queue.add(front);
+    CHECK(!queue.hasBack());
+    MeshDraw back = front;
+    back.mesh = 2;
+    back.back = true;
+    queue.add(back);
+    MeshDraw glass = back;
+    glass.mesh = 3;
+    glass.material.pass = Pass::Blended;
+    queue.add(glass);
+    MeshDraw cover = front;
+    cover.mesh = 4;
+    cover.cover = true;
+    queue.add(cover);
+    CHECK(queue.hasBack());
+    CHECK(queue.total() == 4);
+    const int32_t solid = static_cast<int32_t>(Pass::Solid);
+    const int32_t blended = static_cast<int32_t>(Pass::Blended);
+    // The cover draw stays in its bucket, in queue order: it is drawn as before too.
+    CHECK(queue.bucket(solid).size() == 2);
+    CHECK(queue.bucket(solid)[0].mesh == 1 && queue.bucket(solid)[1].mesh == 4);
+    CHECK(queue.bucket(solid)[1].cover);
+    CHECK(queue.bucket(blended).empty());
+    CHECK(queue.backBucket(solid).size() == 1 && queue.backBucket(solid)[0].mesh == 2);
+    CHECK(queue.backBucket(blended).size() == 1 && queue.backBucket(blended)[0].mesh == 3);
+    CHECK(queue.backBucket(-1).empty() && queue.backBucket(kDrawQueuePassCount).empty());
+    queue.reset();
+    CHECK(queue.empty() && !queue.hasBack());
+    CHECK(queue.backBucket(solid).empty() && queue.bucket(solid).empty());
+}
+
+// ScriptRuntime::cameraArena on the retail LEVEL4 (DepthBandTests.cs's two data facts).
+void testCameraArenaLevel4(const MdkData& data) {
+    LevelData levelData;
+    if (!LevelData::load(&levelData, &data, 4)) {
+        printf("  FAIL line %d: level 4 did not load\n", __LINE__);
+        failures++;
+        return;
+    }
+    Cmi cmi;
+    {
+        std::vector<uint8_t> bytes;
+        if (!data.read("TRAVERSE/LEVEL4/LEVEL4.CMI", &bytes) ||
+            !Cmi::parse(&cmi, bytes.data(), (int32_t)bytes.size())) {
+            printf("  FAIL line %d: level 4's CMI did not read\n", __LINE__);
+            failures++;
+            return;
+        }
+    }
+    audio::SoundBank bank;
+    if (!audio::SoundBank::forLevel(&bank, data, 4)) {
+        printf("  FAIL line %d: level 4's bank did not load\n", __LINE__);
+        failures++;
+        return;
+    }
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData.arenas()) {
+        if (levelData.isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+
+    // TubeCoversTheShell: at the snowboard ride's end in CMEAT_1 (by the tube to
+    // MEAT_3) both are drawn, and the follow camera behind Kurt is in the tube.
+    {
+        audio::SoundMixer mixer(&bank);
+        Player player;
+        player.setSpace(&space);
+        player.setMixer(&mixer);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, nullptr);
+        runtime.option = 1;
+        // Before the first tick nothing is drawn: Kurt's arena.
+        CHECK(runtime.cameraArena(Vec3{0.0f, 0.0f, 0.0f}) == runtime.currentArena());
+        runtime.teleportKurt("CMEAT_1", Vec3{62.35f, 2582.81f, -392.90f}, 90.0f);
+        runtime.update(1.0f / 30.0f);
+        const std::vector<std::string>& drawn = runtime.drawnArenas();
+        CHECK(std::find(drawn.begin(), drawn.end(), std::string("MEAT_3")) != drawn.end());
+        CHECK(runtime.currentArena() == "CMEAT_1");
+        CHECK(runtime.cameraArena(Vec3{62.35f, 2574.84f, -387.84f}) == "CMEAT_1");
+        // A camera out through the tube's doorway (connection 1003, y 2662) is MEAT_3's.
+        CHECK(runtime.cameraArena(Vec3{62.35f, 2700.0f, -360.0f}) == "MEAT_3");
+    }
+
+    // CameraBehindTheDoorway: Kurt just through MEAT_7's doorway into CMEAT_7 with
+    // the camera still behind it -- the arena left is the camera's (0x490db4).
+    {
+        const float kDoorway = 14822.0f;
+        const float kFloor = 21.0f;
+        audio::SoundMixer mixer(&bank);
+        Player player;
+        player.setSpace(&space);
+        player.setMixer(&mixer);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, nullptr);
+        runtime.option = 1;
+        runtime.teleportKurt("MEAT_7", Vec3{0.0f, kDoorway - 100.0f, kFloor}, 90.0f);
+        runtime.update(1.0f / 30.0f);
+        player.teleport(Vec3{0.0f, kDoorway + 3.0f, kFloor}, player.yaw);
+        runtime.update(1.0f / 30.0f);
+        CHECK(runtime.currentArena() == "CMEAT_7");
+        CHECK(runtime.drawnArenas().size() == 2);
+        CHECK(runtime.cameraArena(Vec3{0.0f, kDoorway - 5.0f, kFloor + 5.0f}) == "MEAT_7");
+        CHECK(runtime.cameraArena(Vec3{0.0f, kDoorway + 1.0f, kFloor + 5.0f}) == "CMEAT_7");
+    }
+}
+
 void testTeleportKurtLevel4(const MdkData& data) {
     const float kDoorway = 14822.0f;  // ArenaSwitchTests.Doorway (connection 1012's plane)
     const float kFloor = 21.0f;       // ArenaSwitchTests.Floor
@@ -8342,6 +8503,17 @@ int main(int argc, char** argv) {
         printf("PASS PicaMatrix\n");
     }
 
+    // The camera's arena over the other one: the box arithmetic and the queue's
+    // back draws (render/arena_scene.h, render/draw_queue.h). Data-independent.
+    {
+        const int before = failures;
+        testArenaLayerBoxes();
+        testDrawQueueKeepsTheBackApart();
+        if (failures == before) {
+            printf("PASS ArenaLayering\n");
+        }
+    }
+
     // The 3DS control mapping: the buttons, the circle pad's look, and who owns
     // the accumulated mouse. Data-independent for the same reason, and it is the
     // only thing in the tree that checks the controls at all -- the console cannot
@@ -8754,6 +8926,13 @@ int main(int argc, char** argv) {
     }
     testTeleportKurtLevel4(data);
     printf("PASS TeleportKurtLevel4\n");
+    {
+        const int before = failures;
+        testCameraArenaLevel4(data);
+        if (failures == before) {
+            printf("PASS CameraArenaLevel4\n");
+        }
+    }
     testTeleportKurtLoadsCorridorsAndPullsDoors(&levelData, &cmi, &bank);
     printf("PASS TeleportKurtLoadsCorridorsAndPullsDoors\n");
     testTeleportOpcodesDispatch(&levelData, &cmi, &bank);

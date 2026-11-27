@@ -1173,8 +1173,9 @@ def adjudicate(text, quiet=False):
     op = object_pass(text)
     # The arena draw is the scripts' drawn list (Viewer.cs:702, LevelView.Draw(
     # DrawnArenas)) since arena streaming Phase 2; it was one `view.draw()` of the
-    # level's start arena before.
-    arena_at = text.find("arenaViews.draw(*frameDrawn);")
+    # level's start arena before. Since upstream e1eb36bb's port it also names the
+    # camera's arena (ArenaViews::draw draws it over the other one).
+    arena_at = text.find("arenaViews.draw(*frameDrawn, cameraArena, sceneCamera.position,")
     kurt_at = text.find("kurtSprite.draw(")
     frame = frame_body_span(text)
     in_frame = (op is not None and frame is not None

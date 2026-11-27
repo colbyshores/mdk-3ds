@@ -206,6 +206,28 @@ static void prepareQueue(RendererC3D* r);
 static void drawRecorded(RendererC3D* r, const PreparedDraw* p);
 static void installAlphaTest(RendererC3D* r, int reference, bool force);
 
+// THE STENCIL, for the camera's arena over the other one (render/draw_queue.h,
+// 06_queue.inc prepareQueue). The eye targets are DEPTH24_STENCIL8 and every
+// depth clear (kDepthClearValue, a 32-bit fill) leaves the stencil 0. Mark: a
+// fragment that passes writes 1. Test: a fragment draws only where the stencil
+// is still 0. Off: no test, no write. One state per record, cached.
+static void installStencil(RendererC3D* r, int mode) {
+    if (r->stencilMode == mode) {
+        return;
+    }
+    if (mode == kStencilMark) {
+        C3D_StencilTest(true, GPU_ALWAYS, 1, 0xFF, 0xFF);
+        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_REPLACE);
+    } else if (mode == kStencilTest) {
+        C3D_StencilTest(true, GPU_EQUAL, 0, 0xFF, 0x00);
+        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_KEEP);
+    } else {
+        C3D_StencilTest(false, GPU_ALWAYS, 0, 0xFF, 0x00);
+        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_KEEP);
+    }
+    r->stencilMode = mode;
+}
+
 // Install one pass's depth state on the citro3d context and record it in the
 // cache.
 //

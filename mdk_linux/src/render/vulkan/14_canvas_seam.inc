@@ -289,6 +289,7 @@ void renderInsets(RendererVk* r, bool underCanvas) {
         }
         VkRect2D scissor = {{sx, sy}, {(uint32_t)sw, (uint32_t)sh}};
         vkCmdSetViewport(cb, 0, 1, &viewport);
+        r->sceneViewport = viewport;
         vkCmdSetScissor(cb, 0, 1, &scissor);
         // The C#'s BeginOver: the rectangle's depth cleared.
         VkClearAttachment clear = {};
@@ -319,6 +320,7 @@ void renderInsets(RendererVk* r, bool underCanvas) {
     full.maxDepth = 1.0f;
     VkRect2D fullScissor = {{0, 0}, r->ctx.extent};
     vkCmdSetViewport(cb, 0, 1, &full);
+    r->sceneViewport = full;
     vkCmdSetScissor(cb, 0, 1, &fullScissor);
 }
 

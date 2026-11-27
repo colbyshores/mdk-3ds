@@ -36,6 +36,7 @@ static bool coalesciblePair(const PreparedDraw* a, const PreparedDraw* b) {
         db->primitive != mdk::Primitive::Triangles) return false;
     if (a->texHd != b->texHd || a->texIndex != b->texIndex || a->texUnit != b->texUnit) return false;
     if (a->texPending != b->texPending) return false;
+    if (a->stencil != b->stencil) return false;
     if (a->overlay != b->overlay || a->lit != b->lit || a->shadowLit != b->shadowLit ||
         a->worldIdentity != b->worldIdentity ||
         a->haze != b->haze || a->mipped != b->mipped) return false;
@@ -88,10 +89,41 @@ static void prepareQueue(RendererC3D* r) {
     {
         size_t total = r->insetOverDraws.size();
         for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
-            total += r->queue.bucket(pass).size();
+            total += r->queue.bucket(pass).size() + r->queue.backBucket(pass).size();
         }
         if (r->prepared.capacity() < total) {
             r->prepared.reserve(total);
+        }
+    }
+    // THE CAMERA'S ARENA OVER THE OTHER ONE (render/draw_queue.h), with the
+    // stencil instead of the depth step: no draw is added. The camera arena's
+    // opaque `cover` draws go first and mark where they draw; the other arena's
+    // `back` draws follow, only where nothing was marked; then every bucket as
+    // before, without the cover draws already drawn. The picture is the depth
+    // step's (Vulkan, 12_draw.inc): the camera's arena wherever it is drawn, the
+    // depth buffer everywhere else. Without back draws only the last runs.
+    const bool layered = r->queue.hasBack();
+    if (layered) {
+        for (int32_t pass = static_cast<int32_t>(mdk::Pass::Solid);
+             pass <= static_cast<int32_t>(mdk::Pass::DoubleSided); pass++) {
+            const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+            for (size_t i = 0; i < bucket.size(); i++) {
+                PreparedDraw p;
+                if (bucket[i].cover && prepareDraw(r, &bucket[i], &p)) {
+                    p.stencil = kStencilMark;
+                    pushPrepared(r, &p);
+                }
+            }
+        }
+        for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
+            const std::vector<mdk::MeshDraw>& back = r->queue.backBucket(pass);
+            for (size_t i = 0; i < back.size(); i++) {
+                PreparedDraw p;
+                if (prepareDraw(r, &back[i], &p)) {
+                    p.stencil = kStencilTest;
+                    pushPrepared(r, &p);
+                }
+            }
         }
     }
     for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
@@ -101,7 +133,12 @@ static void prepareQueue(RendererC3D* r) {
             r->preparedGlowAt = (int32_t)r->prepared.size();
         }
         const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+        const bool opaque = pass == static_cast<int32_t>(mdk::Pass::Solid) ||
+                            pass == static_cast<int32_t>(mdk::Pass::DoubleSided);
         for (size_t i = 0; i < bucket.size(); i++) {
+            if (layered && opaque && bucket[i].cover) {
+                continue;   // drawn first, above
+            }
             PreparedDraw p;
             if (prepareDraw(r, &bucket[i], &p)) {
                 pushPrepared(r, &p);
@@ -238,8 +275,14 @@ static void drawSceneInsets(RendererC3D* r) {
             mdk::pica::DepthState reset;
             reset.reset = true;
             installDepthState(r, reset);
+            // And the stencil to 0 there: the inset's records mark and test it
+            // afresh (prepareQueue; the eye's marks are not the inset camera's).
+            C3D_StencilTest(true, GPU_ALWAYS, 0, 0xFF, 0xFF);
+            C3D_StencilOp(GPU_STENCIL_REPLACE, GPU_STENCIL_REPLACE, GPU_STENCIL_REPLACE);
+            r->stencilMode = -1;
             C3D_DrawArrays(r->boundProgram->geometryShader ? GPU_GEOMETRY_PRIM : GPU_TRIANGLES,
                            0, 6);
+            installStencil(r, kStencilOff);
             // Back to states the caches describe.
             installAlphaTest(r, alphaReference, false);
             installDepthState(r, mdk::pica::depthStateForPass(mdk::Pass::Solid));
@@ -361,6 +404,8 @@ static void replayQueue(RendererC3D* r) {
         // carries the inset's own transform, so the box no longer describes it:
         // opt the copy back out of the frustum cull.
         inset.cullable = false;
+        inset.back = false;
+        inset.cover = false;
         inset.material.pass = mdk::Pass::Overlay;
         if (r->insetOver) {
             r->insetOverDraws.push_back(inset);
@@ -369,6 +414,19 @@ static void replayQueue(RendererC3D* r) {
         }
         return;
     }
+    if (r->queueBack) {
+        mdk::MeshDraw back = *draw;
+        back.back = true;
+        r->queue.add(back);
+        return;
+    }
     r->queue.add(*draw);
+}
+
+void mdk_render_set_back(MdkRenderer rr, bool back) {
+    RendererC3D* r = asC3d(rr);
+    if (r) {
+        r->queueBack = back;
+    }
 }
 
