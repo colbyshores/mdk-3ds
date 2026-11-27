@@ -4,6 +4,8 @@
 
 #include "render/arena_scene.h"
 
+#include <math.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -689,6 +691,19 @@ bool arenaBatchVisible(const formats::Arena* arena, const ArenaBatch& batch) {
     // The C# LevelView skips a group whose stored state is Hidden (LevelView.cs:126).
     // Group 0 has no stored state (groupState returns 0) and is always drawn.
     return (arena->groupState(batch.group) & formats::Arena::kGroupHidden) == 0;
+}
+
+bool boxesCut(const Vec3& aMin, const Vec3& aMax, const Vec3& bMin, const Vec3& bMax) {
+    return aMin.x < bMax.x && bMin.x < aMax.x && aMin.y < bMax.y && bMin.y < aMax.y &&
+           aMin.z < bMax.z && bMin.z < aMax.z;
+}
+
+void boxWithEye(const Vec3& min, const Vec3& max, const Vec3& eye, float margin, Vec3* outMin,
+                Vec3* outMax) {
+    *outMin = Vec3{fminf(min.x, eye.x - margin), fminf(min.y, eye.y - margin),
+                   fminf(min.z, eye.z - margin)};
+    *outMax = Vec3{fmaxf(max.x, eye.x + margin), fmaxf(max.y, eye.y + margin),
+                   fmaxf(max.z, eye.z + margin)};
 }
 
 } // namespace mdk

@@ -91,7 +91,7 @@ MdkTextureId RopeView::colourTexture(MdkRenderer renderer, uint32_t rgba) {
 }
 
 void RopeView::draw(MdkRenderer renderer, const scripts::ScriptRuntime& runtime, LevelData& level,
-                    const Camera& camera, float tickAlpha) {
+                    const Camera& camera, float tickAlpha, const std::string& backArena) {
     if (!renderer) {
         return;
     }
@@ -121,6 +121,7 @@ void RopeView::draw(MdkRenderer renderer, const scripts::ScriptRuntime& runtime,
         queued.first = (int32_t)vertices_.size();
         queued.count = corners;
         queued.rgba = ropeColour(level, obj.arena, obj.rope_color);
+        queued.back = !backArena.empty() && obj.arena == backArena;
         if (lines) {
             for (int32_t k = 0; k < count; k++) {
                 vertices_.push_back(vertexAt(ends[k]));
@@ -172,6 +173,9 @@ void RopeView::draw(MdkRenderer renderer, const scripts::ScriptRuntime& runtime,
         draw.first_vertex = q.first;
         draw.vertex_count = q.count;
         memcpy(draw.world, identity.m, sizeof(draw.world));
+        // The other drawn arena's ropes with its objects, under the camera arena's
+        // cover (the ride-end ordering: render/draw_queue.h).
+        draw.back = q.back;
         if (lines) {
             // Material.Flat(Colour(arena, RopeColor), Pass.Solid), drawn as lines.
             draw.primitive = Primitive::Lines;

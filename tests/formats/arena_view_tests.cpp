@@ -16,13 +16,15 @@
 #include "render/surface_cache.h"
 #include "scripts/animated_textures.h"
 
-#include <utility>
-#include <vector>
-
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <utility>
+#include <vector>
+
 extern int mdk_test_meshDraws;
+extern int mdk_test_backDraws;
+extern int mdk_test_coverDraws;
 extern int mdk_test_meshes;
 extern int mdk_test_failMeshCreates;
 extern std::vector<std::pair<int32_t, int32_t> > mdk_test_drawFrames;
@@ -76,7 +78,7 @@ MDK_TEST(LevelViewRefreshFailureKeepsOldMesh) {
             }
 
             const int drawsBefore = mdk_test_meshDraws;
-            view.draw();
+            view.draw(mdk::ArenaLayer::Plain, mdk::Vec3{}, mdk::Vec3{}, mdk::Vec3{}, 0.0f);
             if (mdk_test_meshDraws == drawsBefore) {
                 view.unload();
                 continue;
@@ -87,7 +89,7 @@ MDK_TEST(LevelViewRefreshFailureKeepsOldMesh) {
             MDK_CHECK_EQ(mdk_test_failMeshCreates, 0);
 
             const int drawsAfterFailure = mdk_test_meshDraws;
-            view.draw();
+            view.draw(mdk::ArenaLayer::Plain, mdk::Vec3{}, mdk::Vec3{}, mdk::Vec3{}, 0.0f);
             MDK_CHECK(mdk_test_meshDraws > drawsAfterFailure);
             view.unload();
             exercised = true;
@@ -113,7 +115,7 @@ const mdk::formats::Arena* firstDrawableArena(mdk::LevelData* level, mdk::Surfac
             continue;
         }
         const int drawsBefore = mdk_test_meshDraws;
-        view.draw();
+        view.draw(mdk::ArenaLayer::Plain, mdk::Vec3{}, mdk::Vec3{}, mdk::Vec3{}, 0.0f);
         view.unload();
         if (mdk_test_meshDraws > drawsBefore) {
             return arena;
@@ -227,7 +229,7 @@ MDK_TEST(LevelViewPendingRefreshRetriesAfterMeshFailure) {
     MDK_CHECK(view.retryPendingRefresh());
     MDK_CHECK(!view.pendingRefresh());
     const int drawsBefore = mdk_test_meshDraws;
-    view.draw();
+    view.draw(mdk::ArenaLayer::Plain, mdk::Vec3{}, mdk::Vec3{}, mdk::Vec3{}, 0.0f);
     MDK_CHECK(mdk_test_meshDraws > drawsBefore);
     view.unload();
 }
@@ -498,6 +500,69 @@ MDK_TEST(ArenaViewsReaskOnlyThePairAndTheDrawn) {
     views.clear();
 }
 
+// THE CAMERA'S ARENA OVER THE OTHER ONE (upstream e1eb36bb; game/arena_views.cpp):
+// LevelView::draw's marks. Plain marks nothing (the frame as before); Back marks
+// every batch of the other arena; Cover marks the camera arena's batches whose box,
+// grown to take in the eye, cuts the given box -- all of them for a box over the
+// whole arena, none for a box and an eye far from it.
+MDK_TEST(LevelViewMarksTheLayers) {
+    mdk::LevelData level;
+    MDK_CHECK(loadLevel3(&level));
+    if (level.arenas().empty()) {
+        return;
+    }
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    const mdk::formats::Arena* arena = firstDrawableArena(&level, &surfaces, renderer);
+    MDK_CHECK(arena != nullptr);
+    if (arena == nullptr) {
+        return;
+    }
+    mdk::LevelView view;
+    MDK_CHECK(view.load(renderer, &level, arena, &surfaces));
+    mdk::Vec3 lo{};
+    mdk::Vec3 hi{};
+    MDK_CHECK(view.bounds(&lo, &hi));
+    const mdk::Vec3 centre = {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+
+    int draws = mdk_test_meshDraws;
+    int backs = mdk_test_backDraws;
+    int covers = mdk_test_coverDraws;
+    view.draw(mdk::ArenaLayer::Plain, lo, hi, centre, 1.0f);
+    const int drawn = mdk_test_meshDraws - draws;
+    MDK_CHECK(drawn > 0);
+    MDK_CHECK_EQ(mdk_test_backDraws - backs, 0);
+    MDK_CHECK_EQ(mdk_test_coverDraws - covers, 0);
+
+    backs = mdk_test_backDraws;
+    view.draw(mdk::ArenaLayer::Back, lo, hi, centre, 1.0f);
+    MDK_CHECK_EQ(mdk_test_backDraws - backs, drawn);
+
+    // A box a little bigger than the arena: every batch's box cuts it.
+    const mdk::Vec3 bigLo = {lo.x - 1.0f, lo.y - 1.0f, lo.z - 1.0f};
+    const mdk::Vec3 bigHi = {hi.x + 1.0f, hi.y + 1.0f, hi.z + 1.0f};
+    covers = mdk_test_coverDraws;
+    view.draw(mdk::ArenaLayer::Cover, bigLo, bigHi, centre, 1.0f);
+    MDK_CHECK_EQ(mdk_test_coverDraws - covers, drawn);
+
+    // A box far beyond the arena on +x, the eye beyond it on -x: nothing of the
+    // arena lies between the eye and that box, so nothing can be hidden. (With
+    // the eye beyond the box, every batch would be: the box is between them.)
+    const float far = (hi.x - lo.x) + 1000.0f;
+    const mdk::Vec3 awayLo = {hi.x + far, lo.y, lo.z};
+    const mdk::Vec3 awayHi = {hi.x + far + 10.0f, hi.y, hi.z};
+    const mdk::Vec3 awayEye = {lo.x - far, centre.y, centre.z};
+    covers = mdk_test_coverDraws;
+    view.draw(mdk::ArenaLayer::Cover, awayLo, awayHi, awayEye, 1.0f);
+    MDK_CHECK_EQ(mdk_test_coverDraws - covers, 0);
+    // And with the eye beyond the box, the box is between the eye and every batch.
+    const mdk::Vec3 behindEye = {hi.x + far + 20.0f, centre.y, centre.z};
+    covers = mdk_test_coverDraws;
+    view.draw(mdk::ArenaLayer::Cover, awayLo, awayHi, behindEye, 1.0f);
+    MDK_CHECK_EQ(mdk_test_coverDraws - covers, drawn);
+    view.unload();
+}
+
 // OPCODE 133 (arena_texture_frame) REACHES THE DRAW: LevelView::draw gives an animated
 // batch the frame the scripts set for its texture in its arena (LevelView.cs:139,
 // FrameOf), and 0 without frames, before a frame is set, or for another arena's key.
@@ -512,7 +577,8 @@ int32_t mCommFrames(void*, const std::string&, const std::string& texture) {
 std::vector<int32_t> animatedDrawFrames(mdk::LevelView* view,
                                         const mdk::scripts::AnimatedTextures* frames) {
     mdk_test_drawFrames.clear();
-    view->draw(frames);
+    const mdk::Vec3 none{};
+    view->draw(mdk::ArenaLayer::Plain, none, none, none, 1.0f, frames);
     std::vector<int32_t> out;
     for (size_t i = 0; i < mdk_test_drawFrames.size(); i++) {
         if (mdk_test_drawFrames[i].second == 6) {

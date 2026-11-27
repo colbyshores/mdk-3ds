@@ -704,6 +704,19 @@ std::string ScriptRuntime::crossedArena(const std::string& arena, const Vec3& fr
     return std::string();
 }
 
+std::string ScriptRuntime::cameraArena(const Vec3& eye) {
+    // Upstream e1eb36bb ScriptRuntime.CameraArena: `_drawnArenas.Count < 2` is
+    // Kurt's arena; else the line from KurtPosition + 3 z (CameraLineHeight, the
+    // original's 0x4940f0) to the eye, through CrossedArena, picks the second one
+    // only when that is where it leads.
+    const float kCameraLineHeight = 3.0f;
+    if (drawnArenas_.size() < 2) {
+        return currentArena_;
+    }
+    const Vec3 from = {kurtPosition_.x, kurtPosition_.y, kurtPosition_.z + kCameraLineHeight};
+    return crossedArena(currentArena_, from, eye) == secondArena_ ? secondArena_ : currentArena_;
+}
+
 void ScriptRuntime::followArenas(MdkObject* obj) {
     // C# FollowArenas (:780-787): the arena its OWN last move crossed, and only a
     // non-empty answer replaces the object's arena -- a move through no doorway

@@ -4,6 +4,7 @@
 
 #include "game/level_view.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "scripts/animated_textures.h"
@@ -335,7 +336,36 @@ bool LevelView::bounds(Vec3* outMin, Vec3* outMax) const {
     return true;
 }
 
-void LevelView::draw(const scripts::AnimatedTextures* frames) {
+bool LevelView::batchesCutting(const Vec3& boxMin, const Vec3& boxMax, Vec3* outMin,
+                               Vec3* outMax) const {
+    if (!ready()) {
+        return false;
+    }
+    bool any = false;
+    for (size_t i = 0; i < scene_.batches.size(); i++) {
+        const ArenaBatch& batch = scene_.batches[i];
+        if (!arenaBatchVisible(arena_, batch)) {
+            continue;
+        }
+        const Vec3 lo = {batch.boundsMin[0], batch.boundsMin[1], batch.boundsMin[2]};
+        const Vec3 hi = {batch.boundsMax[0], batch.boundsMax[1], batch.boundsMax[2]};
+        if (!boxesCut(lo, hi, boxMin, boxMax)) {
+            continue;
+        }
+        if (!any) {
+            *outMin = lo;
+            *outMax = hi;
+            any = true;
+        } else {
+            *outMin = Vec3{fminf(outMin->x, lo.x), fminf(outMin->y, lo.y), fminf(outMin->z, lo.z)};
+            *outMax = Vec3{fmaxf(outMax->x, hi.x), fmaxf(outMax->y, hi.y), fmaxf(outMax->z, hi.z)};
+        }
+    }
+    return any;
+}
+
+void LevelView::draw(ArenaLayer layer, const Vec3& boxMin, const Vec3& boxMax, const Vec3& eye,
+                     float eyeMargin, const scripts::AnimatedTextures* frames) {
     if (!renderer_ || mesh_ < 0 || surfaces_ == nullptr || !ready()) {
         return;
     }
@@ -378,6 +408,18 @@ void LevelView::draw(const scripts::AnimatedTextures* frames) {
             draw.bounds_max[j] = batch.boundsMax[j];
         }
         draw.cullable = true;
+        // The camera's arena over the other one (render/arena_scene.h's box arithmetic).
+        // The other arena whole (its glass after its own walls, as the original
+        // draws it); of the camera's, the batches it may hide.
+        draw.back = layer == ArenaLayer::Back;
+        if (layer == ArenaLayer::Cover) {
+            const Vec3 lo = {batch.boundsMin[0], batch.boundsMin[1], batch.boundsMin[2]};
+            const Vec3 hi = {batch.boundsMax[0], batch.boundsMax[1], batch.boundsMax[2]};
+            Vec3 reachMin{};
+            Vec3 reachMax{};
+            boxWithEye(lo, hi, eye, eyeMargin, &reachMin, &reachMax);
+            draw.cover = boxesCut(reachMin, reachMax, boxMin, boxMax);
+        }
 
         // The texture and the palette come from the shared cache, keyed by the
         // format's objects: an object drawn with this arena's palette reuses

@@ -29,6 +29,7 @@
 
 #include <stdint.h>
 
+#include <string>
 #include <vector>
 
 #include "render/render.h"
@@ -48,9 +49,12 @@ public:
 
     // Queues the ropes of the live, visible objects as the frame `tickAlpha` of
     // the way between ticks draws them (1 = blending off), under `camera` (the
-    // quads face it). `level` gives each arena's palette.
+    // quads face it). `level` gives each arena's palette. `backArena` is the arena
+    // ArenaViews::draw drew `back` this frame ("" for none): an object of it has
+    // its rope queued `back` too (MeshDraw::back), as the frontends queue the
+    // object itself (mdk_render_set_back), so the camera's arena covers both.
     void draw(MdkRenderer renderer, const scripts::ScriptRuntime& runtime, LevelData& level,
-              const Camera& camera, float tickAlpha);
+              const Camera& camera, float tickAlpha, const std::string& backArena);
 
     bool allocationFailed() const { return failed_; }
 
@@ -64,6 +68,7 @@ private:
         int32_t first;
         int32_t count;
         uint32_t rgba;
+        bool back;
     };
 
     bool ensureMesh(MdkRenderer renderer);

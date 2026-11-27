@@ -491,6 +491,12 @@ void mdk_render_set_gamma(MdkRenderer r, float gamma);
 //     mid-frame flush and an immediate draw at every one of those seams.
 void mdk_render_draw_mesh(MdkRenderer r, const mdk::MeshDraw* draw);
 
+// Queue the mesh draws that follow as the other drawn arena's (MeshDraw::back;
+// render/draw_queue.h) until it is set false again: the frontend's objects of the
+// arena game/arena_views.cpp's ArenaViews::draw drew `back`. Off at every
+// mdk_render_begin_frame; an Own inset's draws never take it.
+void mdk_render_set_back(MdkRenderer r, bool back);
+
 // ---------------------------------------------------------------------------
 // The 2D canvas
 // ---------------------------------------------------------------------------
@@ -536,7 +542,8 @@ int32_t mdk_render_canvas_capacity(MdkRenderer r);
 //   * Citro3D draws an Own inset's meshes the canvas's way (one composed matrix
 //     onto the rectangle, no depth, no cull), and a Scene inset as the frame's
 //     scene records again through its camera in its viewport, its depth reset by
-//     a far-plane quad, in each eye (at most three a frame).
+//     a far-plane quad, in the first eye at zero parallax and copied into the
+//     second (at most three a frame).
 // A zero-area inset draws nothing.
 void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* inset);
 void mdk_render_end_inset(MdkRenderer r);

@@ -11,6 +11,7 @@
 #include "audio/sound_mixer.h"
 #include "platform/input_3ds.h"
 #include "platform/log_3ds.h"
+#include "platform/run_end_3ds.h"
 #include "stream/stream_screen.h"
 
 namespace mdk {
@@ -126,8 +127,8 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
             screen->status(status, (int32_t)sizeof(status));
             log3dsPrintf("stream: frame %lu: %s", (unsigned long)*frame, status);
         }
-        if (f.frameBudget != 0 && *frame >= f.frameBudget) {
-            *exitReason = "frame budget reached";
+        // The run's own end holds in the stream too (platform/run_end_3ds.h).
+        if (runEnded3ds(*frame, exitReason)) {
             result = flow::Event::Quit;
             break;
         }

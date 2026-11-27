@@ -441,6 +441,7 @@ static void castShadows(RendererC3D* r) {
     // The ramp keeps the nearer caster with the map's own depth buffer; native
     // writes keep it themselves.
     installDepthState(r, mdk::pica::DepthState{!r->shadowNative, !r->shadowNative});
+    installStencil(r, kStencilOff);   // the map's own target: no arena layering
     if (r->shadowNative) {
         C3D_FragOpMode(GPU_FRAGOPMODE_SHADOW);
         C3D_FragOpShadow(0.0f, 1.0f);
@@ -453,9 +454,12 @@ static void castShadows(RendererC3D* r) {
     C3D_CullFace(GPU_CULL_NONE);
     r->cullMode = GPU_CULL_NONE;
 
-    for (int32_t pass = static_cast<int32_t>(mdk::Pass::Solid);
-         !probeNoCasters && pass <= static_cast<int32_t>(mdk::Pass::DoubleSided); pass++) {
-        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+    // Every caster, the other arena's `back` draws too (render/draw_queue.h): the
+    // sun's map has no camera, so their order does not matter here.
+    for (int32_t slot = 0; !probeNoCasters && slot < 4; slot++) {
+        const int32_t pass = static_cast<int32_t>(mdk::Pass::Solid) + slot % 2;
+        const std::vector<mdk::MeshDraw>& bucket =
+            slot < 2 ? r->queue.backBucket(pass) : r->queue.bucket(pass);
         for (size_t i = 0; i < bucket.size(); i++) {
             const mdk::MeshDraw* draw = &bucket[i];
             if (!mdk::pica::castsSunShadow(draw->material.pass, draw->material.shading,

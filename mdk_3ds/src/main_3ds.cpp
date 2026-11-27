@@ -107,6 +107,7 @@
 #include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
+#include "platform/run_end_3ds.h"
 #include "platform/stream_worker_3ds.h"
 #include "config_3ds.h"
 #include "level_load_3ds.h"
@@ -118,12 +119,6 @@
 #include "stream_3ds.h"
 
 namespace {
-
-// The deterministic frame budget for a test run: `--frames N` runs exactly N
-// frames and then exits, so a host-side harness gets a reproducible run
-// instead of one that has to be interrupted. 0 means "run until asked to
-// stop".
-uint32_t g_frameBudget = 0;
 
 // Set by the APT lifecycle hook when the console wakes (lid opened /
 // resumed): the main loop rebases its frame clock on the next frame
@@ -191,9 +186,12 @@ int main(int argc, char** argv) {
             nullptr);
     // The command line. A 3DS title's arguments are short; --frames is the
     // one the test harness needs.
+    // `--frames N` is the deterministic frame budget for a test run: exactly N
+    // frames and then the ordinary exit, in whichever frame loop the run is in
+    // (platform/run_end_3ds.h). 0 (the default) means "run until asked to stop".
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
-            g_frameBudget = (uint32_t)strtoul(argv[i + 1], nullptr, 10);
+            mdk::runEndSetFrameBudget((uint32_t)strtoul(argv[i + 1], nullptr, 10));
             i++;
         }
     }
@@ -361,7 +359,6 @@ int main(int argc, char** argv) {
     front.now = mdk::nowSeconds;
     front.resumePending = &g_resumePending;
     front.frame = &frame;
-    front.frameBudget = g_frameBudget;
     // The main menu's Continue and Saved Game page read the saves (package #19).
     front.saves = &saves;
     // The START menu's OPTIONS row opens the C# PauseMenu's options pages
@@ -422,7 +419,6 @@ int main(int argc, char** argv) {
             streamFrontend.renderer = renderer;
             streamFrontend.controls = &controls;
             streamFrontend.frame = &frame;
-            streamFrontend.frameBudget = g_frameBudget;
             streamFrontend.resumePending = &g_resumePending;
             streamFrontend.heapProbe = mdk::heapProbe;
             streamFrontend.difficulty = (mdk::Kurt::Difficulty)mdk::g_gameSettings.difficulty;
@@ -2408,6 +2404,9 @@ int main(int argc, char** argv) {
         // The arenas the scripts say are drawn: Kurt's and the active second
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
         // the runtime's first tick has named one.
+        // The arena ArenaViews::draw drew `back` this frame ("" when none): its
+        // objects are drawn `back` too (mdk_render_set_back, below).
+        std::string layeredBack;
         if (arena && frameDrawn && !strikeFrame) {
             // The end of a level's torn triangles leave the arena's mesh first (the C#'s
             // LevelView.DrawEnd, Viewer.cs:703): its view swaps to a dynamic mesh and
@@ -2425,7 +2424,12 @@ int main(int argc, char** argv) {
             // The comm screen's frames (arena_texture_frame, opcode 133): the
             // C#'s LevelView.Draw(DrawnArenas, AnimatedTextures).
             arenaViews.setAnimatedTextures(runtime ? &runtime->animatedTextures : nullptr);
-            arenaViews.draw(*frameDrawn);
+            // The camera's arena over the other drawn one (upstream e1eb36bb; the
+            // original's 0x490db4 and 0x41df35): ArenaViews::draw.
+            const std::string cameraArena =
+                runtime ? runtime->cameraArena(sceneCamera.position) : std::string();
+            layeredBack = arenaViews.draw(*frameDrawn, cameraArena, sceneCamera.position,
+                                         mdk::g_gameSettings.stereoSeparation);
         }
         // A sniper round camera watching its round (SniperView's insets, below)
         // sees the scene from the round, 90 degrees wide: the scope's frustum
@@ -2531,9 +2535,13 @@ int main(int argc, char** argv) {
                 }
                 // The pose between its frames at the tick's alpha (upstream ae746b5d,
                 // Viewer's blend.PoseOf), the driven and carried ones too.
+                // The other arena's objects with it, under its glass (upstream
+                // e1eb36bb bands them by arena too; render/draw_queue.h).
+                mdk_render_set_back(renderer, !layeredBack.empty() && obj.arena == layeredBack);
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
                                      &objectStream, tinyHidden, tickAlpha);
             }
+            mdk_render_set_back(renderer, false);
             // THE RIDDEN BOARD (upstream a27ca2f4, Viewer.DrawBoard): after the objects,
             // scaled towards the eye in front of the floors its box dips under (the
             // original draws an object after its leaf's floor, with no depth buffer).
@@ -2646,7 +2654,8 @@ int main(int argc, char** argv) {
             // C# RopeView.Draw (Viewer.cs:705): the objects' ropes after the objects,
             // blended as they are. The PICA200 has no line primitive, so each line is
             // a thin camera-facing quad in its arena's colour (game/rope_view.h).
-            ropeView.draw(renderer, *runtime, level, sceneCamera, runtime->tick_blend(pending));
+            ropeView.draw(renderer, *runtime, level, sceneCamera, runtime->tick_blend(pending),
+                          layeredBack);
         }
         if (runtime && !strikeFrame) {
             // The pieces and sprite effects, where the C# draws them:
@@ -2880,8 +2889,9 @@ int main(int argc, char** argv) {
                               (int)objectPeakCorners, (int)objectPeakDraws);
         }
 
-        if (g_frameBudget != 0 && frame >= g_frameBudget) {
-            exitReason = "frame budget reached";
+        // The run's own end (the frame budget; a harness's deadline), asked here
+        // as in every frame loop (platform/run_end_3ds.h).
+        if (mdk::runEnded3ds(frame, &exitReason)) {
             break;
         }
 

@@ -143,7 +143,20 @@ void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
         r->insets[(size_t)r->openInset].own.add(*draw);
         return;
     }
+    if (r->queueBack) {
+        mdk::MeshDraw back = *draw;
+        back.back = true;
+        r->queue.add(back);
+        return;
+    }
     r->queue.add(*draw);
+}
+
+void mdk_render_set_back(MdkRenderer rr, bool back) {
+    RendererVk* r = asVk(rr);
+    if (r) {
+        r->queueBack = back;
+    }
 }
 
 // ---------------------------------------------------------------------------

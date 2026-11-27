@@ -112,7 +112,21 @@ public:
 
     // Queue the drawn arenas' visible groups, in the list's order, the animated
     // textures at the frames setAnimatedTextures names (LevelView::draw).
-    void draw(const std::vector<std::string>& drawn);
+    //
+    // THE CAMERA'S ARENA OVER THE OTHER ONE (upstream e1eb36bb; the original's
+    // 0x41df35): with two arenas drawn, `cameraArena` (ScriptRuntime::cameraArena
+    // for the camera at `eye`) is drawn over the other one wherever the two
+    // overlap on screen, as the original's painter's order has it. The other
+    // arena's batches that may lie between the eye and the camera's arena are
+    // queued `back`, and the camera arena's batches they may hide `cover`
+    // (render/arena_scene.h's box arithmetic; render_types.h MeshDraw; render/
+    // draw_queue.h). With one arena drawn, or none such, nothing is marked and
+    // the frame is drawn as before. `eyeMargin` is the stereo separation (at
+    // least kLayerEyeMargin). Returns the other arena's name while it is drawn
+    // `back`, "" otherwise: the frontend draws that arena's objects `back` too
+    // (mdk_render_set_back), so its glass stays over them.
+    std::string draw(const std::vector<std::string>& drawn, const std::string& cameraArena,
+                     const Vec3& eye, float eyeMargin);
 
     // The scripts' texture frames (ScriptRuntime::animatedTextures, opcode 133) the
     // next draw() uses; null draws every animated texture at frame 0. Borrowed: the
@@ -162,6 +176,11 @@ private:
         // The pair or drawn (set by sync): only these views re-ask their made
         // textures (LevelView::pumpSurfaces).
         bool reask = false;
+        // The arena's box (LevelView::bounds, once at build), for draw()'s
+        // layering. False: no geometry, so never marked.
+        bool hasBox = false;
+        Vec3 boxMin{};
+        Vec3 boxMax{};
     };
 
     // pumpSurfaces()'s rotating start, so a view past the frame's budget

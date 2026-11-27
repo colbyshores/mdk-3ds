@@ -47,6 +47,14 @@ namespace scripts {
 class AnimatedTextures;
 } // namespace scripts
 
+// How LevelView::draw marks the batches it queues (render/arena_scene.h's box
+// arithmetic; ArenaViews::draw).
+enum class ArenaLayer : uint8_t {
+    Plain,   // none marked: the frame as before
+    Back,    // the other arena: every batch is `back` (drawn first, with its glass)
+    Cover,   // the camera's: a batch whose box, with the eye, cuts the given box is `cover`
+};
+
 // An arena on the GPU.
 enum class LevelViewBuildFailure : uint8_t {
     None,
@@ -115,12 +123,22 @@ public:
     // (LevelView.cs:126). A group the scripts RETEXTURED (group_set_texture)
     // needs refresh() first: its surface is baked into the batches.
     //
+    // `layer` marks the batches queued (ArenaLayer above; ArenaViews::draw):
+    // only Cover reads `boxMin`/`boxMax`/`eye`/`eyeMargin`.
+    //
     // An animated texture (frameCount > 1) is drawn at the frame the scripts set
     // for it in this arena (arena_texture_frame, opcode 133: LevelView.cs:139,
     // `frames.FrameOf(arena, batch.Animated)`), frame 0 with no `frames` or before a
     // script sets one. The frame only moves the texture's uv (its frames are one
-    // stacked strip): no texture is made or read for it.
-    void draw(const scripts::AnimatedTextures* frames = nullptr);
+    // stacked strip): no texture is made or read for it. Orthogonal to `layer`.
+    void draw(ArenaLayer layer, const Vec3& boxMin, const Vec3& boxMax, const Vec3& eye,
+              float eyeMargin, const scripts::AnimatedTextures* frames = nullptr);
+
+    // The box around this arena's VISIBLE batches whose boxes cut `boxMin`..
+    // `boxMax` (ArenaViews::draw: the other arena's batches that may hide the
+    // camera's). False when none does.
+    bool batchesCutting(const Vec3& boxMin, const Vec3& boxMax, Vec3* outMin,
+                        Vec3* outMax) const;
 
     // Rebuild the scene from the arena's CURRENT group materials and re-upload
     // the mesh. This is the C# LevelView.Rebuild (LevelView.cs:251), the path a

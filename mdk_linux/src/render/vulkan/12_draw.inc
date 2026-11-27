@@ -11,7 +11,11 @@
 // the camera, the viewport, the render pass -- is the state the frame is drawn
 // with, exactly as the C# reads `view.ViewProjection` when it renders the
 // command rather than when the view queued it.
-void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw) {
+//
+// `cover`: this draw's depth only, through getCoverPipeline (render/draw_queue.h
+// step 2), the same matrices and texture so the same fragments are kept (the
+// caller has narrowed the viewport's depth range to the far plane).
+void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw, bool cover) {
     if (draw->mesh < 0 || draw->mesh >= (int32_t)r->meshes.size() || !r->meshes[draw->mesh].used) {
         return;
     }
@@ -38,7 +42,7 @@ void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw) {
     // The enhanced look's Lit/Sprite draws go through the lit pipeline;
     // everything else (Original shading, mirrors, the canvas's own draws)
     // keeps the palette path below.
-    if (r->enhancedLook && r->enhancedReady &&
+    if (!cover && r->enhancedLook && r->enhancedReady &&
         (draw->material.shading == mdk::Shading::Lit ||
          draw->material.shading == mdk::Shading::Sprite)) {
         drawEnhanced(r, draw, world, wv);
@@ -66,7 +70,8 @@ void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw) {
     const int pass = (int)draw->material.pass;
     const int blend = (int)draw->material.blend;
     const int primitive = (draw->primitive == mdk::Primitive::Lines) ? 1 : 0;
-    VkPipeline pipeline = getPipeline(r, pass, blend, primitive);
+    VkPipeline pipeline =
+        cover ? getCoverPipeline(r, pass) : getPipeline(r, pass, blend, primitive);
     if (!pipeline) {
         return;
     }
@@ -148,7 +153,41 @@ void flushDraws(RendererVk* r) {
 // Draw a queue's buckets in the pass order -- the frame's queue, or an Own
 // inset's -- through the camera installed now. `overlay` false leaves the Overlay
 // bucket out, as the C#'s RenderInset does (Renderer.Insets.cs:113-119).
+//
+// THE CAMERA'S ARENA OVER THE OTHER ONE (render/draw_queue.h): the other
+// arena's `back` draws first, then the camera arena's `cover` draws' depth over
+// them, then every bucket as before. Without back draws only the last runs.
 void drawBuckets(RendererVk* r, const mdk::DrawQueue& queue, bool overlay) {
+    if (queue.hasBack()) {
+        for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
+            const std::vector<mdk::MeshDraw>& back = queue.backBucket(pass);
+            for (size_t i = 0; i < back.size(); i++) {
+                if (!r->toggles.enableMirrors && back[i].material.pass == mdk::Pass::Mirror) {
+                    continue;
+                }
+                drawRecorded(r, &back[i], false);
+            }
+        }
+        // The cover step writes the FAR PLANE (the viewport's depth range
+        // narrowed to 1) under the camera arena's opaque cover draws, so step 3's
+        // draw of the same batch passes whatever its shader's rounding: the
+        // enhanced look draws it through another vertex program than this one.
+        VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+        VkViewport farOnly = r->sceneViewport;
+        farOnly.minDepth = 1.0f;
+        farOnly.maxDepth = 1.0f;
+        vkCmdSetViewport(cb, 0, 1, &farOnly);
+        for (int32_t pass = static_cast<int32_t>(mdk::Pass::Solid);
+             pass <= static_cast<int32_t>(mdk::Pass::DoubleSided); pass++) {
+            const std::vector<mdk::MeshDraw>& bucket = queue.bucket(pass);
+            for (size_t i = 0; i < bucket.size(); i++) {
+                if (bucket[i].cover && bucket[i].primitive == mdk::Primitive::Triangles) {
+                    drawRecorded(r, &bucket[i], true);
+                }
+            }
+        }
+        vkCmdSetViewport(cb, 0, 1, &r->sceneViewport);
+    }
     for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
         if (!overlay && pass == static_cast<int32_t>(mdk::Pass::Overlay)) {
             continue;
@@ -160,7 +199,7 @@ void drawBuckets(RendererVk* r, const mdk::DrawQueue& queue, bool overlay) {
             if (!r->toggles.enableMirrors && bucket[i].material.pass == mdk::Pass::Mirror) {
                 continue;
             }
-            drawRecorded(r, &bucket[i]);
+            drawRecorded(r, &bucket[i], false);
         }
     }
 }

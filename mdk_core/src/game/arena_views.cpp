@@ -223,6 +223,7 @@ bool ArenaViews::build(const std::string& name) {
     Entry entry;
     entry.name = name;
     entry.view = view;
+    entry.hasBox = view->bounds(&entry.boxMin, &entry.boxMax);
     views_.push_back(entry);
     stats_.built++;
     lastBuilt_ = name;
@@ -492,7 +493,36 @@ void ArenaViews::pumpSurfaces(int32_t budget) {
     }
 }
 
-void ArenaViews::draw(const std::vector<std::string>& drawn) {
+std::string ArenaViews::draw(const std::vector<std::string>& drawn,
+                             const std::string& cameraArena, const Vec3& eye, float eyeMargin) {
+    // THE CAMERA'S ARENA OVER THE OTHER ONE (see the header). With two arenas
+    // drawn: the camera's arena's box, grown to take in the eye; the box around
+    // the other arena's batches that cut it. When there are any, the other arena
+    // is drawn `back` and the camera arena's batches that can reach them `cover`.
+    const Entry* cover = nullptr;
+    const Entry* back = nullptr;
+    if (drawn.size() == 2 && drawn[0] != drawn[1]) {
+        for (size_t i = 0; i < views_.size(); i++) {
+            if (views_[i].name != drawn[0] && views_[i].name != drawn[1]) {
+                continue;
+            }
+            if (views_[i].name == cameraArena) {
+                cover = &views_[i];
+            } else {
+                back = &views_[i];
+            }
+        }
+    }
+    Vec3 reachMin{};
+    Vec3 reachMax{};
+    Vec3 backMin{};
+    Vec3 backMax{};
+    bool layered = false;
+    const float margin = eyeMargin > kLayerEyeMargin ? eyeMargin : kLayerEyeMargin;
+    if (cover && back && cover->hasBox) {
+        boxWithEye(cover->boxMin, cover->boxMax, eye, margin, &reachMin, &reachMax);
+        layered = back->view->batchesCutting(reachMin, reachMax, &backMin, &backMax);
+    }
     for (size_t d = 0; d < drawn.size(); d++) {
         for (size_t i = 0; i < views_.size(); i++) {
             if (views_[i].name == drawn[d]) {
@@ -500,11 +530,18 @@ void ArenaViews::draw(const std::vector<std::string>& drawn) {
                 // bubble built it during the approach); a view that is
                 // still building -- or failed and is waiting out its
                 // retry -- draws nothing this frame.
-                views_[i].view->draw(frames_);
+                if (layered && &views_[i] == back) {
+                    views_[i].view->draw(ArenaLayer::Back, backMin, backMax, eye, margin, frames_);
+                } else if (layered && &views_[i] == cover) {
+                    views_[i].view->draw(ArenaLayer::Cover, backMin, backMax, eye, margin, frames_);
+                } else {
+                    views_[i].view->draw(ArenaLayer::Plain, backMin, backMax, eye, margin, frames_);
+                }
                 break;
             }
         }
     }
+    return layered ? back->name : std::string();
 }
 
 void ArenaViews::clear() {

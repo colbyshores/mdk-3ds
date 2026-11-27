@@ -254,4 +254,31 @@ bool computeArenaDepthLayers(const std::vector<formats::Vec3f>& vertices,
                              const std::vector<int32_t>& triangleIndices,
                              std::vector<int32_t>* layers);
 
+// THE CAMERA'S ARENA OVER THE OTHER ONE: the box arithmetic (game/arena_views.cpp
+// ArenaViews::draw, game/level_view.cpp; upstream e1eb36bb, the original's
+// 0x41df35).
+//
+// A point Q of the other arena hides a point P of the camera's arena only if Q is
+// on the segment from the eye to P -- so inside any box that holds both the eye
+// and P. A batch of the other arena whose box misses the box around the camera's
+// arena and the eye can hide none of it, and a batch of the camera's arena whose
+// box, grown to take in the eye, misses every such batch cannot be hidden by any.
+// Only the batches the boxes cannot clear are marked (render_types.h MeshDraw
+// `back` / `cover`); everything else is drawn exactly as before.
+//
+// Boxes that only TOUCH do not cut: two arenas meet at a doorway's plane, and a
+// point of one hiding the other there would need the eye in that plane too.
+
+// The stereo eyes sit half the separation (0.25 units by default) to each side of
+// the camera the box is grown by: the margin is the separation (the frontend's),
+// and at least one unit.
+const float kLayerEyeMargin = 1.0f;
+
+// Whether two boxes share interior (not just a face).
+bool boxesCut(const Vec3& aMin, const Vec3& aMax, const Vec3& bMin, const Vec3& bMax);
+
+// `min`..`max` grown to take in the eye's point, `margin` around it.
+void boxWithEye(const Vec3& min, const Vec3& max, const Vec3& eye, float margin, Vec3* outMin,
+                Vec3* outMax);
+
 } // namespace mdk

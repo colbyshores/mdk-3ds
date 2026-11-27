@@ -432,7 +432,17 @@ struct PreparedDraw {
     int32_t vertCount = 0;
     int alphaRef = 0;
     int32_t stage0Index = -1;       // 0 scene, 1 overlay, 2..5 flat; -1 shadow
+    // THE CAMERA'S ARENA OVER THE OTHER ONE (render/draw_queue.h; 06_queue.inc
+    // prepareQueue): a `cover` draw marks the stencil where it draws
+    // (kStencilMark), a `back` draw only draws where none did (kStencilTest);
+    // every other record leaves the stencil alone (kStencilOff).
+    int8_t stencil = 0;
 };
+
+// PreparedDraw::stencil and RendererC3D::stencilMode.
+const int8_t kStencilOff = 0;
+const int8_t kStencilMark = 1;
+const int8_t kStencilTest = 2;
 
 struct RendererC3D {
     C3D_RenderTarget* targetLeft = nullptr;
@@ -639,6 +649,9 @@ struct RendererC3D {
     // the exempt passes neither test nor write.
     bool depthTest = true;
     bool depthWrite = true;
+    // The stencil use installed (kStencil*, 03_frame_state.inc installStencil),
+    // cached as the depth state is: C3D_StencilTest dirties the effect block too.
+    int stencilMode = -1;
 
     // The blend state last written to the citro3d CONTEXT, cached the same way.
     //
@@ -701,9 +714,11 @@ struct RendererC3D {
     // over the canvas wait in `insetOverDraws` for the end of each eye's Overlay
     // bucket (replayQueue). A Scene inset (a sniper round camera: the frame's scene
     // again through the round's camera, in its window under the canvas; C#
-    // Renderer.Insets.cs RenderInset) is kept in `sceneInsets` and drawn in each
-    // eye's replay after the scene and the glow, before the canvas
-    // (drawSceneInsets, 06_queue.inc). The sniper screen has three windows.
+    // Renderer.Insets.cs RenderInset) is kept in `sceneInsets` and drawn in the
+    // first eye's replay after the scene and the glow, before the canvas
+    // (drawSceneInsets, 06_queue.inc), at zero parallax; the second eye gets a copy
+    // of those pixels after its replay (copyInsetsToSecondEye). The sniper screen
+    // has three windows.
     bool insetOpen = false;
     struct SceneInset {
         float rect[4];          // x, y, width, height on the canvas
@@ -714,8 +729,6 @@ struct RendererC3D {
     static const int32_t kMaxSceneInsets = 3;
     SceneInset sceneInsets[kMaxSceneInsets];
     int32_t sceneInsetCount = 0;
-    // The eye installEye installed last (its offset), for the insets' own matrices.
-    float eyeOffset = 0.0f;
     // THE SCENE WINDOW (mdk_render_set_scene_window), this frame's: the canvas
     // rectangle the scene's draws are scissored to in replayQueue.
     bool sceneWindowOn = false;
@@ -750,6 +763,8 @@ struct RendererC3D {
     bool diagnosticTriangle = true;
     bool ready = false;
     bool inFrame = false;
+    // mdk_render_set_back: the queued draws are the other arena's (MeshDraw::back).
+    bool queueBack = false;
 
     // The Enhanced Mode feature toggles (SPEC.md 7.9). The 3DS enhanced
     // features land behind these flags, each strictly on the PICA200;

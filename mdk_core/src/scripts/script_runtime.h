@@ -278,6 +278,13 @@ public:
     // golden has to name the arena a move enters, not only the arena the tick ended
     // in.
     std::string crossedArena(const std::string& arena, const Vec3& from, const Vec3& to);
+    // The drawn arena the camera at `eye` is in (upstream e1eb36bb's CameraArena;
+    // the original's 0x490db4, camera_update): Kurt's, or the second drawn one when
+    // the line from 3 units above Kurt's feet to the eye leaves Kurt's arena through
+    // a doorway into it. The original draws the other drawn arena first and this one
+    // over it (0x41df35); game/arena_views.cpp does the same with the depth buffer.
+    // With fewer than two drawn arenas it is Kurt's.
+    std::string cameraArena(const Vec3& eye);
     // FollowArenas (ScriptRuntime.cs:780): an object with FlagChangesArena goes
     // into the arena its OWN last move crossed, so the board follows Kurt through a
     // door and its script keeps running (LEVEL4's first run ends in MEAT_3). The

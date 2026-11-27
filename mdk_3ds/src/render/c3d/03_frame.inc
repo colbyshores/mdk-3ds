@@ -37,6 +37,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->ready) return;
     if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry
+    r->queueBack = false;
 
     // EDGE SMOOTHING follows its toggle here, OUTSIDE the frame: the rebuild
     // deletes the eye targets, and C3D_RenderTargetDelete waits for the GPU queue
@@ -285,6 +286,8 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
         // (canaryArmed): the eye loop's statements stay unconditional.
         drawDiagnostic(r, mdk_render_canvas_width(rr));
     }
+    // The sniper's round cameras were drawn in the first eye only (drawSceneInsets).
+    copyInsetsToSecondEye(r);
     // THE CANVAS LINE, and it is the evidence `mdk_3ds/tools/emurun.sh --expect
     // hud` reads. Why a log line and not a pixel: the HUD's own colours are white,
     // grey and black, so a screenshot cannot tell "the HUD drew" from "the HUD was

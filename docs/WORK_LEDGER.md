@@ -3718,6 +3718,13 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
     is not oracle-checked.
 - **Commit:** the merges and fixes above, and this ledger commit.
 
+### The sniper's round cameras in one eye (2026-11-26, owner: "we dont need stereoscopy there")
+- **What:** the round cameras' insets are drawn in the first eye only, at zero parallax (no eye offset), and the second eye gets the same pixels by a copy after its replay (`copyInsetsToSecondEye`, 06_queue.inc): one `C3D_FrameSplit` and one `GX_TextureCopy` per inset rectangle, left eye's colour buffer to the right's, in the 8x8-tiled layout (memory row = panel x, column = 239 - panel y, the rotation writeScreenshotBmp measured; the glow pass's tile-row copy is the same mechanism, verified on hardware). The rectangle is grown to whole tiles (at most 7 target pixels, under the frame around the windows). Chosen over drawing the inset in both eyes at zero parallax because that keeps the cost; chosen over a render-to-texture inset because the copy needs no new VRAM target. ROUND CAMERAS stays on by default (owner). One path on Old and New 3DS. With the slider closed or SCOPE IN 2D there is one eye and no copy.
+- **Evidence:** Linux build clean; 3DS 0 compiler warnings; `make -C tests/scripts test` rc 0 (`PASS C3dFrame`); `tests/formats` 200632 checks, 0 failures; `tools/check.sh` ALL GATES PASSED (gates_smdh SKIP). An independent read-only review found no arithmetic, ordering or GX-budget defect (1 split + at most 3 copies per frame).
+  - Old 3DS appliance (`old3ds-lan167`, model 0, stereo on), the same walk, toggles and harness as the earlier entry, `--profile`, FRESH (`.git/worktrees/bullet-cam/hw-logs/hw-on1eye.log`): the 875 frames with a camera watching, mean **39.5 ms** (max 53.8; 857 over 33.3 ms), against 44.4 ms drawn in both eyes and 33.45 ms with the cameras off. Steady mean 35.7 ms (vblanks 2: 2295, 3: 190), against 37.7 (both eyes) and 33.6 (off). Longest command list 27,844 words (34,302 both eyes).
+- **Not verified:** the picture. No ATM screenshots (owner: suspected cause of the hard hangs), the harness on this base has no capture, Mandarine was not used. Whether the right eye's windows show the copied cam (the memory-row orientation is taken from the screenshot readback and the glow, not seen through the barrier) is open for the owner's look on the console.
+- **Commit:** this one.
+
 ### Script opcode watch list for the playthrough (2026-11-26, branch docs/opcode-watchlist)
 - **What:** `docs/OPCODE_WATCHLIST.md`, a read-only coverage comparison of our VM
   (test/3ds-combined-11-26 f517348b) against upstream's C++ 2.0 (origin/main 367cc6fc). The C#
@@ -3944,3 +3951,270 @@ against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new
 - **Watch list:** `docs/OPCODE_WATCHLIST.md` names each fix's commit.
 - **Not done:** no hardware (owner away; no appliance use); no Mandarine run (optional; the
   machine's load was ~98 through this work).
+
+## 2026-11-27 -- LEVEL4's ride end: the camera's arena over the other one, at full depth precision (branch fix/l4-ride-end-depth)
+- **The bug (upstream e1eb36bb), and that this port showed it.** At the end of LEVEL4's
+  snowboard tube (CMEAT_1, by the doorway to MEAT_3) both arenas are drawn, and MEAT_3's flat
+  shell lies above CMEAT_1's floor. Depth-tested, the shell won: a flat dark grey plane covered
+  the tube's floor and walls and Kurt below the knees. Linux headless
+  (`--level=4 --arena=CMEAT_1 --at=62.35,2582.81,-392.90,90`, lavapipe, `DISPLAY=:99`, f517348b):
+  50,499 of 76,800 pixels differ from the fixed frame at 320x240 on EVERY frame from the
+  scripts' first tick (frame 30, 60, 120, 240, 480; frame 1 draws one arena and is identical);
+  walking back up the tube (`--walk=back@30-600`) 36,614-49,398 pixels at frames 60-480. It is
+  a place, not a moment: it lasts as long as Kurt and the camera are in that end of the tube
+  with MEAT_3 drawn (the ride itself was not reproduced; walking/standing there it never let
+  up). The 3DS shows it too: Mandarine r1.2.1 (md5 0d2adab6 checked, `emurun.sh`, `DISPLAY=:99`,
+  the only MDK instance) on `throwaway/l4-ride-end-hw-base` (throwaway/combined-hw 25180768,
+  `AUTOQUIT=60 FIXED=1 LEVEL=4 AT=62.35,2582.81,-392.90,90 ARENA=CMEAT_1
+  TOGGLES=enableLighting=0`): the same grey plane, Kurt cut at the knees.
+- **Not like upstream.** Upstream drew every draw in one of two halves of the depth range
+  (viewport min/max depth). Owner decision: no -- it halves the depth precision of every draw
+  on the 3DS. Instead, full precision everywhere, and the original's own rule (0x41df35: the
+  other arena first, the camera's arena over it) only where it can change a pixel:
+  - `ScriptRuntime::cameraArena` (upstream CameraArena, 0x490db4): Kurt's arena, or the second
+    one when the line from 3 units above his feet to the camera leaves through a doorway into it.
+  - `ArenaViews::draw` (both frontends): with two arenas drawn, the camera arena's box grown to
+    take in the eye (the stereo separation, at least 1 unit, around it). If no batch of the
+    other arena cuts it, nothing is marked and the frame is drawn exactly as before. If one
+    does, the other arena's batches (and, through the new `mdk_render_set_back`, its objects)
+    are queued `back`, and the camera arena's batches whose box-with-the-eye cuts the box around
+    those are `cover` (`render/arena_scene.h` gives the argument: a point that hides another
+    lies on the segment from the eye to it).
+  - `DrawQueue` keeps `back` draws in their own buckets. Vulkan: the back buckets, then each
+    opaque cover draw's depth at the far plane (viewport depth range [1,1]; no colour), then
+    every bucket as before; the enhanced look's camera-depth prepass does the same and the
+    sun's map reads both sets. Citro3D (D24S8): the opaque cover draws first, marking the
+    stencil; the back buckets only where it is unmarked; then the rest -- NO draw is added on
+    the 3DS, only order and a cached stencil state (set every eye; the round-camera insets'
+    depth reset clears the stencil too). One picture, two ways (`render/draw_queue.h`).
+- **Not done like upstream, recorded:** the other arena's effects, debris and ropes are not
+  marked; Kurt and the camera arena's objects stay depth-tested against the other arena
+  (upstream drew them over it); a round camera's inset replays the frame camera's marks.
+- **Independent review** (read-only agent over the first version): found that the other
+  arena's glass, drawn first with only its overlapping batches, was painted over by its own
+  walls drawn later (fixed: the whole other arena and its objects go first); that the Vulkan
+  cover depth came from another vertex program than the enhanced draw it must let through
+  (fixed: far plane); the stereo margin (fixed: from the separation); test gaps (fixed:
+  `LevelViewMarksTheLayers`, a camera-beyond-the-doorway case). The first version also added a
+  depth-only re-draw of the camera arena on the 3DS too; measured on Linux at doorways it is
+  +2..+45 draws and up to +58 % triangles in most two-arena frames (the boxes cut in 272 of 336
+  doorway teleports), so the 3DS was moved to the stencil, which adds none.
+- **How often it changes a frame:** 84 corridor doorways x 4 yaws (every level), teleported
+  onto the doorway, frame 40, 160x120, base vs fixed: 33 of 336 frames differ, every one with
+  two arenas drawn; pixel changes are the camera's arena drawn over the other where they
+  overlap. Unchanged: level 3 frame 1 (the pinned frame gate), levels 3/5/6/7/8 walking from
+  their starts (frames 1/300/900), LEVEL4's MEAT_7 doorway walk.
+- **Cost:** one arena-box test and a pass over the two views' batch boxes per frame with two
+  arenas drawn; nothing with one. 3DS: no extra vertices; one stencil-state change per phase
+  change, per eye. Linux: the cover draws' depth again (+0..45 draws). NOT MEASURED on the Old
+  3DS (no appliance).
+- **Tests:** `vm_tests` `ArenaLayering` (box arithmetic, the queue) and `CameraArenaLevel4`
+  (DepthBandTests' two data facts plus the camera out through CMEAT_1's doorway; a
+  `return currentArena_` mutation fails it); `tests/formats` `LevelViewMarksTheLayers`;
+  `tests/scripts/arena_cover_test.sh` (upstream's rides_test check: Kurt's dark legs at the
+  ride end, both looks: 0 / 0 on f517348b, 2937 / 2961 fixed, needs >= 1000);
+  `main_3ds_flow_test.sh`'s arena-draw pattern follows the new call.
+- **Checks** (`nice -n 19 ionice -c2 -n7`): Linux build 0 warnings; 3DS build (`make -C
+  mdk_3ds`) 0 warnings; `make -C tests/scripts test` exit 0, 1004 PASS, 0 FAIL, 4 SKIP (the
+  frame gate's oracle arms); `make -C tests/formats` 200,681 checks, 0 failures;
+  `tools/check.sh` ALL GATES PASSED (gates_smdh SKIP). (This worktree needed the usual
+  untracked `logs/ralph/disabled` park marker for gates_batch_integrity.)
+- **Emulator (the stencil path):** the same harness build with this branch merged
+  (`throwaway/l4-ride-end-hw`, merge left uncommitted there), Mandarine r1.2.1 md5 0d2adab6,
+  `DISPLAY=:99`, `emurun.sh --secs 40 --shot`: base shows the grey plane and Kurt cut at the
+  knees; fixed shows the tube's snow and walls, Kurt whole with the board at his feet. Both runs
+  logged the harness teleport into CMEAT_1 and reached frame 5 in the log (the tree logs frames
+  1-5 only); the emulator's timing is not the Old 3DS's. During the fixed run another
+  emulator (`/tmp/kilo/heap-growth/before.3dsx`, owner unknown, possibly MDK) was also running.
+- **Evidence kept** (`.git/worktrees/l4-ride-end/evidence/`, not committed): the Linux A/B at
+  the ride end (original f120, enhanced f60), the Mandarine pair (`emu_3ds_{base,fix,ab}.png`,
+  their emurun logs), the doorway sweep's table.
+- **Not verified:** nothing on hardware (no appliance); the 3DS cost is argued (no added
+  draws), not measured; no C# oracle frame of e1eb36bb (no dotnet host on this machine), so
+  "same pixels as upstream" is argued, not measured; the ride itself (from its start) was not
+  driven.
+- **Commits:** eaef0d79 (the fix, tests, this entry) and this ledger update.
+
+## 2026-11-27 -- fix-arena-entry-stutter recorded as merged; its content was already here (branch test/3ds-combined-11-26)
+
+- **What:** 20e2521f merges fix-arena-entry-stutter with `-s ours`: the tree is unchanged.
+- **Why:** each of its six commits is an older copy of a commit this branch (and main) already
+  has: c657187e = d0a80228 (the sky's per-palette linear table, the arena-entry stutter fix),
+  1d5b1382 = 4f92fe25 (scope zoom X/B, pause handoff), 8ec5e1fb = 6c10b4c6 (harness UNLOCK),
+  16b9f53b = 95da0680 and 85aaf3be = cbfe36d3 (instruments), 49e3c824 = dcb61d21 (ledger) --
+  same subjects, the newer copies in main's history. A content merge conflicted in 11 files
+  and would only have re-added the harness (harness_3ds.*, hw_cycle.sh, render_c3d_stats.h,
+  the profile instruments) that 930508e1 moved off this line to harness/3ds-profiling.
+- **Evidence:** `git merge-base --is-ancestor d0a80228` holds for main, this branch,
+  perf/3ds-hd-bubble and both sides of the 11-26 HD A/B, so the doorway worst frames measured
+  there (L7 CDANT_3->DANT_4 86-102 ms, L8 CGUNT_1->GUNT_2 173-207 ms) were taken WITH the sky
+  table; they come from elsewhere (L4's measured case: a synchronous view build, ~250 ms; see
+  perf/3ds-hd-bubble's ledger, 2026-11-27). No code changed, so no build or test was rerun.
+- **Commit:** 20e2521f (merge) and this one (ledger).
+
+### The fall's pause menu -> MAIN MENU sent the next fall back to the menu (2026-11-26, fix/fall-pause-main-menu)
+- **Owner report (combined 11-26 build, 3DS):** a level's fall, START, MAIN MENU, another level:
+  its briefing shows, then the game is back at the main menu instead of the fall.
+- **Root cause (both frontends):** the fall's pause menu (`menu::PauseMenu fallPause`,
+  mdk_3ds/src/menu_screens_3ds.cpp:291, mdk_linux/src/menu_screens.cpp:246, added with upstream
+  75ec50e2) is a local of the screens loop and outlives the fall. Its "Main menu" item
+  (`PauseMenu::act`, mdk_core/src/game/pause_menu.cpp:75) sets the answer `Menu` and leaves the
+  menu open, as the C# does -- but the C# makes a new PauseMenu with each FallScreen. Here the
+  next fall's first frame found `fallPause.open()` still true, took the `update` path
+  (menu_screens_3ds.cpp:454) and got the stale `Menu` back: straight to the main menu.
+  `PauseMenu::show` (which clears the answer) was never reached, because the menu was "open".
+- **Fix:** `openFall` (the C#'s new FallScreen) starts a new `fallPause` before `fall->open`, in
+  both frontends. Nothing is configured on that menu elsewhere, so the fresh one is the same as
+  the first.
+- **Test:** `fall_frontend_test.sh` case 2b (Linux, headless): new game, the fall, Esc, Main
+  menu, new game again -- the second fall must be the run's last flow line, with two falls and
+  two main menus. Without the fix: FAIL (3 main menus, ends at the menu); with it: PASS. Case 0
+  reads both frontends' `openFall` for the reset before `fall->open` (the 3DS's cannot run on a
+  host); a mutant without the 3DS line fails it.
+- **Evidence:** Linux build 0 warnings; `make -C tests/scripts test` rc 0 (`PASS FallFrontend`,
+  `PASS MenuFrontend`, `PASS Main3dsFlow (22 checks, 64 arms, 24 probes)`, tick1 all cases
+  match); `tests/formats` 200670 checks, 0 failures; `tools/check.sh` ALL GATES PASSED
+  (gates_smdh SKIP, no .cia); 3DS build rc 0, 0 compiler warnings. An independent read-only
+  review agreed on the cause and found no defect in the fix. Not run in Mandarine or on a
+  console: the defect is in both frontends' shared shape and is reproduced and pinned on the
+  Linux frontend.
+- **Other ways to the main menu, checked for the same stale state:** the 3DS level's START menu
+  (`EnhancedMenu`, closed with `menu.setOpen(false)` on Menu, statistics and the next fall;
+  `pauseOptions` and the cheats page cannot be open when MAIN MENU is chosen); the Linux level's
+  pause menu (reset at the level's end, main.cpp:3091); death and game-finished (the 3DS does
+  not close the START menu there, but the simulation is paused while it is open, so neither can
+  happen with it open); the fall's own game over (the pause menu is closed then). None has the
+  defect.
+- **Found, not fixed:** the fall pause menu's OPTIONS page is never given the settings
+  (nor the host, the fonts or the print: `items()` is set up for the level's pause menus only),
+  so on its pages the setting rows have blank labels and change nothing, on both frontends.
+  Pre-existing since 75ec50e2; fixed in the next entry, its own commit.
+- **Commit:** this one (branch fix/fall-pause-main-menu, from test/3ds-combined-11-26).
+
+### The fall's pause menu's OPTIONS pages were blank and inert (2026-11-27, fix/fall-pause-main-menu)
+- **What:** the fall's pause menu (both frontends) now gives its items the main menu's fonts,
+  `Host::Console`, the front's settings and the print line before it shows (the level pause
+  menus' wiring: mdk_linux/src/main.cpp ~2114, mdk_3ds/src/main_3ds.cpp ~1673). A change on its
+  options pages goes through `fallApplied`: saved as the main menu's are (`applied`: Linux
+  `saveSettings`, 3DS `front->save` = `saveConfigNow`) and applied at once to the fall's own
+  mixer (`applyAudio`), as the level's are to the level's.
+- **Why:** before, `fallPause.items()` was never set up: no settings, so every setting row's label
+  was empty and a step did nothing; no host, so the pages were the desktop oracle's; no print,
+  so nothing reached the log. The C# PauseMenu (75ec50e2) is made over the Ui, with its
+  settings and fonts.
+- **Test:** `fall_frontend_test.sh` case 2c (Linux, headless): in the fall, Esc, Options, Audio,
+  Left -- the log has "Menu: Resume | Options | Main menu | Quit", "Menu: Graphics | Audio |
+  Game | Back" and the labelled volumes, and the run's own settings.cfg has master_volume=70.
+  Against the binary without this change: FAIL (4 checks: no lines, the file kept 80); with it:
+  PASS. Case 0's second check reads both frontends for `fallPause.items()` and the four setters
+  in the 12 lines before the fall's `fallPause.show();`; a mutant without any one of them (3DS)
+  or without the setSettings (Linux) fails it.
+- **Not like the C#:** the options page's song (`_ui.Play(_song, Bus.Music)`) is not played in
+  the fall, as it is not in the level's pause menu on this port.
+- **Evidence:** Linux build 0 warnings; `make -C tests/scripts test` rc 0 (`PASS FallFrontend`
+  with 2c, `PASS MenuFrontend`, `PASS Main3dsFlow (22 checks, 64 arms, 24 probes)`, tick1 all
+  cases match); `tests/formats` 200670 checks, 0 failures; `tools/check.sh` ALL GATES PASSED
+  (gates_smdh SKIP, no .cia); 3DS build rc 0 (menu_screens_3ds.cpp recompiled), 0 compiler
+  warnings. An independent read-only review found no defect (the fall's mixer lives whenever
+  `fallApplied` can run; the 3DS `front->save` is `saveConfigNow`, the level's saver). Not run
+  in Mandarine or on a console: the 3DS side is pinned by the source check only.
+- **Commit:** this one.
+### The Old 3DS "menu-exit hang" of 2026-11-26: not a menu exit; one run end for every frame loop
+- **Asked:** root-cause the hard hang of `old3ds-lan167` (no ping, no ARP, UDP `cmd reboot`
+  not consumed, physical power needed), on the hypothesis that quitting from the MAIN MENU
+  tears down with the menu's slide reads or music worker live.
+- **The session named as the hang is not one.** `sd-pull-1851/mdk.prev2.log` line 606 (the
+  only session on the card without `--- session end ---`) is the `L5a` cycle of
+  `throwaway/overnight-smoke-hw` at 09446445 (pushed ~08:17; built after 09446445 08:09 and
+  before ca63e48e's GOD=1 at 08:34; `.git/worktrees/overnight-smoke-hw/hw-logs/L5a-cap.out`).
+  Kurt died at frame 2279, the menu came up, its slides loaded at frame 2698 -- and that
+  harness never asks its deadline outside the level loop (`harnessAutoquitDue` is called only
+  in main_3ds.cpp's level loop on every 11-26 throwaway carrying the 7d86f347 port:
+  overnight-smoke, decal-zfight, combined, hd-bubble-base, mip-root, second-core-hw2;
+  `harness/3ds-profiling` and `fix/3ds-hd-only` do ask it in the menus and the stream). The
+  game sat in the menu: hw_cycle `TIMEOUT ... consecutive failed pulls=0`, "HTTP answers but no
+  new session end", and the next push (08:36) was received by the stub. The console was alive.
+- **A quit from the main menu was run on the appliance and was clean.** `throwaway/death-menu-hw`
+  14bd3a01 (which added the menus' autoquit), cycle A 12:15-12:28
+  (`.git/worktrees/death-menu-hw/hw-logs/A.session.log`): three deaths, the menu each time, the
+  last visit `menu: slides loaded at frame 4756 (8 loaded)` with MAINSONG on the worker, then
+  `exiting after 14258 frames ... harness autoquit`, `--- session end ---`, FRESH, and the next
+  lanes' cycles (12:32-13:21) ran normally.
+- **The real hard hang** began during `decal-zfight`'s `after-shot.3dsx` cycle (pushed 13:22,
+  push returned after 367 s, `hw-after-shot.cycle.txt`: 48 consecutive failed pulls from the
+  start of the poll; ARP-dead by 13:46, `bullet-cam/hw-logs/hw-shot2.cycle.txt`). That run
+  quit from INSIDE level 7, not from a menu, and its log on the card (sd-pull-1851 `mdk.log`,
+  5th session) is complete: `exiting after 4360 frames (5381 steps): harness autoquit`,
+  `--- session end ---`. HTTP had stopped answering while the game was still running; the ATM
+  `screenshot` requests sent mid-run came back "not committed within 30s" then "artifacts.txt
+  timed out" (`shots-after-{1,2,3}.json`). The overnight `restore-strips` wedge (~02:46,
+  WORK_LEDGER "the appliance stopped answering after the screenshot run") has the same shape:
+  mid-run ATM screenshot sets "not committed", then :8080 and :17491 dead. Ranked candidates:
+  (1) ATM/Rosalina's live capture path (`RosalinaMenu_CaptureScreenshotSet`, netload_stub
+  `sysmodules/rosalina/source/menus.c`) under a running MDK -- firmware, outside this repo;
+  (2) something in the run itself that kills the network sysmodules mid-run. Not proven:
+  no ATM log or crash dump from 13:30 has been read (both are on the card).
+- **Teardown audit (this tree and 09446445), no defect found:** every thread is joined before
+  exit (the streaming worker, or on 09446445 the log writer, the HD reader and the audio worker),
+  `ndspExit` runs on every open, the render targets' deletes and `C3D_Fini` wait for the GPU
+  queue (citro3d's `C3D_RenderTargetDelete` disassembled: `gxCmdQueueWait(-1)`), romfs is
+  released after its readers. An independent read-only review agent reached the same verdict.
+- **What was fixed** (the defect class behind the stranded session): the run's own end was a
+  field per loop (`FrontScreens3ds::frameBudget`, `Stream3dsFrontend::frameBudget`) and a
+  harness's deadline one call in the level loop. `platform/run_end_3ds.{h,cpp}`'s
+  `runEnded3ds(frame, &reason)` is now the one check the level loop, the front screens and the
+  stream all make; a harness adds its deadline there (`throwaway/menu-exit-hw` d4c41824 does).
+  `--frames` behaves as before (same position, reason, teardown).
+  `tests/scripts/run_end_test.sh` fails any `aptMainLoop()` frame loop in `mdk_3ds/src` without
+  the call and any per-loop `frameBudget` copy, and proves both on seeded copies of the tree
+  (against the unfixed tree it reports 8 failures).
+- **Evidence:**
+  - Linux build (RelWithDebInfo): 0 warnings. 3DS player build (`make -C mdk_3ds`): 0 warnings.
+  - `make -C tests/scripts test`: exit 0, 1004 PASS, 0 FAIL, 4 SKIP (frame-gate oracle arms);
+    RunEnd 3/3. `make -C tests/formats`: 200,670 checks, 0 failures. `tools/check.sh` (with
+    `MDK_DATA_DIR`): ALL GATES PASSED (gates_smdh SKIP, no .cia).
+  - Mandarine r1.2.1 (md5 0d2adab6), `DISPLAY=:99`, `emurun.sh --secs 150`, the only MDK
+    instance (a perfect_dark instance was up). Menu-only boot, `AUTOQUIT=60`:
+    - fixed (`fixed-menu60.3dsx`, md5 44e7d073): splash, MAINSONG, slides loaded at frame 724,
+      `audio: dsp close`, `exiting after 3477 frames (0 steps): harness autoquit`,
+      `reader: at stop`, `--- session end ---`;
+    - unfixed (`throwaway/combined-hw` 33b97b0a, `unfixed-menu60.3dsx`, md5 efb1221d): slides
+      loaded at frame 723, then 14 ten-second worker summaries in the menu and no exit -- the
+      L5a stranding reproduced. The emulator does not hang on either.
+- **Hardware: NOT RUN** (owner away; nobody can power-cycle the appliance). Payloads ready in
+  `.git/worktrees/menu-exit/hw-logs/`: `fixed-menu60.3dsx` (autoquit from the main menu after
+  the slides load) and `fixed-L5-death-menu120.3dsx` (the L5a scene: LEVEL=5, HDROMFS, the
+  L5a toggles, no god; Kurt's death, the menu, autoquit there at 120 s). `unfixed-menu60.3dsx`
+  is kept for the emulator only: on the console it would sit in the menu until a UDP reboot.
+  Before any of them: pull `/luma/atm/atm.log` and `/luma/dumps/arm11/` for 13:2x-13:4x.
+- **Commit:** 1fde4fbd (the fix and its test); this entry.
+
+## 2026-11-27 -- test/3ds-combined-11-26 (ff13fd11) merged into fix/opcodes-parity
+- **What:** the combined line's ride-end ordering (fix/l4-ride-end-depth), the fall's pause menu
+  and the run-end fix merged into the opcode branch. Conflicts resolved keeping both intents:
+  `LevelView::draw(ArenaLayer, box, eye, margin, frames)` -- the ride end's back/cover marks
+  and opcode 133's per-batch frame are independent fields of the same MeshDraw; `ArenaViews::draw`
+  passes the frames on all three layers; both frontends set the frames pointer, then make the
+  ride end's `arenaViews.draw(*frameDrawn, cameraArena, eye, separation)` call; both host tests
+  (`LevelViewMarksTheLayers`, `LevelViewDrawsTheScriptsTextureFrame`) kept, the seam stub
+  records frames and back/cover counts; the ledger is the union of both sides.
+- **Ropes in the ride-end ordering:** `RopeView::draw` takes the frame's `layeredBack` and queues
+  the rope of an object in that arena `back` (`MeshDraw::back`; the same buckets
+  `mdk_render_set_back` routes to), so the pendulum's rope and the dog's tethers go under the
+  camera arena's cover with their arena. Ropes are never `cover` and never make a frame layered
+  on their own.
+- **Found by the resolution's review (a gap on the combined line, not made by the merge):** the
+  objects of the `back` arena are not actually queued `back`. The frontends switch
+  `mdk_render_set_back` on around `ObjectView::addObject`, but that only fills the object
+  stream; `ObjectDraw::draw` submits it later, after the flag is off, and sets no `back`. Fixed
+  in the next commit on this branch (kept separate from the merge so it can be judged alone).
+- **Checks:** Linux build 0 warnings; `make -C tests/scripts test` exit 0 (1014 PASS, 0 FAIL,
+  ArenaCover pass, the seven opcode goldens pass); `make -C tests/formats` 200692 checks, 0
+  failures; `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds` 0 compiler
+  warnings. Linux frames of the pendulum (OLYM_6 f330), the dog (MUSE_5 f120) and the comm
+  screen (DANT_5 scope f110) are pixel-identical to the pre-merge captures (those spots draw
+  one arena or nothing layered). An independent read-only review of the resolution found no
+  lost or duplicated code and no caller of an old signature.
+- **Not verified:** no layered frame with a rope in the other arena was looked at (no retail
+  rope sits at a two-arena doorway that was found); no hardware, no Mandarine.
+

@@ -36,6 +36,7 @@ static bool coalesciblePair(const PreparedDraw* a, const PreparedDraw* b) {
         db->primitive != mdk::Primitive::Triangles) return false;
     if (a->texHd != b->texHd || a->texIndex != b->texIndex || a->texUnit != b->texUnit) return false;
     if (a->texPending != b->texPending) return false;
+    if (a->stencil != b->stencil) return false;
     if (a->overlay != b->overlay || a->lit != b->lit || a->shadowLit != b->shadowLit ||
         a->worldIdentity != b->worldIdentity ||
         a->haze != b->haze || a->mipped != b->mipped) return false;
@@ -88,10 +89,41 @@ static void prepareQueue(RendererC3D* r) {
     {
         size_t total = r->insetOverDraws.size();
         for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
-            total += r->queue.bucket(pass).size();
+            total += r->queue.bucket(pass).size() + r->queue.backBucket(pass).size();
         }
         if (r->prepared.capacity() < total) {
             r->prepared.reserve(total);
+        }
+    }
+    // THE CAMERA'S ARENA OVER THE OTHER ONE (render/draw_queue.h), with the
+    // stencil instead of the depth step: no draw is added. The camera arena's
+    // opaque `cover` draws go first and mark where they draw; the other arena's
+    // `back` draws follow, only where nothing was marked; then every bucket as
+    // before, without the cover draws already drawn. The picture is the depth
+    // step's (Vulkan, 12_draw.inc): the camera's arena wherever it is drawn, the
+    // depth buffer everywhere else. Without back draws only the last runs.
+    const bool layered = r->queue.hasBack();
+    if (layered) {
+        for (int32_t pass = static_cast<int32_t>(mdk::Pass::Solid);
+             pass <= static_cast<int32_t>(mdk::Pass::DoubleSided); pass++) {
+            const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+            for (size_t i = 0; i < bucket.size(); i++) {
+                PreparedDraw p;
+                if (bucket[i].cover && prepareDraw(r, &bucket[i], &p)) {
+                    p.stencil = kStencilMark;
+                    pushPrepared(r, &p);
+                }
+            }
+        }
+        for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
+            const std::vector<mdk::MeshDraw>& back = r->queue.backBucket(pass);
+            for (size_t i = 0; i < back.size(); i++) {
+                PreparedDraw p;
+                if (prepareDraw(r, &back[i], &p)) {
+                    p.stencil = kStencilTest;
+                    pushPrepared(r, &p);
+                }
+            }
         }
     }
     for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
@@ -101,7 +133,12 @@ static void prepareQueue(RendererC3D* r) {
             r->preparedGlowAt = (int32_t)r->prepared.size();
         }
         const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+        const bool opaque = pass == static_cast<int32_t>(mdk::Pass::Solid) ||
+                            pass == static_cast<int32_t>(mdk::Pass::DoubleSided);
         for (size_t i = 0; i < bucket.size(); i++) {
+            if (layered && opaque && bucket[i].cover) {
+                continue;   // drawn first, above
+            }
             PreparedDraw p;
             if (prepareDraw(r, &bucket[i], &p)) {
                 pushPrepared(r, &p);
@@ -172,8 +209,10 @@ static void sceneWindowScissor(RendererC3D* r, u32* left, u32* top, u32* right, 
 // has no rectangle depth clear (a target clear is the whole buffer), so the
 // depth is reset by a quad over the viewport at the far plane, depth test
 // ALWAYS, depth written and colour not (vault: forsaken
-// citro3d-missile-chase-cam-per-eye-scissored-clear). The eye's offset is the
-// scene's, as the C#'s View.Eye per inset. It leaves the scissor off.
+// citro3d-missile-chase-cam-per-eye-scissored-clear). It leaves the scissor off.
+// ONE EYE (owner, 2026-11-26: "we dont need stereoscopy there"): the insets are
+// drawn in the first eye only, at zero parallax (no eye offset), and the second
+// eye gets the same pixels by a copy after its replay (copyInsetsToSecondEye).
 // The lit programs turn each face to the camera (mdk_c3d.g.pica): the inset's
 // camera while its records draw, the eye's again after. Their uniforms are
 // written at every bind from these rows, and now if one is bound.
@@ -192,7 +231,7 @@ static void setLitCamera(RendererC3D* r, const float position[3]) {
 }
 
 static void drawSceneInsets(RendererC3D* r) {
-    if (r->sceneInsetCount <= 0 || r->preparedGlowAt <= 0) {
+    if (r->sceneInsetCount <= 0 || r->preparedGlowAt <= 0 || r->eyeTarget != r->targetLeft) {
         return;
     }
     float frameVp[16];
@@ -238,8 +277,14 @@ static void drawSceneInsets(RendererC3D* r) {
             mdk::pica::DepthState reset;
             reset.reset = true;
             installDepthState(r, reset);
+            // And the stencil to 0 there: the inset's records mark and test it
+            // afresh (prepareQueue; the eye's marks are not the inset camera's).
+            C3D_StencilTest(true, GPU_ALWAYS, 0, 0xFF, 0xFF);
+            C3D_StencilOp(GPU_STENCIL_REPLACE, GPU_STENCIL_REPLACE, GPU_STENCIL_REPLACE);
+            r->stencilMode = -1;
             C3D_DrawArrays(r->boundProgram->geometryShader ? GPU_GEOMETRY_PRIM : GPU_TRIANGLES,
                            0, 6);
+            installStencil(r, kStencilOff);
             // Back to states the caches describe.
             installAlphaTest(r, alphaReference, false);
             installDepthState(r, mdk::pica::depthStateForPass(mdk::Pass::Solid));
@@ -248,11 +293,10 @@ static void drawSceneInsets(RendererC3D* r) {
         }
 
         // The inset's camera in place of the eye's, for the matrix and the cull.
-        mdk::pica::eyeViewProjection(inset.view, inset.projection, r->eyeOffset, r->eyeVp);
+        mdk::pica::eyeViewProjection(inset.view, inset.projection, 0.0f, r->eyeVp);
         {
             float vpEngine[16];
-            mdk::pica::eyeViewProjectionEngine(inset.view, inset.projection, r->eyeOffset,
-                                               vpEngine);
+            mdk::pica::eyeViewProjectionEngine(inset.view, inset.projection, 0.0f, vpEngine);
             mdk::pica::frustumPlanes(vpEngine, r->frustum);
         }
         C3D_Mtx gpuMtx;
@@ -275,6 +319,52 @@ static void drawSceneInsets(RendererC3D* r) {
     memcpy(r->pullEye, r->cameraPos, sizeof(r->pullEye));
     C3D_SetViewport(0, 0, r->targetWidth, r->targetHeight);
     C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, r->targetWidth, r->targetHeight);
+}
+
+// THE SECOND EYE'S INSETS: the first eye's pixels of each inset's rectangle,
+// copied into the second eye's target after its replay (the canvas is flat, so
+// both eyes drew the same canvas there). The rectangle on the panel, through the
+// rotation writeScreenshotBmp measured (memory row = panel x, memory column =
+// 239 - panel y, both times the target's scale), grown out to whole 8x8 tiles:
+// within one row of tiles the tiles are consecutive, 256 bytes each, so each
+// rectangle is one GX_TextureCopy of tile-row lines with a gap. The few pixels
+// the growth adds lie under the opaque frame around the windows. One split (the
+// eye's commands run before the copy) and one copy per inset in the GX queue.
+static void copyInsetsToSecondEye(RendererC3D* r) {
+    if (r->sceneInsetCount <= 0 || r->eyes.passes < 2 || r->preparedGlowAt <= 0) {
+        return;
+    }
+    frameSplit(r);
+    const float canvasWidth = mdk_render_canvas_width((MdkRenderer)r);
+    const int32_t width = (int32_t)r->targetWidth;     // kScreenWidth * scale x
+    const int32_t height = (int32_t)r->targetHeight;   // kScreenHeight * scale y
+    const int32_t tilesPerRow = width / 8;
+    for (int32_t n = 0; n < r->sceneInsetCount; n++) {
+        const float* rect = r->sceneInsets[n].rect;
+        const float panelX0 = rect[0] * (float)kScreenHeight / canvasWidth;
+        const float panelX1 = (rect[0] + rect[2]) * (float)kScreenHeight / canvasWidth;
+        const float panelY0 = rect[1] * (float)kScreenWidth / (float)mdk::kCanvasHeight;
+        const float panelY1 = (rect[1] + rect[3]) * (float)kScreenWidth / (float)mdk::kCanvasHeight;
+        int32_t row0 = (int32_t)floorf(panelX0 * (float)r->targetScaleY);
+        int32_t row1 = (int32_t)ceilf(panelX1 * (float)r->targetScaleY);
+        int32_t col0 = width - (int32_t)ceilf(panelY1 * (float)r->targetScaleX);
+        int32_t col1 = width - (int32_t)floorf(panelY0 * (float)r->targetScaleX);
+        row0 = (row0 < 0 ? 0 : row0) / 8;
+        row1 = ((row1 > height ? height : row1) + 7) / 8;
+        col0 = (col0 < 0 ? 0 : col0) / 8;
+        col1 = ((col1 > width ? width : col1) + 7) / 8;
+        if (row1 <= row0 || col1 <= col0) {
+            continue;
+        }
+        const u32 lineBytes = (u32)(col1 - col0) * 256u;
+        const u32 gapBytes = (u32)(tilesPerRow - (col1 - col0)) * 256u;
+        const size_t start = ((size_t)row0 * (size_t)tilesPerRow + (size_t)col0) * 256u;
+        const u8* from = static_cast<const u8*>(r->targetLeft->frameBuf.colorBuf) + start;
+        u8* to = static_cast<u8*>(r->targetRight->frameBuf.colorBuf) + start;
+        GX_TextureCopy((u32*)from, GX_BUFFER_DIM(lineBytes >> 4, gapBytes >> 4), (u32*)to,
+                       GX_BUFFER_DIM(lineBytes >> 4, gapBytes >> 4),
+                       lineBytes * (u32)(row1 - row0), GX_TRANSFER_RAW_COPY(1));
+    }
 }
 
 static void replayQueue(RendererC3D* r) {
@@ -361,6 +451,8 @@ static void replayQueue(RendererC3D* r) {
         // carries the inset's own transform, so the box no longer describes it:
         // opt the copy back out of the frustum cull.
         inset.cullable = false;
+        inset.back = false;
+        inset.cover = false;
         inset.material.pass = mdk::Pass::Overlay;
         if (r->insetOver) {
             r->insetOverDraws.push_back(inset);
@@ -369,6 +461,19 @@ static void replayQueue(RendererC3D* r) {
         }
         return;
     }
+    if (r->queueBack) {
+        mdk::MeshDraw back = *draw;
+        back.back = true;
+        r->queue.add(back);
+        return;
+    }
     r->queue.add(*draw);
+}
+
+void mdk_render_set_back(MdkRenderer rr, bool back) {
+    RendererC3D* r = asC3d(rr);
+    if (r) {
+        r->queueBack = back;
+    }
 }
 
