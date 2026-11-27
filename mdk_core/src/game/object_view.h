@@ -184,9 +184,17 @@ void objectModelSurfaces(const formats::Model& model, const ObjectLook& look,
 // done. `cmi` may be null (a level with no scripts: the arena's own models only).
 using ObjectSurfaceFn = void (*)(void* user, const Surface& surface,
                                  const formats::Palette* palette);
+//
+// With `layouts` (null: none), an arena-OWN model's layout is made too
+// (ObjectView::preload), keyed as the object pass will key it: its pointer is the
+// arena's, which the objects placed in it draw. A global model's is not -- the
+// object pass keys it by the runtime's own parse (ScriptRuntime::findModel), which
+// this temporary is not.
+class ObjectView;
 bool warmObjectStep(const formats::Arena& arena, const formats::Cmi* cmi,
                     const ObjectLook& look, const MaterialResolver& resolver,
-                    ObjectSurfaceFn start, void* user, size_t* cursor);
+                    ObjectSurfaceFn start, void* user, size_t* cursor,
+                    ObjectView* layouts = nullptr);
 
 // One batch's draw, as the object pass queues it (the C#'s DrawCommand, for the
 // object pass). The surface is the FORMAT's surface, not a GPU one: the backend

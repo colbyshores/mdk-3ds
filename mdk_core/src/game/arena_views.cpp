@@ -360,8 +360,8 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
         if (view != nullptr && !view->ready() && !view->buildFailed() && !view->notBuilding()) {
             // Driven on state, not buildStep's return (the header states
             // it: true exactly at Ready), and capped far past any real
-            // build (the largest arena is ~50 slices: depth units, 1200-
-            // triangle loop steps, Mesh, Large): every buildStep call
+            // build (the largest is ~600 slices at 150 units a step, LEVEL4's
+            // MEAT_5: depth units, loop steps, Mesh, Large): every buildStep call
             // advances a cursor or changes state by construction, so the
             // cap is a belt against a future no-progress step, and the
             // pump keeps stepping past it on later syncs regardless.
@@ -382,32 +382,9 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
             }
         }
     }
-    // One build step a sync, for ONE view still building (the door pump:
-    // an incoming arena's view is made over the approach frames, not in
-    // one sync -- and one build in flight at a time, so two arenas'
-    // intermediate vertex buffers never peak together). A build that
-    // fails here takes the same retry path as a load that failed outright.
-    // Oldest first: the arena the player is standing in finishes before
-    // the one being walked to (a reverse sweep would starve it behind
-    // every newer build).
-    for (size_t i = 0; i < views_.size(); i++) {
-        LevelView* view = views_[i].view;
-        if (view->ready()) {
-            continue;
-        }
-        view->buildStep();
-        stats_.buildSteps++;
-        if (view->buildFailed() || view->notBuilding()) {
-            const std::string name = views_[i].name;
-            const LevelViewBuildFailure failure = view->buildFailure();
-            release(i);
-            noteFailed(name, failure);
-            stats_.failed++;
-            i--;   // the next view shifted into this slot; step it next sync
-            continue;
-        }
-        break;   // one build step a sync (the cap above)
-    }
+    // One build step a sync (stepBuild); the frontend may take more under a
+    // time budget.
+    stepBuild(false);
     // A refresh recorded while a view was building, or one whose mesh
     // creation failed, is retried here under the same transient backoff.
     for (size_t i = 0; i < views_.size(); i++) {
@@ -455,6 +432,40 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
     return built;
 }
 
+
+bool ArenaViews::stepBuild(bool sliceOnly) {
+    // One build step for ONE view still building (the door pump: an incoming
+    // arena's view is made over the approach frames, not in one frame -- and
+    // one build in flight at a time, so two arenas' intermediate vertex buffers
+    // never peak together). A build that fails here takes the same retry path
+    // as a load that failed outright. Oldest first: the arena the player is
+    // standing in finishes before the one being walked to (a reverse sweep
+    // would starve it behind every newer build).
+    bool stepped = false;
+    for (size_t i = 0; i < views_.size(); i++) {
+        LevelView* view = views_[i].view;
+        if (view->ready()) {
+            continue;
+        }
+        if (sliceOnly && !view->sceneBuilding()) {
+            break;   // a Mesh or Large step: the next sync takes it, alone
+        }
+        view->buildStep();
+        stats_.buildSteps++;
+        stepped = true;
+        if (view->buildFailed() || view->notBuilding()) {
+            const std::string name = views_[i].name;
+            const LevelViewBuildFailure failure = view->buildFailure();
+            release(i);
+            noteFailed(name, failure);
+            stats_.failed++;
+            i--;   // the next view shifted into this slot: it is stepped now
+            continue;
+        }
+        break;   // one build step a call
+    }
+    return stepped;
+}
 
 void ArenaViews::sweepOrphans(const std::string& current, const std::string& second,
                               const std::vector<std::string>& drawn) {

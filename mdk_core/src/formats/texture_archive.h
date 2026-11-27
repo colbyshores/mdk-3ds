@@ -93,6 +93,15 @@ public:
 private:
     std::vector<std::pair<std::string, Texture>> textures_;
     std::vector<std::pair<std::string, int32_t>> colors_;
+    // findTexture's index: the entries' positions, sorted by name (stably, so
+    // a name's first entry comes first -- the scan's answer). Made by parse()
+    // and add(), at load, in one allocation; remade by a lookup only if the
+    // entry count changed behind it (names are never changed in place:
+    // mutableTextures changes textures, add() appends or keeps the name).
+    // Lookups are main-thread only.
+    void index() const;
+    mutable std::vector<uint32_t> byName_;
+    mutable size_t indexed_ = (size_t)-1;
 };
 
 } // namespace formats

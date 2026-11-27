@@ -229,6 +229,53 @@ MDK_TEST(OnlyKeyedTexturesSeeThrough) {
     }
 }
 
+// TextureArchive::findTexture answers through its name index (made on the first
+// lookup, remade when the entry count changes) exactly what the scan answered: each
+// name's FIRST entry, null for a name that is not there, case-sensitive, and an
+// entry add()ed after a lookup is found.
+MDK_TEST(FindTextureIsTheFirstEntryOfItsName) {
+    std::vector<uint8_t> mtiBytes;
+    MDK_CHECK(readDataFile("TRAVERSE/LEVEL8/LEVEL8S.MTI", &mtiBytes));
+    if (mtiBytes.empty()) {
+        return;
+    }
+    TextureArchive level = TextureArchive::parse(mtiBytes.data(), (int32_t)mtiBytes.size(),
+                                                 TextureArchive::kFileBase);
+    const std::vector<std::pair<std::string, Texture>>& textures = level.textures();
+    MDK_CHECK(!textures.empty());
+    int checked = 0;
+    for (size_t i = 0; i < textures.size(); i++) {
+        const Texture* first = nullptr;
+        for (size_t k = 0; k < textures.size() && first == nullptr; k++) {
+            if (textures[k].first == textures[i].first) {
+                first = &textures[k].second;
+            }
+        }
+        MDK_CHECK(level.findTexture(textures[i].first) == first);
+        checked++;
+    }
+    MDK_CHECK(checked == (int)textures.size() && checked > 0);
+    MDK_CHECK(level.findTexture("NO_SUCH_TEXTURE") == nullptr);
+    MDK_CHECK(level.findTexture("bullet") == nullptr);   // ordinal, as the scan
+    Texture added;
+    level.add("ADDED_LATE", added);
+    MDK_CHECK(level.findTexture("ADDED_LATE") == &level.textures().back().second);
+    // A copy answers from its own entries, not the original's.
+    TextureArchive copy = level;
+    MDK_CHECK(copy.findTexture("ADDED_LATE") == &copy.textures().back().second);
+    // A name twice (pushed past add(), which would replace it): the FIRST one, as
+    // the scan's answer; and an entry pushed behind a built index is found.
+    TextureArchive twice;
+    twice.mutableTextures().push_back(std::make_pair(std::string("SAME"), Texture()));
+    twice.mutableTextures().push_back(std::make_pair(std::string("OTHER"), Texture()));
+    MDK_CHECK(twice.findTexture("SAME") == &twice.textures()[0].second);
+    twice.mutableTextures().push_back(std::make_pair(std::string("SAME"), Texture()));
+    twice.mutableTextures().push_back(std::make_pair(std::string("AAA"), Texture()));
+    MDK_CHECK(twice.findTexture("SAME") == &twice.textures()[0].second);
+    MDK_CHECK(twice.findTexture("AAA") == &twice.textures()[3].second);
+    MDK_CHECK(twice.findTexture("OTHER") == &twice.textures()[1].second);
+}
+
 // LevelData::entryNamed finds the DTI arena entry by name the way the C#'s
 // EntryNamed does: a linear scan, matched with `entry.Name == name`, which is
 // ordinal (case-sensitive). The VM's spawn path looks up an arena's object

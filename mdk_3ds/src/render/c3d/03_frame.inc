@@ -344,51 +344,14 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);
     r->inFrame = false;
-    // THE NATIVE WRITES, SEEN ON THE REAL PASS, ONCE. testNativeShadowWrites
-    // decides from 8x8 quads; the emulator's native writes pass that and land
-    // nowhere in the scene's caster pass (level 8 frame 60: 0 texels), which is
-    // why the ramp is taken wherever it is exact, and native only where the ramp
-    // measured broken (the Old 3DS: 13,285 texels, the emulator's ramp map's own,
-    // depths equal to 1/65536). So the first native frames have their map read
-    // back, as evidence: the first that wrote any settles it; three in a row
-    // with casters drawn and nothing written settle it too, and the map stays
-    // native -- a frame CAN legitimately write nothing (every caster back-facing
-    // the sun, or outside the map's box), and the only other path is the one
-    // that cannot work on this GPU (review, 2026-11-18: demoting to the ramp here
-    // put a console on it for the session).
-    if (r->shadowNative && !r->shadowNativeVerified && r->shadowLive && r->shadowCasters > 0 &&
-        r->shadowMapReady && r->shadowMapSize > 0) {
-        const u32 side = (u32)r->shadowMapSize;
-        const size_t bytes = (size_t)side * side * 4;
-        u32* copy = static_cast<u32*>(linearAlloc(bytes));
-        if (copy) {
-            const u32 rowDim = GX_BUFFER_DIM((side * 8u * 4u) >> 4, 0);
-            const bool read = readBack(r, r->shadowTex.data, rowDim, copy, bytes, 0xFF);
-            uint32_t written = 0;
-            for (size_t i = 0; i < (size_t)side * side && read; i++) {
-                if (copy[i] != 0xFFFFFFFFu) {
-                    written++;
-                }
-            }
-            linearFree(copy);
-            if (written > 0) {
-                r->shadowNativeVerified = true;
-                r->shadowNativeEmptyFrames = 0;
-                mdk::log3dsPrintf("shadows: native writes verified in the caster pass (%d "
-                                  "casters, %u texels written)",
-                                  (int)r->shadowCasters, (unsigned)written);
-            } else if (++r->shadowNativeEmptyFrames >= 3) {
-                // Settled without a sighting: native writes are only chosen where
-                // the ramp measured BROKEN, so there is nothing better to fall
-                // back to (the ramp shadows the floor with itself there); the
-                // readbacks stop, the map stays native.
-                r->shadowNativeVerified = true;
-                mdk::log3dsPrintf("shadows: native writes not seen in the caster pass (%d "
-                                  "casters, 0 texels, 3 frames running); kept (the ramp "
-                                  "measured broken on this GPU)", (int)r->shadowCasters);
-            }
-        }
-    }
+    // THE NATIVE WRITES ARE DECIDED AT BOOT, NOT IN PLAY (2026-11-27). The
+    // first native frame used to read the real pass's whole map back (1 MiB GPU
+    // copy, waited for, and a scan) as evidence: 41.6 ms of LEVEL4's first
+    // sunlit frame on the Old 3DS. Either answer kept the map native, so it
+    // decided nothing; testNativeShadowWrites (boot, outside any frame, its
+    // frame waited for) is the decision, and it already writes natively into a
+    // bare target AND samples it in the same command list -- the emulator's
+    // failure (writes landing, the sampler not seeing them) fails there.
     // C3D_FrameEnd submits the queue; it does not wait for it. Until the
     // next C3D_FrameBegin, the GPU may still be reading this frame's
     // textures, so they cannot be freed or replaced (AGENTS.md P3).

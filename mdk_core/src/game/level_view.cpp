@@ -100,11 +100,12 @@ bool LevelView::loadBegin(MdkRenderer renderer, LevelData* level, const formats:
 }
 
 bool LevelView::buildStep() {
-    // Triangles a step: a view is ready a few frames after it starts --
-    // inside the pair window the door gives it. Measured on the Old 3DS (L7
-    // walk, DANT_2's build at the corridor crossing): 1200 were ~7 ms a
-    // step; 600 keep a step near the depth steps' few milliseconds.
-    const int32_t kBuildTrianglesPerStep = 600;
+    // Triangles a step. Measured on the Old 3DS (L7 walk, DANT_2's build at
+    // the corridor crossing): 1200 were ~7 ms a step. Small steps (~1 ms) so
+    // the frontend's time budget (ArenaViews::stepBuild) bounds a frame's
+    // share: one 600-triangle step a frame left LEVEL4's MEAT_5 build 15 frames
+    // over 33 ms on its approach (2026-11-27).
+    const int32_t kBuildTrianglesPerStep = 150;
     switch (buildState_) {
         case BuildState::Scene:
             if (builder_.step(kBuildTrianglesPerStep)) {

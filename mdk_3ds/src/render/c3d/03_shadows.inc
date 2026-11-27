@@ -300,8 +300,7 @@ static void prepareShadows(RendererC3D* r) {
     r->shadowRecast = r->shadowMapFresh || moved || sunTurned || rigChanged ||
                       mdk::pica::shadowRefreshDue(r->toggles.shadowMapRefresh,
                                                   r->frame - r->shadowCastFrame,
-                                                  now - r->shadowCastTick) ||
-                      (r->shadowNative && !r->shadowNativeVerified);
+                                                  now - r->shadowCastTick);
     if (r->shadowRecast) {
         float sun[16];
         const mdk::Vec3 centre = {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2]};

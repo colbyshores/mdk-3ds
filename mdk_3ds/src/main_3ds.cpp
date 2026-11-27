@@ -1508,7 +1508,7 @@ int main(int argc, char** argv) {
             size_t& cursor = objectWarmAt[startArenaName];
             while (!mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr,
                                         objectLook(startArenaName), objectResolver,
-                                        mdk::requestPackedSurface, &warmAsk, &cursor)) {
+                                        mdk::requestPackedSurface, &warmAsk, &cursor, &objectView)) {
             }
         }
         mdk::holdHdWindow3ds(renderer, nullptr, 0, "loading screen", loading.get(), holdFrom,
@@ -2118,8 +2118,19 @@ int main(int argc, char** argv) {
                 bubbleSticky = bubbleHints;
             }
             const double stream1 = mdk::nowSeconds();
+            // THE BUILD BUDGET: after sync's own step, more scene slices of the
+            // view still building (~1 ms each on the Old 3DS) while this frame's
+            // view work is under 3 ms (an integer tick deadline: no float in the
+            // loop's condition, AGENTS.md T2). One 600-triangle step a frame put
+            // LEVEL4's MEAT_5 build (on its approach, from MEAT_6) 15 frames over
+            // 33 ms (2026-11-27); a budget bounds the frame's share and keeps the
+            // build's pace near the old one.
+            const uint64_t kViewBuildBudgetTicks = 3ull * (SYSCLOCK_ARM11 / 1000ull);
+            const uint64_t viewBuildUntil = svcGetSystemTick() + kViewBuildBudgetTicks;
             const int32_t builtViews =
                 arenaViews.sync(streamCurrent, streamSecond, *frameDrawn, bubbleHints);
+            while (svcGetSystemTick() < viewBuildUntil && arenaViews.stepBuild(true)) {
+            }
             const double stream2 = mdk::nowSeconds();
             // THE HD WINDOW FOLLOWS KURT (docs/3DS_ARCHITECTURE.md 4): when his
             // arena or the drawn list changes, the window is asked for anew, the
@@ -2258,7 +2269,7 @@ int main(int argc, char** argv) {
                     size_t& cursor = objectWarmAt[name];
                     mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr, objectLook(name),
                                         objectResolver, mdk::requestPackedSurface, &warmAsk,
-                                        &cursor);
+                                        &cursor, &objectView);
                 }
             }
             for (size_t i = 0; i < bubbleHints.size(); i++) {
@@ -2270,7 +2281,7 @@ int main(int argc, char** argv) {
                 const size_t before = cursor;
                 mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr,
                                     objectLook(bubbleHints[i]), objectResolver,
-                                    mdk::requestPackedSurface, &warmAsk, &cursor);
+                                    mdk::requestPackedSurface, &warmAsk, &cursor, &objectView);
                 if (cursor != before) {
                     break;   // this hint took the frame's step
                 }

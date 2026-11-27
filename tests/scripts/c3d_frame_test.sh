@@ -1507,10 +1507,12 @@ def adjudicate(text, quiet=False):
     #     review finding 1) and the native combiner is constant black;
     #   * native mode is on only for the casters, off again before the flush;
     #   * a native map's target has no depth buffer (as the test measured it);
-    #   * the first native frames' maps are read back as evidence, and three
-    #     empty ones in a row settle it WITHOUT leaving native mode: native is
-    #     chosen only where the ramp measured broken, so demoting to it put a
-    #     console on the path that cannot work there (review, 2026-11-18);
+    #   * play reads the map back never and never leaves native mode: the boot
+    #     test decides (it writes AND samples in one list, which the emulator's
+    #     failure fails), and the in-play readback that used to follow decided
+    #     nothing -- both its answers kept native -- for 41.6 ms of a doorway
+    #     frame (2026-11-27); demoting to the ramp put a console on the path
+    #     that cannot work there (review, 2026-11-18);
     #   * every readback goes through readBack (a trailing copy into the drain,
     #     the destination pre-filled with "nothing seen").
     cast_b = body(text, "castShadows") or ""
@@ -1524,19 +1526,21 @@ def adjudicate(text, quiet=False):
         r"C3D_RenderTargetCreateFromTex\(\s*&r->shadowTex,\s*GPU_TEXFACE_2D,\s*0,\s*"
         r"r->shadowNative \? C3D_DEPTHTYPE\(-1\) : C3D_DEPTHTYPE\(GPU_RB_DEPTH16\)\);", text)) == 1
     end_b = body(text, "mdk_render_end_frame") or ""
-    fallback = (re.search(r"else\s+if\s*\(\s*\+\+r->shadowNativeEmptyFrames\s*>=\s*3\s*\)\s*\{"
-                          r"(?:\s*//[^\n]*)*\s*r->shadowNativeVerified\s*=\s*true;", end_b) is not None
+    probe_b = body(text, "testNativeShadowWrites") or ""
+    fallback = (end_b != ""
                 and "r->shadowNative = false" not in end_b
-                and end_b.count("readBack(r, r->shadowTex.data") >= 1
-                and "C3D_SyncTextureCopy" not in end_b)
+                and "readBack(" not in end_b
+                and "C3D_SyncTextureCopy" not in end_b
+                and probe_b.count("readBack(r, tex.data") == 1)
     test_b = body(text, "testNativeShadowWrites") or ""
     test_restored = 0 <= test_b.find("C3D_FragOpMode(GPU_FRAGOPMODE_GL);") < test_b.find("C3D_FrameEnd(0);")
     rep.check("sun-shadow-map-written-by-a-measured-path",
               ca_alpha and 0 <= ca_on < ca_draw < ca_off < ca_flush and native_target
               and fallback and test_restored,
               "caster alpha from the ramp (native: constant): %s; native mode on %d < draw %d < "
-              "off %d < flush %d; native target without a depth buffer: %s; three empty native "
-              "frames settle it without leaving native mode, read back through readBack: %s; the test leaves native mode before "
+              "off %d < flush %d; native target without a depth buffer: %s; play reads the map back "
+              "never and never leaves native mode (the boot test reads it, through readBack): %s; "
+              "the test leaves native mode before "
               "its frame ends: %s"
               % ("yes" if ca_alpha else "NO", ca_on, ca_draw, ca_off, ca_flush,
                  "yes" if native_target else "NO", "yes" if fallback else "NO",
@@ -3467,19 +3471,16 @@ ARMS = [
      lambda s: s.replace("r->shadowNative ? C3D_DEPTHTYPE(-1) : C3D_DEPTHTYPE(GPU_RB_DEPTH16)",
                          "C3D_DEPTHTYPE(GPU_RB_DEPTH16)", 1),
      "sun-shadow-map-written-by-a-measured-path"),
-    ("native-map-read-back-forever",
-     lambda s: s.replace("                r->shadowNativeVerified = true;\n                mdk::log3dsPrintf(\"shadows: native writes not seen",
-                         "                mdk::log3dsPrintf(\"shadows: native writes not seen", 1),
+    ("native-map-read-back-in-play-again",
+     lambda s: s.replace("    C3D_FrameEnd(0);\n    r->inFrame = false;\n",
+                         "    C3D_FrameEnd(0);\n    r->inFrame = false;\n"
+                         "    if (r->shadowNative) {\n        u32 word = 0;\n"
+                         "        readBack(r, r->shadowTex.data, 0, &word, 4, 0xFF);\n    }\n", 1),
      "sun-shadow-map-written-by-a-measured-path"),
-    ("native-map-demoted-to-the-broken-ramp",
-     lambda s: s.replace("                r->shadowNativeVerified = true;\n                mdk::log3dsPrintf(\"shadows: native writes not seen",
-                         "                r->shadowNativeVerified = true;\n                r->shadowNative = false;\n"
-                         "                releaseShadowMap(r);\n                mdk::log3dsPrintf(\"shadows: native writes not seen", 1),
-     "sun-shadow-map-written-by-a-measured-path"),
-    ("native-map-read-back-without-the-drain",
-     lambda s: s.replace("            const bool read = readBack(r, r->shadowTex.data, rowDim, copy, bytes, 0xFF);",
-                         "            C3D_SyncTextureCopy(static_cast<u32*>(r->shadowTex.data), rowDim, copy, rowDim,\n"
-                         "                                (u32)bytes, GX_TRANSFER_RAW_COPY(1));\n            const bool read = true;", 1),
+    ("native-map-demoted-in-play",
+     lambda s: s.replace("    C3D_FrameEnd(0);\n    r->inFrame = false;\n",
+                         "    C3D_FrameEnd(0);\n    r->inFrame = false;\n"
+                         "    if (r->shadowCasters == 0) {\n        r->shadowNative = false;\n    }\n", 1),
      "sun-shadow-map-written-by-a-measured-path"),
     # The shrink as it was written first: one tiled-to-tiled transfer.
     ("glow-shrinks-tiled-to-tiled",

@@ -104,6 +104,9 @@ public:
     // No build in flight (never begun, or unloaded): the sync pump treats
     // it as failed rather than stepping it forever.
     bool notBuilding() const { return buildState_ == BuildState::Empty; }
+    // In the scene's sliced phase (the small steps); the Mesh and Large steps
+    // after it are single larger ones (the mesh's copy, the large surfaces' starts).
+    bool sceneBuilding() const { return buildState_ == BuildState::Scene; }
 
     // The look the arena's surfaces are shaded with (the C#'s
     // EnhancedLook.Surfaces for the settings' graphics): Lit under the
