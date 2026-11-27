@@ -3717,3 +3717,26 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   - The C# oracle covers the host goldens only; the 3DS frontends' behaviour (bar, insets, pull)
     is not oracle-checked.
 - **Commit:** the merges and fixes above, and this ledger commit.
+
+### Script opcode watch list for the playthrough (2026-11-26, branch docs/opcode-watchlist)
+- **What:** `docs/OPCODE_WATCHLIST.md`, a read-only coverage comparison of our VM
+  (test/3ds-combined-11-26 f517348b) against upstream's C++ 2.0 (origin/main 367cc6fc). The C#
+  (1.1.1 and 1.2.6) is the authority. Rows are sorted in level order, with the arenas and objects
+  where each opcode is used.
+- **Why:** the owner's full playthrough. These are the places where our handling is thinner than
+  upstream's.
+- **Findings:** both VMs dispatch the same 238 opcodes. 234 are equal. Four are partial in ours,
+  where the state is written but nothing consumes it:
+  - 133: the M_COMM screen does not animate (LEVEL4 MEAT_3, LEVEL7 DANT_5).
+  - 159: the box sprites are not stretched over their box (upstream 84ad71e4).
+  - 226: the LEVEL6 OLYM_6 pendulum does not swing, which is a gameplay difference.
+  - 242: the dog's tether lines are not drawn (LEVEL5 MUSE_5, LEVEL8 GUNT_10).
+
+  None is weaker upstream. Opcode 5 (LEVEL7 DANT_2 XBANG) is unhandled everywhere and is counted
+  by `noteUnimplemented`. The demo's five opcodes (300-361) have no case in ours, and ours
+  cannot load the demo.
+- **Evidence:** the case-label set difference is empty. A scratch census walks every script from
+  its entry point through this tree's decoder (236 opcodes used, 107,856 reachable sites).
+  `tick1 probe 18000` reports nothing unimplemented on LEVEL3-8.
+- **Not done:** no code changed, and nothing was run on hardware or in the emulator.
+- **Commit:** this one.
