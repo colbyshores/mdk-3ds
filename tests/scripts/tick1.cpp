@@ -10242,6 +10242,17 @@ int main(int argc, char** argv) {
              "tp:1:DANT_5:100:2320:-60,frames,left:20-85,fire:100-400",
              "DANT_5's comm device shot by the chain gun: its screen goes from 6 to 12 "
              "frames a second (133)"},
+            // set_2d0_block (242): the dog XBN's four tethers, drawn by RopeView's 0xFF mode
+            // from reference points 1-4 (the dog's model has none, so its origin) to the
+            // block's points. Both goldens are the C# oracle's (v1.2.6); their rope column
+            // also equals 1.1.1 + 683a53ef's byte for byte.
+            {"L5_hazards_dog", "golden/L5_hazards_dog.txt", 5, 300,
+             "tp:1:MUSE_5:465:-6:-2263,rope:XBN",
+             "MUSE_5's dog XBN held by four tether lines (set_2d0_block, 242; RopeView "
+             "AllLines)"},
+            {"L8_hazards_dog", "golden/L8_hazards_dog.txt", 8, 300,
+             "tp:1:GUNT_10:-43:3300:-380,rope:XBN",
+             "GUNT_10's dog XBN and its four tethers (242)"},
         };
         for (size_t i = 0; i < sizeof(kHazardsCases) / sizeof(kHazardsCases[0]); i++) {
             const HazardsCase& c = kHazardsCases[i];

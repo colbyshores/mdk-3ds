@@ -320,9 +320,20 @@ static mdk::Vec3 carriedPoint(const mdk::scripts::MdkObject& obj, float alpha, m
 int32_t mdk::scripts::MdkObject::rope_lines(float alpha, Vec3* out) const {
     const int32_t kPairs = 2;
     const float kPairLift = 5.0f;
-    const int32_t kAllLines = 0xFF;  // set_2d0_block's lines (opcode 242): not drawn yet
     int32_t count = 0;
-    if (rope_mask == kAllLines) {
+    if (rope_mask == kRopeAllLines) {
+        // set_2d0_block (opcode 242; the LEVEL5 MUSE_5 / LEVEL8 GUNT_10 dog XBN's four
+        // tethers): a line from reference point i+1, carried with the object, to rope
+        // point i -- for each point that is not exactly zero (the C#'s `!= Vector3.Zero`,
+        // so -0 counts as zero too), which is how the script drops a line.
+        for (size_t i = 0; i < rope_points.size(); i++) {
+            const mdk::Vec3& point = rope_points[i];
+            if (point.x == 0.0f && point.y == 0.0f && point.z == 0.0f) {
+                continue;
+            }
+            out[count++] = carriedPoint(*this, alpha, reference_point((int)i + 1));
+            out[count++] = point;
+        }
         return count;
     }
     for (int32_t i = 0; i < kPairs; i++) {

@@ -308,8 +308,10 @@ struct MdkObject {
     // is the C#'s blending Off (a fixed-step capture, the probes): the points as
     // they are. Returns the number of ends written (0 for rope_mask 0).
     //
+    //   mask 0xFF:  reference point i+1 ---- rope point i   (each non-zero point, opcode 242)
     //   bit 0, 1:   rope point 0 (+5 up) ---- rope point 1  (a swing's rope: object to pivot)
     //               rope point 2 (+5 up) ---- rope point 3
+    static constexpr int32_t kRopeAllLines = 0xFF;  // RopeView.AllLines (set_2d0_block)
     static constexpr int32_t kMaxRopeEnds = 8;
     int32_t rope_lines(float alpha, Vec3* out) const;
     // World position of the centre of a model part (the C#'s PartCenter): the box of

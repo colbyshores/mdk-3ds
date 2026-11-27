@@ -3839,3 +3839,32 @@ against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new
   the level draw links no scripts translation unit); `tools/check.sh` all gates pass (smdh
   skipped); `main_3ds_flow_test.sh` pass; `make -C mdk_3ds` 0 compiler warnings. The slow
   shell half of `make -C tests/scripts test` was run on the 226 commit and the final tree.
+
+### 242 set_2d0_block -- the dog's tether lines are drawn
+- **What was wrong:** the VM set `rope_mask` 0xFF and the four points, save/load kept them, but
+  nothing drew them: the dog XBN (LEVEL5 MUSE_5, LEVEL8 GUNT_10) looked free.
+- **What:** `MdkObject::rope_lines` gains `RopeView.AddLines`' 0xFF branch: for each rope point
+  that is not exactly zero (`!= Vector3.Zero`, so a zeroed point is a dropped line), a line from
+  reference point i+1 (`reference_point`, carried with the object between ticks) to the point.
+  The draw is the 226 commit's `RopeView` (Lines on Vulkan, quads on the PICA200), so nothing
+  in the frontends changed. The VM's own 0xFF is now `MdkObject::kRopeAllLines`. The XBN model
+  has no reference points, so every line starts at the dog's origin (the C#'s ReferencePoint
+  returns Position past the list, as ours does).
+- **Oracle:** new goldens `L5_hazards_dog` (MUSE_5) and `L8_hazards_dog` (GUNT_10), 300 steps
+  each with `rope:XBN`, both the C# oracle's bytes at v1.2.6; 600-step runs equal v1.2.6 byte
+  for byte, and their rope column equals 1.1.1 + 683a53ef's on every line (the other columns
+  part on other objects' upstream fixes). 1.2.6's 242 and RopeView lines are 1.1.1's.
+- **Frames (Linux, headless, --fixed-step, 640x480, DISPLAY=:99, lavapipe):** `dog_linux.png`
+  in the session scratchpad (`opframes/`): left, MUSE_5 (`--level=5 --arena=MUSE_5
+  --at=465,-6,-2263,112`, frame 120), the dog high on its perch with white tether lines down to
+  the platforms; right, GUNT_10 (`--at=-43,3250,-380,90`), the lines at the top of the view.
+- **Cost on the 3DS:** up to 4 quads (24 vertices) a frame while the dog is drawn, in the rope
+  view's mesh; four `reference_point` calls (each a cosf/sinf for the yaw) a frame.
+- **Not verified:** the scripts' line drops (4, 3, 2, then 0 lines before the howl) were not
+  reached in a probe run: standing at the arena's start and firing at the dog (it is
+  indestructible, 65000 hp) leaves all four lines up in both arenas for 2400-3000 steps. The
+  drop path is the same `rope_lines` loop over zeroed points, but no golden shows it. Not run on
+  hardware or in Mandarine.
+- **Checks:** Linux build 0 warnings; tick1 526/526, vm_tests pass; `make -C tests/formats`
+  200670 checks, 0 failures; `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds`
+  0 compiler warnings.

@@ -2397,7 +2397,7 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.turnAndJump(obj, fval(op(ins, 0)));
             return branch(obj, ins, obj->move_command == 229);
         case 242: {  // set_2d0_block: [[count, 4 points]]: lines from reference points 1-4 to the points
-            const int32_t kAllLines = 0xFF;
+            const int32_t kAllLines = MdkObject::kRopeAllLines;
             const std::vector<ScriptValue>& block = listval(op(ins, 0));
             // The decoder only ever builds [mode] or [mode + 12 floats]
             // (modeCount242, matching the C#'s ModeThenFloats), so a short
