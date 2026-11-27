@@ -99,8 +99,9 @@ owner first.
 ## 6. GPU visibility
 
 - Every texture written by the CPU is flushed from the CPU cache before the GPU
-  can sample it, per texture, not only by the end-of-frame flush (candidate
-  cause of the New 3DS mip glitch, branch `fix/3ds-mip-chain`).
+  can sample it, per texture, not only by the end-of-frame flush. This is P3
+  hygiene. It is NOT the fix for the New 3DS mip glitch: the owner's console
+  shows the glitch with the flush in place (`docs/MIP_GLITCH.md`).
 - Imports happen at a frame boundary, never inside a draw, and nothing in flight
   on the GPU is freed or overwritten before the frame that used it completed
   (AGENTS.md P3).
