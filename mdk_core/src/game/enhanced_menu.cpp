@@ -96,7 +96,14 @@ const Item kItems[EnhancedMenu::kItemCount] = {
      &GameSettings::stereoSeparation},
     {"3D SCREEN DISTANCE", Kind::Setting, nullptr, nullptr, nullptr, kStereoDistances,
      kStereoDistanceLabels, 10, &GameSettings::stereoConvergence},
+    // SWAP STICKS (owner 2026-11-27), last so the rows above keep their numbers:
+    // a New 3DS's C-Stick looks and its circle pad walks. Inert without a C-Stick
+    // (EnhancedMenu::setCStick).
+    {"SWAP STICKS", Kind::Toggle, &EnhancedToggles::swapSticks, nullptr, nullptr, nullptr, nullptr,
+     0, nullptr},
 };
+static_assert(EnhancedMenu::kSwapSticksRow == EnhancedMenu::kItemCount,
+              "SWAP STICKS is the last setting row");
 
 bool isItemRow(int32_t row) {
     return row > EnhancedMenu::kResumeRow && row <= EnhancedMenu::kItemCount;
@@ -331,6 +338,10 @@ EnhancedMenu::Action EnhancedMenu::handle(const Input& input, EnhancedToggles* t
     if (!item) {
         return Action::None;
     }
+    // SWAP STICKS without a C-Stick: shown, never changed.
+    if (selected_ == kSwapSticksRow && !cstick_) {
+        return Action::None;
+    }
     if (item->kind == Kind::Toggle) {
         // Left, right or A: one flip, whichever of them came (as before).
         if (!(input.confirm || input.left || input.right)) {
@@ -393,7 +404,9 @@ void EnhancedMenu::draw(MdkRenderer renderer, FontView& big, FontView& small,
         }
         const Colour& labelColour =
             isSelected ? kSelected
-                       : ((row == kQuitRow || row == kMainMenuRow) ? kQuit : kRow);
+                       : ((row == kQuitRow || row == kMainMenuRow)
+                              ? kQuit
+                              : ((row == kSwapSticksRow && !cstick_) ? kHintColour : kRow));
         small.draw(renderer, rowLabel(row), px + 30.0f, baseline, 1.5f, labelColour);
         const Item* item = rowItem(row);
         if (!item) {
@@ -401,8 +414,13 @@ void EnhancedMenu::draw(MdkRenderer renderer, FontView& big, FontView& small,
         }
         char value[16];
         rowValue(row, toggles, value, (int32_t)sizeof(value), settings);
+        const bool disabled = row == kSwapSticksRow && !cstick_;
+        if (disabled) {
+            snprintf(value, sizeof(value), "%s", "NO C-STICK");
+        }
         const Colour& valueColour =
-            item->kind != Kind::Toggle ? kLevel : (toggles.*(item->flag) ? kOn : kOff);
+            disabled ? kHintColour
+                     : (item->kind != Kind::Toggle ? kLevel : (toggles.*(item->flag) ? kOn : kOff));
         small.draw(renderer, value, px + kPanelW - 24.0f - (float)small.width(value) * 1.5f,
                    baseline, 1.5f, valueColour);
     }

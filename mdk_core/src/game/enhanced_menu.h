@@ -6,8 +6,9 @@
 // gameplay for side-by-side A/B comparison), and Quit.
 //
 // START opens it (owner, 2026-11-19: START used to quit the game outright on
-// one press, and the effects menu on SELECT was undiscovered); SELECT opens the
-// same menu. It opens on RESUME, so a stray A resumes rather than quits; QUIT is
+// one press, and the effects menu on SELECT was undiscovered). SELECT opened the
+// same menu until 2026-11-27, when it became the run toggle (the original 3DS
+// has no ZL; platform/input_3ds.h). It opens on RESUME, so a stray A resumes rather than quits; QUIT is
 // a row of its own, reached with the D-pad (up from RESUME wraps to it) and
 // confirmed with A -- never a single press.
 //
@@ -56,7 +57,7 @@ public:
         bool left = false;
         bool right = false;
         bool confirm = false;  // A: flip a toggle, cycle a choice, or take RESUME / QUIT
-        bool close = false;    // START, B or SELECT: leave the menu (resume)
+        bool close = false;    // START or B: leave the menu (resume)
     };
 
     // What one frame's edges did.
@@ -93,9 +94,14 @@ public:
 
     // The rows: RESUME, the settings (MOVIES HALF RATE, package #20c, then the
     // 3DS draw culls: TINY DEBRIS, TINY ENEMIES, then SCOPE IN 2D, SCOPE CLIP and
-    // ROUND CAMERAS, then 3D DEPTH and 3D SCREEN DISTANCE), CHEATS (#21), OPTIONS,
-    // MAIN MENU, QUIT.
-    static const int32_t kItemCount = 26;
+    // ROUND CAMERAS, then 3D DEPTH and 3D SCREEN DISTANCE, then SWAP STICKS),
+    // CHEATS (#21), OPTIONS, MAIN MENU, QUIT.
+    static const int32_t kItemCount = 27;
+    // SWAP STICKS (owner 2026-11-27): a New 3DS's only row. Without a C-Stick
+    // (setCStick(false), the default) it is SHOWN DISABLED -- drawn greyed with
+    // "NO C-STICK" and inert to every key -- rather than hidden, so the rows keep
+    // one numbering on both models and an Old 3DS player can see why.
+    static const int32_t kSwapSticksRow = 27;
     static const int32_t kResumeRow = 0;
     static const int32_t kCheatsRow = kItemCount + 1;
     static const int32_t kOptionsRow = kItemCount + 2;
@@ -116,6 +122,10 @@ public:
         }
     }
     int32_t selected() const { return selected_; }
+    // Whether the console has a C-Stick (APT_CheckNew3DS): SWAP STICKS is usable
+    // only then.
+    void setCStick(bool present) { cstick_ = present; }
+    bool cstick() const { return cstick_; }
     // The first row the panel shows.
     int32_t top() const { return top_; }
 
@@ -158,6 +168,7 @@ private:
     bool open_ = false;
     int32_t selected_ = kResumeRow;
     int32_t top_ = 0;
+    bool cstick_ = false;
 };
 
 } // namespace mdk

@@ -94,35 +94,114 @@ void loadConfig3ds(EnhancedToggles* toggles) {
 // the format and the defaults): a missing file is the defaults, written out once
 // so the owner can edit it; a bad line keeps that action's default and an
 // unknown key is ignored, both logged; the resolved table is one line.
+//
+// AN OLDER FILE (no `version=2` line: written before the run controls) is
+// migrated (controls_3ds.h THE MIGRATION): each old default becomes today's and
+// every change is logged. The migrated table is written to controls.ini.new
+// first; only when that is whole does the old file move, by rename and with its
+// bytes untouched, to controls.v1.ini, and the new one take its place -- the
+// save games' order (game/save_games.cpp: the 3DS FS service will not rename
+// onto an existing file). Any failure leaves the owner's file where it was (or
+// puts it back) and the migration is applied in memory only, and logged again,
+// on the next boot. A file too long for the buffer, or one that did not read,
+// is never rewritten.
+namespace {
+
+const char* const kControlsPath = "sdmc:/3ds/mdk/controls.ini";
+const char* const kControlsNew = "sdmc:/3ds/mdk/controls.ini.new";
+const char* const kControlsOld = "sdmc:/3ds/mdk/controls.v1.ini";
+
+bool writeWhole(const char* path, const char* text, size_t size) {
+    FILE* file = fopen(path, "wb");
+    if (!file) {
+        return false;
+    }
+    bool written = fwrite(text, 1, size, file) == size;
+    written = fclose(file) == 0 && written;
+    return written;
+}
+
+// The migrated table into place, the old file kept as controls.v1.ini.
+bool replaceControls(const std::string& text) {
+    if (!writeWhole(kControlsNew, text.c_str(), text.size())) {
+        ::remove(kControlsNew);
+        return false;
+    }
+    ::remove(kControlsOld);   // an earlier migration's copy: this file is newer
+    if (rename(kControlsPath, kControlsOld) != 0) {
+        ::remove(kControlsNew);
+        return false;
+    }
+    if (rename(kControlsNew, kControlsPath) != 0) {
+        rename(kControlsOld, kControlsPath);   // the owner's file back where it was
+        ::remove(kControlsNew);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 void loadControls3ds(ControlBindings* controls) {
     static char controlsText[4096];
     size_t got = 0;
     bool read = false;
-    if (FILE* file = fopen("sdmc:/3ds/mdk/controls.ini", "rb")) {
+    bool readFailed = false;
+    if (FILE* file = fopen(kControlsPath, "rb")) {
         got = fread(controlsText, 1, sizeof(controlsText) - 1, file);
         controlsText[got] = '\0';
+        readFailed = ferror(file) != 0;
         fclose(file);
         read = true;
     }
-    if (read) {
+    // Filled to the last byte: there may be more of it than was read.
+    const bool whole = read && !readFailed && got < sizeof(controlsText) - 1;
+    if (read && readFailed) {
+        // Never overwritten on a failed read: the defaults, and the file alone.
+        mdk::log3dsPrintf("controls: sdmc:/3ds/mdk/controls.ini did not read; defaults in use, "
+                          "the file left alone");
+    } else if (read) {
         mdk::ControlsReport report;
         mdk::parseControls(controlsText, got, controls, &report);
-        mdk::log3dsPrintf("controls: sdmc:/3ds/mdk/controls.ini loaded: %d actions set, %d "
-                          "bad (default kept), %d unknown (ignored)%s%s",
-                          (int)report.applied, (int)report.bad, (int)report.unknown,
-                          report.firstProblem[0] ? "; first: " : "", report.firstProblem);
+        mdk::log3dsPrintf("controls: sdmc:/3ds/mdk/controls.ini loaded (version %d): %d actions "
+                          "set, %d bad (default kept), %d unknown (ignored)%s%s",
+                          (int)report.version, (int)report.applied, (int)report.bad,
+                          (int)report.unknown, report.firstProblem[0] ? "; first: " : "",
+                          report.firstProblem);
+        if (report.version < mdk::kControlsVersion) {
+            std::string changes;
+            const int32_t changed = mdk::migrateControls(report.version, controls, &changes, nullptr);
+            mdk::log3dsPrintf("controls: migrated version %d -> %d: %s", (int)report.version,
+                              (int)mdk::kControlsVersion,
+                              changed > 0 ? changes.c_str() : "no old default to replace");
+            const bool replaced = whole && replaceControls(mdk::writeControls(*controls));
+            if (replaced) {
+                mdk::log3dsPrintf("controls: the old file kept as controls.v1.ini; controls.ini "
+                                  "rewritten as version 2");
+            } else {
+                mdk::log3dsPrintf("controls: controls.ini left as it was (%s); migrated in "
+                                  "memory only",
+                                  whole ? "could not write the new one" : "4 KB or longer");
+            }
+        } else if (report.version > mdk::kControlsVersion) {
+            mdk::log3dsPrintf("controls: the file says version %d, newer than this build's %d; "
+                              "read as it is", (int)report.version, (int)mdk::kControlsVersion);
+        }
     } else {
         const std::string text = mdk::writeControls(*controls);
-        bool written = false;
-        if (FILE* file = fopen("sdmc:/3ds/mdk/controls.ini", "wb")) {
-            written = fwrite(text.c_str(), 1, text.size(), file) == text.size();
-            written = fclose(file) == 0 && written;
-        }
+        const bool written = writeWhole(kControlsPath, text.c_str(), text.size());
         mdk::log3dsPrintf(written ? "controls: wrote default sdmc:/3ds/mdk/controls.ini"
                                   : "controls: could not write sdmc:/3ds/mdk/controls.ini; "
                                     "defaults in use");
     }
     mdk::log3dsPrintf("controls: %s", mdk::describeControls(*controls).c_str());
+    // The run's buttons shared with a game action (a customised file): kept, and said.
+    std::string conflicts;
+    mdk::migrateControls(mdk::kControlsVersion, controls, nullptr, &conflicts);
+    if (!conflicts.empty()) {
+        mdk::log3dsPrintf("controls: kept as written, but %s: both act on that button",
+                          conflicts.c_str());
+    }
     if (controls->buttons[mdk::kKeyZoomIn] == 0 || controls->buttons[mdk::kKeyZoomOut] == 0) {
         mdk::log3dsPrintf("controls: the scope's zoom_in/zoom_out are unbound; sniper mode "
                           "stays at its entry zoom");

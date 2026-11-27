@@ -18,6 +18,10 @@
 //      monotonicity. PROPERTIES of the C# formula, which do not depend on any
 //      particular rounding.
 //   4. THE MOUSE IS THE GAME'S to drain, not the platform's.
+//   6. THE RUN CONTROLS (owner 2026-11-27): the toggle on ZL and SELECT, ZR
+//      inverting it both ways; the New 3DS's C-Stick walk with its dead zone and
+//      sectors; SWAP STICKS on and off, and ignored without a C-Stick; and the
+//      controls.ini migration of a file written before them.
 //
 // The constants are the C#'s: GamepadMap.DeadZone 0.15, Curve 2, LookRate
 // (180, 120) deg/s, Input.LookDegrees 0.15 deg per count, Gamepads.MaxStep 0.1 s.
@@ -103,14 +107,14 @@ void testDigitalMap() {
         {kHidA, kKeyStrafeRight, "A strafes right"},
         {kHidL, kKeyJump, "L jumps"},
         {kHidR, kKeyFire, "R fires"},
-        {kHidZR, kKeyFire, "ZR fires too (New 3DS)"},
+        {kHidZR, -1, "ZR is the run button: no game action of its own (input3dsRun)"},
         {kHidDLeft, kKeyItemPrevious, "D-pad left is the previous item"},
         {kHidDRight, kKeyItemNext, "D-pad right is the next item"},
         {kHidDUp, kKeySniper, "D-pad up is the sniper key"},
         {kHidDDown, kKeyUseItem, "D-pad down uses the item"},
-        {kHidZL, kKeyTurbo, "ZL is turbo (New 3DS; unassigned by the owner)"},
+        {kHidZL, -1, "ZL is the run toggle: no game action of its own (input3dsRun)"},
         {kHidStart, -1, "Start is the frontend's pause menu, no game action"},
-        {kHidSelect, -1, "Select is the frontend's effects menu, no game action"},
+        {kHidSelect, -1, "Select is the run toggle too: no game action of its own"},
     };
 
     for (const Row& row : rows) {
@@ -304,27 +308,33 @@ void testTheDefaults() {
     expect("strafe left = Y", d.buttons[kKeyStrafeLeft], kHidY);
     expect("strafe right = A", d.buttons[kKeyStrafeRight], kHidA);
     expect("jump = L", d.buttons[kKeyJump], kHidL);
-    expect("fire = R + ZR", d.buttons[kKeyFire], kHidR | kHidZR);
+    expect("fire = R (ZR is the run button since 2026-11-27)", d.buttons[kKeyFire], kHidR);
     expect("item previous = D-pad left", d.buttons[kKeyItemPrevious], kHidDLeft);
     expect("item next = D-pad right", d.buttons[kKeyItemNext], kHidDRight);
     expect("sniper = D-pad up", d.buttons[kKeySniper], kHidDUp);
     expect("use item = D-pad down", d.buttons[kKeyUseItem], kHidDDown);
-    expect("turbo = ZL", d.buttons[kKeyTurbo], kHidZL);
+    expect("turbo's own hold is unbound", d.buttons[kKeyTurbo], 0);
+    expect("run toggle = ZL + SELECT", d.buttons[kControlRunToggle], kHidZL | kHidSelect);
+    expect("run button = ZR", d.buttons[kControlRunHold], kHidZR);
     expect("zoom in = X (owner 2026-11-21)", d.buttons[kKeyZoomIn], kHidX);
     expect("zoom out = B (owner 2026-11-21)", d.buttons[kKeyZoomOut], kHidB);
     expect("noclip's down is unbound (package #21; the owner picks it)", d.buttons[kKeyDown], 0);
     expect("the turn axes have no buttons", d.buttons[kKeyTurnLeft] | d.buttons[kKeyTurnRight], 0);
     expect("escape has none (START is the pause menu)", d.buttons[kKeyEscape], 0);
-    // No default uses START or SELECT: those are the frontend's menus.
+    // No default uses START (the frontend's menu); SELECT is the run toggle's
+    // alone, and no game action shares it, ZL or ZR.
     uint32_t all = 0;
     for (int key = 0; key < kKeyCount; key++) {
         all |= d.buttons[key];
     }
-    expect("no default binds START or SELECT", all & (kHidStart | kHidSelect), 0);
+    expect("no game action's default binds START, SELECT, ZL or ZR",
+           all & (kHidStart | kHidSelect | kHidZL | kHidZR), 0);
+    expect("and the run binds no START", (d.buttons[kControlRunToggle] |
+                                          d.buttons[kControlRunHold]) & kHidStart, 0);
     expectText("the boot log's line", describeControls(d),
-               "forward=X back=B strafe_left=Y strafe_right=A jump=L fire=R+ZR "
+               "forward=X back=B strafe_left=Y strafe_right=A jump=L fire=R "
                "item_previous=DLEFT item_next=DRIGHT sniper=DUP zoom_in=X zoom_out=B "
-               "use_item=DDOWN turbo=ZL down=none");
+               "use_item=DDOWN turbo=none down=none run_toggle=ZL+SELECT run_hold=ZR");
 }
 
 // THE SCOPE'S BUTTONS (owner 2026-11-21): in sniper mode X zooms in and B zooms
@@ -364,14 +374,15 @@ void testTheRoundTrip() {
     ControlBindings parsed;   // all unbound: every bit must come from the text
     ControlsReport report;
     parseControls(text.data(), text.size(), &parsed, &report);
-    for (int key = 0; key < kKeyCount; key++) {
+    for (int key = 0; key < kControlCount; key++) {
         if (parsed.buttons[key] != d.buttons[key]) {
             printf("  FAIL: round trip of action %d: %08X, wrote %08X\n", key,
                    (unsigned)parsed.buttons[key], (unsigned)d.buttons[key]);
             failures++;
         }
     }
-    expect("fourteen action lines taken", report.applied, 14);
+    expect("sixteen action lines taken", report.applied, 16);
+    expect("the file says version 2", report.version, 2);
     expect("none bad", report.bad, 0);
     expect("none unknown", report.unknown, 0);
     expect("every line a line: the text ends with a newline", text.empty() ? 0 : text.back(), '\n');
@@ -417,7 +428,8 @@ void testBadAndUnknownLines() {
     expect("three bad", report.bad, 3);
     expect("two unknown (crouch, and a line with no '=')", report.unknown, 2);
     expectText("the first problem is named", report.firstProblem, "line 5: jump=Q");
-    expect("an untouched action keeps its default", b.buttons[kKeyTurbo], kHidZL);
+    expect("an untouched action keeps its default", b.buttons[kKeyItemNext], kHidDRight);
+    expect("a file with no version line is version 1", report.version, 1);
     // The button names one by one.
     expect("ZL", controlButtonBit("zl", 2), kHidZL);
     expect("DRIGHT", controlButtonBit("DRight", 6), kHidDRight);
@@ -465,6 +477,246 @@ void testTheBindingsThroughTheMapping() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 6. THE RUN CONTROLS (owner 2026-11-27).
+// ---------------------------------------------------------------------------
+
+// One played frame through the mapping and the run: the game's Input.
+Input runFrame(uint32_t held, RunState* run, bool playing = true,
+               const ControlBindings& b = defaultControlBindings()) {
+    Input input;
+    input3dsApply(buttons(held), kStep, b, &input);
+    input3dsRun(held, b, playing, run, &input);
+    return input;
+}
+
+// The toggle: a PRESS flips it, holding does not flip it again, and ZL and
+// SELECT are the same toggle.
+void testTheRunToggle() {
+    RunState run;
+    expect("the run starts off: Kurt jogs", runFrame(0, &run).down[kKeyTurbo] ? 1 : 0, 0);
+    expect("ZL pressed: run on", runFrame(kHidZL, &run).down[kKeyTurbo] ? 1 : 0, 1);
+    expect("ZL still held: still on, not flipped back",
+           runFrame(kHidZL, &run).down[kKeyTurbo] ? 1 : 0, 1);
+    expect("ZL released: the toggle stays on", runFrame(0, &run).down[kKeyTurbo] ? 1 : 0, 1);
+    expect("SELECT pressed: run off (the Old 3DS's toggle)",
+           runFrame(kHidSelect, &run).down[kKeyTurbo] ? 1 : 0, 0);
+    expect("released: stays off", runFrame(0, &run).down[kKeyTurbo] ? 1 : 0, 0);
+    expect("SELECT again: on", runFrame(kHidSelect, &run).down[kKeyTurbo] ? 1 : 0, 1);
+    // ZL pressed while SELECT is still held is a new press of the toggle.
+    expect("ZL joins a held SELECT: a press, off",
+           runFrame(kHidSelect | kHidZL, &run).down[kKeyTurbo] ? 1 : 0, 0);
+    runFrame(0, &run);
+
+    // Not playing (the menu, the strike): a press flips nothing, and the button
+    // still held when play resumes is not a new press.
+    RunState paused;
+    runFrame(kHidSelect, &paused, false);
+    expect("a press in the menu does not flip the run", paused.on ? 1 : 0, 0);
+    runFrame(kHidSelect, &paused, true);
+    expect("and the same press held into play is no new press", paused.on ? 1 : 0, 0);
+    runFrame(0, &paused, true);
+    runFrame(kHidSelect, &paused, true);
+    expect("a fresh press in play flips it", paused.on ? 1 : 0, 1);
+}
+
+// ZR held inverts the toggle, both ways; released, the toggle again.
+void testTheRunButton() {
+    RunState run;
+    expect("toggle off, ZR held: Kurt runs", runFrame(kHidZR, &run).down[kKeyTurbo] ? 1 : 0, 1);
+    expect("toggle off, ZR released: he jogs", runFrame(0, &run).down[kKeyTurbo] ? 1 : 0, 0);
+    runFrame(kHidZL, &run);   // toggle on
+    runFrame(0, &run);
+    expect("toggle on, nothing held: he runs", runFrame(0, &run).down[kKeyTurbo] ? 1 : 0, 1);
+    expect("toggle on, ZR held: he jogs", runFrame(kHidZR, &run).down[kKeyTurbo] ? 1 : 0, 0);
+    expect("toggle on, ZR released: he runs again", runFrame(0, &run).down[kKeyTurbo] ? 1 : 0, 1);
+    expect("ZR never flips the toggle", run.on ? 1 : 0, 1);
+    // ZR is not fire any more: fire stays on R.
+    expect("ZR does not fire", runFrame(kHidZR, &run).down[kKeyFire] ? 1 : 0, 0);
+    expect("R fires", runFrame(kHidR, &run).down[kKeyFire] ? 1 : 0, 1);
+    // A file that binds turbo's own hold: held, it runs whatever the toggle says.
+    ControlBindings b = defaultControlBindings();
+    b.buttons[kKeyTurbo] = kHidL;
+    RunState plain;
+    expect("turbo's own button holds the run", runFrame(kHidL, &plain, true, b).down[kKeyTurbo]
+                                                   ? 1 : 0, 1);
+}
+
+HidFrame withStick(int32_t x, int32_t y, bool swap = false) {
+    HidFrame frame;
+    frame.hasCStick = true;
+    frame.stickX = x;
+    frame.stickY = y;
+    frame.swapSticks = swap;
+    return frame;
+}
+
+int walkBits(const Input& input) {
+    return (input.down[kKeyForward] ? 1 : 0) | (input.down[kKeyBack] ? 2 : 0) |
+           (input.down[kKeyStrafeLeft] ? 4 : 0) | (input.down[kKeyStrafeRight] ? 8 : 0);
+}
+
+// The C-Stick walks (New 3DS, not swapped): four directions, the diagonals, the
+// dead zone, and no look.
+void testTheCStickWalk() {
+    const int F = 1, B = 2, L = 4, R = 8;
+    expect("C-Stick up walks forward", walkBits(applied(withStick(0, 155), kStep)), F);
+    expect("down walks back", walkBits(applied(withStick(0, -155), kStep)), B);
+    expect("left strafes left", walkBits(applied(withStick(-155, 0), kStep)), L);
+    expect("right strafes right", walkBits(applied(withStick(155, 0), kStep)), R);
+    expect("up-right is both", walkBits(applied(withStick(110, 110), kStep)), F | R);
+    expect("down-left is both", walkBits(applied(withStick(-110, -110), kStep)), B | L);
+    // 0.25 of the reach is 38.75: 38 is inside the dead zone, 39 outside.
+    expect("38 of 155 is inside the walk's dead zone",
+           walkBits(applied(withStick(0, 38), kStep)), 0);
+    expect("39 is outside it", walkBits(applied(withStick(0, 39), kStep)), F);
+    expect("a resting stick (a few counts off zero) walks nowhere",
+           walkBits(applied(withStick(-6, 9), kStep)), 0);
+    // The sectors: 50 off the axis at full tilt is under sin(22.5 deg) of the
+    // length (0.31), so up stays up; 70 is over it (0.41) and adds the strafe.
+    expect("up a little to the right is still up", walkBits(applied(withStick(50, 150), kStep)),
+           F);
+    expect("further to the right adds the strafe", walkBits(applied(withStick(70, 140), kStep)),
+           F | R);
+    const Input walking = applied(withStick(155, 155), kStep);
+    expectBits("the walking stick does not look", walking.mouseX, 0);
+    expectBits("or pitch", walking.mouseY, 0);
+    // The circle pad still looks while the C-Stick walks.
+    HidFrame both = withStick(0, 155);
+    both.padX = 155;
+    const Input lookAndWalk = applied(both, kStep);
+    expect("the C-Stick walks while", walkBits(lookAndWalk), F);
+    expectBits("the circle pad looks, exactly as alone", lookAndWalk.mouseX, 0x41A00000);
+    // The buttons keep walking, and the stick never releases them.
+    HidFrame pressed = withStick(0, -155);
+    pressed.held = kHidX;
+    expect("X and the stick's back are both held",
+           walkBits(applied(pressed, kStep)), F | B);
+    // Without a C-Stick (an Old 3DS), stick values are never read.
+    HidFrame old = withStick(0, 155);
+    old.hasCStick = false;
+    expect("no C-Stick: its values walk nowhere", walkBits(applied(old, kStep)), 0);
+}
+
+// SWAP STICKS: the circle pad walks, the C-Stick looks with the pad's own curve;
+// off, the defaults; and ignored without a C-Stick.
+void testSwapSticks() {
+    HidFrame swapped = withStick(155, 0, true);
+    swapped.padY = 155;   // the circle pad pushed up
+    const Input s = applied(swapped, kStep);
+    expect("swapped: the circle pad walks", walkBits(s), 1);
+    expectBits("swapped: the C-Stick looks, at the pad's rate", s.mouseX, 0x41A00000);
+    expectBits("and the pad pushed up does not pitch", s.mouseY, 0);
+
+    HidFrame unswapped = swapped;
+    unswapped.swapSticks = false;
+    const Input u = applied(unswapped, kStep);
+    expect("not swapped: the C-Stick right strafes", walkBits(u), 8);
+    expectBits("and the pad up pitches", u.mouseY, 0xC1555555);
+    expectBits("and nothing turns", u.mouseX, 0);
+
+    // The swap without a C-Stick is ignored: the pad keeps looking, nothing walks.
+    HidFrame noStick = swapped;
+    noStick.hasCStick = false;
+    noStick.padX = 155;
+    noStick.padY = 0;
+    const Input n = applied(noStick, kStep);
+    expectBits("no C-Stick: the pad still looks, swap or not", n.mouseX, 0x41A00000);
+    expect("and does not walk", walkBits(n), 0);
+
+    // The swapped look is the pad's look, bit for bit, at every tilt tested.
+    const int32_t tilts[] = {24, 39, 100, 155, 200};
+    for (int32_t t : tilts) {
+        Input viaStick = applied(withStick(t, -t / 2, true), 0.1f);
+        Input viaPad = applied(stick(t, -t / 2), 0.1f);
+        if (bitsOf(viaStick.mouseX) != bitsOf(viaPad.mouseX) ||
+            bitsOf(viaStick.mouseY) != bitsOf(viaPad.mouseY)) {
+            printf("  FAIL: the swapped C-Stick look at %d differs from the pad's\n", (int)t);
+            failures++;
+        }
+    }
+}
+
+// THE MIGRATION of a controls.ini written before the run controls.
+void testTheMigration() {
+    // The owner's file as the boot log printed it (2026-11-27), one key a line,
+    // no version line: version 1.
+    const char owners[] =
+        "# MDK 3DS controls.\n"
+        "forward=X\nback=B\nstrafe_left=Y\nstrafe_right=A\njump=L\nfire=R+ZR\n"
+        "item_previous=DLEFT\nitem_next=DRIGHT\nsniper=DUP\nzoom_in=none\nzoom_out=none\n"
+        "use_item=DDOWN\nturbo=ZL\ndown=none\n";
+    ControlBindings b = defaultControlBindings();
+    ControlsReport report;
+    parseControls(owners, sizeof(owners) - 1, &b, &report);
+    expect("the owner's file is version 1", report.version, 1);
+    std::string changes;
+    std::string conflicts;
+    const int32_t changed = migrateControls(report.version, &b, &changes, &conflicts);
+    expect("four old defaults replaced", changed, 4);
+    expectText("and named", changes,
+               "fire R+ZR->R turbo ZL->none zoom_in none->X zoom_out none->B");
+    expectText("and nothing left sharing the run's buttons", conflicts, "");
+    const ControlBindings d = defaultControlBindings();
+    for (int key = 0; key < kControlCount; key++) {
+        if (b.buttons[key] != d.buttons[key]) {
+            printf("  FAIL: the migrated owner's file differs from the defaults at %d\n", key);
+            failures++;
+        }
+    }
+    // Written back as version 2 and read again: nothing more to migrate.
+    const std::string text = writeControls(b);
+    ControlBindings again = defaultControlBindings();
+    ControlsReport againReport;
+    parseControls(text.data(), text.size(), &again, &againReport);
+    expect("rewritten: version 2", againReport.version, 2);
+    expect("and a second migration changes nothing",
+           migrateControls(againReport.version, &again, nullptr, nullptr), 0);
+
+    // A version-1 file the owner CUSTOMISED: nothing of theirs is dropped.
+    const char custom[] =
+        "fire=R+A\nturbo=L\nzoom_in=DUP\nzoom_out=none\njump=ZR\n";
+    ControlBindings c = defaultControlBindings();
+    ControlsReport customReport;
+    parseControls(custom, sizeof(custom) - 1, &c, &customReport);
+    const int32_t customChanged = migrateControls(customReport.version, &c, &changes, &conflicts);
+    expect("a customised fire stays", c.buttons[kKeyFire], kHidR | kHidA);
+    expect("a customised turbo stays", c.buttons[kKeyTurbo], kHidL);
+    expect("a customised zoom_in stays", c.buttons[kKeyZoomIn], kHidDUp);
+    expect("an unbound zoom_out was the old default: B", c.buttons[kKeyZoomOut], kHidB);
+    expect("a jump on ZR stays", c.buttons[kKeyJump], kHidZR);
+    expect("one change", customChanged, 1);
+    expectText("named", changes, "zoom_out none->B");
+    expectText("and the shared ZR is reported, not removed", conflicts,
+               "jump=ZR shares ZR with run_hold");
+
+    // A version-2 file is the owner's as written: fire=R+ZR there is a choice.
+    const char current[] = "version=2\nfire=R+ZR\nturbo=ZL\n";
+    ControlBindings v2 = defaultControlBindings();
+    ControlsReport v2Report;
+    parseControls(current, sizeof(current) - 1, &v2, &v2Report);
+    expect("version 2 read", v2Report.version, 2);
+    expect("version 2 migrates nothing", migrateControls(v2Report.version, &v2, &changes,
+                                                         &conflicts), 0);
+    expect("fire=R+ZR kept", v2.buttons[kKeyFire], kHidR | kHidZR);
+    expectText("and both shares named", conflicts,
+               "turbo=ZL shares ZL with run_toggle, fire=R+ZR shares ZR with run_hold");
+
+    // A version line that is not a number is a bad line, and the file version 1.
+    const char badVersion[] = "version=two\n";
+    ControlBindings bv = defaultControlBindings();
+    ControlsReport bvReport;
+    parseControls(badVersion, sizeof(badVersion) - 1, &bv, &bvReport);
+    expect("a bad version line is bad", bvReport.bad, 1);
+    expect("and the file stays version 1", bvReport.version, 1);
+    // The run's two actions read like any other.
+    const char runs[] = "version=2\nrun_toggle=SELECT\nrun_hold=none\n";
+    ControlBindings r = defaultControlBindings();
+    parseControls(runs, sizeof(runs) - 1, &r, nullptr);
+    expect("run_toggle read", r.buttons[kControlRunToggle], kHidSelect);
+    expect("run_hold unbound", r.buttons[kControlRunHold], 0);
+}
+
 } // namespace
 
 namespace mdk {
@@ -481,6 +733,11 @@ int runInput3dsTests() {
     testLookBits();
     testLookProperties();
     testTheMouseIsDrainedByTheGame();
+    testTheRunToggle();
+    testTheRunButton();
+    testTheCStickWalk();
+    testSwapSticks();
+    testTheMigration();
     return failures;
 }
 

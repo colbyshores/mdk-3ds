@@ -16,8 +16,8 @@ source is kept in `src/` as the reference the C++ code is checked against; it is
 > Do not share that executable: it contains the game's data.
 
 - **3DS**: a `.3dsx` for the Homebrew Launcher, with the game data inside it. The original 3DS
-  is the performance target. The SELECT button opens a menu of optional effects (lighting,
-  filtering, glow, haze, HD textures and others).
+  is the performance target. The START button opens the pause menu, which also holds the
+  optional effects (lighting, filtering, glow, haze, HD textures and others).
 - **Linux**: a desktop build of the same game code (SDL3, Vulkan).
 
 The port is a work in progress.
@@ -87,14 +87,17 @@ That conversion gives the original game's music; three tracks that only the comm
 as they are in the original game.
 
 **Installing.** Copy `mdk.3dsx` to the SD card's `/3ds/` folder and start it from the Homebrew
-Launcher. The game keeps its files on the SD card in `/3ds/mdk/`: `config.ini` (the SELECT
-menu's effects), `controls.ini` (the buttons; written with the defaults on the first start),
+Launcher. The game keeps its files on the SD card in `/3ds/mdk/`: `config.ini` (the START
+menu's effects and settings), `controls.ini` (the buttons; written with the defaults on the first start),
 `saves/` and `mdk.log`.
 
 **Controls** (the defaults, changeable in `controls.ini`): circle pad look; X forward, B back,
-Y and A strafe; L jump; R fire (ZR too on a New 3DS); d-pad left and right pick the item, up
-sniper mode, down use the item; in sniper mode X and B zoom. START pauses, SELECT opens the
-effects menu.
+Y and A strafe; L jump; R fire; d-pad left and right pick the item, up sniper mode, down use
+the item; in sniper mode X and B zoom. SELECT toggles running on and off. START opens the
+pause menu. On a New 3DS also: ZL toggles running too, ZR held runs while the toggle is off
+(and jogs while it is on), and the C-Stick walks; the pause menu's SWAP STICKS makes the
+circle pad walk and the C-Stick look. A `controls.ini` from an older build is updated on the
+first start (the old one is kept as `controls.v1.ini`).
 
 **A .cia** (optional): `make -C mdk_3ds cia` also needs
 [makerom](https://github.com/3DSGuy/Project_CTR), which is not part of devkitPro, on the `PATH`
@@ -127,7 +130,7 @@ for levels 3-8), because the 3DS reads it faster than it can unpack it. A pack m
 folder instead. A second run only redoes what changed. It
 writes the upscaled textures to `build-hd-mod/` and the pack to `build-hd-pack/`. Copy the
 pack's contents to the SD card as `/3ds/mdk/hd/` (so that
-`/3ds/mdk/hd/manifest.txt` exists), then turn on HD TEXTURES in the SELECT menu (or set
+`/3ds/mdk/hd/manifest.txt` exists), then turn on HD TEXTURES in the START menu (or set
 `enableHdTextures=1` in `/3ds/mdk/config.ini`); it takes effect from the next level loaded.
 The pack is read from the SD card, not from the `.3dsx`.
 

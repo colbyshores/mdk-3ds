@@ -31,26 +31,11 @@ void input3dsScopeButtons(uint32_t held, const ControlBindings& bindings, Input*
     input->down[kKeyBack] = (held & bindings.buttons[kKeyBack] & ~zoom) != 0;
 }
 
-void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& bindings,
-                   Input* input) {
-    if (input == nullptr) {
-        return;
-    }
+namespace {
 
-    // ---- the digital controls ------------------------------------------------
-    // THE BINDINGS (controls_3ds.h: the owner's defaults, or controls.ini): an
-    // action is held when any of its buttons is. Every action is written: the
-    // frame's mask IS the state, so a key released since the last frame has to
-    // go false here or the player walks forever. The turn axes and Escape have
-    // no buttons on this target (the circle pad turns, below; START is the
-    // frontend's pause menu), so their masks are 0 and they read false -- which
-    // also means a caller that reused an Input cannot keep a stale turn.
-    const uint32_t held = frame.held;
-    for (int key = 0; key < kKeyCount; key++) {
-        input->down[key] = (held & bindings.buttons[key]) != 0;
-    }
-
-    // ---- the circle pad: a look in degrees, then the mouse's counts ----------
+// One stick's look: the circle pad's arithmetic, unchanged, for whichever stick
+// looks this frame. `x` right and `y` UP, libctru's units.
+void addLook(int32_t x, int32_t y, float seconds, Input* input) {
     // Gamepads.Update clamps its frame gap the same way, and a NaN has to land
     // here too: a NaN step would poison the accumulated mouse for every frame
     // after it, and the player would spin with no way back.
@@ -65,8 +50,8 @@ void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& 
     // The stick, normalised to its reach. libctru's dy is UP; the look's y is
     // down (the C#'s stick is SDL's, whose y is down, and FollowCamera adds
     // MouseY to a pitch that grows downward), so dy is negated once, here.
-    const float nx = (float)frame.padX / kPadReach;
-    const float ny = -(float)frame.padY / kPadReach;
+    const float nx = (float)x / kPadReach;
+    const float ny = -(float)y / kPadReach;
     const float length = sqrtf(nx * nx + ny * ny);
     // GamepadMap: `if (tilt < DeadZone) return Vector2.Zero`. Written as a
     // negated >= so a NaN length takes the same early return instead of
@@ -92,6 +77,93 @@ void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& 
     const float degreesPerCount = kLookDegreesPerCount;
     input->mouseX += ((dirX * strength) * kLookRateX * step) / degreesPerCount;
     input->mouseY += ((dirY * strength) * kLookRateY * step) / degreesPerCount;
+}
+
+} // namespace
+
+void input3dsStickWalk(int32_t x, int32_t y, Input* input) {
+    if (input == nullptr) {
+        return;
+    }
+    // Normalised, y UP (forward is up on either stick). Inside the dead zone,
+    // or a NaN, walks nowhere.
+    const float nx = (float)x / kPadReach;
+    const float ny = (float)y / kPadReach;
+    const float length = sqrtf(nx * nx + ny * ny);
+    if (!(length >= kWalkDeadZone)) {
+        return;
+    }
+    // Eight sectors: an axis is held when the stick's component along it is at
+    // least sin(22.5 deg) of the length, so a stick pushed straight up holds
+    // forward alone, and one pushed between up and right holds both. Ored into
+    // the buttons' walk: a stick never releases a held button.
+    const float reach = kWalkSector * length;
+    if (ny >= reach) {
+        input->down[kKeyForward] = true;
+    }
+    if (-ny >= reach) {
+        input->down[kKeyBack] = true;
+    }
+    if (-nx >= reach) {
+        input->down[kKeyStrafeLeft] = true;
+    }
+    if (nx >= reach) {
+        input->down[kKeyStrafeRight] = true;
+    }
+}
+
+void input3dsRun(uint32_t held, const ControlBindings& bindings, bool playing, RunState* run,
+                 Input* input) {
+    if (run == nullptr || input == nullptr) {
+        return;
+    }
+    const uint32_t toggle = bindings.buttons[kControlRunToggle];
+    const uint32_t pressed = held & ~run->lastHeld;
+    run->lastHeld = held;
+    if (playing && (pressed & toggle) != 0) {
+        run->on = !run->on;
+    }
+    const bool holding = (held & bindings.buttons[kControlRunHold]) != 0;
+    // Turbo's own buttons (none by default) still hold it outright.
+    input->down[kKeyTurbo] = input->down[kKeyTurbo] || (run->on != holding);
+}
+
+void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& bindings,
+                   Input* input) {
+    if (input == nullptr) {
+        return;
+    }
+
+    // ---- the digital controls ------------------------------------------------
+    // THE BINDINGS (controls_3ds.h: the owner's defaults, or controls.ini): an
+    // action is held when any of its buttons is. Every action is written: the
+    // frame's mask IS the state, so a key released since the last frame has to
+    // go false here or the player walks forever. The turn axes and Escape have
+    // no buttons on this target (the look stick turns, below; START is the
+    // frontend's pause menu), so their masks are 0 and they read false -- which
+    // also means a caller that reused an Input cannot keep a stale turn.
+    const uint32_t held = frame.held;
+    for (int key = 0; key < kKeyCount; key++) {
+        input->down[key] = (held & bindings.buttons[key]) != 0;
+    }
+
+    // ---- the sticks: which walks and which looks ------------------------------
+    // The Old 3DS has the circle pad alone, and it looks. The New 3DS's C-Stick
+    // walks; swapped, the circle pad walks and the C-Stick looks. The swap needs
+    // a C-Stick: without one the setting is ignored.
+    const bool swapped = frame.hasCStick && frame.swapSticks;
+    if (frame.hasCStick) {
+        if (swapped) {
+            input3dsStickWalk(frame.padX, frame.padY, input);
+        } else {
+            input3dsStickWalk(frame.stickX, frame.stickY, input);
+        }
+    }
+    if (swapped) {
+        addLook(frame.stickX, frame.stickY, seconds, input);
+    } else {
+        addLook(frame.padX, frame.padY, seconds, input);
+    }
 }
 
 } // namespace mdk

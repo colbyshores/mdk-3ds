@@ -378,6 +378,13 @@ struct EnhancedToggles {
     // (level 3, stereo, drawn in both eyes): ~44 ms a frame while a camera
     // watches, against ~33.5 with it off. On by default. The PC ignores it.
     bool sniperRoundCams = true;
+
+    // 3DS, NEW 3DS ONLY: SWAP STICKS (owner 2026-11-27). Off, the circle pad
+    // looks and the C-Stick walks; on, the circle pad walks and the C-Stick looks
+    // (platform/input_3ds.h). Not a look: a controller setting kept in config.ini
+    // with the pause menu's other rows. An Old 3DS has no C-Stick, so there the
+    // menu row is shown disabled and the setting is ignored. The PC ignores it.
+    bool swapSticks = false;
 };
 
 // ---------------------------------------------------------------------------

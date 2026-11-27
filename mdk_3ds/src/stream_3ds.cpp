@@ -107,7 +107,9 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
 
         // ONE HID scan for the frame (input3dsPoll); the pad is read off the same scan.
         Input input;
-        const u32 held = input3dsPoll(&input, elapsed, *f.controls);
+        // The fall steers with the buttons' walk and the circle pad below, as
+        // before the C-Stick: no stick walk, no swap here.
+        const u32 held = input3dsPoll(&input, elapsed, *f.controls, false, false);
         circlePosition pad;
         hidCircleRead(&pad);
         const u32 pressed = held & ~prevHeld;

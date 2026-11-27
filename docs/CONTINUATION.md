@@ -2414,7 +2414,7 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
    unreadable live one, and a `pgrep -f` hit needs comm or an exe under `.mount_mandar*`
    (`PASS EmurunHarness (68 checks)`).
 4. **DONE (72) — 3DS input.** `mdk_3ds/src/platform/input_3ds.{h,cpp}` maps HID to `mdk::Input`;
-   `input_3ds_hid.cpp` is the one `hidScanInput` per frame. The C-Stick is deferred with a cause.
+   `input_3ds_hid.cpp` is the one `hidScanInput` per frame. The C-Stick was deferred here; it walks since 2026-11-27 (feat/3ds-run-controls).
 5a. **DONE (73-75) — wire the frontend.** `main_3ds.cpp` builds the level from `flow.state().level`, spawns
     `Player` at the DTI start `+ StartDrop`, steps `Player` then `FollowCamera` in fixed steps, respawns on
     `player.died()`, draws Kurt after the level, refreshes the solid arena per step, and (batch 75) clears
@@ -3793,7 +3793,7 @@ double the bank and re-open 6c.
 * **The render seam's `clear_colour` is `0xAARRGGBB`; the PICA's clear word is `0xRRGGBBAA`, red in the TOP
   byte** (`mdk::pica::clearColour`). Assert colour contracts as **bit fields, not memory bytes**.
 * **Exactly one `input3dsPoll()` per frame, and it is the only `hidScanInput()`.** libctru recomputes its edge
-  bits on every scan. The poll RETURNS the held mask. The C-Stick is absent by decision, not oversight.
+  bits on every scan. The poll RETURNS the held mask. The C-Stick (New 3DS) is read off the same scan since 2026-11-27: libctru 2.7.0's hidInit starts IRRST and hidScanInput scans it.
 * **Never `git add -A`.** Owner-authored paths sit uncommitted in the worktree and at least one is PROTECTED
   (`ralph/builder.md`); staging a protected path halts the loop at exit 6. Stage your own paths by name.
 * **Editing `ralph-pi.sh` does not change the running loop** (review-2 F1): bash reads a script incrementally,

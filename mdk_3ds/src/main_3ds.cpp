@@ -285,6 +285,10 @@ int main(int argc, char** argv) {
     // unknown key is ignored, both logged; the resolved table is one line.
     static mdk::ControlBindings controls = mdk::defaultControlBindings();
     mdk::loadControls3ds(&controls);
+    // THE RUN TOGGLE (owner 2026-11-27; input_3ds.h input3dsRun): ZL or SELECT
+    // flips it, ZR held inverts it. The session's, like a caps lock: a death, a
+    // reload or the next level keeps it as the player left it.
+    static mdk::RunState run;
 
     MdkRenderDesc desc;
     desc.width = 240;
@@ -606,8 +610,8 @@ int main(int argc, char** argv) {
     mdk::HudView hud;
     bool hudReady = false;
     // The Video/Graphics settings menu (SPEC.md 7.9): its fonts, and
-    // its readiness. SELECT opens it when ready; without the fonts
-    // there is no menu and SELECT keeps its old quit meaning. Not on
+    // its readiness. START opens it when ready; without the fonts
+    // there is no menu and START held two seconds quits. Not on
     // the stack: a FontView carries a whole Font (256 glyph records,
     // ~11 KB), and two of them as main() locals overflowed the main
     // thread's stack -- the first printf of the run wrote below it
@@ -1411,6 +1415,16 @@ int main(int argc, char** argv) {
     int32_t objectPeakCorners = 0;
     int32_t objectPeakDraws = 0;
     u32 prevHeld = 0;  // last frame's held mask; the menu reads edges
+    // SWAP STICKS is a New 3DS's row only; the Old 3DS shows it disabled.
+    menu.setCStick(isNew3ds);
+    // The run toggle's edges start from "everything held": the main menu and the
+    // fall poll HID without input3dsRun, so a ZL or SELECT still held from there
+    // is not a press on the level's first frame; a button up there clears itself.
+    run.lastHeld = ~0u;
+    // START held with no pause menu (its fonts did not load): the way out after
+    // kNoMenuQuitSeconds of wall time.
+    const double kNoMenuQuitSeconds = 2.0;
+    double startHeldSeconds = 0.0;
     // THE END OF A LEVEL (package 1). The C#'s Viewer subscribes to the scripts'
     // LevelEnded (Viewer.cs:240) and leaves EndDelay (0.5 s, :112) later through
     // Game.cs's Event.LevelEnded (:442, AfterLevel). The runtime's levelEnded() is
@@ -1586,11 +1600,12 @@ int main(int argc, char** argv) {
     const int32_t playDecodesFrom = bank.stats().decodes;
     const int64_t playDecodedSamplesFrom = bank.stats().decodedSampleCount;
     // THE PAUSE MENU'S FALLBACK. Without the menu's fonts there is no menu to
-    // open, and so no Quit row: holding START and SELECT together is then the
-    // way out (one press of either alone does nothing), and the log says so.
+    // open, and so no Quit row: holding START for two seconds is then the way
+    // out (a press alone does nothing; SELECT is the run toggle since
+    // 2026-11-27, so it is no longer part of it), and the log says so.
     if (!menuReady) {
-        mdk::log3dsPrintf("menu: no pause menu (its fonts did not load); hold START+SELECT "
-                          "together to quit");
+        mdk::log3dsPrintf("menu: no pause menu (its fonts did not load); hold START for %.0f "
+                          "seconds to quit", kNoMenuQuitSeconds);
     }
     // The hint, for the first seconds of the level: the owner did not know the
     // effects menu existed. Drawn with the menu's own small font on the canvas,
@@ -1626,7 +1641,8 @@ int main(int argc, char** argv) {
         // on frames that fit a step -- so nothing accumulates across a frame that
         // runs zero steps.
         mdk::Input input;
-        const u32 held = mdk::input3dsPoll(&input, elapsed, controls);
+        const u32 held = mdk::input3dsPoll(&input, elapsed, controls, isNew3ds,
+                                           enhancedToggles.swapSticks);
         // In sniper mode X and B zoom instead of tilting (input_3ds.h).
         if (playerReady && player.sniping()) {
             mdk::input3dsScopeButtons(held, controls, &input);
@@ -1637,26 +1653,34 @@ int main(int argc, char** argv) {
 
         // THE PAUSE MENU (owner, 2026-11-19; SPEC.md 7.9's Video/Graphics
         // settings are its rows). START opens it -- it used to quit the game
-        // on one press -- and SELECT opens the same menu. It opens on RESUME;
+        // on one press; SELECT opened it too until it became the run toggle
+        // (2026-11-27). It opens on RESUME;
         // while it is open the simulation below is paused and the frame's
         // edges drive the menu instead: the D-pad moves (and wraps), A flips a
         // toggle or takes RESUME / QUIT, left/right step a slider or cycle a
-        // choice, and START, B or SELECT close it. A
+        // choice, and START or B close it. A
         // change applies at once (mdk_render_set_enhanced_toggles) and is written
         // back to config.ini in the same frame, so a hardware A/B is one press.
         // QUIT is a row, confirmed with A: never a single press.
         bool menuQuit = false;
         bool menuMainMenu = false;
-        // THE FULL-SCREEN STRIKE (package 14, game/strike_view.h): while it plays, START or
-        // SELECT skips it (the C#'s Esc) instead of pausing (Viewer.cs:389-396).
+        // THE FULL-SCREEN STRIKE (package 14, game/strike_view.h): while it plays, START
+        // skips it (the C#'s Esc) instead of pausing (Viewer.cs:389-396).
         const bool striking = runtime && runtime->strikeScene() != nullptr &&
                               runtime->strikeScene()->active();
+        // THE RUN, from this frame's edges, only while Kurt is being played: the
+        // menu's and the strike's frames track the edges and flip nothing.
+        const bool runWas = run.on;
+        mdk::input3dsRun(held, controls, playerReady && !menu.open() && !striking, &run,
+                         &input);
+        if (run.on != runWas) {
+            mdk::log3dsPrintf("input: run toggle %s", run.on ? "on" : "off");
+        }
         if (menuReady) {
-            if (!menu.open() && !striking && (pressed & (KEY_START | KEY_SELECT))) {
+            if (!menu.open() && !striking && (pressed & KEY_START)) {
                 menu.setOpen(true);
                 cheatsPage.setOpen(false);
-                mdk::log3dsPrintf("menu: paused (%s)",
-                                  (pressed & KEY_START) ? "START" : "SELECT");
+                mdk::log3dsPrintf("menu: paused (START)");
             } else if (menu.open() && pauseOptions.open()) {
                 // THE OPTIONS PAGES (the C# PauseMenu's Options, package #20a):
                 // the D-pad moves and steps, A chooses, B or START goes up a page
@@ -1677,14 +1701,14 @@ int main(int argc, char** argv) {
                 }
             } else if (menu.open() && cheatsPage.open()) {
                 // THE CHEATS PAGE (package #21): the D-pad moves, A or left/right flips,
-                // B, START or SELECT (or A on BACK) returns to the START menu.
+                // B or START (or A on BACK) returns to the START menu.
                 mdk::EnhancedMenu::Input edges;
                 edges.up = (pressed & KEY_DUP) != 0;
                 edges.down = (pressed & KEY_DDOWN) != 0;
                 edges.left = (pressed & KEY_DLEFT) != 0;
                 edges.right = (pressed & KEY_DRIGHT) != 0;
                 edges.confirm = (pressed & KEY_A) != 0;
-                edges.close = (pressed & (KEY_START | KEY_B | KEY_SELECT)) != 0;
+                edges.close = (pressed & (KEY_START | KEY_B)) != 0;
                 const mdk::CheatsMenu::Action action = cheatsPage.handle(edges, &cheatSwitches);
                 if (action == mdk::CheatsMenu::Action::Changed) {
                     // TOOSCARYFORME (Viewer.cs:872-876): the settings' gore, not saved, and
@@ -1724,7 +1748,7 @@ int main(int argc, char** argv) {
                 edges.left = (pressed & KEY_DLEFT) != 0;
                 edges.right = (pressed & KEY_DRIGHT) != 0;
                 edges.confirm = (pressed & KEY_A) != 0;
-                edges.close = (pressed & (KEY_START | KEY_B | KEY_SELECT)) != 0;
+                edges.close = (pressed & (KEY_START | KEY_B)) != 0;
                 const bool hdMenuWas = enhancedToggles.enableHdTextures;
                 const mdk::EnhancedMenu::Action action =
                     menu.handle(edges, &enhancedToggles, &mdk::g_gameSettings);
@@ -1781,17 +1805,18 @@ int main(int argc, char** argv) {
         // menu that Escape opens in the C# is cut, so the honest end is to
         // stop, and the flow says so (Quit -> Screen::None) rather than the
         // frontend deciding on its own. It comes from the pause menu's QUIT
-        // row -- or, only when the menu's fonts did not load, from START and
-        // SELECT held together.
+        // row -- or, only when the menu's fonts did not load, from START held
+        // for kNoMenuQuitSeconds, summed from the frames' wall-clock deltas.
         mdk::flow::Event next = mdk::flow::Event::None;
         const char* quitReason = "menu Quit";
+        startHeldSeconds = (!menuReady && (held & KEY_START)) ? startHeldSeconds + delta : 0.0;
         if (menuQuit) {
             next = mdk::flow::Event::Quit;
         } else if (menuMainMenu) {
             next = mdk::flow::Event::Menu;
-        } else if (!menuReady && (held & KEY_START) && (held & KEY_SELECT)) {
+        } else if (startHeldSeconds >= kNoMenuQuitSeconds) {
             next = mdk::flow::Event::Quit;
-            quitReason = "START+SELECT held (no pause menu)";
+            quitReason = "START held (no pause menu)";
         }
         if (next != mdk::flow::Event::None) {
             screen = flow.handle(next);
@@ -1817,7 +1842,7 @@ int main(int argc, char** argv) {
         const bool strikeFrame =
             !menu.open() &&
             mdk::advanceStrikeScene(runtime.get(),
-                                    striking && (pressed & (KEY_START | KEY_SELECT)) != 0,
+                                    striking && (pressed & KEY_START) != 0,
                                     elapsed);
         if (playerReady && !menu.open() && !strikeFrame) {
             // The C# Viewer.Frame order: the mouse look is PER FRAME (Kurt's yaw

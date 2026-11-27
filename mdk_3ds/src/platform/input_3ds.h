@@ -17,26 +17,47 @@
 // reason: the part that can be pinned is separated from the part that needs the
 // console.
 //
-// THE CONTROL SCHEME (the owner's defaults of 2026-11-19, in
-// sdmc:/3ds/mdk/controls.ini; controls_3ds.h has the table and the file).
+// THE CONTROL SCHEME (the owner's defaults of 2026-11-19, the run controls of
+// 2026-11-27, in sdmc:/3ds/mdk/controls.ini; controls_3ds.h has the table and
+// the file).
 //
-//   Circle Pad   look (yaw and pitch), as relative mouse counts
-//   X / B        forward / back
+//                Old 3DS                       New 3DS (adds)
+//   Circle Pad   look (yaw and pitch)          walk, when SWAP STICKS is on
+//   C-Stick      --                            walk (up/down forward/back,
+//                                              left/right strafe); look, when
+//                                              SWAP STICKS is on
+//   X / B        forward / back (the scope: zoom in / zoom out)
 //   Y / A        strafe left / strafe right
 //   L            jump
-//   R, ZR        fire
+//   R            fire
 //   D-pad L / R  previous item / next item
 //   D-pad up     sniper (the scope's view and overlay: game/sniper_view.h)
 //   D-pad down   use item
-//   ZL           turbo (New 3DS only; unassigned by the owner)
+//   Select       RUN TOGGLE: each press flips Kurt's run (the game's turbo)
+//   ZL           --                            RUN TOGGLE, as Select
+//   ZR           --                            RUN BUTTON: held, it inverts the
+//                                              toggle (toggle off: run; toggle
+//                                              on: jog); released, the toggle
 //   Start        the frontend's PAUSE menu (main_3ds.cpp, game/enhanced_menu.h:
 //                Resume, the Video/Graphics settings of SPEC.md 7.9, Quit).
 //                QUIT is a menu row confirmed with A -> flow::Event::Quit;
-//                one press of Start no longer ends the run (owner,
-//                2026-11-19). The mask still sets kKeyEscape, which nothing
-//                on this target reads.
-//   Select       opens the same menu; only when the menu's fonts did not
-//                load (no menu) is Start+Select held together the way out
+//                one press of Start never ends the run (owner, 2026-11-19).
+//                Only when the menu's fonts did not load (no menu) is START
+//                HELD FOR TWO SECONDS the way out.
+//
+// WHY SELECT LEFT THE MENU (owner, 2026-11-27): "the Original 3DS does not have
+// enough buttons" -- it has no ZL, so Select is the Old 3DS's run toggle, and
+// Start alone opens the menu. The run is a TOGGLE rather than a held button
+// because Kurt runs most of the time and the thumbs are on the stick and the
+// face buttons (input3dsRun below).
+//
+// THE C-STICK (New 3DS only; the one per-model difference, because the hardware
+// differs). libctru 2.7.0's hidInit brings up IRRST itself on a New 3DS (its
+// weak hidShouldUseIrrst() is APT_CheckNew3DS) and hidScanInput scans it, so
+// hidCstickRead needs no irrstInit of ours -- checked against the linked
+// libctru.a (hid.o calls irrstInit/irrstScanInput), not assumed; the vault's
+// "3ds-cstick-requires-irrstinit" note predates that libctru. The walk it drives
+// is DIGITAL (input3dsStickWalk): the game's walk is four binary axes.
 //
 // The C# `GamepadMap` is the oracle for a controller, and it puts WALK on the
 // left stick and LOOK on the right one. The original 3DS has ONE analog stick,
@@ -93,18 +114,39 @@ enum HidKey : uint32_t {
 };
 
 // One frame's raw controls: libctru's held mask and the circle pad, in
-// libctru's own units (dx right, dy UP, both roughly -155..+155).
+// libctru's own units (dx right, dy UP, both roughly -155..+155); on a New 3DS
+// the C-Stick too, in the same units. And the frame's STICK LAYOUT: which
+// stick walks and which looks.
 struct HidFrame {
     uint32_t held = 0;
     int32_t padX = 0;
     int32_t padY = 0;
+    // The C-Stick (hidCstickRead): only when `hasCStick`, i.e. a New 3DS.
+    bool hasCStick = false;
+    int32_t stickX = 0;
+    int32_t stickY = 0;
+    // SWAP STICKS (config.ini swapSticks, the pause menu's row): the circle pad
+    // walks and the C-Stick looks. IGNORED without a C-Stick, so an Old 3DS can
+    // never lose its only look to a stale setting.
+    bool swapSticks = false;
 };
 
 // The circle pad's reach: the magnitude libctru reports at full tilt. Measured
 // on this hardware by ../forsaken/input_3ds.c ("circle pad raw range is
 // roughly -155..+155"), which is also what libctru's own CPAD direction bits
-// threshold against.
+// threshold against. The C-Stick is normalised by the same reach: its own full
+// tilt is NOT measured here (no New 3DS run has logged it), so a C-Stick look
+// at full tilt is at most the pad's rate, and the walk below is a direction
+// test that does not depend on the reach past its dead zone.
 constexpr float kPadReach = 155.0f;
+
+// THE STICK WALK's dead zone, as a fraction of the reach: a stick inside it
+// walks nowhere (the C-Stick does not rest at exactly zero). Past it the stick's
+// DIRECTION picks one of eight sectors, 45 degrees each, centred on the four
+// axes and the four diagonals -- an axis is held when the stick is within 67.5
+// degrees of it, i.e. its component is at least sin(22.5 deg) of the length.
+constexpr float kWalkDeadZone = 0.25f;
+constexpr float kWalkSector = 0.38268343f;   // sin(22.5 degrees)
 
 // The look, in the C#'s numbers. GamepadMap: DeadZone 0.15 of the reach,
 // Curve 2, LookRate (180, 120) degrees a second at full tilt; Input's
@@ -119,12 +161,37 @@ constexpr float kLookDegreesPerCount = 0.15f;
 constexpr float kMaxLookStep = 0.1f;
 
 // Fill `input` from one frame's controls through `bindings`: every `down[]`
-// action is written (the whole digital state comes from this one frame), and the
-// circle pad ADDS to the accumulated mouse, which the game drains with
+// action is written (the whole digital state comes from this one frame), the
+// WALK stick (the C-Stick, or the circle pad when swapped) adds its digital walk
+// to the walk buttons', and the LOOK stick (the circle pad, or the C-Stick when
+// swapped) ADDS to the accumulated mouse, which the game drains with
 // takeMouseX/TakeMouseY. `seconds` is the time since the previous frame; it is
 // clamped to kMaxLookStep and a zero, negative or NaN gap looks nowhere.
+// The run (turbo) here is only turbo's own buttons; input3dsRun adds the toggle.
 void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& bindings,
                    Input* input);
+
+// One stick's digital walk (x right, y UP, libctru's units): sets forward /
+// back / strafe left / strafe right in `input` when the stick is past
+// kWalkDeadZone in their sector, and clears none (the buttons' walk stays).
+void input3dsStickWalk(int32_t x, int32_t y, Input* input);
+
+// THE RUN (owner, 2026-11-27). `on` is the toggle; `lastHeld` the previous
+// frame's mask, for the toggle's press edges.
+struct RunState {
+    bool on = false;
+    uint32_t lastHeld = 0;
+};
+
+// The run, after input3dsApply, with the same held mask: a PRESS of any
+// run_toggle button (ZL, SELECT) flips `run->on` -- only while `playing`, so the
+// menus and the strike's skip never flip it -- and kKeyTurbo is then held when
+// turbo's own buttons are, or when the toggle and the run_hold button (ZR)
+// disagree: toggle off + ZR held runs, toggle on + ZR held jogs, ZR released is
+// the toggle. The edges are tracked every frame, playing or not, so a button
+// held across the menu's close is not a new press.
+void input3dsRun(uint32_t held, const ControlBindings& bindings, bool playing, RunState* run,
+                 Input* input);
 
 // THE SCOPE'S BUTTONS (owner 2026-11-21). In sniper mode the C# reads forward/back
 // as the scope's tilt (Kurt.SniperControls); on the 3DS the circle pad already
@@ -133,12 +200,17 @@ void input3dsApply(const HidFrame& frame, float seconds, const ControlBindings& 
 // are NOT also a zoom key's: X zooms and does not tilt as well. A binding with no
 // overlap (controls.ini) is untouched. The caller runs it after input3dsApply
 // with the same held mask, only on frames Kurt is sniping.
+// Forward and back are rebuilt from the BUTTONS alone, so a walk stick's
+// forward/back (input3dsStickWalk) does nothing in the scope, as the circle pad
+// already moves it; the stick's strafe is left as it was.
 void input3dsScopeButtons(uint32_t held, const ControlBindings& bindings, Input* input);
 
 // The libctru service: ONE hidScanInput, the reads, and input3dsApply. Returns
 // the frame's held mask so the caller can act on it without scanning HID a
 // second time (see the trap above). `input` must be the frame's own — the mouse
-// it accumulates belongs to this frame.
-uint32_t input3dsPoll(Input* input, float seconds, const ControlBindings& bindings);
+// it accumulates belongs to this frame. `hasCStick` is APT_CheckNew3DS's answer
+// (the C-Stick is read only then); `swapSticks` the setting, ignored without it.
+uint32_t input3dsPoll(Input* input, float seconds, const ControlBindings& bindings,
+                      bool hasCStick, bool swapSticks);
 
 } // namespace mdk

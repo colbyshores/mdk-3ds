@@ -442,10 +442,11 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(10), "EDGE SMOOTHING");
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kQuitRow), "QUIT");
     // + OPTIONS and MAIN MENU, the C# PauseMenu's rows (package #20a).
-    // 26 settings (MOVIES HALF RATE, package #20c, then TINY DEBRIS, TINY
-    // ENEMIES, SCOPE IN 2D, SCOPE CLIP, ROUND CAMERAS, 3D DEPTH and 3D SCREEN
-    // DISTANCE), RESUME, CHEATS (gap package #21), OPTIONS, MAIN MENU, QUIT.
-    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 31);
+    // 27 settings (MOVIES HALF RATE, package #20c, then TINY DEBRIS, TINY
+    // ENEMIES, SCOPE IN 2D, SCOPE CLIP, ROUND CAMERAS, 3D DEPTH, 3D SCREEN
+    // DISTANCE and SWAP STICKS), RESUME, CHEATS (gap package #21), OPTIONS, MAIN
+    // MENU, QUIT.
+    MDK_CHECK_EQ(mdk::EnhancedMenu::kRowCount, 32);
     MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(mdk::EnhancedMenu::kCheatsRow), "CHEATS");
     // Left/right on RESUME flip nothing.
     mdk::EnhancedMenu::Input left;
@@ -586,11 +587,12 @@ std::string menuValue(int32_t row, const mdk::EnhancedToggles& toggles) {
 MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
     using Action = mdk::EnhancedMenu::Action;
     using Menu = mdk::EnhancedMenu;
-    MDK_CHECK_EQ(Menu::kItemCount, 26);   // + MOVIES HALF RATE (package #20c), row 19
+    MDK_CHECK_EQ(Menu::kItemCount, 27);   // + MOVIES HALF RATE (package #20c), row 19
                                           // + TINY DEBRIS, row 20; TINY ENEMIES, row 21
                                           // + SCOPE IN 2D, row 22; SCOPE CLIP, row 23
                                           // + ROUND CAMERAS, row 24
                                           // + 3D DEPTH, row 25; 3D SCREEN DISTANCE, 26
+                                          // + SWAP STICKS, row 27 (New 3DS only)
     MDK_CHECK_EQ(Menu::kQuitRow, Menu::kRowCount - 1);
     // The rows after the ten toggles, in order.
     MDK_CHECK_EQ(menuRowOf("30 FPS CAP"), 11);
@@ -836,6 +838,36 @@ MDK_TEST(PauseMenuSlidersStepAndClampChoicesWrap) {
         MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
         MDK_CHECK(!back.sniperRoundCams);
     }
+    // SWAP STICKS (owner 2026-11-27): off by default, row 27, a config line; inert
+    // without a C-Stick (the Old 3DS: shown disabled), a toggle with one.
+    {
+        MDK_CHECK_EQ(mdk::EnhancedMenu::kSwapSticksRow, 27);
+        MDK_CHECK_STR_EQ(mdk::EnhancedMenu::rowLabel(27), "SWAP STICKS");
+        mdk::EnhancedMenu menu;
+        mdk::EnhancedToggles toggles;
+        MDK_CHECK(!toggles.swapSticks);
+        MDK_CHECK(!menu.cstick());   // the default: no C-Stick
+        menuSelect(&menu, &toggles, 27);
+        MDK_CHECK_EQ(menu.selected(), 27);
+        MDK_CHECK(menu.handle(confirm, &toggles) == Action::None);
+        mdk::EnhancedMenu::Input sideways;
+        sideways.left = true;
+        sideways.right = true;
+        MDK_CHECK(menu.handle(sideways, &toggles) == Action::None);
+        MDK_CHECK(!toggles.swapSticks);
+        menu.setCStick(true);
+        MDK_CHECK(menu.handle(confirm, &toggles) == Action::Changed);
+        MDK_CHECK(toggles.swapSticks);
+        const std::string text = mdk::writeEnhancedConfig(toggles);
+        MDK_CHECK(text.find("swapSticks=1\n") != std::string::npos);
+        mdk::EnhancedToggles back;
+        MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
+        MDK_CHECK(back.swapSticks);
+        // An older config.ini without the line keeps the default (off).
+        mdk::EnhancedToggles old;
+        MDK_CHECK(mdk::parseEnhancedConfig("scopeClip=1\n", &old));
+        MDK_CHECK(!old.swapSticks);
+    }
 }
 
 // Twenty rows do not fit the top screen's twelve: the window follows the
@@ -964,6 +996,7 @@ MDK_TEST(PauseMenuTextHasGlyphs) {
     std::vector<std::string> texts;
     texts.push_back(mdk::EnhancedMenu::kHint);
     texts.push_back(">");
+    texts.push_back("NO C-STICK");   // SWAP STICKS without a C-Stick
     mdk::EnhancedToggles states[3];
     states[1].cap30Fps = true;
     states[1].hazeDensity = 0;

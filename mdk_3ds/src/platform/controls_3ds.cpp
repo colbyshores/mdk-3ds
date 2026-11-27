@@ -33,6 +33,8 @@ const Action kActions[] = {
     {kKeyUseItem, "use_item"},
     {kKeyTurbo, "turbo"},
     {kKeyDown, "down"},
+    {kControlRunToggle, "run_toggle"},
+    {kControlRunHold, "run_hold"},
 };
 const size_t kActionCount = sizeof(kActions) / sizeof(kActions[0]);
 
@@ -101,12 +103,19 @@ ControlBindings defaultControlBindings() {
     bindings.buttons[kKeyStrafeLeft] = kHidY;
     bindings.buttons[kKeyStrafeRight] = kHidA;
     bindings.buttons[kKeyJump] = kHidL;
-    bindings.buttons[kKeyFire] = kHidR | kHidZR;
+    // Fire is R alone since the run controls (owner 2026-11-27): ZR is the run
+    // button.
+    bindings.buttons[kKeyFire] = kHidR;
     bindings.buttons[kKeyItemPrevious] = kHidDLeft;
     bindings.buttons[kKeyItemNext] = kHidDRight;
     bindings.buttons[kKeySniper] = kHidDUp;
     bindings.buttons[kKeyUseItem] = kHidDDown;
-    bindings.buttons[kKeyTurbo] = kHidZL;
+    // THE RUN (owner 2026-11-27): ZL and SELECT toggle it (an original 3DS has
+    // no ZL, so SELECT is its toggle), ZR held inverts it (input3dsRun). Turbo's
+    // own hold is unbound: the toggle and the run button cover it.
+    bindings.buttons[kKeyTurbo] = 0;
+    bindings.buttons[kControlRunToggle] = kHidZL | kHidSelect;
+    bindings.buttons[kControlRunHold] = kHidZR;
     // The scope's zoom (owner 2026-11-21): X in, B out -- the circle pad already
     // moves the scope's view, so forward/back have nothing to do in sniper mode,
     // and input3dsScopeButtons gives their shared buttons to the zoom there.
@@ -221,6 +230,25 @@ void parseControls(const char* text, size_t size, ControlBindings* out, Controls
         const char* keyEnd = equals;
         const char* keyBegin = begin;
         trim(&keyBegin, &keyEnd);
+        // The version line: a whole number, read before the actions.
+        if (equals < end && spells(keyBegin, keyEnd, "version")) {
+            const char* v = equals + 1;
+            const char* vEnd = end;
+            trim(&v, &vEnd);
+            int32_t number = 0;
+            bool digits = v < vEnd && vEnd - v <= 4;
+            for (const char* c = v; digits && c < vEnd; c++) {
+                digits = *c >= '0' && *c <= '9';
+                number = number * 10 + (*c - '0');
+            }
+            if (digits && number >= 1) {
+                r->version = number;
+            } else {
+                r->bad++;
+                note(r, line, begin, end);
+            }
+            continue;
+        }
         int key = -1;
         for (size_t i = 0; i < kActionCount && equals < end; i++) {
             if (spells(keyBegin, keyEnd, kActions[i].name)) {
@@ -244,19 +272,104 @@ void parseControls(const char* text, size_t size, ControlBindings* out, Controls
     }
 }
 
+namespace {
+
+// One migrated key: when the file's value is exactly `was`, it becomes `now`.
+struct Migration {
+    int key;
+    uint32_t was;
+    uint32_t now;
+};
+
+void appendChange(std::string* out, int key, uint32_t was, uint32_t now) {
+    if (!out->empty()) {
+        *out += ' ';
+    }
+    *out += controlActionName(key);
+    *out += ' ';
+    *out += formatControlButtons(was);
+    *out += "->";
+    *out += formatControlButtons(now);
+}
+
+} // namespace
+
+int32_t migrateControls(int32_t fromVersion, ControlBindings* bindings, std::string* changes,
+                        std::string* conflicts) {
+    if (changes) {
+        changes->clear();
+    }
+    if (conflicts) {
+        conflicts->clear();
+    }
+    if (!bindings) {
+        return 0;
+    }
+    int32_t changed = 0;
+    if (fromVersion < 2) {
+        // Version 1's defaults that today's replace (controls_3ds.h). A value
+        // that is not exactly one of them is the owner's and stays.
+        const Migration kToVersion2[] = {
+            {kKeyFire, kHidR | kHidZR, kHidR},
+            {kKeyTurbo, kHidZL, 0},
+            {kKeyZoomIn, 0, kHidX},
+            {kKeyZoomOut, 0, kHidB},
+        };
+        for (const Migration& m : kToVersion2) {
+            if (bindings->buttons[m.key] != m.was) {
+                continue;
+            }
+            bindings->buttons[m.key] = m.now;
+            changed++;
+            if (changes) {
+                appendChange(changes, m.key, m.was, m.now);
+            }
+        }
+    }
+    // The run's buttons shared with a game action: kept, and named.
+    if (conflicts) {
+        const int runs[2] = {kControlRunToggle, kControlRunHold};
+        for (int r = 0; r < 2; r++) {
+            const uint32_t run = bindings->buttons[runs[r]];
+            for (int key = 0; key < kKeyCount; key++) {
+                const uint32_t shared = bindings->buttons[key] & run;
+                if (shared == 0) {
+                    continue;
+                }
+                if (!conflicts->empty()) {
+                    *conflicts += ", ";
+                }
+                *conflicts += controlActionName(key);
+                *conflicts += '=';
+                *conflicts += formatControlButtons(bindings->buttons[key]);
+                *conflicts += " shares ";
+                *conflicts += formatControlButtons(shared);
+                *conflicts += " with ";
+                *conflicts += controlActionName(runs[r]);
+            }
+        }
+    }
+    return changed;
+}
+
 std::string writeControls(const ControlBindings& bindings) {
     std::string out =
         "# MDK 3DS controls. One line per action: action=BUTTONS, the buttons\n"
         "# joined with '+' (any of them held holds the action), or none.\n"
         "# Buttons: A B X Y L R ZL ZR START SELECT DUP DDOWN DLEFT DRIGHT.\n"
-        "# ZL and ZR exist on the New 3DS only: turbo is on ZL (the owner left it\n"
-        "# unassigned), so an original 3DS has no turbo unless you bind it here.\n"
-        "# The circle pad looks. START opens the pause menu and SELECT the\n"
-        "# effects menu, whatever is bound.\n"
-        "# sniper enters and leaves sniper mode (X/B tilt the scope, the circle pad\n"
-        "# turns it). zoom_in and zoom_out zoom the scope (unbound by default).\n"
+        "# ZL and ZR exist on the New 3DS only.\n"
+        "# run_toggle: each press flips Kurt's run (ZL, and SELECT for the\n"
+        "# original 3DS). run_hold: held, it inverts the toggle -- runs when the\n"
+        "# toggle is off, jogs when it is on. turbo: a plain hold-to-run (none).\n"
+        "# The circle pad looks; a New 3DS's C-Stick walks (the pause menu's SWAP\n"
+        "# STICKS swaps them). START opens the pause menu, whatever is bound.\n"
+        "# sniper enters and leaves sniper mode (the circle pad turns the scope);\n"
+        "# zoom_in and zoom_out zoom it (X and B, which do not walk there).\n"
         "# down sinks Kurt while the pause menu's NOCLIP cheat is on (unbound).\n"
         "# Delete this file to get the defaults back.\n";
+    char version[32];
+    snprintf(version, sizeof(version), "version=%d\n", (int)kControlsVersion);
+    out += version;
     for (size_t i = 0; i < kActionCount; i++) {
         out += kActions[i].name;
         out += '=';
