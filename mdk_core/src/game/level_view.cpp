@@ -6,6 +6,8 @@
 
 #include <string.h>
 
+#include "scripts/animated_textures.h"
+
 namespace mdk {
 
 // The stacked texels a batch's texture will be made with -- the same
@@ -333,7 +335,7 @@ bool LevelView::bounds(Vec3* outMin, Vec3* outMax) const {
     return true;
 }
 
-void LevelView::draw() {
+void LevelView::draw(const scripts::AnimatedTextures* frames) {
     if (!renderer_ || mesh_ < 0 || surfaces_ == nullptr || !ready()) {
         return;
     }
@@ -354,7 +356,15 @@ void LevelView::draw() {
         draw.mesh = mesh_;
         draw.first_vertex = batch.first;
         draw.vertex_count = batch.count;
+        // LevelView.cs:139: an animated texture's batch at the frame the scripts set
+        // for it in this arena (FrameOf: 0 until one is set). Only M_COMM, the comm
+        // device's screen (LEVEL4 MEAT_3, LEVEL7 DANT_5), is animated by a script,
+        // so a level without one skips the lookup on the map's emptiness.
         draw.frame = 0;
+        if (frames != nullptr && batch.surface.frameCount > 1 && batch.surface.texture != nullptr &&
+            !frames->frames().empty()) {
+            draw.frame = frames->frameOf(arena_->name(), batch.surface.texture->name());
+        }
         draw.primitive = Primitive::Triangles;
         memset(draw.world, 0, sizeof(draw.world));
         draw.world[0] = 1.0f;

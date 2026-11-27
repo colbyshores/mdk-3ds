@@ -3795,3 +3795,47 @@ against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new
   (tick1 522/522); `make -C tests/formats` 200670 checks, 0 failures; `tools/check.sh` all
   gates pass (smdh skipped: no .cia) after the swing's libm trig got its `@vfp-exempt R6` pin
   (gameplay: the LUT would move a damaging object); `make -C mdk_3ds` 0 compiler warnings.
+
+### 133 arena_texture_frame -- the comm device's screen (M_COMM) animates
+- **What was wrong:** the VM kept the scripts' frames in `runtime.animatedTextures`
+  (`AnimatedTextures.Set`, mode 1: frames per second), but the level draw always passed frame 0,
+  so the comm device's screen on LEVEL4 MEAT_3 and LEVEL7 DANT_5 never moved.
+- **What:** `LevelView::draw` takes the scripts' frames and gives an animated batch
+  (frameCount > 1) `frameOf(arena, texture name)`, the C#'s
+  `frames.FrameOf(view.Arena.Name, batch.Animated)` (LevelView.cs:139); `ArenaViews` carries the
+  pointer, which both frontends set each frame before `arenaViews.draw` (a runtime replaced at a
+  level change is never read through a stale pointer). A level whose scripts never set a frame
+  skips the lookup on the map's emptiness.
+- **3DS texture paths:** the frame only moves the uv. M_COMM is one stacked strip of 6 frames,
+  128 x 774 (6 x 129), under the PICA's 1024: the arena ETC1 set has it as one 128 x 1024 texture
+  per palette (`build-arena-etc1` manifest), whose draw takes its frame's slice through
+  `pica::compressedFrameUv`; an expanded original takes `offsetY = frame * frameHeight`. A
+  stacked texture never gets an HD copy (`hdPackLookup` gives no `hdPath` for frameCount > 1,
+  06_draw.inc never binds one for frame_count > 1), so the HD window holds no M_COMM and a frame
+  swap neither imports a texture nor reads a file on core 0. The `Texture::parseAnimated`
+  delta-decode fix (build/hd-pack-native, M_COMM only) is in this tree, so the frames differ as
+  the C#'s do (frame 1: 78 texels from frame 0, frame 2: 2656). The known ETC1 limit stays: a
+  frame height of 129 puts a frame boundary inside a 4x4 block, so the screen's edge row can
+  bleed (ledger, the compressed strip frame entry).
+- **Oracle:** the hazards probe's new `frames` token prints `AnimatedTextures.Frames` and
+  `FrameOf` per step. New goldens, both the C# oracle's bytes: `L4_hazards_comm` (MEAT_3, 400
+  steps at 6 frames/s; equal to v1.2.6 and to 1.1.1 + 683a53ef) and `L7_hazards_comm` (DANT_5,
+  Kurt turns and fires: the chain gun hits the device and the screen goes to 12 frames/s; 600
+  steps equal to v1.2.6 byte for byte; 1.1.1 + 683a53ef parts from s=20, Kurt's landing, an
+  upstream gameplay fix 1.1.1 lacks, which shifts the hit by a few ticks). 1.2.6's 133 path is
+  1.1.1's (its LevelView only adds depth bands). tick1 524/524.
+- **Frames (Linux, headless, --fixed-step, DISPLAY=:99, lavapipe):** `comm_linux_frames.png`
+  in the session scratchpad (`opframes/`): the DANT_5 device through the scope
+  (`--level=7 --arena=DANT_5 --at=80,2255,-60,90 --sniper=0.6,2`), capture frames 100, 110 and
+  120, top row this build (the screen's red indicator changes), bottom row the same build with
+  the frames pointer forced to null (frame 0 every time, the old picture). Pixels differ between
+  the two at 5 of 6 captures (up to 2098 pixels), only on the screen.
+- **Cost on the 3DS:** per frame, one `std::map` lookup per animated batch in a drawn arena of a
+  level whose scripts set a frame (MEAT_3, DANT_5: one batch); nothing in other levels.
+- **Not verified:** not run on hardware or in Mandarine; the ETC1 strip's edge-row bleed was not
+  looked at on a console.
+- **Checks:** Linux build 0 warnings; tick1 524/524 and vm_tests pass; `make -C tests/formats`
+  200670 checks, 0 failures (its link-graph guard: `AnimatedTextures::frameOf` is inline now, so
+  the level draw links no scripts translation unit); `tools/check.sh` all gates pass (smdh
+  skipped); `main_3ds_flow_test.sh` pass; `make -C mdk_3ds` 0 compiler warnings. The slow
+  shell half of `make -C tests/scripts test` was run on the 226 commit and the final tree.

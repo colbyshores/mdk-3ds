@@ -110,8 +110,15 @@ public:
     // The same with the drawn list the pair implies (tools and tests).
     int32_t sync(const std::string& current, const std::string& second);
 
-    // Queue the drawn arenas' visible groups, in the list's order.
+    // Queue the drawn arenas' visible groups, in the list's order, the animated
+    // textures at the frames setAnimatedTextures names (LevelView::draw).
     void draw(const std::vector<std::string>& drawn);
+
+    // The scripts' texture frames (ScriptRuntime::animatedTextures, opcode 133) the
+    // next draw() uses; null draws every animated texture at frame 0. Borrowed: the
+    // frontend sets it each frame before draw(), so a runtime replaced at a level
+    // change is never read through a stale pointer.
+    void setAnimatedTextures(const scripts::AnimatedTextures* frames) { frames_ = frames; }
 
     // Resolve up to `budget` textures across the kept views (LevelView::
     // pumpSurfaces), so an arena's first drawn frame does not pay them all.
@@ -147,6 +154,8 @@ public:
     const std::string& lastBuilt() const { return lastBuilt_; }
 
 private:
+    const scripts::AnimatedTextures* frames_ = nullptr;
+
     struct Entry {
         std::string name;
         LevelView* view = nullptr;

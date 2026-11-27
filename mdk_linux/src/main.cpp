@@ -2634,6 +2634,9 @@ int main(int argc, char** argv) {
                                 runtime->endLevel()->arena().c_str());
                 }
             }
+            // The comm screen's frames (arena_texture_frame, opcode 133): the
+            // C#'s LevelView.Draw(DrawnArenas, AnimatedTextures).
+            arenaViews.setAnimatedTextures(runtime ? &runtime->animatedTextures : nullptr);
             arenaViews.draw(*frameDrawn);
         }
         if (runtime) {

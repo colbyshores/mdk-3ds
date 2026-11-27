@@ -4278,7 +4278,7 @@ std::vector<std::string> splitColons(const std::string& token) {
 bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* holds,
                           std::vector<ItemsGive>* gives, std::vector<HazardsTeleport>* teleports,
                           std::vector<HazardsRun>* runs, std::vector<std::string>* watched,
-                          bool* flying, std::vector<std::string>* roped) {
+                          bool* flying, std::vector<std::string>* roped, bool* textures) {
     std::string items;
     size_t start = 0;
     while (start < schedule.size()) {
@@ -4323,6 +4323,11 @@ bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* h
                 return false;
             }
             *flying = true;
+        } else if (f[0] == "frames") {
+            if (f.size() != 1) {
+                return false;
+            }
+            *textures = true;
         } else if (f[0] == "rope") {
             if (f.size() != 2) {
                 return false;
@@ -4363,8 +4368,9 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
     std::vector<std::string> watched;
     bool flying = false;
     std::vector<std::string> roped;
+    bool textures = false;
     if (!parseHazardsSchedule(schedule, &holds, &gives, &teleports, &runs, &watched, &flying,
-                              &roped)) {
+                              &roped, &textures)) {
         *why = "the schedule did not parse: " + schedule;
         return false;
     }
@@ -4584,6 +4590,24 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
             }
             *out += " rope=";
             *out += rope.empty() ? "-" : rope;
+        }
+        if (textures) {
+            // The `frames` token: the scripts' arena texture frames (arena_texture_frame,
+            // opcode 133; AnimatedTextures.Frames) in (arena, texture) order, each as
+            // arena/texture:value (1/10000):drawn frame (FrameOf, what LevelView draws).
+            std::string list;
+            const std::map<std::pair<std::string, std::string>, float>& all =
+                runtime.animatedTextures.frames();
+            for (std::map<std::pair<std::string, std::string>, float>::const_iterator it =
+                     all.begin();
+                 it != all.end(); ++it) {
+                snprintf(buffer, sizeof(buffer), "%s%s/%s:%.4f:%d", list.empty() ? "" : ";",
+                         it->first.first.c_str(), it->first.second.c_str(), it->second,
+                         runtime.animatedTextures.frameOf(it->first.first, it->first.second));
+                list += buffer;
+            }
+            *out += " tex=";
+            *out += list.empty() ? "-" : list;
         }
         *out += "\n";
         if (trace != nullptr) {
@@ -10206,6 +10230,18 @@ int main(int argc, char** argv) {
              "OLYM_6's pendulum XSWINGB swings under its pivot (jump_to, 226; ObjectMotion."
              "Swing), turns its plane at the turning points, draws its rope and knocks Kurt "
              "down (PENDHIT)"},
+            // arena_texture_frame (133): the comm device's screen M_COMM, which every
+            // frontend drew at frame 0 before the parity branch. The `frames` column is
+            // the scripts' frame and the frame LevelView draws (FrameOf); both goldens are
+            // the C# oracle's (v1.2.6; L4's also equals 1.1.1 + 683a53ef byte for byte).
+            {"L4_hazards_comm", "golden/L4_hazards_comm.txt", 4, 400,
+             "tp:1:MEAT_3:293:4166:-548,frames",
+             "MEAT_3's comm screen M_COMM runs at 6 frames a second (arena_texture_frame, "
+             "133, mode 1), wrapping over its 6 frames"},
+            {"L7_hazards_comm", "golden/L7_hazards_comm.txt", 7, 600,
+             "tp:1:DANT_5:100:2320:-60,frames,left:20-85,fire:100-400",
+             "DANT_5's comm device shot by the chain gun: its screen goes from 6 to 12 "
+             "frames a second (133)"},
         };
         for (size_t i = 0; i < sizeof(kHazardsCases) / sizeof(kHazardsCases[0]); i++) {
             const HazardsCase& c = kHazardsCases[i];

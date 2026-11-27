@@ -500,7 +500,7 @@ void ArenaViews::draw(const std::vector<std::string>& drawn) {
                 // bubble built it during the approach); a view that is
                 // still building -- or failed and is waiting out its
                 // retry -- draws nothing this frame.
-                views_[i].view->draw();
+                views_[i].view->draw(frames_);
                 break;
             }
         }

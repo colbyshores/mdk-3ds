@@ -38,7 +38,9 @@ using KurtT = Mdk.Game.Kurt.Kurt;
 //                                pitch, yaw, swing speed and plane (jump_to, opcode 226),
 //                                flags, rope colour and mask and RopeView.LinesOf's ends
 //                                (blending off), at 1/10000, and `#` an FNV-1a over the bits of
-//                                all those floats (2026-11-26, the opcode parity branch).
+//                                all those floats (2026-11-26, the opcode parity branch);
+//   `frames`                     appends ` tex=`: AnimatedTextures.Frames (opcode 133) in
+//                                ordinal (arena, texture) order, arena/texture:value:FrameOf.
 // The goldens' schedules are in tick1.cpp's kHazardsCases table.
 //
 // HOW IT WAS BUILT AND RUN (2026-11-20, .NET SDK 10.0.404): as tests/scripts/items_probe -- copy
@@ -109,6 +111,7 @@ var teleports = new List<(int Step, string Arena, Vector3 Position)>();
 var runs = new List<(int Step, string Model, int Pc, Vector3 Offset)>();
 var watched = new List<string>();
 var roped = new List<string>();
+var textures = false;
 var flying = false;
 foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries))
 {
@@ -135,6 +138,9 @@ foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries)
             continue;
         case "rope":
             roped.Add(parts[1]);
+            continue;
+        case "frames":
+            textures = true;
             continue;
     }
 
@@ -229,7 +235,17 @@ for (var step = 1; step <= steps; step++)
         $"watch={(watch.Count == 0 ? "-" : string.Join(";", watch))} " +
         $"bomb={(runtime.Items.Bomb is { Dead: false } ? 1 : 0)} pieces={runtime.Debris.Pieces.Count} effects={runtime.Effects.All.Count} " +
         $"white={F(kurt.WhiteFlash)} shake={F(runtime.Shake)} voices={Voices()}" + (flying ? Flying() : "")
-        + (roped.Count > 0 ? Ropes() : ""));
+        + (roped.Count > 0 ? Ropes() : "") + (textures ? Textures() : ""));
+}
+
+// The `frames` token's column (tick1's kurtHazardsDump prints the same, from a std::map).
+string Textures()
+{
+    var all = runtime.AnimatedTextures.Frames
+        .OrderBy(f => f.Key.Arena, StringComparer.Ordinal).ThenBy(f => f.Key.Texture, StringComparer.Ordinal)
+        .Select(f => $"{f.Key.Arena}/{f.Key.Texture}:{F(f.Value)}:{runtime.AnimatedTextures.FrameOf(f.Key.Arena, f.Key.Texture)}")
+        .ToList();
+    return " tex=" + (all.Count == 0 ? "-" : string.Join(";", all));
 }
 
 // The `rope:TYPE` token's column (tick1's kurtHazardsDump prints the same).

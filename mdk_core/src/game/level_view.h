@@ -43,6 +43,10 @@
 
 namespace mdk {
 
+namespace scripts {
+class AnimatedTextures;
+} // namespace scripts
+
 // An arena on the GPU.
 enum class LevelViewBuildFailure : uint8_t {
     None,
@@ -110,7 +114,13 @@ public:
     // batch, with no rebuild -- the C# LevelView checks Hidden at draw time
     // (LevelView.cs:126). A group the scripts RETEXTURED (group_set_texture)
     // needs refresh() first: its surface is baked into the batches.
-    void draw();
+    //
+    // An animated texture (frameCount > 1) is drawn at the frame the scripts set
+    // for it in this arena (arena_texture_frame, opcode 133: LevelView.cs:139,
+    // `frames.FrameOf(arena, batch.Animated)`), frame 0 with no `frames` or before a
+    // script sets one. The frame only moves the texture's uv (its frames are one
+    // stacked strip): no texture is made or read for it.
+    void draw(const scripts::AnimatedTextures* frames = nullptr);
 
     // Rebuild the scene from the arena's CURRENT group materials and re-upload
     // the mesh. This is the C# LevelView.Rebuild (LevelView.cs:251), the path a
