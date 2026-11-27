@@ -3761,5 +3761,34 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
 - **Found, not fixed:** the fall pause menu's OPTIONS page is never given the settings
   (nor the host, the fonts or the print: `items()` is set up for the level's pause menus only),
   so on its pages the setting rows have blank labels and change nothing, on both frontends.
-  Pre-existing since 75ec50e2; reported, left for its own change.
+  Pre-existing since 75ec50e2; fixed in the next entry, its own commit.
 - **Commit:** this one (branch fix/fall-pause-main-menu, from test/3ds-combined-11-26).
+
+### The fall's pause menu's OPTIONS pages were blank and inert (2026-11-27, fix/fall-pause-main-menu)
+- **What:** the fall's pause menu (both frontends) now gives its items the main menu's fonts,
+  `Host::Console`, the front's settings and the print line before it shows (the level pause
+  menus' wiring: mdk_linux/src/main.cpp ~2114, mdk_3ds/src/main_3ds.cpp ~1673). A change on its
+  options pages goes through `fallApplied`: saved as the main menu's are (`applied`: Linux
+  `saveSettings`, 3DS `front->save` = `saveConfigNow`) and applied at once to the fall's own
+  mixer (`applyAudio`), as the level's are to the level's.
+- **Why:** before, `fallPause.items()` was never set up: no settings, so every setting row's label
+  was empty and a step did nothing; no host, so the pages were the desktop oracle's; no print,
+  so nothing reached the log. The C# PauseMenu (75ec50e2) is made over the Ui, with its
+  settings and fonts.
+- **Test:** `fall_frontend_test.sh` case 2c (Linux, headless): in the fall, Esc, Options, Audio,
+  Left -- the log has "Menu: Resume | Options | Main menu | Quit", "Menu: Graphics | Audio |
+  Game | Back" and the labelled volumes, and the run's own settings.cfg has master_volume=70.
+  Against the binary without this change: FAIL (4 checks: no lines, the file kept 80); with it:
+  PASS. Case 0's second check reads both frontends for `fallPause.items()` and the four setters
+  in the 12 lines before the fall's `fallPause.show();`; a mutant without any one of them (3DS)
+  or without the setSettings (Linux) fails it.
+- **Not like the C#:** the options page's song (`_ui.Play(_song, Bus.Music)`) is not played in
+  the fall, as it is not in the level's pause menu on this port.
+- **Evidence:** Linux build 0 warnings; `make -C tests/scripts test` rc 0 (`PASS FallFrontend`
+  with 2c, `PASS MenuFrontend`, `PASS Main3dsFlow (22 checks, 64 arms, 24 probes)`, tick1 all
+  cases match); `tests/formats` 200670 checks, 0 failures; `tools/check.sh` ALL GATES PASSED
+  (gates_smdh SKIP, no .cia); 3DS build rc 0 (menu_screens_3ds.cpp recompiled), 0 compiler
+  warnings. An independent read-only review found no defect (the fall's mixer lives whenever
+  `fallApplied` can run; the 3DS `front->save` is `saveConfigNow`, the level's saver). Not run
+  in Mandarine or on a console: the 3DS side is pinned by the source check only.
+- **Commit:** this one.

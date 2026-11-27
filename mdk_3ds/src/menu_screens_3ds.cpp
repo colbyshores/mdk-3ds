@@ -60,6 +60,20 @@ void applied(void* user) {
                  (int)front->settings->gore, (int)saved);
 }
 
+// The fall pause menu's options (the C#'s PauseMenu reads and applies the Ui's
+// settings, as the main menu's do): saved as the main menu's are, and heard at
+// once on the fall's own mixer, as the level pause menu's are on the level's.
+struct FallApply {
+    FrontScreens3ds* front;
+    fall::FallScreen* fall;
+};
+
+void fallApplied(void* user) {
+    FallApply* self = static_cast<FallApply*>(user);
+    applied(self->front);
+    self->front->settings->applyAudio(&self->fall->mixer().device());
+}
+
 // MDKFONT.FTI's two fonts in SYS_PAL (C# Fonts), its texts, SYS_PAL's bytes, and
 // the two archives the screens draw from. On the heap: each Font and FontView is
 // ~11 KB, and the main thread's stack is not the place (AGENTS.md section 10).
@@ -289,6 +303,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     // START in the fall opens the pause menu, as in a level (upstream 75ec50e2; the
     // original's abort prompt, 0x403cf8): the fall waits under it.
     menu::PauseMenu fallPause;
+    FallApply fallApply{front, fall.get()};
     bool fallAudio = false;
     auto closeFall = [&]() {
         if (fallAudio) {
@@ -457,6 +472,13 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
                     log3dsPrintf("fall: the pause menu closes at %s", fall->status().c_str());
                 }
             } else if ((pressed & KEY_START) != 0) {
+                // The C# PauseMenu's items over the Ui: its fonts, host, settings
+                // and print, as the main menu's (and the level pause menu's) are.
+                menu::MenuItems& items = fallPause.items();
+                items.setFonts(&ui->bigFont, &ui->smallFont);
+                items.setHost(menu::Host::Console);
+                items.setSettings(front->settings, fallApplied, &fallApply);
+                items.setPrint(printLine, nullptr);
                 fallPause.show();
                 log3dsPrintf("fall: the pause menu opens at %s", fall->status().c_str());
             } else {
