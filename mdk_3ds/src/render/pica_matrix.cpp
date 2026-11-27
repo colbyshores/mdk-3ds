@@ -892,6 +892,50 @@ void streamTexelsRgb565(const uint8_t* indices, int32_t width, int32_t height,
     }
 }
 
+void mirrorFaceTexelsRgb565(const uint8_t* indices, int32_t size, const uint8_t* paletteRgba,
+                            uint8_t* out) {
+    if (!indices || !paletteRgba || !out || size <= 0) {
+        return;
+    }
+    uint16_t words[256];
+    for (int32_t i = 0; i < 256; i++) {
+        const uint8_t* c = paletteRgba + i * 4;
+        words[i] = rgb565Word(c[0], c[1], c[2]);   // index 0 too (see the header)
+    }
+    uint32_t mortonX[8];
+    uint32_t mortonY[8];
+    for (uint32_t v = 0; v < 8u; v++) {
+        mortonX[v] = morton8InTile(v, 0u);
+        mortonY[v] = morton8InTile(0u, v);
+    }
+    const size_t tilesPerRow = (size_t)((uint32_t)size >> 3);
+    for (int32_t y = 0; y < size; y++) {
+        const uint8_t* row = indices + (size_t)y * (size_t)size;
+        const size_t rowBase = (size_t)((uint32_t)y >> 3) * tilesPerRow * 64u + mortonY[y & 7];
+        for (int32_t x = 0; x < size; x++) {
+            const size_t slot = rowBase + (size_t)((uint32_t)x >> 3) * 64u + mortonX[x & 7];
+            texel16Bytes(out + slot * 2u, words[row[x]]);
+        }
+    }
+}
+
+int32_t mirrorCubeFor(const int32_t* rowShifts, int32_t count, float rowShift) {
+    // One conversion a mirror draw, of a value that is already a whole number
+    // of rows; the slots are then compared as integers (no float compare).
+    /* @vfp-exempt R2 — one exact conversion per MIRROR draw (prepareMirror), of a whole number of rows; the slot search after it is integer. measured n/a (pending OG capture). Verified 2026-11-27. */
+    const int32_t want = (int32_t)rowShift;
+    int32_t best = -1;
+    int32_t bestDistance = 0;
+    for (int32_t i = 0; i < count; i++) {
+        const int32_t distance = rowShifts[i] > want ? rowShifts[i] - want : want - rowShifts[i];
+        if (best < 0 || distance < bestDistance) {
+            best = i;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
 size_t mipChainTexels(int32_t paddedWidth, int32_t paddedHeight, int32_t levels) {
     size_t total = 0;
     size_t w = (size_t)paddedWidth;

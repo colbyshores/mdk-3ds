@@ -1085,6 +1085,27 @@ inline void texel16Bytes(uint8_t* dst, uint16_t word) {
 void streamTexelsRgb565(const uint8_t* indices, int32_t width, int32_t height,
                         const uint8_t* paletteRgba, int32_t paddedWidth, uint8_t* out);
 
+// A MIRROR CUBE'S FACE (mdk_render_set_mirror_cube_face, render/mirror_cube.h):
+// `size` x `size` palette indices through `paletteRgba` into an RGB565 face, the
+// same tiled layout as streamTexelsRgb565 -- with one difference, and it is the
+// oracle's: index 0 is palette[0]'s OWN colour. The oracle's mirror program has
+// no discard (mirror.hlsl:36 returns `float4(palette.rgb, 1.0)`), so a mirror
+// shows index 0 as a colour; RGB565 has no alpha, so the frame-wide alpha test
+// (03_eye.inc) never discards it either. Integer only, one pass.
+void mirrorFaceTexelsRgb565(const uint8_t* indices, int32_t size, const uint8_t* paletteRgba,
+                            uint8_t* out);
+
+// THE MIRROR'S CUBE (06_draw.inc prepareMirror): which of the level's cubes a
+// mirror draw samples -- the one made for its material's row shift (an integer
+// number of rows: MaterialResolver's (1000 - value) * 8) when there is one, else
+// the NEAREST made shift (the first of two as near). The cubes are made for the
+// shifts of the level's ARENAS (render/mirror_cube.h), so a room's mirror is
+// always exact; a model's chrome may carry a value no arena uses (LEVEL6's XF
+// and XBSHARK carry 995-1010 in single rows, measured 2026-11-27) and takes
+// the nearest cube -- at most 20 rows (~8 degrees) off in LEVEL6, never a cube
+// per value. `rowShifts` are the cubes' shifts in slot order; -1 for none.
+int32_t mirrorCubeFor(const int32_t* rowShifts, int32_t count, float rowShift);
+
 // THE CHOICE, per texture, from its EXPANDED level 0 (`texelBytes` order, tiled,
 // `level0Texels` = paddedWidth * paddedHeight, padding included):
 //

@@ -378,9 +378,55 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
             shaderProgramFree(&r->programPass);
         }
     }
+    // THE MIRRORS' PROGRAMS (render_c3d_mirror.h): in geometry mode the vertex
+    // shader plus the DVLB's sixth DVLE, mdk_mirror.g.pica; otherwise the seventh,
+    // mdk_mirror.v.pica, alone -- the program the list is already using decides
+    // (drawRecorded), so neither ever splits it. Both or neither: they need the
+    // pass-through program beside them for the unlit draws after a geometry
+    // one. Optional: without them a mirror draw is skipped.
+    if (r->passReady && r->dvlb->numDVLE >= 7) {
+        bool geometry = false;
+        bool plain = false;
+        if (R_SUCCEEDED(shaderProgramInit(&r->programMirror))) {
+            if (R_SUCCEEDED(shaderProgramSetVsh(&r->programMirror, &r->dvlb->DVLE[0])) &&
+                R_SUCCEEDED(shaderProgramSetGsh(&r->programMirror, &r->dvlb->DVLE[5], 12))) {
+                r->mirrorCameraLocation =
+                    shaderInstanceGetUniformLocation(r->programMirror.geometryShader, "camera");
+                geometry = r->mirrorCameraLocation >= 0;
+            }
+            if (!geometry) {
+                shaderProgramFree(&r->programMirror);
+            }
+        }
+        if (geometry && R_SUCCEEDED(shaderProgramInit(&r->programMirrorPlain))) {
+            if (R_SUCCEEDED(shaderProgramSetVsh(&r->programMirrorPlain, &r->dvlb->DVLE[6]))) {
+                shaderInstance_s* vs = r->programMirrorPlain.vertexShader;
+                r->mirrorPlainCameraLocation = shaderInstanceGetUniformLocation(vs, "camera");
+                // Its matrices are written through the scene program's locations:
+                // they must be the same registers (mdk_mirror.v.pica).
+                plain = r->mirrorPlainCameraLocation >= 0 &&
+                        shaderInstanceGetUniformLocation(vs, "mvp") == r->mvpLocation &&
+                        shaderInstanceGetUniformLocation(vs, "world") == r->worldLocation;
+            }
+            if (!plain) {
+                shaderProgramFree(&r->programMirrorPlain);
+            }
+        }
+        if (geometry && !plain) {
+            shaderProgramFree(&r->programMirror);
+        }
+        r->mirrorReady = geometry && plain;
+    }
+    mdk::log3dsPrintf("mirror programs: %s (camera gs=%d vs=%d)",
+                      r->mirrorReady ? "ready" : "UNAVAILABLE", (int)r->mirrorCameraLocation,
+                      (int)r->mirrorPlainCameraLocation);
     // The vertex shader's uniform registers run from c0 to the world matrix's
-    // last row (mdk_c3d.v.pica: mvp c0-3, uvtransform, tint, haze, world c7-10).
+    // last row (mdk_c3d.v.pica: mvp c0-3, uvtransform, tint, haze, world c7-10),
+    // and on to the mirrors' camera (c11, mdk_mirror.v.pica) when it is there.
     r->vshUniformVecs = r->worldLocation + 4;
+    if (r->mirrorReady && r->mirrorPlainCameraLocation + 1 > r->vshUniformVecs) {
+        r->vshUniformVecs = r->mirrorPlainCameraLocation + 1;
+    }
     mdk::log3dsPrintf("pass program: %s; vertex uniforms c0-c%d",
                       r->passReady ? "ready" : "UNAVAILABLE", (int)r->vshUniformVecs - 1);
     // THE DEDUPE (03_frame_state.inc) reads citro3d's uniform array as the registers'
@@ -556,6 +602,10 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
         if (r->shadowProgramReady) {
             shaderProgramFree(&r->programShadow);
         }
+        if (r->mirrorReady) {
+            shaderProgramFree(&r->programMirrorPlain);
+            shaderProgramFree(&r->programMirror);
+        }
         if (r->passReady) {
             shaderProgramFree(&r->programPass);
         }
@@ -582,6 +632,14 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
         C3D_TexDelete(&r->unitIdle);
         r->unitIdleReady = false;
     }
+    // The mirror cubes: linear heap, sampled by the queue C3D_Fini has waited for.
+    for (int32_t i = 0; i < mdk::kMirrorRowShiftsMax; i++) {
+        if (r->mirrorCubes[i].valid) {
+            C3D_TexDelete(&r->mirrorCubes[i].tex);
+            r->mirrorCubes[i].valid = false;
+        }
+    }
+    r->mirrorCubeCount = 0;
     if (r->glowHaloReady) {
         C3D_TexDelete(&r->glowHalo);
         r->glowHaloReady = false;

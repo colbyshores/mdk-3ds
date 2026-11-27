@@ -59,6 +59,8 @@
 
 #include "render/render.h"
 #include "render/render_c3d_hd_set.h"
+#include "render/render_c3d_mirror.h"
+#include "render/mirror_cube.h"
 #include "render/render_types.h"
 #include "render/draw_queue.h"
 #include "render/depth_pull.h"

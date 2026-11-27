@@ -61,6 +61,16 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     }
     C3D_Tex* texture = nullptr;
     bool usedHd = false;
+    // A MIRROR samples its cube (06_draw.inc prepareMirror), nothing else: its
+    // material's texture is the white placeholder the cube replaces.
+    const bool mirror = p->mirrorCube >= 0;
+    if (mirror) {
+        RendererC3D::MirrorCube& cube = r->mirrorCubes[p->mirrorCube];
+        if (!cube.valid || cube.releasePending || cube.faces != 0x3F) {
+            return;
+        }
+        texture = &cube.tex;
+    }
     if (p->texHd && p->texIndex >= 0 && (size_t)p->texIndex < r->hdCopies.size() &&
         r->hdCopies[(size_t)p->texIndex].state == HdCopy::Resident) {
         texture = &r->hdCopies[(size_t)p->texIndex].tex;
@@ -340,8 +350,15 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     // THE GEOMETRY-STAGE RULE (03_frame_state.inc bindProgram): once this command
     // list has used a geometry program, an unlit draw goes through the
     // pass-through one -- the same picture, and no split to leave geometry mode.
+    // A mirror's program is its own: the direction from the camera -- the
+    // frame's, or a scene inset's (setLitCamera) -- written at the bind. The
+    // geometry one when the list is already in geometry mode, the plain one
+    // otherwise: the same picture, and neither splits the list (bindProgram).
+    shaderProgram_s* const mirrorProgram =
+        r->gsInList ? &r->programMirror : &r->programMirrorPlain;
     shaderProgram_s* const wanted =
-        shadowLit ? &r->programShadow
+        mirror    ? mirrorProgram
+        : shadowLit ? &r->programShadow
         : lit     ? &r->programLit
                   : (r->gsInList && r->passReady && wholeTriangles ? &r->programPass : &r->program);
     if (wanted != r->boundProgram) {
@@ -350,12 +367,19 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
             installShadowUniforms(r);
         } else if (lit) {
             installLitUniforms(r);
+        } else if (mirror && wanted == &r->programMirror) {
+            C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->mirrorCameraLocation, r->pullEye[0],
+                          r->pullEye[1], r->pullEye[2], 1.0f);
+        } else if (mirror) {
+            C3D_FVUnifSet(GPU_VERTEX_SHADER, r->mirrorPlainCameraLocation, r->pullEye[0],
+                          r->pullEye[1], r->pullEye[2], 1.0f);
         }
     }
     r->litBound = lit && !shadowLit;
+    // The world position the geometry shader takes the light's normal -- or the
+    // mirror's direction -- from; the identity (every arena batch) is written
+    // only when it is not there.
     if (lit) {
-        // The world position the geometry shader takes its normal from; the
-        // identity (every arena batch) is written only when it is not there.
         const bool identity = p->worldIdentity;
         if (!identity || !r->worldIsIdentity) {
             C3D_Mtx worldMtx;
@@ -363,6 +387,16 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
             setVsMatrix(r, kDedupeWorld, r->worldLocation, &worldMtx);
             r->worldIsIdentity = identity;
         }
+    } else if (mirror && !r->worldIsIdentity) {
+        // A MIRROR's direction is from its vertex's OWN position, whatever its
+        // world matrix: the oracle's mirror.hlsl hands the pixel `input.position`
+        // (and Linux's mirror.vert `in_position`), so a model's chrome looks along
+        // its model-space position. The arena's batches are the identity anyway.
+        static const float kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        C3D_Mtx worldMtx;
+        mdk::pica::registers(kIdentity, worldMtx.m);
+        setVsMatrix(r, kDedupeWorld, r->worldLocation, &worldMtx);
+        r->worldIsIdentity = true;
     }
     if (shadowLit) {
         installShadowLitStages(r, r->hazeLive);   // a Lit, non-Overlay draw: hazed when the frame is

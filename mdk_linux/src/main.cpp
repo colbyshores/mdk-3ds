@@ -1531,7 +1531,16 @@ int main(int argc, char** argv) {
                     mdk::Panorama pano;
                     pano.sky = mdk_render_create_index_texture(renderer, sky.width(), sky.height(),
                                                                sky.indices(), pal);
-                    pano.mirror_sky = pano.sky;
+                    // The mirrors' panorama (C# Viewer.CreatePanorama): the DTI's
+                    // second one where the level has it (levels 5 and 6), the sky
+                    // itself everywhere else. Until 2026-11-27 this was always the
+                    // sky, so LEVEL5/LEVEL6's mirrors showed the wrong picture.
+                    const mdk::formats::Texture& mirrorSky = level.dti().mirrorSky();
+                    pano.mirror_sky = level.dti().hasOwnMirrorSky()
+                        ? mdk_render_create_index_texture(renderer, mirrorSky.width(),
+                                                          mirrorSky.height(), mirrorSky.indices(),
+                                                          pal)
+                        : pano.sky;
                     pano.palette = mdk_render_create_palette(renderer, pal);
                     pano.wrap_width = (float)level.dti().skyWrapWidth();
                     pano.horizon_row = (float)level.dti().skyHorizonRow();

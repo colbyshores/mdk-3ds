@@ -65,6 +65,7 @@
 #include "layer_tests.h"
 #include "object_warm_tests.h"
 #include "sky_dome_tests.h"
+#include "mirror_cube_tests.h"
 #include "mve_audio_tests.h"
 #include "pica_matrix_tests.h"
 #include "scripts/debris.h"
@@ -8524,6 +8525,13 @@ int main(int argc, char** argv) {
     if (skyFailures == 0) {
         printf("PASS SkyDome\n");
     }
+    // The 3DS mirrors' cube maps against the oracle's mirror mapping and the
+    // PICA's cube convention (mirror_cube_tests.h).
+    const int mirrorFailures = mdk::test::runMirrorCubeTests();
+    failures += mirrorFailures;
+    if (mirrorFailures == 0) {
+        printf("PASS MirrorCube\n");
+    }
 
     const int inputFailures = mdk::test::runInput3dsTests();
     failures += inputFailures;
@@ -8942,6 +8950,13 @@ int main(int argc, char** argv) {
     testPushKurtModeZeroFrameAndLiftAreExact(&levelData, &cmi, &bank);
     printf("PASS PushKurtModeZeroFrameAndLiftAreExact\n");
 
+    // The retail levels' mirror row shifts (mirror_cube_tests.h): the cubes the
+    // 3DS makes at level load.
+    const int mirrorDataFailures = mdk::test::runMirrorCubeDataTests(data);
+    failures += mirrorDataFailures;
+    if (mirrorDataFailures == 0) {
+        printf("PASS MirrorRowShiftsOfTheRetailLevels\n");
+    }
     // The depth layers and the depth pull: the C#'s LayerTests.cs and
     // DepthPullTests.cs, run here.
     const int layerFailures = mdk::test::runDepthLayerTests(data);

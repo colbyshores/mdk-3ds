@@ -206,6 +206,7 @@ set(SOURCES
     ${CORE}/src/render/camera_builder.cpp
     ${CORE}/src/render/depth_pull.cpp
     ${CORE}/src/render/sky_dome.cpp
+    ${CORE}/src/render/mirror_cube.cpp
     ${CORE}/src/render/draw_queue.cpp
     ${CORE}/src/render/material_resolver.cpp
     ${CORE}/src/render/surface_cache.cpp
@@ -247,7 +248,7 @@ set(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(GEN_DIR "${CMAKE_BINARY_DIR}/generated")
 set(SHADERS
     palette.vert palette.frag
-    mirror.frag
+    mirror.vert mirror.frag
     sky.vert sky.frag
     stereo.vert stereo.frag
     enhanced.vert enhanced.frag

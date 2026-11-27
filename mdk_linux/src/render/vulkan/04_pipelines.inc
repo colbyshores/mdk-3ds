@@ -163,11 +163,14 @@ VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive, boo
     VkPipelineShaderStageCreateInfo stages[2] = {};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = r->vertModule;
+    // The mirrors have their own program (the oracle's "mirror", Renderer.cs:1064)
+    // under the same pass state: tested, written, both faces, opaque.
+    const bool mirror = !cover && pass == (int)mdk::Pass::Mirror;
+    stages[0].module = mirror ? r->mirrorVertModule : r->vertModule;
     stages[0].pName = "main";
     stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = r->fragModule;
+    stages[1].module = mirror ? r->mirrorFragModule : r->fragModule;
     stages[1].pName = "main";
     info.pStages = stages;
     info.pVertexInputState = &vi;

@@ -3,6 +3,61 @@
 // No include guards, no includes of its own; the order is load-bearing.
 
 
+// A MIRROR (Pass::Mirror, MIRRLOW...MIRRHIGH): the oracle's DrawOne mirror
+// branch (Renderer.cs:1082-1092) -- nothing without a panorama, otherwise the
+// mirror program over the mirror panorama and the palette, CLAMPED like the
+// sky's (BindPanorama), with the camera and the material's row shift. `wv` is
+// the draw's world (depth pull included) times the view, as drawRecorded made it.
+//
+// Until 2026-11-27 this backend had no mirror program, and a mirror drew as the
+// resolver's placeholder material: no texture, colour white -- the owner's
+// "white panels" (LEVEL6's OLYM_6/7 floors, and LEVEL3/5/8's mirror tiles).
+static void drawMirror(RendererVk* r, const mdk::MeshDraw* draw, const float wv[16]) {
+    if (r->panorama.mirror_sky < 0 || r->panorama.palette < 0) {
+        return;
+    }
+    MirrorPush mp;
+    mulMatrix(wv, r->activeCamera.projection, mp.mvp);
+    flipClipY(mp.mvp);   // Vulkan's framebuffer runs y down; see flipClipY
+    mp.wrap_width = r->panorama.wrap_width;
+    mp.horizon_row = r->panorama.horizon_row;
+    mp.offset = r->panorama.offset;
+    mp.height = r->panorama.height;
+    mp.camera[0] = r->activeCamera.position.x;
+    mp.camera[1] = r->activeCamera.position.y;
+    mp.camera[2] = r->activeCamera.position.z;
+    mp.row_shift = draw->material.row_shift;
+
+    const int primitive = (draw->primitive == mdk::Primitive::Lines) ? 1 : 0;
+    VkPipeline pipeline =
+        getPipeline(r, (int)mdk::Pass::Mirror, (int)draw->material.blend, primitive);
+    if (!pipeline) {
+        return;
+    }
+    VkDescriptorSet set = getDescriptorSet(r, r->panorama.mirror_sky, r->panorama.palette, false);
+    if (!set) {
+        return;  // no set means no draw, not a stale one: see drawRecorded
+    }
+    const MeshVk& mesh = r->meshes[draw->mesh];
+    const VkBuffer buffer = mesh.buffer[meshSlot(mesh, &r->ctx)];
+    if (!buffer) {
+        return;
+    }
+    VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdPushConstants(cb, r->pipeLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(MirrorPush), &mp);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1, &set, 0,
+                            nullptr);
+    const VkDeviceSize offset = sizeof(mdk::Vertex) * (VkDeviceSize)draw->first_vertex;
+    vkCmdBindVertexBuffers(cb, 0, 1, &buffer, &offset);
+    vkCmdDraw(cb, (uint32_t)draw->vertex_count, 1, 0, 0);
+    r->drawCalls++;
+    if (!primitive) {
+        r->triangles += draw->vertex_count / 3;
+    }
+}
+
 // Record one queued draw into this frame's command buffer. This is what the
 // oracle's `DrawOne` is (Renderer.cs:1060-1110): a pipeline for the pass, the
 // matrices, the texture pair, one draw.
@@ -38,6 +93,13 @@ void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw, bool cover) {
     }
     float wv[16];
     mulMatrix(world, r->activeCamera.view, wv);
+
+    // A mirror has its own program, in both looks (the C#'s EnhancedMode
+    // returns null for Pass.Mirror, Renderer.Enhanced.cs:283).
+    if (!cover && draw->material.pass == mdk::Pass::Mirror) {
+        drawMirror(r, draw, wv);
+        return;
+    }
 
     // The enhanced look's Lit/Sprite draws go through the lit pipeline;
     // everything else (Original shading, mirrors, the canvas's own draws)

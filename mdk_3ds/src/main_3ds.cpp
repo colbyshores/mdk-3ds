@@ -115,6 +115,7 @@
 #include "menu_screens_3ds.h"
 #include "packs_3ds.h"
 #include "render/render_c3d_hd_set.h"
+#include "render/render_c3d_mirror.h"
 #include "platform/clock_3ds.h"
 #include "platform/heap_probe_3ds.h"
 #include "stream_3ds.h"
@@ -1520,6 +1521,9 @@ int main(int argc, char** argv) {
     // The last level's copies are given back first, so the heap read below is
     // this level's (mdk_render_set_hd_window frees what nothing links any more).
     mdk_render_set_hd_window(renderer, nullptr, nullptr, 0);
+    // THE MIRRORS' CUBES (level_load_3ds.h), before the window below is sized: they
+    // stay for the level, so the set's arithmetic must see them taken.
+    mdk::buildMirrorCubes3ds(renderer, level);
     if (hdSource.pack && hdSource.byname) {
         hdWindowBytes = mdk::buildHdWindow3ds(flow.state().level, origByName, hdShapes, level,
                                               cmiReady ? &cmi : nullptr, &hdWindow);
@@ -3279,7 +3283,9 @@ int main(int argc, char** argv) {
     pauseOptions.items().setFonts(nullptr, nullptr);
     }   // END OF THE LEVEL: its objects are destroyed here, in reverse order
     // 5. What the level made through the renderer and no object released, newest
-    //    first (the deferred release: freed at the next frame boundary).
+    //    first (the deferred release: freed at the next frame boundary). The mirror
+    //    cubes are outside the scope's log (render_c3d_mirror.h): given back here.
+    mdk_render_release_mirror_cubes(renderer);
     mdk_render_release(renderer, levelScope);
     if (nextLevel || toMenu) {
         // 6. THE LOADING SCREEN'S FRAMES (C# Play: Show(null), LoadingScreen.Show,

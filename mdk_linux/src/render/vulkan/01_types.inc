@@ -30,6 +30,22 @@ struct SkyPush {
     int32_t sampling;
 };
 
+// The mirror pipeline's push block (the same 96-byte range): the draw's matrix
+// as PushConstants carries it, then the panorama and the camera with the
+// mirror's row shift (shaders/mirror.vert and mirror.frag, the oracle's
+// mirror.hlsl + panorama.hlsli).
+struct MirrorPush {
+    float mvp[16];
+    float wrap_width;
+    float horizon_row;
+    float offset;
+    float height;
+    float camera[3];
+    float row_shift;
+};
+static_assert(sizeof(MirrorPush) == sizeof(PushConstants),
+              "the mirror's push block must fit the shared push range");
+
 struct TextureVk {
     bool used = false;
     bool isIndex = false;
@@ -244,6 +260,9 @@ struct RendererVk {
     VkShaderModule fragModule = VK_NULL_HANDLE;
     VkShaderModule skyVertModule = VK_NULL_HANDLE;
     VkShaderModule skyFragModule = VK_NULL_HANDLE;
+    // The mirrors' program (createPipeline uses it for Pass::Mirror).
+    VkShaderModule mirrorVertModule = VK_NULL_HANDLE;
+    VkShaderModule mirrorFragModule = VK_NULL_HANDLE;
     VkPipeline skyPipeline = VK_NULL_HANDLE;
 
     // The flat-stereo state (P6). `stereo` is the requested mode from the

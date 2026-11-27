@@ -90,6 +90,9 @@ public:
     // The panorama the mirrors show: the second one in levels 5 and 6, and
     // the sky itself everywhere else.
     const Texture& mirrorSky() const { return mirrorSky_; }
+    // True when mirrorSky() is the level's own second panorama, not a copy of
+    // the sky (the C# `dti.MirrorSky != dti.Sky`, Viewer.CreatePanorama).
+    bool hasOwnMirrorSky() const { return ownMirrorSky_; }
 
     // The RGBA8 of GLASS1-GLASS4.
     const std::vector<std::vector<uint32_t>>& glass() const { return glass_; }
@@ -135,6 +138,7 @@ private:
     int32_t skyTopColor_ = 0;
     int32_t skyBottomColor_ = 0;
     Texture mirrorSky_;
+    bool ownMirrorSky_ = false;
     std::vector<std::vector<uint32_t>> glass_;
     std::vector<ArenaEntry> arenas_;
 };

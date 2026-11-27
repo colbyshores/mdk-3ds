@@ -179,8 +179,10 @@ SOURCES_VM := \
 	heap_split_tests.cpp \
 	hd_window_tests.cpp \
 	sky_dome_tests.cpp \
+	mirror_cube_tests.cpp \
 	object_warm_tests.cpp \
 	$(CORE)/render/sky_dome.cpp \
+	$(CORE)/render/mirror_cube.cpp \
 	$(3DS)/render/pica_matrix.cpp \
 	$(CORE)/render/sun_shadow.cpp \
 	$(3DS)/platform/input_3ds.cpp \

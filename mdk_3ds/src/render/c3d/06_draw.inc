@@ -154,6 +154,89 @@ static C3D_TexEnv* stage0Variant(RendererC3D* r, int32_t index) {
     return &r->stage0Scene;
 }
 
+// The stage-0 variants (r->stage0*), built once: pure functions of nothing but
+// the constants below. Scene: the texture replaces the colour; Overlay: the
+// texture times the tint; the four rdebug `flat` colours.
+static void buildStage0Variants(RendererC3D* r) {
+    if (r->stage0Built) {
+        return;
+    }
+    C3D_TexEnvInit(&r->stage0Scene);
+    C3D_TexEnvSrc(&r->stage0Scene, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
+    C3D_TexEnvFunc(&r->stage0Scene, C3D_Both, GPU_REPLACE);
+    C3D_TexEnvInit(&r->stage0Overlay);
+    C3D_TexEnvSrc(&r->stage0Overlay, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+    C3D_TexEnvFunc(&r->stage0Overlay, C3D_Both, GPU_MODULATE);
+    static const uint32_t kFlatColour[4] = {
+        0xFF0000FFu, 0xFF00FF00u, 0xFF00FFFFu, 0xFFFF0000u}; // ABGR
+    for (int i = 0; i < 4; i++) {
+        C3D_TexEnvInit(&r->stage0Flat[i]);
+        C3D_TexEnvSrc(&r->stage0Flat[i], C3D_Both, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
+        C3D_TexEnvFunc(&r->stage0Flat[i], C3D_Both, GPU_REPLACE);
+        C3D_TexEnvColor(&r->stage0Flat[i], kFlatColour[i]);
+    }
+    r->stage0Built = true;
+}
+
+// THE MIRROR'S PREPARE (Pass::Mirror, MIRRLOW...MIRRHIGH; render_c3d_mirror.h).
+// The resolver gives a mirror no texture and a white colour, and the surface
+// cache turns that colour into a one-pixel white texture like any flat surface's
+// (render/surface_cache.cpp flatColourId): drawn by the general path below, that
+// is the owner's "white panels" (2026-11-27). The oracle draws a mirror with
+// its own program over the mirror panorama (Renderer.cs:1082-1092), and so does
+// this: the mirrors' program (mdk_mirror.v.pica, or mdk_mirror.g.pica in a list
+// already in geometry mode) turns each vertex into the direction from the
+// camera, and texture unit 0 looks that direction up in the cube made at level
+// load for the draw's row shift. Stage 0 replaces the colour with the cube's
+// texel (RGB565: alpha 1, never cut), no light, no haze, nearest (the oracle's
+// mirror has neither filter nor chain). Without the programs, the cube or the
+// mirrors toggle (enableMirrors off: skipped, as on Linux), the draw is skipped
+// -- a hole, never the white placeholder.
+static bool prepareMirror(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw* out) {
+    if (!r->toggles.enableMirrors || !r->mirrorReady ||
+        draw->primitive != mdk::Primitive::Triangles || (draw->vertex_count % 3) != 0) {
+        return false;
+    }
+    const int32_t slot =
+        mdk::pica::mirrorCubeFor(r->mirrorShifts, r->mirrorCubeCount, draw->material.row_shift);
+    if (slot < 0 || r->mirrorCubes[slot].faces != 0x3F) {
+        if (!r->mirrorMissingLogged) {
+            r->mirrorMissingLogged = true;
+            mdk::log3dsPrintf("mirror: no cube for row shift %.0f (%d made) -- its draws are "
+                              "skipped", (double)draw->material.row_shift,
+                              (int)r->mirrorCubeCount);
+        }
+        return false;
+    }
+    buildStage0Variants(r);
+    out->mirrorCube = slot;
+    out->texIndex = -1;
+    out->texHd = false;
+    out->texPending = false;
+    out->filter = (int32_t)GPU_NEAREST;
+    out->mipped = false;
+    out->mipLevels = 0;
+    out->overlay = false;
+    out->wholeTriangles = true;
+    out->lit = false;
+    out->shadowLit = false;
+    out->texUnit = 0;   // a cube map is unit 0's alone
+    // The uv transform is unused (the geometry shader writes the texcoord); the
+    // identity, so a following draw's dedupe sees an ordinary value.
+    out->scaleX = 1.0f;
+    out->scaleY = 1.0f;
+    out->offsetX = 0.0f;
+    out->offsetY = 0.0f;
+    // The cut of a Mirror pass (the cube is RGB565: alpha 1, which every
+    // reference keeps).
+    out->alphaRef = mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,
+                                                     mdk::Pass::Mirror);
+    out->stage0Index = 0;
+    out->worldIdentity = mdk::pica::isIdentity(draw->world);
+    out->haze = false;
+    return true;
+}
+
 // A COMPRESSED texture's uv transform (Kurt's ETC1A4 frames, the orig pack's
 // arena textures): its image's rectangle (pica::compressedFrameRect), in
 // tex3ds' convention, with no last-row flip on top -- the converters feed
@@ -193,6 +276,9 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
     out->draw = draw;
     out->meshIndex = draw->mesh;
     out->vertCount = draw->vertex_count;
+    if (draw->material.pass == mdk::Pass::Mirror) {
+        return prepareMirror(r, draw, out);
+    }
 
     if ((renderDebugFlags() & kRenderDebugUvLog) && r->frame == 30 && mesh.data != nullptr &&
         draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
@@ -537,23 +623,7 @@ static bool prepareDraw(RendererC3D* r, const mdk::MeshDraw* draw, PreparedDraw*
     // others yellow, all opaque. A shadowed lit draw's stage 0 is
     // installShadowLitStages' instead, so it stores none.
     if (!shadowLit) {
-        if (!r->stage0Built) {
-            C3D_TexEnvInit(&r->stage0Scene);
-            C3D_TexEnvSrc(&r->stage0Scene, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
-            C3D_TexEnvFunc(&r->stage0Scene, C3D_Both, GPU_REPLACE);
-            C3D_TexEnvInit(&r->stage0Overlay);
-            C3D_TexEnvSrc(&r->stage0Overlay, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-            C3D_TexEnvFunc(&r->stage0Overlay, C3D_Both, GPU_MODULATE);
-            static const uint32_t kFlatColour[4] = {
-                0xFF0000FFu, 0xFF00FF00u, 0xFF00FFFFu, 0xFFFF0000u}; // ABGR
-            for (int i = 0; i < 4; i++) {
-                C3D_TexEnvInit(&r->stage0Flat[i]);
-                C3D_TexEnvSrc(&r->stage0Flat[i], C3D_Both, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
-                C3D_TexEnvFunc(&r->stage0Flat[i], C3D_Both, GPU_REPLACE);
-                C3D_TexEnvColor(&r->stage0Flat[i], kFlatColour[i]);
-            }
-            r->stage0Built = true;
-        }
+        buildStage0Variants(r);
         if (overlay) out->stage0Index = 1;
         else if (renderDebugFlags() & kRenderDebugFlat) {
             int fi = (draw->material.pass == mdk::Pass::Solid) ? 0

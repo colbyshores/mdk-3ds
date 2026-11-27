@@ -141,11 +141,10 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // (2) The oracle's OTHER fragment programs do not discard at all: both
     // `mirror.hlsl:36` and `sky.hlsl:63,67` return `float4(..., 1.0)` with no
     // `discard`, so a mirror or sky repaint of palette index 0 paints
-    // palette[0].rgb in the oracle and is discarded by this frame-wide test.
-    // Neither pass is reachable on this backend yet -- there is no mirror
-    // panorama and no sky pass -- and both already diverge in colour for other
-    // reasons, so the frame-wide test stays and the corner is written down
-    // where the next mirror batch will find it (review-3 F5).
+    // palette[0].rgb in the oracle. Neither meets this test here: the sky dome
+    // remaps its index-0 texels to an opaque colour (render/sky_dome.h), and
+    // the mirrors' cubes are RGB565 with index 0 as palette[0]'s own colour
+    // (pica::mirrorFaceTexelsRgb565), alpha 1 -- never cut (review-3 F5).
     // (3) `enhanced.hlsl:199-201`, the MODE_CANVAS and MODE_IMAGE branches,
     // return the texel's OWN alpha (`float4(..., texel.a) * colour`) with no
     // discard, so a canvas or image texel of alpha 0 is painted by the oracle
