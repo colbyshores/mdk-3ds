@@ -66,6 +66,7 @@
 #include "game/sniper_view.h"
 #include "render/arena_scene.h"
 #include "render/material_resolver.h"
+#include "game/effects_view.h"
 #include "scripts/script_runtime.h"
 #include "util/matrix.h"
 #include "util/math_lut.h"
@@ -4278,7 +4279,8 @@ std::vector<std::string> splitColons(const std::string& token) {
 bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* holds,
                           std::vector<ItemsGive>* gives, std::vector<HazardsTeleport>* teleports,
                           std::vector<HazardsRun>* runs, std::vector<std::string>* watched,
-                          bool* flying, std::vector<std::string>* roped, bool* textures) {
+                          bool* flying, std::vector<std::string>* roped, bool* textures,
+                          bool* sprites) {
     std::string items;
     size_t start = 0;
     while (start < schedule.size()) {
@@ -4323,6 +4325,11 @@ bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* h
                 return false;
             }
             *flying = true;
+        } else if (f[0] == "sprites") {
+            if (f.size() != 1) {
+                return false;
+            }
+            *sprites = true;
         } else if (f[0] == "frames") {
             if (f.size() != 1) {
                 return false;
@@ -4369,8 +4376,9 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
     bool flying = false;
     std::vector<std::string> roped;
     bool textures = false;
+    bool quads = false;
     if (!parseHazardsSchedule(schedule, &holds, &gives, &teleports, &runs, &watched, &flying,
-                              &roped, &textures)) {
+                              &roped, &textures, &quads)) {
         *why = "the schedule did not parse: " + schedule;
         return false;
     }
@@ -4415,6 +4423,19 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
            " seed=1 schedule=" + schedule + "\n";
     const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
     char buffer[1024];
+    // The `sprites` token's view (EffectsView, the Linux build's: no cull), under a camera
+    // whose view-projection has exact 0/1 entries -- right +X, forward +Y, up +Z -- so the
+    // C# probe's View carries the same bits.
+    MaterialResolver spriteResolver(&levelData.dti(), Shading::Original);
+    EffectsView spriteView(spriteResolver, &levelData, Shading::Original);
+    EffectsFrame spriteFrame;
+    Camera spriteCamera;
+    for (int k = 0; k < 16; k++) {
+        spriteCamera.view[k] = 0.0f;
+        spriteCamera.projection[k] = (k % 5) == 0 ? 1.0f : 0.0f;
+    }
+    spriteCamera.view[0] = 1.0f;   // M11: right
+    spriteCamera.view[7] = 1.0f;   // M24: forward
     for (int step = 1; step <= steps; step++) {
         for (size_t i = 0; i < teleports.size(); i++) {
             if (teleports[i].step == step) {
@@ -4590,6 +4611,34 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
             }
             *out += " rope=";
             *out += rope.empty() ? "-" : rope;
+        }
+        if (quads) {
+            // The `sprites` token: EffectsView's frame (EffectsView.Draw) -- the effects'
+            // and the spawn_box boxes' quads (opcode 159) -- as its draw count, vertex
+            // count, each draw's first:count:frame, and an FNV-1a over every vertex's
+            // position and uv bits. Debris pieces would be in it too; the cases using it
+            // have none.
+            spriteView.build(runtime, spriteCamera, &spriteFrame, 1.0f);
+            uint32_t bits = 2166136261u;
+            for (size_t k = 0; k < spriteFrame.vertices.size(); k++) {
+                const Vertex& v = spriteFrame.vertices[k];
+                bits = fnvFloat(bits, v.pos.x);
+                bits = fnvFloat(bits, v.pos.y);
+                bits = fnvFloat(bits, v.pos.z);
+                bits = fnvFloat(bits, v.uv.x);
+                bits = fnvFloat(bits, v.uv.y);
+            }
+            std::string list;
+            for (size_t k = 0; k < spriteFrame.draws.size(); k++) {
+                snprintf(buffer, sizeof(buffer), "%s%d:%d:%d", k == 0 ? "" : ",",
+                         spriteFrame.draws[k].first, spriteFrame.draws[k].count,
+                         spriteFrame.draws[k].frame);
+                list += buffer;
+            }
+            snprintf(buffer, sizeof(buffer), " spr=%d/%d/%08X/", (int)spriteFrame.draws.size(),
+                     (int)spriteFrame.vertices.size(), bits);
+            *out += buffer;
+            *out += list.empty() ? "-" : list;
         }
         if (textures) {
             // The `frames` token: the scripts' arena texture frames (arena_texture_frame,
@@ -10253,6 +10302,15 @@ int main(int argc, char** argv) {
             {"L8_hazards_dog", "golden/L8_hazards_dog.txt", 8, 300,
              "tp:1:GUNT_10:-43:3300:-380,rope:XBN",
              "GUNT_10's dog XBN and its four tethers (242)"},
+            // spawn_box's sprites (159, upstream 84ad71e4): L3_hazards_boxes' schedule with
+            // the `sprites` column, EffectsView's whole frame (the effects' and the boxes'
+            // quads) as bits. The golden is the C# oracle's (v1.2.6, which has 84ad71e4); the
+            // same oracle with 84ad71e4 reverted differs on 60 lines, so the column sees it.
+            {"L3_hazards_boxsprites", "golden/L3_hazards_boxsprites.txt", 3, 300,
+             "tp:1:HMO_3:3:1241:-931,run:5:XG:44160:0:0:0,run:9:XG:8127:10:0:0,"
+             "run:13:XG:52115:-10:0:0,watch:PULSE,watch:FIRE,sprites",
+             "the PULSE and FIRE boxes' sprites stretched over the box's width and height "
+             "(spawn_box, 159; EffectsView as upstream 84ad71e4)"},
         };
         for (size_t i = 0; i < sizeof(kHazardsCases) / sizeof(kHazardsCases[0]); i++) {
             const HazardsCase& c = kHazardsCases[i];

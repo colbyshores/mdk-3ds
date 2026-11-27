@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Reflection;
 using Mdk.Engine.Audio;
 using Mdk.Engine.Platform;
+using Mdk.Engine.Render;
 using Mdk.Formats;
 using Mdk.Game.Audio;
 using Mdk.Game.Collision;
@@ -40,7 +41,14 @@ using KurtT = Mdk.Game.Kurt.Kurt;
 //                                (blending off), at 1/10000, and `#` an FNV-1a over the bits of
 //                                all those floats (2026-11-26, the opcode parity branch);
 //   `frames`                     appends ` tex=`: AnimatedTextures.Frames (opcode 133) in
-//                                ordinal (arena, texture) order, arena/texture:value:FrameOf.
+//                                ordinal (arena, texture) order, arena/texture:value:FrameOf;
+//   `sprites`                    appends ` spr=`: EffectsView.Draw's frame (the effects' and the
+//                                spawn_box boxes' quads, opcode 159) under a view-projection with
+//                                exact 0/1 entries (right +X, forward +Y): draws/vertices/FNV-1a
+//                                of every vertex's position and uv bits/first:count:frame each.
+//                                EffectsView.cs and MaterialResolver.cs are compiled into the probe
+//                                against the CPU-only Renderer at the end of this file (Probe.csproj,
+//                                as tests/scripts/table_probe does).
 // The goldens' schedules are in tick1.cpp's kHazardsCases table.
 //
 // HOW IT WAS BUILT AND RUN (2026-11-20, .NET SDK 10.0.404): as tests/scripts/items_probe -- copy
@@ -112,6 +120,9 @@ var runs = new List<(int Step, string Model, int Pc, Vector3 Offset)>();
 var watched = new List<string>();
 var roped = new List<string>();
 var textures = false;
+var quads = false;
+var cpu = new Mdk.Engine.Render.Renderer();
+EffectsView? spriteView = null;
 var flying = false;
 foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries))
 {
@@ -141,6 +152,9 @@ foreach (var token in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries)
             continue;
         case "frames":
             textures = true;
+            continue;
+        case "sprites":
+            quads = true;
             continue;
     }
 
@@ -235,7 +249,7 @@ for (var step = 1; step <= steps; step++)
         $"watch={(watch.Count == 0 ? "-" : string.Join(";", watch))} " +
         $"bomb={(runtime.Items.Bomb is { Dead: false } ? 1 : 0)} pieces={runtime.Debris.Pieces.Count} effects={runtime.Effects.All.Count} " +
         $"white={F(kurt.WhiteFlash)} shake={F(runtime.Shake)} voices={Voices()}" + (flying ? Flying() : "")
-        + (roped.Count > 0 ? Ropes() : "") + (textures ? Textures() : ""));
+        + (roped.Count > 0 ? Ropes() : "") + (quads ? Sprites() : "") + (textures ? Textures() : ""));
 }
 
 // The `frames` token's column (tick1's kurtHazardsDump prints the same, from a std::map).
@@ -320,4 +334,92 @@ uint Fnv(uint hash, int value)
     }
 
     return hash;
+}
+
+
+// The `sprites` token's column (tick1's kurtHazardsDump prints the same).
+string Sprites()
+{
+    spriteView ??= new EffectsView(cpu, new MaterialResolver(cpu, levelData.Dti), levelData, Shading.Original);
+    var m = new Matrix4x4 { M11 = 1f, M24 = 1f };
+    cpu.Begin();
+    // 1.1.1's Draw(scripts, camera); 1.2.x's Draw(scripts, camera, tick, cameraArena) (7740deb1,
+    // e1eb36bb), called at tick 1 -- blending off, as tick1's build(..., 1.0f).
+    var view = new Mdk.Engine.Render.View(m, Matrix4x4.Identity, Vector3.Zero);
+    var draw = typeof(EffectsView).GetMethod("Draw")!;
+    draw.Invoke(spriteView, draw.GetParameters().Length == 2 ? [runtime, view] : [runtime, view, 1f, runtime.CurrentArena]);
+    var bits = 2166136261u;
+    foreach (var v in cpu.Vertices)
+    {
+        foreach (var f in new[] { v.Position.X, v.Position.Y, v.Position.Z, v.Uv.X, v.Uv.Y })
+        {
+            bits = Fnv(bits, BitConverter.SingleToInt32Bits(f));
+        }
+    }
+
+    var list = cpu.Draws.Select(d => $"{d.First}:{d.Count}:{d.Frame}").ToList();
+    return $" spr={cpu.Draws.Count}/{cpu.Vertices.Count}/{bits:X8}/" + (list.Count == 0 ? "-" : string.Join(",", list));
+}
+
+namespace Mdk.Game.Scripts
+{
+    /// <summary>ScriptMath.Size (internal to Mdk.Game, so not visible to the EffectsView.cs this probe
+    /// compiles): the same expression.</summary>
+    internal static class ProbeBoxSize
+    {
+        public static System.Numerics.Vector3 Size(this Mdk.Formats.Box box) => box.Max - box.Min;
+    }
+}
+
+namespace Mdk.Engine.Render
+{
+    /// <summary>The CPU half of Mdk.Engine's Renderer, as much as EffectsView and MaterialResolver
+    /// call (tests/scripts/table_probe's, with the dynamic mesh): no SDL device exists here. It
+    /// shadows the real class inside this probe only (CS0436).</summary>
+    public sealed class Renderer
+    {
+        private int _textures = 1;  // texture 0: the real constructor's 1x1 for flat colours
+
+        public readonly record struct Queued(int First, int Count, int Frame);
+
+        public List<Vertex> Vertices { get; } = [];
+
+        /// <summary>1.2.x's depth band (e1eb36bb): set around each draw, nothing to record here.</summary>
+        public object? Band { get; set; }
+        public List<Queued> Draws { get; } = [];
+
+        /// <summary>A frame's start: nothing drawn (EffectsView uploads only when it has vertices).</summary>
+        public void Begin()
+        {
+            Vertices.Clear();
+            Draws.Clear();
+        }
+
+        public int CreateDynamicMesh(int capacity) => 1;
+
+        public void UpdateMesh(int mesh, ReadOnlySpan<Vertex> vertices)
+        {
+            Vertices.Clear();
+            Vertices.AddRange(vertices);
+        }
+
+        public void Draw(int mesh, int firstVertex, int vertexCount, Material material, int frame) =>
+            Draws.Add(new Queued(firstVertex, vertexCount, frame));
+
+        public int CreateIndexTexture(int width, int height, byte[] indices) => _textures++;
+
+        public int CreatePalette(byte[] rgba) => _textures++;
+
+        public void UpdateTexture(int texture, int width, int height, byte[] pixels)
+        {
+        }
+
+        public void Prepare(Material material)
+        {
+        }
+
+        public void Replace(Material material, int width, int height, byte[] rgba)
+        {
+        }
+    }
 }

@@ -3868,3 +3868,41 @@ against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new
 - **Checks:** Linux build 0 warnings; tick1 526/526, vm_tests pass; `make -C tests/formats`
   200670 checks, 0 failures; `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds`
   0 compiler warnings.
+
+### 159 spawn_box -- the box sprites are stretched over the box (a port of upstream 84ad71e4)
+- **What was wrong:** our EffectsView drew a spawn_box sprite at its image's own aspect, scaled by
+  `max(sizeX, sizeZ) / width`, which is C# 1.1.1. Upstream 84ad71e4 (C# 1.2.0) corrected it to
+  the original's (0x43b2b0, box sizes at 0x316 and 0x31e): the image stretched over the box's
+  width and height. LEVEL4's bones (BONEFLC, 64 x 36 in a 9 x 9 x 6 box) drew 9 x 5, not 9 x 6;
+  the FIRE/PULSE hazards and the EWJ worms take the same path.
+- **What:** `EffectsView::build`'s box loop takes `texelX = size.X / max(Width, 1)` and
+  `texelZ = size.Z / max(Height, 1)`; `queueSprite` and `spriteCulled` take the two texels
+  (the effects pass the one texel twice). The 3DS halo (a 3DS-only glow billboard) is stretched
+  with its sprite, and its nudge and the cull's radius take the larger side; for an effect
+  (equal texels) `max(t*w, t*h)` is bit-identical to the old `t * max(w, h)`, so nothing else
+  moved (tick1's `L8_effects_storm` passes unchanged).
+- **Oracle:** the hazards probe's new `sprites` token runs the C#'s own `EffectsView.cs` and
+  `MaterialResolver.cs`, compiled into the probe against a CPU-only Renderer (as table_probe
+  does), under a view-projection with exact 0/1 entries (right +X, forward +Y), and prints the
+  frame's draws and an FNV-1a over every vertex's position and uv bits; tick1 builds our
+  EffectsView under the same matrix. New golden `L3_hazards_boxsprites` (L3_hazards_boxes'
+  schedule + `sprites`, 300 steps): the C# oracle's at v1.2.6, which has 84ad71e4, byte for
+  byte. Non-vacuity: the same v1.2.6 tree with 84ad71e4 reverse-applied differs from it on the
+  `spr=` column of 60 lines and on nothing else. The probe calls either C# `Draw` signature
+  (1.1.1's, 1.2.x's with tick and camera arena; tick 1 = blending off) and shims the internal
+  `ScriptMath.Size` with the same expression. (A 1.1.1 tree with 84ad71e4's two lines
+  hand-applied parts from our C++ on other columns from s=6 -- upstream gameplay fixes 1.1.1
+  lacks -- so v1.2.6 is the oracle here.)
+- **Frames (Linux, headless, --fixed-step, 640x480, DISPLAY=:99, lavapipe):** `bones_crop.png`
+  in the session scratchpad (`opframes/`): LEVEL4 CMEAT_3's snowboard run
+  (`--level=4 --arena=CMEAT_3 --at=420,4285,-570,91`), a red bone at capture frames 150 and 250,
+  this build then the build before (the 242 commit) side by side: the new bone is a row taller
+  (9 x 6 against 9 x 5); `bones_linux.png` is the whole frame 250 pair. 32 and 78 pixels differ,
+  only on the bone.
+- **Cost on the 3DS:** one more float divide per drawn box a frame (a handful of boxes); the
+  halo and cull take a max of two products instead of one product.
+- **Not verified:** not run on hardware or in Mandarine.
+- **Checks:** Linux build 0 warnings; tick1 527/527; `make -C tests/formats` 200670 checks, 0
+  failures; `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds` 0 compiler
+  warnings. The changed hazards probe still reproduces `L3_hazards_boxes` and
+  `L6_hazards_swing` byte for byte at v1.2.6 without the new token.
