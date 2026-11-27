@@ -3823,3 +3823,75 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   table; they come from elsewhere (L4's measured case: a synchronous view build, ~250 ms; see
   perf/3ds-hd-bubble's ledger, 2026-11-27). No code changed, so no build or test was rerun.
 - **Commit:** 20e2521f (merge) and this one (ledger).
+
+## 2026-11-27 -- doorway hitches: the bubble's second hop, hints built in order, the next arena's objects warmed (branch perf/3ds-view-prebuild)
+
+- **Cause per doorway** (combined tip 92011514 + harness, Old 3DS, from the logs and a 5 s / slow-frame
+  span instrument; they do NOT share one cause):
+  - **L4 CMEAT_5 -> MEAT_5 (337 ms):** MEAT_5's view finished synchronously (148 build steps;
+    host probe: 1,251 triangles, almost all of it the depth layers' per-plane overlap tests).
+    The bubble named only arenas through the current arena's doorways, so MEAT_5 (past the
+    31-unit CMEAT_5) became a hint only once Kurt was in the connector, and ArenaViews::sync
+    only ever built hints[0].
+  - **L7 CDANT_3 -> DANT_4 (100 ms) and CDANT_1 -> DANT_2 (60 ms):** no view build (DANT_4/DANT_2
+    were ready). Main-thread reads of the next arena's object textures, "not yet asked for":
+    SW_HBOMB, LOCK, XBN_BOMB (63 ms); SW_DUMBX, SW_DUMMY, LOCK (59 ms). The object warm covered
+    only the current and second arena, and the second is the arena Kurt LEFT.
+  - **L8 CGUNT_1 -> GUNT_2 (202 ms):** the same, five reads (XD1_DRON and four pickups, 98 ms),
+    plus first-use work that stays (below).
+- **What:**
+  - `ScriptRuntime::doorBubbleArenas`: a second hop -- arenas through a first-hop arena's own
+    doorways whose box is within the radius, ranked after the first hop, read from the DTI
+    (no runtime cache built, no script state touched).
+  - `ArenaViews::sync`: hints built in the bubble's order, one at a time (the first with no
+    view, once every hint before it is ready), not hints[0] only.
+  - main: the object warm covers the bubble's hints, one hint a frame (nearest unfinished);
+    a palette release keeps the warm cursors of arenas a view protects.
+  - Review (independent agent): one hint build in flight, not three; hint warm one a frame, not
+    all every frame; warm cursors tied to a view, not to hint status (a viewless hint's palette
+    is not protected); comments. Fixed before the hardware runs below.
+- **Hardware** (old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, HD on, PROFILE OG;
+  `HDROMFS=1 GOD=1 NOCLIP=1 PROFILE=1 ROUTE_START=8 HDIMPORTS=2`, the hd-bubble campaign's routes:
+  L4 turbo-first from MEAT_6 `AT=-126,13440,-1989,270 ARENA=MEAT_6`, L7/L8 door walks; one run
+  each, all FRESH; before = the tip + harness, after = this branch + the same harness; logs
+  `.git/mdk-review/l7-view-logs/{tip,vp}-L{4,7,8}.log`). Doorway max frame ms, before -> after:
+  - **L4:** CMEAT_5->MEAT_5 (first, turbo) **336.9 -> 84.5**, no synchronous finish (MEAT_5 is
+    built while Kurt is still in MEAT_6); MEAT_6->CMEAT_5 38.1 -> 20.2; later passes 37.0 ->
+    33.9 at most. Whole run over 33.3 ms 10 -> 17, mean 17.22 -> 17.20 ms.
+  - **L7:** CDANT_3->DANT_4 **100.2 -> 46.5**; CDANT_1->DANT_2 59.5 -> 65.1; DANT_1->CDANT_1
+    41.0 -> 42.0; CDANT_2->DANT_3 41.5 -> 40.1; DANT_3->CDANT_3 38.0 -> 38.6; DANT_4->CDANT_3
+    43.4 -> 60.7 (a TRAIL effect read on the main thread, 28.9 ms -- an effect texture, seen in
+    the tip's L8 run too). Main-thread reads 6 -> 1. Whole run over 33.3 ms 478 -> 482, mean
+    18.36 -> 18.36.
+  - **L8:** CGUNT_1->GUNT_2 **202.1 -> 97.0**; GUNT_1->CGUNT_1 48.9 -> 64.1 (that frame is the
+    scripts, sim 31 ms; views and warm 0.1 ms); CGUNT_1->GUNT_1 47.3 -> 38.1; CGUNT_2->GUNT_3
+    48.5 -> 48.0. Main-thread reads 7 -> 1 (TRAIL). Whole run over 33.3 ms 1,772 -> 1,778, mean
+    24.62 -> 24.66.
+  - **Frame cost:** views 0.05-0.19 ms and warm 0.16-0.22 ms a frame on average; the worst warm
+    frame 11.1 ms (L8, at level start).
+- **What is left at the doorways (not views):**
+  - L4 MEAT_5's 84.5 ms: the first sunlit arena -- the shadow map's one-time native-write
+    readback check (frame end 41.6 ms, 03_frame.inc), sim 10.5 ms, objects 10.7 ms.
+  - L8 GUNT_2's 97 ms: the object pass's first use of the arena's models (30.7 ms) and the
+    arena's scripts (sim 25.5 ms, then 36 / 22 ms the next frames). Candidates: the object
+    layouts made by the warm too; the shadow check moved out of play.
+  - **L4's build moved to the approach:** MEAT_5's 148 steps now run in MEAT_6 at one step a
+    frame (views 2.7 ms a frame over the first 5 s window; 15 frames over 33.3 ms there against
+    4). That is the measured case for the depth-layer phase on the core-1 worker (it reads
+    only the arena's immutable vertices and indices); not done tonight: it needs a worker
+    hand-off with cancellation and the lifecycle checks (HOME, sleep) the appliance cannot do.
+- **Goal (every doorway <= ~67 ms):** met on L7 (worst 65.1); not met on L4 (84.5) or L8 (97.0),
+  for the causes above.
+- **Memory** (in-play minima, before -> after): L4 linear 11.14 -> 11.06 MB, main 8.01 -> 7.99 MB;
+  L7 linear 8.23 -> 8.21 MB, main 8.20 -> 8.35 MB; **L8 linear 2.448 -> 2.289 MB (-159 KB)**, main
+  4.79 -> 4.76 MB. No failed allocation, 0 HD waits, 0 draws without their HD copy on any run.
+  A view is its arena's mesh in linear memory (20 bytes a vertex: MEAT_5 75 KB, GUNT_2 47 KB)
+  plus its scene on the main heap; the hinted views' textures ride the shared cache.
+- **Checks:** Linux build 0 warnings; tests/formats 200,687 checks, 0 failures (new
+  ArenaViewsBuildTheFirstHintWithoutAView, fails on the parent); tests/scripts all cases match
+  (new L4_bubble_second_hop, fails on the parent); tools/check.sh all gates passed; 3DS build 0
+  warnings.
+- **Not verified:** a capture per level; the walk-speed-first L4 route; the owner's New 3DS.
+  `tests/formats/arena_view_tests.cpp` loadLevel3 keeps no MdkData alive for lazy MTO reads
+  (pre-existing; the new test keeps its own).
+- **Commits:** fe117e29 (code, tests) and this one (ledger).
