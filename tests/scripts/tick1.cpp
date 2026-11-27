@@ -7659,6 +7659,118 @@ bool audioSizeDump(int level, const MdkData& data, std::string* out, std::string
     return true;
 }
 
+// `tick1 sfxset <level>` -- the level's archive inventory and what the 3DS's DSP
+// sample arena would hold if every effect were copied in at load: per archive,
+// its sound entries split music / effect; then every effect name the bank can
+// answer (SoundBank::effectNames), its decoded int16 bytes, and its arena span
+// as audio_dsp_3ds.cpp stores it (PCM8 when every sample's low byte is zero,
+// else PCM16; 32-byte aligned).
+bool sfxSetDump(int level, const MdkData& data, std::string* out, std::string* why) {
+    audio::SoundBank bank;
+    if (level == 0) {
+        // The fall's one archive (fall_screen.cpp).
+        std::vector<formats::Sni> archives(1);
+        std::vector<uint8_t> bytes;
+        if (!data.read("FALL3D/FALL3D.SNI", &bytes) ||
+            !formats::Sni::parse(&archives[0], std::move(bytes))) {
+            *why = "FALL3D/FALL3D.SNI did not load";
+            return false;
+        }
+        audio::SoundBank::withArchives(&bank, std::move(archives));
+    } else if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the level has no sound archives";
+        return false;
+    }
+    char line[256];
+    std::string o;
+    std::vector<std::string> names;
+    bank.effectNames(&names);
+    size_t decoded = 0;
+    size_t arena = 0;
+    int32_t pcm16 = 0;
+    int32_t missing = 0;
+    size_t largest = 0;
+    for (size_t i = 0; i < names.size(); i++) {
+        audio::SoundBank::Entry entry;
+        if (!bank.get(names[i], &entry) || entry.sound == nullptr) {
+            missing++;
+            continue;
+        }
+        const audio::Sound& s = *entry.sound;
+        bool pcm8 = true;
+        for (size_t k = 0; k < s.samples.size() && pcm8; k++) {
+            pcm8 = (s.samples[k] & 0xFF) == 0;
+        }
+        const size_t bytes = pcm8 ? s.samples.size() : s.samples.size() * 2u;
+        const size_t span = (bytes + 31u) & ~(size_t)31u;
+        decoded += s.samples.size() * sizeof(audio::Sound::Samples::value_type);
+        arena += span;
+        pcm16 += pcm8 ? 0 : 1;
+        largest = span > largest ? span : largest;
+    }
+    snprintf(line, sizeof(line),
+             "sfxset level=%d effects=%d missing=%d pcm16=%d decoded=%zu arena=%zu largest=%zu "
+             "archive=%zu demand_reads=%d demand_bytes=%lld\n",
+             level, (int)names.size(), (int)missing, (int)pcm16, decoded, arena, largest,
+             bank.archiveBytes(), (int)bank.stats().demandReads,
+             (long long)bank.stats().demandBytes);
+    o += line;
+    // The music-flagged sounds (SNI flag 2) effectNames leaves out, and which of
+    // them the level's CMI spells anywhere outside its arena music table: a
+    // script could play one of THOSE on the effects bus (the 3DS would then
+    // decode and copy it at its first play). The table's own names play on the
+    // music bus (LevelMusic), streamed.
+    if (level > 0) {
+        char prefix[64];
+        snprintf(prefix, sizeof(prefix), "TRAVERSE/LEVEL%d/LEVEL%d", level, level);
+        const std::string paths[3] = {"TRAVERSE/TRAVERSE.SNI", std::string(prefix) + "S.SNI",
+                                      std::string(prefix) + "O.SNI"};
+        std::set<std::string> music;
+        for (int a = 0; a < 3; a++) {
+            formats::Sni sni;
+            if (!formats::Sni::open(&sni, data, paths[a])) {
+                continue;
+            }
+            for (size_t e = 0; e < sni.entries().size(); e++) {
+                const formats::Sni::Entry& entry = sni.entries()[e];
+                if (sni.isSound(entry) && (entry.flags & formats::Sni::kFlagMusic) != 0) {
+                    music.insert(entry.nameString());
+                }
+            }
+        }
+        std::vector<uint8_t> cmiBytes;
+        Cmi cmi;
+        std::string outside;
+        if (data.read(std::string(prefix) + ".CMI", &cmiBytes) &&
+            Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+            std::set<std::string> table;
+            for (size_t i = 0; i < cmi.arenaMusic().size(); i++) {
+                table.insert(cmi.arenaMusic()[i].first);
+                table.insert(cmi.arenaMusic()[i].second);
+            }
+            for (std::set<std::string>::const_iterator it = music.begin(); it != music.end(); ++it) {
+                if (table.count(*it) != 0) {
+                    continue;
+                }
+                const std::string& name = *it;
+                bool named = false;
+                for (size_t at = 0; at + name.size() <= cmiBytes.size() && !named; at++) {
+                    named = memcmp(cmiBytes.data() + at, name.data(), name.size()) == 0 &&
+                            (at + name.size() == cmiBytes.size() || cmiBytes[at + name.size()] == 0);
+                }
+                if (named) {
+                    outside += (outside.empty() ? "" : ",") + name;
+                }
+            }
+        }
+        snprintf(line, sizeof(line), "sfxset level=%d music_flagged=%d named_outside_music_table=%s\n",
+                 level, (int)music.size(), outside.empty() ? "-" : outside.c_str());
+        o += line;
+    }
+    *out = o;
+    return true;
+}
+
 int main(int argc, char** argv) {
     // The shared camera/geometry trig path must be initialized before any
     // runtime can call fastAtan2 (opcode 203's camera-track calculation).
@@ -7716,6 +7828,16 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "mixmeta") {
         std::string got, why;
         if (!audioMetaDump(argc > 2 ? atoi(argv[2]) : 3, data, &got, &why)) {
+            printf("FAIL: %s\n", why.c_str());
+            return 1;
+        }
+        fputs(got.c_str(), stdout);
+        return 0;
+    }
+
+    if (argc > 1 && std::string(argv[1]) == "sfxset") {
+        std::string got, why;
+        if (!sfxSetDump(argc > 2 ? atoi(argv[2]) : 3, data, &got, &why)) {
             printf("FAIL: %s\n", why.c_str());
             return 1;
         }

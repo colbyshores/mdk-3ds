@@ -4244,3 +4244,86 @@ against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new
   skipped); `make -C mdk_3ds` 0 compiler warnings.
 - **Not verified:** no hardware, no Mandarine; no host test pins the stream's `back` (ObjectDraw
   is not linked by either host suite).
+
+## 2026-11-27 -- every sound effect placed in the DSP arena at level load; core 0 decodes and copies none in play (branch perf/3ds-sfx-core1)
+
+- **What:** docs/3DS_ARCHITECTURE.md 2 gave core 1 "feeding sound-effect samples to their
+  buffer", and the second-core inventory (c95310c9) left `SoundBank::get`'s first-play decode
+  and the DSP arena copy (`arenaGet`) on core 0. Option A of the brief: the effects are
+  level-resident. `audioDspPlaceEffects` (after `audioDspOpen`, behind the loading screen; also
+  when the fall and the stream screen open) decodes every `SoundBank::effectNames` sound,
+  copies it into the 2 MiB arena (PCM8 where the low bytes are zero, else PCM16, as before),
+  marks the entry resident (never evicted; matched by name, or by its Sound for the fall's and
+  the stream's unnamed `#<address>` voices) and drops the bank's int16 copy
+  (`SoundBank::dropSamples`: the Entry stays, the name is pinned so the budget cannot evict it).
+  The first-play copy is kept only as a counted fallback ("IN PLAY" in `audio: dsp close`).
+  No worker change, no new thread, no per-model code; the DSP still mixes ndsp 0-7.
+- **Why A, from measurement** (`tick1 sfxset <level>`, retail data; arena = the bytes
+  audio_dsp_3ds stores, 32-byte aligned; decoded = the int16 store):
+
+  | level | effects | arena bytes | % of 2 MiB | int16 decoded |
+  |---|---|---|---|---|
+  | 3 | 78 | 1,435,360 | 68% | 2,757,206 |
+  | 4 | 81 | 1,280,096 | 61% | 2,406,222 |
+  | 5 | 80 | 1,188,512 | 57% | 2,263,492 |
+  | 6 | 80 | 1,214,624 | 58% | 2,315,572 |
+  | 7 | 79 | 1,137,696 | 54% | 2,161,762 |
+  | 8 | 74 | 1,206,272 | 58% | 2,288,136 |
+  | fall | 23 | 1,063,680 | 51% | 1,317,574 |
+
+  Every set fits with >= 650 KB to spare, none comes from the streamed LEVELnO.SNI (0 demand
+  reads), and the load cost measured 0.24 s (below), so B (a worker job class with a ready flag
+  and a late-play rule) buys nothing A does not. The music-flagged entries `effectNames` leaves
+  out: no retail CMI spells one outside its arena music table (sfxset's second line, all six
+  levels), so none is expected on the effects bus; the level-end line would count one.
+- **Hardware** (old3ds-lan167, CFGU model 0, 268 MHz, L2 none, stereo on, 30 fps cap, the
+  owner's toggles with HD on, no HD RomFS; `hw_cycle.sh --profile`, both FRESH, push verified).
+  Route: level 7, `AT=100,2320,-60,90 ARENA=DANT_5 GOD=1 FIXED=1 AUTOQUIT=150`, walk forward
+  820-2600 with two turns and a shot every 60 frames from 800 to 2480 (29 shots). `RIDE=XE` was
+  in the build line but the `throwaway/combined-hw` harness does not wire it, so Kurt walked
+  and fired rather than rode the bomber: 23 distinct effects first-played. Baseline =
+  `throwaway/sfx-core1-base-hw` 80618d01 (combined-hw + the instrumentation commit only);
+  change = `throwaway/sfx-core1-hw` 0d0c16e2 (combined-hw + this branch's code). One run each.
+
+  | measure | baseline | change |
+  |---|---|---|
+  | effects decoded on core 0 during play | 23 (241,581 samples) | **0** |
+  | arena copies on core 0 during play | 23, 21.0 ms (slowest 2.31 ms) | **0** |
+  | decode time on core 0 during play | ~21 ms (est.: 88.8 ns/sample, from the change's load decode) | 0 |
+  | effect samples held in the main heap during play | 483 KB and growing with play | 0 B |
+  | placement at load | -- | 79 of 79, 1,137,696 B; decode 96.0 ms + copy 73.3 ms, 237.5 ms in all |
+  | level load (`level: loaded in`) | 10,264 ms | 10,425 ms (+161 ms) |
+  | frame period mean / p95 / p99 | 34.174 / <=34.9 / <=64.1 ms | 34.190 / <=34.9 / <=63.8 ms |
+  | frames over 33.3 ms (of ~4,388) | 2,571 | 2,572 |
+  | worker busy, steady 10 s windows | 6-8% (music 5.7-7.3%) | 6-8% (music 5.7-6.6%) |
+  | music underruns / DSP dropped frames | 0 / 0 | 0 / 0 |
+  | main heap at the loop (used / free) | 23,295,744 / 1,816,800 | 23,312,328 / 1,923,096 |
+
+  Logs: `.git/worktrees/sfx-core1/hw-logs/` (`base-L7.log`, `new-L7.log` -- the latter holds
+  both sessions; `s-base.txt` / `s-new.txt` are the two cut apart).
+- **A run that did not measure:** `FALL=3` (to time the fall's and level 3's placement) is not
+  wired on this harness either: the build booted to the main menu, never autoquit, and the
+  cycle timed out after 900 s. The console was left running MDK's menu, so a UDP `cmd reboot`
+  was sent at 01:57:56 (boot_count 788 -> 789, confirmed) to give it back to netload for the
+  next lock holder. No screenshots were requested.
+- **Checks:** Linux build 0 warnings; `make -C tests/scripts test` rc 0 (L3_audio_meta and
+  L3_audio_mix PASS: no sample byte moved); `tests/formats` 200,670 checks, 0 failures;
+  `tools/check.sh` ALL GATES PASSED; 3DS release build (clean) 0 warnings. Independent
+  read-only review: a dropped sound could be evicted by the budget and its arena entry then
+  matched by a reused pointer (fixed: `dropSamples` pins, pointer matching only for `#` names);
+  the stream screen also played effects (now placed too); log arithmetic nits fixed.
+- **Not verified:** the fall's and the stream screen's placement on hardware (host sizes only);
+  level 3's placement time (the largest set, 1.44 MB: ~0.3 s by the level-7 rate); the other
+  five levels on hardware; a heavier fight (the bomber ride); the owner's New 3DS; Mandarine
+  (not run); HOME/sleep (no lifecycle change).
+- **Commits:** fe00876a (instrumentation, `tick1 sfxset`), 358597f0 (the placement), this entry.
+
+## 2026-11-27 -- test/3ds-combined-11-26 (6c5b3bcb, perf/3ds-sfx-core1) merged into fix/opcodes-parity
+- **What:** the combined line's new tip (sound effects placed in the DSP arena at level load)
+  merged after the ff13fd11 merge and the object `back` fix, so the coordinator's merge of this
+  branch is clean. Only the ledger conflicted (union); `main_3ds.cpp` and `tick1.cpp` merged
+  without conflict (their sfx-set dump and audio calls beside this branch's rope draw and
+  hazards tokens).
+- **Checks:** Linux build 0 warnings; `make -C tests/scripts test` exit 0 (1014 PASS, ArenaCover
+  and the eight opcode goldens pass); `make -C tests/formats` 200692 checks, 0 failures;
+  `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds` 0 compiler warnings.

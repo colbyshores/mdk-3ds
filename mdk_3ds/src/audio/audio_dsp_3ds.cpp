@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <string>
+#include <vector>
 
 #include "audio/dsp_adpcm.h"
 #include "audio/voice_binding.h"
@@ -55,6 +56,11 @@ struct Entry {
     bool pcm8 = false;
     uint32_t lastUse = 0;
     uint32_t releasedAt = 0;  // the frame a channel last let go of it
+    // Placed at load (audioDspPlaceEffects): never evicted, and found by its name
+    // or by `sound` (a voice the mixer does not name, the fall's) even though the
+    // bank has dropped the int16 copy (the Sound's frames() is then 0).
+    bool resident = false;
+    const audio::Sound* sound = nullptr;
 };
 
 struct EffectChannel {
@@ -199,6 +205,10 @@ uint32_t g_cacheEvictions = 0;
 uint32_t g_cacheMisses = 0;
 uint64_t g_fillTicks = 0;     // main thread: the arena copies' time (arenaGet), all of it
 uint64_t g_fillTicksMax = 0;  // ... and the slowest one
+// The copies made by audioDspPlaceEffects (at load), and their time: the close
+// line's "in play" is everything else, which must be 0.
+uint32_t g_placedFills = 0;
+uint64_t g_placedTicks = 0;
 uint32_t g_musicQueued = 0;   // guarded by g_lock
 uint32_t g_musicRestarts = 0; // guarded by g_lock
 uint32_t g_musicUnprimed = 0; // guarded by g_lock: starts that had to read first
@@ -256,7 +266,7 @@ int64_t findGap(uint32_t bytes) {
 bool evictOne() {
     int32_t victim = -1;
     for (int32_t i = 0; i < kMaxEntries; i++) {
-        if (g_entries[i].used && !entryInUse(i) &&
+        if (g_entries[i].used && !g_entries[i].resident && !entryInUse(i) &&
             (victim < 0 || g_entries[i].lastUse < g_entries[victim].lastUse)) {
             victim = i;
         }
@@ -277,6 +287,12 @@ int32_t arenaGet(const std::string& name, const audio::Sound& sound) {
     const int32_t frames = sound.frames();
     for (int32_t i = 0; i < kMaxEntries; i++) {
         const Entry& e = g_entries[i];
+        // A resident by its name; by its Sound only for a voice the mixer does
+        // not name (nameOf's "#<address>" stand-in: the fall's, the stream's).
+        if (e.used && e.resident &&
+            (e.name == name || (!name.empty() && name[0] == '#' && e.sound == &sound))) {
+            return i;
+        }
         if (e.used && e.frames == frames && e.channels == channels && e.name == name) {
             return i;
         }
@@ -341,6 +357,8 @@ int32_t arenaGet(const std::string& name, const audio::Sound& sound) {
     e.pcm8 = pcm8;
     e.lastUse = 0;
     e.releasedAt = g_frame - 2u;
+    e.resident = false;
+    e.sound = &sound;
     g_cacheFills++;
     return slot;
 }
@@ -1033,6 +1051,12 @@ bool audioDspOpen() {
     }
     g_binder.reset();
     g_frame = 0;
+    // This opening's copies (the close line says them, then they start over).
+    g_cacheFills = 0;
+    g_cacheEvictions = 0;
+    g_cacheMisses = 0;
+    g_placedFills = 0;
+    g_placedTicks = 0;
 
     LightLock_Init(&g_lock);
     g_kick = false;
@@ -1077,14 +1101,19 @@ void audioDspClose() {
         const double msPerTick = 1.0 / (double)(SYSCLOCK_ARM11 / 1000ull);
         log3dsPrintf("audio: dsp close: music %u buffers queued, %u underrun restart(s), %u unprimed "
                      "start(s), slowest buffer read %.1f ms; dsp frames %u dropped %u; effect "
-                     "copies %u (%u evicted, %u missed) %.1f ms on main, slowest %.2f ms",
+                     "copies %u (%u evicted, %u missed) %.1f ms on main, slowest %.2f ms; of them "
+                     "%u placed at load (%.1f ms), %u IN PLAY (%.1f ms)",
                      (unsigned)st.musicQueued, (unsigned)st.musicRestarts,
                      (unsigned)st.musicUnprimed, (double)st.musicReadMaxUs / 1000.0,
                      (unsigned)st.dspFrames, (unsigned)st.dspDropped, (unsigned)g_cacheFills,
                      (unsigned)g_cacheEvictions, (unsigned)g_cacheMisses,
-                     (double)g_fillTicks * msPerTick, (double)g_fillTicksMax * msPerTick);
+                     (double)g_fillTicks * msPerTick, (double)g_fillTicksMax * msPerTick,
+                     (unsigned)g_placedFills, (double)g_placedTicks * msPerTick,
+                     (unsigned)(g_cacheFills - g_placedFills),
+                     (double)(g_fillTicks - g_placedTicks) * msPerTick);
         g_fillTicks = 0;
         g_fillTicksMax = 0;
+        g_placedTicks = 0;
     }
     // P4: detached, the worker is out of the music's pass for good -- then
     // nothing it reads may go.
@@ -1183,6 +1212,68 @@ int32_t audioDspMusicRegisterFolder(audio::SoundBank* bank, const char* folder) 
     log3dsPrintf("music: %d DSP-ADPCM tracks in %s (%u bytes), streamed by the audio worker",
                  (int)count, g_musicFolder, (unsigned)bytes);
     return count;
+}
+
+int32_t audioDspPlaceEffects(audio::SoundBank* bank) {
+    if (!g_live || bank == nullptr) {
+        return 0;
+    }
+    std::vector<std::string> names;
+    bank->effectNames(&names);
+    const u64 t0 = svcGetSystemTick();
+    u64 decodeTicks = 0;
+    const uint64_t fillTicksBefore = g_fillTicks;
+    const uint32_t fillsAtStart = g_cacheFills;
+    const int32_t decodesBefore = bank->stats().decodes;
+    int32_t placed = 0;
+    int32_t pcm8 = 0;
+    int32_t refused = 0;
+    int32_t already = 0;
+    for (size_t i = 0; i < names.size(); i++) {
+        // The decode get() would make at the sound's first play, made now (a
+        // sound already decoded -- the fall's preloaded bank -- is not decoded
+        // again).
+        const u64 d0 = svcGetSystemTick();
+        audio::SoundBank::Entry entry;
+        const bool found = bank->get(names[i], &entry) && entry.sound != nullptr;
+        decodeTicks += svcGetSystemTick() - d0;
+        if (!found) {
+            refused++;
+            continue;
+        }
+        const uint32_t fillsBefore = g_cacheFills;
+        const int32_t e = arenaGet(names[i], *entry.sound);
+        if (e < 0) {
+            // No room: it plays the old way, copied at its first play (the close
+            // line's "IN PLAY").
+            refused++;
+            continue;
+        }
+        if (g_cacheFills == fillsBefore) {
+            already++;   // copied before this call (first-play copy): left as it is
+            continue;
+        }
+        g_entries[e].resident = true;
+        g_entries[e].sound = entry.sound;
+        // The arena holds the samples now and the device's sample plane is off:
+        // the bank's int16 copy is nobody's (SoundBank::dropSamples).
+        bank->dropSamples(names[i]);
+        placed++;
+        pcm8 += g_entries[e].pcm8 ? 1 : 0;
+    }
+    g_placedFills += g_cacheFills - fillsAtStart;
+    g_placedTicks += g_fillTicks - fillTicksBefore;
+    const double msPerTick = 1.0 / (double)(SYSCLOCK_ARM11 / 1000ull);
+    log3dsPrintf("audio: effects placed at load: %d of %d in the arena (%d PCM8, %d PCM16), %u of "
+                 "%u B, %d not placed, %d already there; %d decoded (%.1f ms), copies %.1f ms, "
+                 "%.1f ms in all; "
+                 "the bank's decoded store is now %u B",
+                 (int)placed, (int)names.size(), (int)pcm8, (int)(placed - pcm8),
+                 (unsigned)arenaUsed(), (unsigned)kSampleArenaBytes, (int)refused, (int)already,
+                 (int)(bank->stats().decodes - decodesBefore), (double)decodeTicks * msPerTick,
+                 (double)(g_fillTicks - fillTicksBefore) * msPerTick,
+                 (double)(svcGetSystemTick() - t0) * msPerTick, (unsigned)bank->decodedBytes());
+    return placed;
 }
 
 void audioDspPrimeMusic(const std::string& name) {
