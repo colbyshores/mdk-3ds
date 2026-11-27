@@ -372,9 +372,21 @@ stream screen's sound placement, LEVEL3/LEVEL4 sound and texture census.
 
 ---
 
-## VRAM placement and load overlap (measurement pending)
+## VRAM placement and load overlap (measured on the Old 3DS)
 
-> **Placeholder -- the coordinator fills this section.**
+- **Static VRAM placement: not kept.** The explosion/fire strips and the sky
+  (1.08 MB) in VRAM cut GPU time by 0.6 ms (13.39 → 12.81 ms on L8) but moved the
+  frame under 1% (L8 24.44 → 24.28 ms). The GPU takes 13–15 ms a frame; the slow
+  frames are CPU-bound. Code parked on `throwaway/vram-load-hw` in case L8 ever
+  runs short of linear memory. Nothing to look for.
+- [ ] **Level load overlap: kept** (`8ec873d2`). The light-rig scan now runs while
+  the worker reads the start HD window. Loaded-in: L3 15.2 → 14.2 s, L7 15.3 →
+  14.3 s, L8 15.5 → 14.6 s. **Look for:** loads about a second shorter; the
+  loading bar still reaches 100%; the first frame looks the same (lighting
+  right, no missing HD). **Regression:** a load that stalls, or lighting wrong on
+  the first frame.
+- **Not done, your call:** a binary byname index and HD window built at build
+  time would remove another ~2.5–3.5 s of main-core work from every load.
 
 ---
 
