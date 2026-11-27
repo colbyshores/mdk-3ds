@@ -5406,3 +5406,71 @@ What is worse, plainly:
 **What:** one-page summary of the overnight findings in `docs/FINDINGS_2026-11-27.md`; the same findings written to the Obsidian vault (seven pattern notes under `30-architecture/patterns/` and `10-projects/mdk-sdl/findings/2026-11-27-overnight-findings.md`).
 **Why:** owner asked for the findings documented in the vault and in the repo.
 **Evidence:** the ledger entries it summarises; owner confirmation on the New 3DS of main 06fae827.
+
+## 2026-11-27 -- The mirror panels show the mirror panorama, not white (branch fix/3ds-mirror-sky)
+
+- **Owner report (New 3DS, main c0a214b7 / code 06fae827):** "the mirrored panels in level 2
+  aren't working properly ... all that shows are white panels" (LEVEL6, the rooms whose
+  panels show the sky as a texture that shifts with the camera).
+- **Root cause -- never implemented, not a regression of the ETC1 sky:**
+  - `mdk_core/src/render/material_resolver.cpp:140-150`: a mirror (colours 990-1010,
+    MIRRLOW...MIRRHIGH) resolves to `Pass::Mirror` with NO texture, colour white and a row
+    shift -- the oracle's `Material.Mirror(rowShift)`, which only its mirror program can draw.
+  - `mdk_core/src/render/surface_cache.cpp:162-181` (`flatColourId`): like every flat
+    surface, that white became a 1x1 white texture.
+  - 3DS: `c3d/06_draw.inc` prepareDraw had no `Pass::Mirror` branch, so the mirror drew
+    that white texture; `c3d/03_eye.inc:145` said so ("there is no mirror panorama").
+  - Linux: no mirror program either (`mirror.frag` was listed in CMake but never written),
+    so the Linux build drew the same white panels -- it was NOT a valid reference. Its
+    `main.cpp` also handed the mirrors the sky instead of the DTI's second panorama
+    (LEVEL5/6), unlike the C#'s `Viewer.CreatePanorama`.
+  - The oracle: `Renderer.cs:1082-1092` binds the MIRROR panorama for a mirror and draws it
+    with `shaders/mirror.hlsl`: the panorama cell in the direction camera->pixel, `row_shift`
+    rows lower/higher, rows wrapping.
+- **What (3DS, PICA200 only, no per-frame CPU work):** one CUBE MAP per row shift the
+  level's arenas use (LEVEL6: -80,-40,0,40,80; LEVEL3/8: one; LEVEL5: three; LEVEL4/7: none),
+  128x128 RGB565 faces of the mirror panorama, built at level load before the HD window is
+  sized (`mdk_core/src/render/mirror_cube.{h,cpp}`, `level_load_3ds.cpp buildMirrorCubes3ds`,
+  `render/render_c3d_mirror.h`). A mirror draw goes through its own program --
+  `shaders/mdk_mirror.v.pica` when the command list is plain, `mdk_mirror.g.pica` when it is
+  already in geometry mode (lighting on), so a mirror never splits the list -- whose texture
+  coordinate is `position - camera` (texcoord0 + texcoord0w) for texture unit 0's cube lookup:
+  the oracle's per-pixel direction, interpolated exactly. Nearest, no light, no haze, opaque
+  (index 0 is palette[0]'s colour, as mirror.hlsl). A model's mirror value no arena uses
+  (LEVEL6's XF and XBSHARK carry 995-1010) takes the nearest cube (<= 20 rows off) rather
+  than one cube per value. MIRRORS toggle off: mirror draws skipped (as on Linux).
+- **What (Linux):** `mdk_linux/shaders/mirror.{vert,frag}` (port of mirror.hlsl), a pipeline
+  for `Pass::Mirror`, `drawMirror` in `vulkan/12_draw.inc`; `main.cpp` uses the DTI's own
+  mirror panorama (`Dti::hasOwnMirrorSky`).
+- **Cost:** 960 KiB of linear in LEVEL6 (5 cubes; 192 KiB each), ~430 ms of level load on
+  the Old 3DS (`mirror: 5 of 5 cubes ... 960 KiB, 433.8 ms`). Per frame: the mirror draws
+  themselves, one textured pass, as before.
+- **Tests:** `tests/scripts/mirror_cube_tests.cpp` (PASS MirrorCube, PASS
+  MirrorRowShiftsOfTheRetailLevels): every cube texel's direction looks up as itself through
+  the PICA/OpenGL cube convention written out independently; cells vs the oracle's libm
+  mapping (98296/98304 exact, all within one cell); shift and wrap vs mirror.hlsl; a draw finds
+  its own shift's cube, else the nearest; index 0 kept; the retail census.
+  `tests/scripts/c3d_frame_test.sh`'s stage0 check follows the extracted `buildStage0Variants`.
+- **Evidence (scene: LEVEL6 OLYM_7, Kurt teleported to -2200,2440,-2900 yaw 0, frame 600):**
+  - Old 3DS appliance (old3ds-lan167, Old 3DS, 268 MHz, stereo on -- both eyes read back),
+    harness builds over keep/2026-11-27/throwaway-smoke-final-hw, `hw_cycle.sh --once`, all
+    FRESH: BEFORE (main's code) white floor and walls in both eyes; AFTER (console config,
+    240x400 targets) and AFTER with `TOGGLES=enableLighting=1;enableEdgeSmoothing=1`
+    (480x400 targets, lighting on: the geometry-mode program) the panels show the green-lit
+    mirror panorama in both eyes, matching Linux.
+  - Mandarine r1.2.1 (md5 0d2adab6), `DISPLAY=:99`, `emurun.sh --secs 150`, lighting off:
+    before white, after the panorama (`mirror programs: ready`, `mirror: 5 of 5 cubes`).
+  - Linux headless `--level=6 --arena=OLYM_7 --at=-2200,2440,-2900,0`: before white, after
+    the panorama, original and `--enhanced`.
+- **Checks:** Linux build 0 warnings; 3DS player build (clean, exporters rebuilt) 0 compiler
+  warnings; `make -C tests/scripts test` rc 0 (C3dFrame 66 checks, 166 arms red); tests/formats
+  200,928 checks, 0 failures; `tools/check.sh` ALL GATES PASSED (smdh SKIP, no .cia).
+  Independent read-only review: no blocking defects; acted on
+  -- model mirrors take their direction from their own (untransformed) position as the oracle
+  does, the census reads PEN_n names, no cubes are made without the programs, the mirror
+  Lines path on Linux, an R2 pin, the loop modulo replaced by a bounded wrap; recorded -- both
+  eyes use the centre camera for the direction (the oracle has no stereo), float24 precision of
+  `world - camera`.
+- **Not verified:** the New 3DS; LEVEL3/5/8 mirrors and LEVEL6's XF/XBSHARK on hardware; the
+  geometry-mode program is inferred from `lighting=1` (no per-draw counter); the face size
+  (128) is a memory choice the owner may want to A/B.

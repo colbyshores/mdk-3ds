@@ -39,6 +39,14 @@ int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, int32_t level
 // Gives back what buildSky3ds made (the HD toggle changed: the sky is made again).
 void releaseSky3ds(MdkRenderer renderer, MdkMeshId* skyMesh, SkyRange* ranges, int32_t* count);
 
+// THE MIRRORS (render/mirror_cube.h, render_c3d_mirror.h): one cube map of the
+// level's mirror panorama per row shift its arenas use, made at level load --
+// before the HD window is sized against the free linear heap, so the set's
+// arithmetic sees them. Returns the cubes made (0 for a level with no mirror:
+// LEVEL4 and LEVEL7). The level's end gives them back
+// (mdk_render_release_mirror_cubes).
+int32_t buildMirrorCubes3ds(MdkRenderer renderer, const LevelData& level);
+
 // The pause menu's fonts (MISC/MDKFONT.FTI), also handed to the HUD's messages.
 bool loadMenuFonts3ds(MdkRenderer renderer, const formats::MdkData& data, FontView* menuBig,
                       FontView* menuSmall, HudView* hud);

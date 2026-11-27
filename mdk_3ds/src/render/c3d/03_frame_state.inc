@@ -87,6 +87,19 @@ static void settleDeferredTextures(RendererC3D* renderer) {
     if (!renderer) {
         return;
     }
+    // The mirror cubes given back while a frame could still read them
+    // (mdk_render_release_mirror_cubes).
+    for (int32_t i = 0; i < mdk::kMirrorRowShiftsMax; i++) {
+        RendererC3D::MirrorCube& cube = renderer->mirrorCubes[i];
+        if (cube.releasePending) {
+            if (cube.valid) {
+                C3D_TexDelete(&cube.tex);
+            }
+            cube.valid = false;
+            cube.releasePending = false;
+            cube.faces = 0;
+        }
+    }
     // Releases come first: they return memory without needing an
     // allocation, and a stale replacement below may need that memory.
     for (size_t i = 0; i < renderer->textures.size(); i++) {

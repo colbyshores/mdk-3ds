@@ -1403,12 +1403,16 @@ def adjudicate(text, quiet=False):
     # The contract is that every site sits before the eye loop and none inside it.
     prepq_in_loop = "prepareQueue(r);" in end_b2[loop_at2:] if loop_at2 >= 0 else True
     # The stage-0 variants are built once (r->stage0Built), not per draw:
-    # rebuilding them every frame would still draw the same picture.
+    # rebuilding them every frame would still draw the same picture. Since the
+    # mirrors (2026-11-27) they are built by buildStage0Variants, which both
+    # prepares call: guarded there, and called from prepareDraw.
     prep_b2 = fn_body(text, "prepareDraw")
-    rep.check("stage0-variants-built-once",
-              "if (!r->stage0Built) {" in prep_b2 and "r->stage0Built = true;" in prep_b2,
-              "stage0 variants guarded by r->stage0Built in prepareDraw: %s"
-              % ("yes" if "r->stage0Built = true;" in prep_b2 else "NO"))
+    stage0_b = fn_body(text, "buildStage0Variants")
+    stage0_once = ("if (r->stage0Built) {" in stage0_b and "r->stage0Built = true;" in stage0_b
+                   and "buildStage0Variants(r);" in prep_b2)
+    rep.check("stage0-variants-built-once", stage0_once,
+              "stage0 variants guarded by r->stage0Built in buildStage0Variants, called from "
+              "prepareDraw: %s" % ("yes" if stage0_once else "NO"))
     rep.check("prepared-replay-prepares-once-before-the-eyes",
               0 <= prepq_at < loop_at2 and not prepq_in_loop,
               "prepareQueue in end_frame at %d, eye loop at %d, called inside the loop: %s "
@@ -3647,7 +3651,7 @@ ARMS = [
      lambda s: s.replace("    if (!a->wholeTriangles || !b->wholeTriangles) return false;\n", "", 1),
      "submit-coalescing-folds-whole-non-cullable-only"),
     ("stage0-variants-rebuilt-every-frame",
-     lambda s: s.replace("            r->stage0Built = true;", "            r->stage0Built = false;", 1),
+     lambda s: s.replace("    r->stage0Built = true;", "    r->stage0Built = false;", 1),
      "stage0-variants-built-once"),
     ("stage-0-written-raw-every-draw-again",
      lambda s: s.replace("        setTexEnv0(r, stage0Variant(r, p->stage0Index));",

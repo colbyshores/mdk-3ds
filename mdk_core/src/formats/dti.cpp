@@ -66,6 +66,7 @@ Dti Dti::parse(const uint8_t* bytes, int32_t byteCount) {
         if (skyBlock >= 0) {
             dti.sky_ = dti.panorama(bytes, byteCount, skyBlock, skyHeight);
             const int32_t mirrorBlock = skyBlock + dti.sky_.width() * dti.sky_.height();
+            dti.ownMirrorSky_ = secondSkyTop > 0;
             dti.mirrorSky_ = (secondSkyTop > 0)
                 ? dti.panorama(bytes, byteCount, mirrorBlock, skyHeight)
                 : dti.sky_;

@@ -170,13 +170,18 @@ SHADER_CPICA := $(CURDIR)/shaders/mdk_caster.v.pica
 # ... and the pass-through geometry shader: the fifth DVLE (mdk_pass.g.pica says
 # why: the PICA must not leave geometry mode inside a command list).
 SHADER_PPICA := $(CURDIR)/shaders/mdk_pass.g.pica
+# ... and the mirrors' geometry shader: the sixth DVLE (mdk_mirror.g.pica: the
+# cube-map direction the mirror's panorama is looked up by).
+SHADER_MPICA := $(CURDIR)/shaders/mdk_mirror.g.pica
+# ... and the mirrors' vertex shader for a list NOT in geometry mode: the seventh.
+SHADER_MVPICA := $(CURDIR)/shaders/mdk_mirror.v.pica
 SHADER_SHBIN := $(BUILD)/mdk_c3d.shbin
 SHADER_HDR   := $(BUILD)/mdk_c3d_shbin.h
 SHADER_OBJ   := $(BUILD)/mdk_c3d_shbin.o
 
-$(SHADER_SHBIN): $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA) | $(BUILD)
-	@echo "PICA $(notdir $(SHADER_PICA)) $(notdir $(SHADER_GPICA)) $(notdir $(SHADER_SPICA)) $(notdir $(SHADER_CPICA)) $(notdir $(SHADER_PPICA))"
-	@$(PICASSO) -o $@ $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA)
+$(SHADER_SHBIN): $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA) $(SHADER_MPICA) $(SHADER_MVPICA) | $(BUILD)
+	@echo "PICA $(notdir $(SHADER_PICA)) $(notdir $(SHADER_GPICA)) $(notdir $(SHADER_SPICA)) $(notdir $(SHADER_CPICA)) $(notdir $(SHADER_PPICA)) $(notdir $(SHADER_MPICA)) $(notdir $(SHADER_MVPICA))"
+	@$(PICASSO) -o $@ $(SHADER_PICA) $(SHADER_GPICA) $(SHADER_SPICA) $(SHADER_CPICA) $(SHADER_PPICA) $(SHADER_MPICA) $(SHADER_MVPICA)
 
 # &: (grouped target, GNU Make 4.3+) is load-bearing here, NOT stylistic: with
 # a plain ':', two targets sharing one recipe are not atomic, so `make -j` can

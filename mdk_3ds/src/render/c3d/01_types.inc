@@ -445,6 +445,9 @@ struct PreparedDraw {
     // (kStencilMark), a `back` draw only draws where none did (kStencilTest);
     // every other record leaves the stencil alone (kStencilOff).
     int8_t stencil = 0;
+    // A MIRROR's cube slot (RendererC3D::mirrorCubes, render_c3d_mirror.h): the
+    // draw goes through the mirrors' program over that cube. -1 for every other.
+    int32_t mirrorCube = -1;
 };
 
 // PreparedDraw::stencil and RendererC3D::stencilMode.
@@ -816,6 +819,32 @@ struct RendererC3D {
     // the splits made this frame to leave geometry mode (each a GX queue entry).
     shaderProgram_s programPass;
     bool passReady = false;
+    // THE MIRRORS' PROGRAMS (render_c3d_mirror.h): each turns a vertex's world
+    // position into the cube-map direction from the camera. One for a command
+    // list in geometry mode -- the scene's vertex shader plus the DVLB's sixth
+    // DVLE, mdk_mirror.g.pica -- and one for a list that is not: the seventh,
+    // mdk_mirror.v.pica, alone. So a mirror never splits a list by itself
+    // (bindProgram). Optional: without them a mirror draw is skipped (never
+    // drawn as its white placeholder).
+    shaderProgram_s programMirror;        // geometry mode
+    shaderProgram_s programMirrorPlain;   // plain
+    bool mirrorReady = false;
+    int mirrorCameraLocation = -1;        // the geometry shader's camera
+    int mirrorPlainCameraLocation = -1;   // the plain vertex shader's (c11)
+    // THE LEVEL'S MIRROR CUBES, one a row shift (mdk_render_create_mirror_cube),
+    // slot i made for mirrorShifts[i]. A fixed array, because a cube C3D_Tex
+    // points at its C3D_TexCube: a slot must never move.
+    struct MirrorCube {
+        bool valid = false;           // allocated (C3D_TexInitCube succeeded)
+        bool releasePending = false;  // given back while the GPU may still read it
+        uint8_t faces = 0;            // the faces that have arrived, a bit each
+        C3D_Tex tex;
+        C3D_TexCube cube;
+    };
+    MirrorCube mirrorCubes[mdk::kMirrorRowShiftsMax];
+    int32_t mirrorShifts[mdk::kMirrorRowShiftsMax] = {};
+    int32_t mirrorCubeCount = 0;      // slots in use, from 0
+    bool mirrorMissingLogged = false; // a mirror draw found no cube (said once)
     shaderProgram_s* boundProgram = nullptr;
     bool gsInList = false;
     int32_t geometrySplits = 0;

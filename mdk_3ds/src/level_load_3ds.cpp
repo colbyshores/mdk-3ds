@@ -4,6 +4,7 @@
 
 #include "level_load_3ds.h"
 
+#include <3ds.h>
 #include <stdio.h>
 
 #include <memory>
@@ -13,6 +14,8 @@
 #include "formats/font.h"
 #include "formats/fti.h"
 #include "platform/log_3ds.h"
+#include "render/mirror_cube.h"
+#include "render/render_c3d_mirror.h"
 #include "render/sky_dome.h"
 
 namespace mdk {
@@ -115,6 +118,64 @@ int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, int32_t level
     }
     // The dome's CPU copies die here: the renderer keeps its own.
     return count;
+}
+
+int32_t buildMirrorCubes3ds(MdkRenderer renderer, const LevelData& level) {
+    int32_t shifts[kMirrorRowShiftsMax];
+    const int32_t count = mirrorRowShifts(level.arenas(), shifts);
+    if (count == 0) {
+        return 0;
+    }
+    const formats::Dti& dti = level.dti();
+    // The panorama and the palette the oracle binds (Viewer.CreatePanorama): the
+    // DTI's mirror panorama (its second one in LEVEL5/6, the sky elsewhere)
+    // through the level's base palette.
+    const formats::Texture& panorama = dti.mirrorSky();
+    const uint8_t* pal = dti.palette().rgba();
+    if (!panorama.indices() || !pal || dti.skyWrapWidth() <= 0 ||
+        panorama.width() < dti.skyWrapWidth()) {
+        mdk::log3dsPrintf("mirror: %d row shifts but no usable panorama -- mirrors skipped",
+                          (int)count);
+        return 0;
+    }
+    const uint64_t start = svcGetSystemTick();
+    int32_t slots[kMirrorRowShiftsMax];
+    int32_t made = 0;
+    for (int32_t i = 0; i < count; i++) {
+        slots[i] = mdk_render_create_mirror_cube(renderer, shifts[i]);
+        if (slots[i] >= 0) {
+            made++;
+        }
+    }
+    if (made > 0) {
+        // One face at a time: its cells (the direction's panorama column and row,
+        // the expensive part) once, then each shift's indices from them.
+        const int32_t texels = kMirrorCubeSize * kMirrorCubeSize;
+        std::vector<int16_t> columns((size_t)texels);
+        std::vector<int16_t> rows((size_t)texels);
+        std::vector<uint8_t> face((size_t)texels);
+        for (int32_t f = 0; f < kMirrorCubeFaces; f++) {
+            mirrorCubeCells(f, kMirrorCubeSize, dti.skyWrapWidth(), dti.skyHorizonRow(),
+                            dti.skyOffset(), panorama.height(), columns.data(), rows.data());
+            for (int32_t i = 0; i < count; i++) {
+                if (slots[i] >= 0 && mirrorCubeFace(panorama, columns.data(), rows.data(),
+                                                    texels, shifts[i], face.data())) {
+                    mdk_render_set_mirror_cube_face(renderer, slots[i], f, face.data(), pal);
+                }
+            }
+        }
+    }
+    char list[kMirrorRowShiftsMax * 6 + 1];
+    int32_t at = 0;
+    list[0] = '\0';
+    for (int32_t i = 0; i < count && at < (int32_t)sizeof(list) - 6; i++) {
+        at += snprintf(list + at, sizeof(list) - (size_t)at, "%s%d", i ? "," : "", (int)shifts[i]);
+    }
+    mdk::log3dsPrintf("mirror: %d of %d cubes (row shifts %s; %s panorama), %u KiB, %.1f ms",
+                      (int)made, (int)count, list, dti.hasOwnMirrorSky() ? "its own" : "the sky's",
+                      (unsigned)(mdk_render_mirror_cube_bytes(renderer) / 1024u),
+                      (double)(svcGetSystemTick() - start) / (double)(SYSCLOCK_ARM11 / 1000ull));
+    return made;
 }
 
 void releaseSky3ds(MdkRenderer renderer, MdkMeshId* skyMesh, SkyRange* ranges, int32_t* count) {

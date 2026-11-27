@@ -150,6 +150,18 @@ its fall; run the **Every fall** list (under "Every level") on at least one.
 - [ ] **Jump on the flying cannon** -- 49db95d9 (upstream 7f0dfca8)
   - Where: the cannon in flight, jump.
   - Right: Kurt stays over it. Wrong: left up to ~10 units behind.
+- [ ] **Mirror panels show the panorama, not white** -- fix/3ds-mirror-sky
+  - Where: OLYM_7's mirror floor and slanted mirror walls (the room after the
+    pendulum); also OLYM_6's floor tiles under the pendulum path and OLYM_5's
+    hub tiles. Toggle MIRRORS on.
+  - Right: each panel shows the level's second (dark, green-lit) panorama in
+    the direction you look through it, sliding as the camera moves; neighbouring
+    tiles show it a little higher or lower (MIRRLOW...MIRRHIGH). Both eyes, with
+    lighting on and off. MIRRORS off: the panels are not drawn at all (as on PC).
+  - Wrong: plain white panels (the old placeholder), black panels, a picture
+    that does not move with the camera, or a picture upside down or swapped
+    between floor and walls. Log: `mirror: 5 of 5 cubes (...)` at level load,
+    and no `mirror: no cube` line.
 - [ ] **Decals: hub rims, mirror tiles** -- 2315ec29
   - Where: OLYM_5 hub rims; OLYM_7 mirror/floor tiles.
   - Right: steady. Wrong: flicker.

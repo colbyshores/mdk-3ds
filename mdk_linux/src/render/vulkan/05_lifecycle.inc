@@ -235,6 +235,14 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
         delete r;
         return nullptr;
     }
+    r->mirrorVertModule = createModule(&r->ctx, spv_mirror_vert, spv_mirror_vert_size);
+    r->mirrorFragModule = createModule(&r->ctx, spv_mirror_frag, spv_mirror_frag_size);
+    if (!r->mirrorVertModule || !r->mirrorFragModule) {
+        std::printf("[vk] mirror shader modules failed -- were the shaders compiled?\n");
+        mdk::vk::destroyContext(&r->ctx);
+        delete r;
+        return nullptr;
+    }
 
     r->ready = true;
     return r;
@@ -339,6 +347,8 @@ void mdk_render_destroy(MdkRenderer rr) {
     if (r->skyPipeline) vkDestroyPipeline(r->ctx.device, r->skyPipeline, nullptr);
     if (r->skyVertModule) vkDestroyShaderModule(r->ctx.device, r->skyVertModule, nullptr);
     if (r->skyFragModule) vkDestroyShaderModule(r->ctx.device, r->skyFragModule, nullptr);
+    if (r->mirrorVertModule) vkDestroyShaderModule(r->ctx.device, r->mirrorVertModule, nullptr);
+    if (r->mirrorFragModule) vkDestroyShaderModule(r->ctx.device, r->mirrorFragModule, nullptr);
     if (r->stereoPipeline) vkDestroyPipeline(r->ctx.device, r->stereoPipeline, nullptr);
     if (r->stereoPipeLayout) vkDestroyPipelineLayout(r->ctx.device, r->stereoPipeLayout, nullptr);
     if (r->stereoSetLayout) vkDestroyDescriptorSetLayout(r->ctx.device, r->stereoSetLayout, nullptr);

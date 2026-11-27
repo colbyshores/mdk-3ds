@@ -1162,3 +1162,113 @@ void mdk_render_release(MdkRenderer r, MdkScope s) {
     }
 }
 
+// THE MIRROR CUBES (render_c3d_mirror.h; render/mirror_cube.h). Made between
+// frames (the level load), given back at the level's end.
+int32_t mdk_render_create_mirror_cube(MdkRenderer rr, int32_t rowShift) {
+    RendererC3D* r = asC3d(rr);
+    // Without the mirrors' programs nothing would sample a cube: none is made
+    // (the 2026-11-27 review's F8), and the draws are skipped.
+    if (!r || !r->mirrorReady || r->inFrame || r->mirrorCubeCount >= mdk::kMirrorRowShiftsMax) {
+        return -1;
+    }
+    for (int32_t i = 0; i < r->mirrorCubeCount; i++) {
+        if (r->mirrorShifts[i] == rowShift) {
+            return -1;
+        }
+    }
+    const int32_t slot = r->mirrorCubeCount;
+    RendererC3D::MirrorCube& cube = r->mirrorCubes[slot];
+    if (cube.releasePending) {
+        // The last level's cube in this slot, still waiting for a frame boundary.
+        // The loading screen's frames normally settled it; if the GPU may still
+        // read it, the slot is not reused (AGENTS.md P3).
+        if (r->gpuPending) {
+            mdk::log3dsPrintf("mirror: cube %d refused (the last level's is still in flight)",
+                              (int)slot);
+            return -1;
+        }
+        if (cube.valid) {
+            C3D_TexDelete(&cube.tex);
+        }
+        cube.valid = false;
+        cube.releasePending = false;
+    }
+    cube.faces = 0;
+    if (!C3D_TexInitCube(&cube.tex, &cube.cube, (u16)mdk::kMirrorCubeSize,
+                         (u16)mdk::kMirrorCubeSize, GPU_RGB565)) {
+        mdk::log3dsPrintf("mirror: cube for row shift %d refused by the linear heap (%lu free)",
+                          (int)rowShift, (unsigned long)linearSpaceFree());
+        return -1;
+    }
+    // The oracle's mirror is nearest (mirror.hlsl Loads its texel); a cube map
+    // is clamped at its faces' edges.
+    C3D_TexSetFilter(&cube.tex, GPU_NEAREST, GPU_NEAREST);
+    C3D_TexSetWrap(&cube.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    cube.valid = true;
+    r->mirrorShifts[slot] = rowShift;
+    r->mirrorCubeCount++;
+    return slot;
+}
+
+void mdk_render_set_mirror_cube_face(MdkRenderer rr, int32_t slot, int32_t face,
+                                     const uint8_t* indices, const uint8_t* paletteRgba) {
+    RendererC3D* r = asC3d(rr);
+    if (!r || slot < 0 || slot >= r->mirrorCubeCount || face < 0 ||
+        face >= mdk::kMirrorCubeFaces || !indices || !paletteRgba) {
+        return;
+    }
+    RendererC3D::MirrorCube& cube = r->mirrorCubes[slot];
+    if (!cube.valid || cube.releasePending) {
+        return;
+    }
+    u32 bytes = 0;
+    uint8_t* texels =
+        static_cast<uint8_t*>(C3D_TexCubeGetImagePtr(&cube.tex, (GPU_TEXFACE)face, 0, &bytes));
+    const u32 want = (u32)(mdk::kMirrorCubeSize * mdk::kMirrorCubeSize * 2);
+    if (!texels || bytes < want) {
+        return;
+    }
+    mdk::pica::mirrorFaceTexelsRgb565(indices, mdk::kMirrorCubeSize, paletteRgba, texels);
+    // The CPU wrote the face; the GPU reads it from memory (AGENTS.md P3: cache
+    // visibility). Made between frames, so nothing is reading it now.
+    GSPGPU_FlushDataCache(texels, want);
+    cube.faces = (uint8_t)(cube.faces | (1u << face));
+}
+
+void mdk_render_release_mirror_cubes(MdkRenderer rr) {
+    RendererC3D* r = asC3d(rr);
+    if (!r) {
+        return;
+    }
+    const bool inFlight = r->gpuPending || r->inFrame;
+    for (int32_t i = 0; i < mdk::kMirrorRowShiftsMax; i++) {
+        RendererC3D::MirrorCube& cube = r->mirrorCubes[i];
+        if (!cube.valid) {
+            continue;
+        }
+        if (inFlight) {
+            cube.releasePending = true;   // freed at the next frame boundary
+        } else {
+            C3D_TexDelete(&cube.tex);
+            cube.valid = false;
+            cube.faces = 0;
+        }
+    }
+    r->mirrorCubeCount = 0;
+    r->mirrorMissingLogged = false;
+}
+
+uint32_t mdk_render_mirror_cube_bytes(MdkRenderer rr) {
+    RendererC3D* r = asC3d(rr);
+    if (!r) {
+        return 0;
+    }
+    uint32_t bytes = 0;
+    for (int32_t i = 0; i < r->mirrorCubeCount; i++) {
+        if (r->mirrorCubes[i].valid) {
+            bytes += (uint32_t)(mdk::kMirrorCubeFaces * mdk::kMirrorCubeSize *
+                                mdk::kMirrorCubeSize * 2);
+        }
+    }
+    return bytes;
+}

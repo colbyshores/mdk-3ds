@@ -1,0 +1,55 @@
+; ============================================================================
+; mdk_mirror.v.pica -- the MIRRORS' vertex shader, for a command list that is
+; not in geometry mode (mdk_mirror.g.pica is the same thing for one that is;
+; mdk_pass.g.pica has the hardware rule that needs both). The scene's vertex
+; shader (mdk_c3d.v.pica) with one difference: the texture coordinate is the
+; DIRECTION from the camera to the vertex -- texcoord0 (u, v) and texcoord0w
+; (w) -- for texture unit 0's CUBE MAP lookup of the mirror panorama
+; (mdk_core/src/render/mirror_cube.h). Linear in the world position, so the
+; rasteriser's perspective-correct interpolation is the oracle's per-pixel
+; direction (shaders/mirror.hlsl).
+;
+; THE UNIFORMS ARE THE SCENE SHADER'S, IN ITS ORDER, so picasso gives them the
+; same registers (mvp c0-3, uvtransform c4, tint c5, haze c6, world c7-10) and
+; the backend's writes through the scene program's locations land here too.
+; `camera` comes after them (c11): the eye's world position, written by the
+; backend at the bind.
+; ============================================================================
+
+.constf mirrorConsts(0.0, 1.0, -1.0, 0.5)
+.alias  mirrorOnes mirrorConsts.yyyy
+
+.out outpos position
+.out outclr color
+.out outtc  texcoord0.st
+.out -      texcoord0w outtc.p
+
+.alias inpos v0
+
+.fvec mvp[4]
+.fvec uvtransform   ; unused here: declared so the registers below match mdk_c3d.v.pica
+.fvec tint
+.fvec haze          ; unused here (a mirror is never hazed), for the same reason
+.fvec world[4]
+.fvec camera
+
+.entry mvmain
+.proc mvmain
+    mov r0.xyz, inpos
+    mov r0.w,   mirrorOnes
+    dp4 outpos.x, mvp[0], r0
+    dp4 outpos.y, mvp[1], r0
+    dp4 outpos.z, mvp[2], r0
+    dp4 outpos.w, mvp[3], r0
+
+    mov outclr, tint
+
+    ; The world position, then the direction from the camera.
+    dp4 r1.x, world[0], r0
+    dp4 r1.y, world[1], r0
+    dp4 r1.z, world[2], r0
+    mov r1.w, mirrorOnes
+    add outtc, -camera, r1
+
+    end
+.end

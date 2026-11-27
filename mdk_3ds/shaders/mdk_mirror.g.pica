@@ -1,0 +1,63 @@
+; ============================================================================
+; mdk_mirror.g.pica -- the MIRRORS' geometry shader (MIRRLOW...MIRRHIGH; the
+; oracle's shaders/mirror.hlsl): each triangle out as the vertex shader made it,
+; except the texture coordinate, which becomes the DIRECTION from the camera to
+; the vertex -- texcoord0 (u, v) and texcoord0w (w) -- for texture unit 0's CUBE
+; MAP lookup (mdk_core/src/render/mirror_cube.h).
+;
+; The oracle's mirror shows its panorama in the direction world - camera, per
+; pixel. That vector is linear in the world position, so the rasteriser's
+; perspective-correct interpolation of it between the vertices IS the
+; per-pixel direction, and the cube map (one per row shift, made at level load)
+; holds the panorama for every direction. No normalisation is needed: a cube
+; lookup reads only the direction.
+;
+; This is the mirror for a command list ALREADY IN GEOMETRY MODE (the hardware
+; rule mdk_pass.g.pica records: once a list has used a geometry program, a plain
+; one must not draw in it without a split); mdk_mirror.v.pica is the same
+; mirror for a list that is not. The vertex shader here is the scene's own
+; (mdk_c3d.v.pica), which already hands every vertex's WORLD position (its
+; `world` matrix times the position) to this stage in v3.
+;
+; Uniform: camera (xyz: the eye's world position; the backend writes it at the
+; bind, and the scene insets' cameras when they draw).
+;
+; The vertex shader's outputs, three vertices of four registers:
+;   v0-v3   position, colour, texcoord, world   (and v4-v7, v8-v11)
+; One input register per instruction (the PICA reads one v register a slot).
+; ============================================================================
+
+.gsh point c0
+
+.fvec camera
+
+.out outpos position
+.out outclr color
+.out outtc  texcoord0.st
+.out -      texcoord0w outtc.p
+
+.entry mmain
+.proc mmain
+    setemit 0
+    mov outpos, v0
+    mov outclr, v1
+    mov r0, v3
+    add outtc, -camera, r0
+    emit
+
+    setemit 1
+    mov outpos, v4
+    mov outclr, v5
+    mov r0, v7
+    add outtc, -camera, r0
+    emit
+
+    setemit 2, prim
+    mov outpos, v8
+    mov outclr, v9
+    mov r0, v11
+    add outtc, -camera, r0
+    emit
+
+    end
+.end

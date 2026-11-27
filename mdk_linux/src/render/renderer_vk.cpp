@@ -63,6 +63,8 @@
 #include "shader_palette_frag.h"
 #include "shader_sky_vert.h"
 #include "shader_sky_frag.h"
+#include "shader_mirror_vert.h"
+#include "shader_mirror_frag.h"
 #include "shader_stereo_vert.h"
 #include "shader_stereo_frag.h"
 #include "shader_gamma_frag.h"

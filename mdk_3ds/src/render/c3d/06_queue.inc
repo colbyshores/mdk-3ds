@@ -37,6 +37,7 @@ static bool coalesciblePair(const PreparedDraw* a, const PreparedDraw* b) {
     if (a->texHd != b->texHd || a->texIndex != b->texIndex || a->texUnit != b->texUnit) return false;
     if (a->texPending != b->texPending) return false;
     if (a->stencil != b->stencil) return false;
+    if (a->mirrorCube != b->mirrorCube) return false;
     if (a->overlay != b->overlay || a->lit != b->lit || a->shadowLit != b->shadowLit ||
         a->worldIdentity != b->worldIdentity ||
         a->haze != b->haze || a->mipped != b->mipped) return false;
@@ -226,6 +227,14 @@ static void setLitCamera(RendererC3D* r, const float position[3]) {
                       position[2], 1.0f);
     } else if (r->boundProgram == &r->programShadow) {
         C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->shadowCameraLocation, position[0], position[1],
+                      position[2], 1.0f);
+    } else if (r->boundProgram == &r->programMirror) {
+        // The mirrors' direction is from this camera too (a later bind writes
+        // pullEye, which the callers set alongside).
+        C3D_FVUnifSet(GPU_GEOMETRY_SHADER, r->mirrorCameraLocation, position[0], position[1],
+                      position[2], 1.0f);
+    } else if (r->boundProgram == &r->programMirrorPlain) {
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->mirrorPlainCameraLocation, position[0], position[1],
                       position[2], 1.0f);
     }
 }
