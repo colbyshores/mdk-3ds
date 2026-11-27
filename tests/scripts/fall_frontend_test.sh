@@ -17,6 +17,11 @@
 #   2. New Game -> briefing -> the fall, Esc in its intro (Menu.Back) opens the
 #      pause menu and the fall waits under it; Esc again resumes it (upstream
 #      75ec50e2: the original's abort prompt, not a skip).
+#   2b. The fall's pause menu -> Main menu, then New Game again: the second fall is
+#      shown and stays (the owner's 2026-11-26 report: it went back to the menu).
+#   2c. The fall's pause menu -> Options -> Audio -> Master volume down: the pages
+#      are labelled and the change is saved (they were blank and inert: the fall's
+#      menu was never given the settings, fonts, host or print).
 #   3. --fall=8 --fall-lean: LEVEL8's fall (Bones) drawn the 3DS's way for 700
 #      frames, past the intro.
 #
@@ -27,6 +32,48 @@
 ROOT=${1:-$(cd "$(dirname "$0")/../.." && pwd)}
 BIN="$ROOT/build-linux/mdk"
 DATA=${MDK_DATA_DIR:-$ROOT/MDK}
+
+# --- 0. Both frontends make a new fall pause menu with each fall -----------------
+# Case 2b runs the Linux frontend; the 3DS's (menu_screens_3ds.cpp, <3ds.h>) cannot
+# run on a host, so its openFall is read: the reset must sit inside openFall,
+# before its fall->open. Always runs, binary or not.
+for SRC in "$ROOT/mdk_linux/src/menu_screens.cpp" "$ROOT/mdk_3ds/src/menu_screens_3ds.cpp"; do
+    if ! awk '
+        /auto openFall = \[&\]\(\) -> bool \{/ { inside = 1; next }
+        inside && /fallPause = menu::PauseMenu\(\);/ { reset = 1 }
+        inside && /fall->open\(/ { found = reset; exit }
+        END { exit found ? 0 : 1 }
+    ' "$SRC"; then
+        echo "FAIL FallFrontend ($SRC: openFall does not reset fallPause before fall->open;" \
+             "a fall left through its pause menu's Main menu sends the next fall back to the menu)"
+        exit 1
+    fi
+done
+# ... and both give the fall's pause menu its items' fonts, host, settings and print
+# before they show it (the main menu's and the level pause menu's are; without them
+# its options pages are blank and change nothing). Within the 12 lines before the
+# fall's `fallPause.show();`.
+for SRC in "$ROOT/mdk_linux/src/menu_screens.cpp" "$ROOT/mdk_3ds/src/menu_screens_3ds.cpp"; do
+    if ! awk '
+        { line[NR] = $0 }
+        /fallPause\.show\(\);/ { at = NR }
+        END {
+            if (!at) exit 1
+            for (i = at - 12; i < at; i++) {
+                if (line[i] ~ /items\.setFonts\(/) f = 1
+                if (line[i] ~ /items\.setHost\(menu::Host::Console\);/) h = 1
+                if (line[i] ~ /items\.setSettings\(front->settings, fallApplied, &fallApply\);/) s = 1
+                if (line[i] ~ /items\.setPrint\(printLine, nullptr\);/) p = 1
+                if (line[i] ~ /fallPause\.items\(\)/) m = 1
+            }
+            exit (f && h && s && p && m) ? 0 : 1
+        }
+    ' "$SRC"; then
+        echo "FAIL FallFrontend ($SRC: the fall's pause menu is shown without its items' fonts," \
+             "host, settings and print; its options pages would be blank and inert)"
+        exit 1
+    fi
+done
 
 if [ ! -x "$BIN" ]; then
     echo "SKIP FallFrontend (build-linux/mdk is not built; there is no binary to run)"
@@ -100,6 +147,46 @@ CLOSED=$(sed -n 's/.*pause menu closes at fall intro t \([0-9.]*\).*/\1/p' "$NEW
 [ -n "$OPENED" ] && [ "$OPENED" = "$CLOSED" ] ||
     bad "[new game] the fall did not wait under the menu (t $OPENED -> $CLOSED)"
 
+# --- 2b. The fall's pause menu -> Main menu, then a new game's fall --------------
+# The owner's 3DS report (2026-11-26): the fall, START, MAIN MENU, a new game: its
+# briefing, then straight back to the main menu. The frontends' fall pause menu
+# outlived the fall and its "Main menu" left it open with Menu as its answer, so
+# the next fall's first frame returned it. The C# makes a new PauseMenu with each
+# FallScreen. Esc at 3 s opens it, Down Down Accept at 3.3-3.6 picks Main menu,
+# then New Game again (4.5-5.4): the second fall must still be running at the end.
+AGAIN="$WORK/again.log"
+run "$AGAIN" --menu --press=Menu.Accept@0.5,Menu.Back@1.2,Menu.Accept@1.4,Menu.Back@3,Menu.Down@3.3,Menu.Down@3.4,Menu.Accept@3.6,Menu.Accept@4.5,Menu.Back@5.2,Menu.Accept@5.4 --frames 400
+FALLS=$(grep -c "flow: the fall before level 7" "$AGAIN")
+MENUS=$(grep -c "flow: the main menu" "$AGAIN")
+[ "$FALLS" -eq 2 ] || bad "[again] $FALLS falls shown, not 2 (the second new game did not reach its fall)"
+[ "$MENUS" -eq 2 ] || bad "[again] the main menu shown $MENUS times, not 2 (the second fall went back to it)"
+LASTLINE=$(grep "flow: " "$AGAIN" | tail -n 1)
+case "$LASTLINE" in
+    *"flow: the fall before level 7"*) ;;
+    *) bad "[again] the run did not end in the second fall (its last flow line: $LASTLINE)" ;;
+esac
+
+# --- 2c. The fall's pause menu's options --------------------------------------------
+# Esc at 3 s opens it; Down, Accept: Options (its pages); Down, Accept: Audio (the
+# volumes, labelled); Left: Master volume 80 -> 70, saved to this run's own
+# settings.cfg. Without the settings the pages printed nothing and the file kept 80.
+OPTS="$WORK/opts.log"
+OPTDIR="$WORK/opts"
+mkdir -p "$OPTDIR"
+MDK_USER_DIR="$OPTDIR" run "$OPTS" --menu --press=Menu.Accept@0.5,Menu.Back@1.2,Menu.Accept@1.4,Menu.Back@3,Menu.Down@3.3,Menu.Accept@3.5,Menu.Down@3.7,Menu.Accept@3.9,Menu.Left@4.1 --frames 300
+for line in \
+    "fall: the pause menu opens at fall intro" \
+    "Menu: Resume | Options | Main menu | Quit" \
+    "Menu: Graphics | Audio | Game | Back" \
+    "Menu: Master volume: 80 | Music volume: 50 | Effects volume: 70 | Music filter: On | Back"; do
+    has "$OPTS" "$line" || bad "[fall options] the log has no \"$line\""
+done
+grep -q "^master_volume=70$" "$OPTDIR/settings.cfg" 2>/dev/null ||
+    bad "[fall options] settings.cfg has no master_volume=70 (the fall's options changed nothing)"
+if has "$OPTS" "Fall ended"; then
+    bad "[fall options] the fall ended under its pause menu"
+fi
+
 # --- 3. The lean way (the 3DS's) -------------------------------------------------
 LEAN="$WORK/lean.log"
 run "$LEAN" --fall=8 --fall-lean --frames 700
@@ -113,7 +200,7 @@ for line in \
 done
 
 if [ "$fail" -eq 0 ]; then
-    echo "PASS FallFrontend (--fall=7 chased into LEVEL7 with health 84 and three pickups in Kurt's inventory; new game -> briefing -> fall -> Esc pauses it, Esc resumes; LEVEL8's fall the lean way)"
+    echo "PASS FallFrontend (--fall=7 chased into LEVEL7 with health 84 and three pickups in Kurt's inventory; new game -> briefing -> fall -> Esc pauses it, Esc resumes; its Main menu then a new game reaches the next fall, its options are labelled and saved; LEVEL8's fall the lean way)"
     exit 0
 fi
 echo "FAIL FallFrontend ($fail check(s))"

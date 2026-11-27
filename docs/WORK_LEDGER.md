@@ -3823,3 +3823,71 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   table; they come from elsewhere (L4's measured case: a synchronous view build, ~250 ms; see
   perf/3ds-hd-bubble's ledger, 2026-11-27). No code changed, so no build or test was rerun.
 - **Commit:** 20e2521f (merge) and this one (ledger).
+
+### The fall's pause menu -> MAIN MENU sent the next fall back to the menu (2026-11-26, fix/fall-pause-main-menu)
+- **Owner report (combined 11-26 build, 3DS):** a level's fall, START, MAIN MENU, another level:
+  its briefing shows, then the game is back at the main menu instead of the fall.
+- **Root cause (both frontends):** the fall's pause menu (`menu::PauseMenu fallPause`,
+  mdk_3ds/src/menu_screens_3ds.cpp:291, mdk_linux/src/menu_screens.cpp:246, added with upstream
+  75ec50e2) is a local of the screens loop and outlives the fall. Its "Main menu" item
+  (`PauseMenu::act`, mdk_core/src/game/pause_menu.cpp:75) sets the answer `Menu` and leaves the
+  menu open, as the C# does -- but the C# makes a new PauseMenu with each FallScreen. Here the
+  next fall's first frame found `fallPause.open()` still true, took the `update` path
+  (menu_screens_3ds.cpp:454) and got the stale `Menu` back: straight to the main menu.
+  `PauseMenu::show` (which clears the answer) was never reached, because the menu was "open".
+- **Fix:** `openFall` (the C#'s new FallScreen) starts a new `fallPause` before `fall->open`, in
+  both frontends. Nothing is configured on that menu elsewhere, so the fresh one is the same as
+  the first.
+- **Test:** `fall_frontend_test.sh` case 2b (Linux, headless): new game, the fall, Esc, Main
+  menu, new game again -- the second fall must be the run's last flow line, with two falls and
+  two main menus. Without the fix: FAIL (3 main menus, ends at the menu); with it: PASS. Case 0
+  reads both frontends' `openFall` for the reset before `fall->open` (the 3DS's cannot run on a
+  host); a mutant without the 3DS line fails it.
+- **Evidence:** Linux build 0 warnings; `make -C tests/scripts test` rc 0 (`PASS FallFrontend`,
+  `PASS MenuFrontend`, `PASS Main3dsFlow (22 checks, 64 arms, 24 probes)`, tick1 all cases
+  match); `tests/formats` 200670 checks, 0 failures; `tools/check.sh` ALL GATES PASSED
+  (gates_smdh SKIP, no .cia); 3DS build rc 0, 0 compiler warnings. An independent read-only
+  review agreed on the cause and found no defect in the fix. Not run in Mandarine or on a
+  console: the defect is in both frontends' shared shape and is reproduced and pinned on the
+  Linux frontend.
+- **Other ways to the main menu, checked for the same stale state:** the 3DS level's START menu
+  (`EnhancedMenu`, closed with `menu.setOpen(false)` on Menu, statistics and the next fall;
+  `pauseOptions` and the cheats page cannot be open when MAIN MENU is chosen); the Linux level's
+  pause menu (reset at the level's end, main.cpp:3091); death and game-finished (the 3DS does
+  not close the START menu there, but the simulation is paused while it is open, so neither can
+  happen with it open); the fall's own game over (the pause menu is closed then). None has the
+  defect.
+- **Found, not fixed:** the fall pause menu's OPTIONS page is never given the settings
+  (nor the host, the fonts or the print: `items()` is set up for the level's pause menus only),
+  so on its pages the setting rows have blank labels and change nothing, on both frontends.
+  Pre-existing since 75ec50e2; fixed in the next entry, its own commit.
+- **Commit:** this one (branch fix/fall-pause-main-menu, from test/3ds-combined-11-26).
+
+### The fall's pause menu's OPTIONS pages were blank and inert (2026-11-27, fix/fall-pause-main-menu)
+- **What:** the fall's pause menu (both frontends) now gives its items the main menu's fonts,
+  `Host::Console`, the front's settings and the print line before it shows (the level pause
+  menus' wiring: mdk_linux/src/main.cpp ~2114, mdk_3ds/src/main_3ds.cpp ~1673). A change on its
+  options pages goes through `fallApplied`: saved as the main menu's are (`applied`: Linux
+  `saveSettings`, 3DS `front->save` = `saveConfigNow`) and applied at once to the fall's own
+  mixer (`applyAudio`), as the level's are to the level's.
+- **Why:** before, `fallPause.items()` was never set up: no settings, so every setting row's label
+  was empty and a step did nothing; no host, so the pages were the desktop oracle's; no print,
+  so nothing reached the log. The C# PauseMenu (75ec50e2) is made over the Ui, with its
+  settings and fonts.
+- **Test:** `fall_frontend_test.sh` case 2c (Linux, headless): in the fall, Esc, Options, Audio,
+  Left -- the log has "Menu: Resume | Options | Main menu | Quit", "Menu: Graphics | Audio |
+  Game | Back" and the labelled volumes, and the run's own settings.cfg has master_volume=70.
+  Against the binary without this change: FAIL (4 checks: no lines, the file kept 80); with it:
+  PASS. Case 0's second check reads both frontends for `fallPause.items()` and the four setters
+  in the 12 lines before the fall's `fallPause.show();`; a mutant without any one of them (3DS)
+  or without the setSettings (Linux) fails it.
+- **Not like the C#:** the options page's song (`_ui.Play(_song, Bus.Music)`) is not played in
+  the fall, as it is not in the level's pause menu on this port.
+- **Evidence:** Linux build 0 warnings; `make -C tests/scripts test` rc 0 (`PASS FallFrontend`
+  with 2c, `PASS MenuFrontend`, `PASS Main3dsFlow (22 checks, 64 arms, 24 probes)`, tick1 all
+  cases match); `tests/formats` 200670 checks, 0 failures; `tools/check.sh` ALL GATES PASSED
+  (gates_smdh SKIP, no .cia); 3DS build rc 0 (menu_screens_3ds.cpp recompiled), 0 compiler
+  warnings. An independent read-only review found no defect (the fall's mixer lives whenever
+  `fallApplied` can run; the 3DS `front->save` is `saveConfigNow`, the level's saver). Not run
+  in Mandarine or on a console: the 3DS side is pinned by the source check only.
+- **Commit:** this one.

@@ -48,6 +48,20 @@ void applied(void* user) {
     saveSettings(*front->settings, front->settingsFile);
 }
 
+// The fall pause menu's options (the C#'s PauseMenu reads and applies the Ui's
+// settings, as the main menu's do): saved as the main menu's are, and heard at
+// once on the fall's own mixer, as the level pause menu's are on the level's.
+struct FallApply {
+    FrontScreens* front;
+    fall::FallScreen* fall;
+};
+
+void fallApplied(void* user) {
+    FallApply* self = static_cast<FallApply*>(user);
+    applied(self->front);
+    self->front->settings->applyAudio(&self->fall->mixer().device());
+}
+
 menu::Keys menuKeysOf(const MenuKeyState& state) {
     menu::Keys keys;
     keys.up = state.up;
@@ -244,11 +258,17 @@ flow::Screen runFrontScreens(FrontScreens* front) {
     // Esc in the fall opens the pause menu, as in a level (upstream 75ec50e2; the
     // original's abort prompt, 0x403cf8): the fall waits under it.
     menu::PauseMenu fallPause;
+    FallApply fallApply{front, fall.get()};
     fall::FallScreen::Print fallPrint;
     fallPrint.line = printLine;
     // C# Show for the fall: a new FallScreen. False when it cannot be shown (its
     // data did not load): the caller skips it the C#'s way.
     auto openFall = [&]() -> bool {
+        // The C#'s new FallScreen comes with a new PauseMenu. This one outlives the
+        // fall, and its "Main menu" leaves it open with its answer (Menu) still
+        // set: kept, the next fall's first frame would take that answer and go
+        // straight back to the main menu.
+        fallPause = menu::PauseMenu();
         fall::FallViewOptions options;
         options.lean = front->fallLean;
         // The C#'s `new Random()` is the clock; a test's --seed or --fixed-step is 1.
@@ -408,6 +428,13 @@ flow::Screen runFrontScreens(FrontScreens* front) {
                                 fall->status().c_str());
                 }
             } else if (keys.back) {
+                // The C# PauseMenu's items over the Ui: its fonts, host, settings
+                // and print, as the main menu's (and the level pause menu's) are.
+                menu::MenuItems& items = fallPause.items();
+                items.setFonts(ui->bigFont.get(), ui->smallFont.get());
+                items.setHost(menu::Host::Console);
+                items.setSettings(front->settings, fallApplied, &fallApply);
+                items.setPrint(printLine, nullptr);
                 fallPause.show();
                 std::printf("[main] fall: the pause menu opens at %s\n", fall->status().c_str());
             } else {
