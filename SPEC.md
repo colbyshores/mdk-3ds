@@ -818,8 +818,9 @@ its look can be A/B-compared on hardware:
   change; a missing file means the shipped defaults, all on) and are
   exposed in an in-game Video/Graphics Settings menu so each feature
   can be toggled live during gameplay for side-by-side visual A/B
-  comparisons. The menu (implemented 2026-11-14): SELECT — unbound in
-  the game — opens and closes it over the paused game; D-pad moves,
+  comparisons. The menu (implemented 2026-11-14; owner 2026-11-27: the
+  START button only): START opens and closes it over the paused game
+  (SELECT is the run toggle, `controls_3ds.h`); D-pad moves,
   A (or Left/Right) flips the selected feature, and the flip calls
   `mdk_render_set_enhanced_toggles` and rewrites `config.ini` in the
   same frame. It is drawn on the canvas with the game's own interface
@@ -828,8 +829,8 @@ its look can be A/B-compared on hardware:
   FontView.cs) by `mdk::EnhancedMenu`; the menu subsystem the
   2026-11-05 directive cut (main menu, save screens) stays cut — this
   is a settings page over the running game, not that subsystem. If
-  the fonts fail to load there is no menu, SELECT keeps its older
-  quit meaning, and the boot log says so.
+  the fonts fail to load there is no menu; holding START for two
+  seconds quits instead, and the boot log says so.
 
 The same toggles are honoured by the Linux/Vulkan backend wherever the
 feature already exists there (sky shadows = the sun shadow pass, haze =
