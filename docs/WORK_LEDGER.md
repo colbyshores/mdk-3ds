@@ -4550,3 +4550,44 @@ against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new
   so its window differs from a plain L7 start (plain L7: next entry).
 - **Logs:** `/tmp/kilo/vram-load/{A,B}-{L8,bomb}.log`, `A-L3.log` (the console's mdk.log pulls).
 - **Commits:** this entry only (docs/measure-vram-load); instruments on `throwaway/vram-load-hw`.
+
+## 2026-11-27 -- level load: the light rigs run behind the start HD window's reads (branch perf/3ds-load-overlap): KEPT
+
+- **What:** the per-arena light-rig precompute (`cachedLighting` over the level's arenas)
+  moves from the middle of the load to after the start HD window is sized and asked for, just
+  before the HD hold, with one `mdk_render_settle_streams(renderer, 1)` between arenas: what
+  landed is imported, the freed slots get the next reads, so core 1 reads the window while
+  core 0 scans. The rigs read no file and take no linear memory, so the window's arithmetic
+  (sized before them) is unchanged; nothing used `lightCache` before the first frame (the frame
+  loop fills it lazily anyway). No Citro3D on the worker, one worker thread, no per-model path.
+  The `start:` line now says how many textures landed during the scan (the hold's own `hd:
+  wait` count no longer includes them). +26 -9 lines in main_3ds.cpp.
+- **Why:** previous entry -- the worker sat idle until the hold, then core 0 slept through
+  ~90% of a 3.0-3.8 s hold; the rigs are 1.5-1.7 s of core-0 work with no dependency on it.
+- **Measured** (old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, default toggles, HD
+  from RomFS, `AUTOQUIT=30 LEVEL=n HDROMFS=1 PROFILE=1`, `hw_cycle.sh --profile`, all FRESH;
+  before = `throwaway/vram-load-hw` 08d9b4d1, after = `throwaway/load-overlap-hw` 45a37f4a, the
+  same instruments + this change):
+
+  | level | loaded in, before -> after | HD hold | worker read during the rigs | rig scan |
+  |---|---|---|---|---|
+  | L3 | 15212 -> **14236 ms (-976)** | 3143 -> 2243 ms | 24 files, 2.05 MB, 906 ms | -- |
+  | L7 | 15343 -> **14271 ms (-1072)** | 3271 -> 2126 ms | 32 files, 2.27 MB, 1119 ms | -- |
+  | L8 | 15524 -> **14551 ms (-973)** | 2887 -> 1806 ms | 33 files, 2.19 MB, 1044 ms | 1703 -> 1800 ms |
+
+  About 1 s (6-7%) off every load. The scan costs ~0.1 s more (the imports it now does: ~0.24
+  s of core-0 imports moved into it). Same end state: linear free at the first frame
+  identical on all three (12,062,848 / 11,850,752 / 12,596,480), the same window resident
+  (90/84/65 files), 0 HD waits, 0 draws without their HD copy, play frame means within noise.
+- **Not more, and why:** the worker reads ~65% of the scan (a pump only between arenas,
+  ~85 ms apart, refills at most the free slots). The rest of core 0's load work either feeds
+  the window's linear arithmetic (Kurt's start set, the DSP arena, the HUD) or is the window
+  itself; moving the window earlier would need a linear estimate for everything after it --
+  more complexity than this entry's payoff justifies, and not done.
+- **Checks:** Linux build 0 warnings; tests/scripts all cases match the oracle; tests/formats
+  200,698 checks, 0 failures; tools/check.sh ALL GATES PASSED (smdh SKIP, no .cia); 3DS build
+  0 compiler warnings; independent review (no defects; its note on the hold's count is the
+  `start:` line change).
+- **Not verified:** New 3DS; levels 4-6; HOME/sleep pressed during the scan (it makes no
+  applet call for its ~1.7 s, exactly as before it moved).
+- **Commits:** 77c72890 (code) and this one (ledger).
