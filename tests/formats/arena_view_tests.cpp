@@ -14,6 +14,10 @@
 #include "game/level_data.h"
 #include "game/level_view.h"
 #include "render/surface_cache.h"
+#include "scripts/animated_textures.h"
+
+#include <utility>
+#include <vector>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -21,6 +25,7 @@
 extern int mdk_test_meshDraws;
 extern int mdk_test_meshes;
 extern int mdk_test_failMeshCreates;
+extern std::vector<std::pair<int32_t, int32_t> > mdk_test_drawFrames;
 
 namespace {
 
@@ -491,4 +496,76 @@ MDK_TEST(ArenaViewsReaskOnlyThePairAndTheDrawn) {
     const int asCurrent = mdk_test_prepareCalls;
     MDK_CHECK(asCurrent > asHint);
     views.clear();
+}
+
+// OPCODE 133 (arena_texture_frame) REACHES THE DRAW: LevelView::draw gives an animated
+// batch the frame the scripts set for its texture in its arena (LevelView.cs:139,
+// FrameOf), and 0 without frames, before a frame is set, or for another arena's key.
+// LEVEL7 DANT_5's comm device screen M_COMM (6 frames) is the retail case.
+namespace {
+
+int32_t mCommFrames(void*, const std::string&, const std::string& texture) {
+    return texture == "M_COMM" ? 6 : 0;
+}
+
+// The frames the view's animated batches (frame_count 6) were queued with.
+std::vector<int32_t> animatedDrawFrames(mdk::LevelView* view,
+                                        const mdk::scripts::AnimatedTextures* frames) {
+    mdk_test_drawFrames.clear();
+    view->draw(frames);
+    std::vector<int32_t> out;
+    for (size_t i = 0; i < mdk_test_drawFrames.size(); i++) {
+        if (mdk_test_drawFrames[i].second == 6) {
+            out.push_back(mdk_test_drawFrames[i].first);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+MDK_TEST(LevelViewDrawsTheScriptsTextureFrame) {
+    mdk::formats::MdkData game = locateData();
+    MDK_CHECK(game.found());
+    if (!game.found()) {
+        return;
+    }
+    mdk::LevelData level;
+    MDK_CHECK(mdk::LevelData::load(&level, &game, 7));
+    const mdk::formats::Arena* arena = level.arenaNamed("DANT_5");
+    MDK_CHECK(arena != nullptr);
+    if (arena == nullptr) {
+        return;
+    }
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    mdk::LevelView view;
+    MDK_CHECK(view.load(renderer, &level, arena, &surfaces));
+    MDK_CHECK(view.ready());
+
+    mdk::scripts::AnimatedTextures frames(&mCommFrames, nullptr);
+    // No frames object, and no frame set yet: frame 0, as before the fix.
+    std::vector<int32_t> drawn = animatedDrawFrames(&view, nullptr);
+    MDK_CHECK(!drawn.empty());
+    for (size_t i = 0; i < drawn.size(); i++) {
+        MDK_CHECK_EQ(drawn[i], 0);
+    }
+    drawn = animatedDrawFrames(&view, &frames);
+    for (size_t i = 0; i < drawn.size(); i++) {
+        MDK_CHECK_EQ(drawn[i], 0);
+    }
+    // Another arena's frame does not move this one.
+    frames.set("DANT_3", "M_COMM", mdk::scripts::AnimatedTextures::Mode::Absolute, 5.0f, 0.0f);
+    drawn = animatedDrawFrames(&view, &frames);
+    for (size_t i = 0; i < drawn.size(); i++) {
+        MDK_CHECK_EQ(drawn[i], 0);
+    }
+    // mode 0 (Absolute) sets value - 1 = 3.5, drawn truncated: frame 3.
+    frames.set("DANT_5", "M_COMM", mdk::scripts::AnimatedTextures::Mode::Absolute, 4.5f, 0.0f);
+    drawn = animatedDrawFrames(&view, &frames);
+    MDK_CHECK(!drawn.empty());
+    for (size_t i = 0; i < drawn.size(); i++) {
+        MDK_CHECK_EQ(drawn[i], 3);
+    }
+    view.unload();
 }

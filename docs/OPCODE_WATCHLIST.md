@@ -17,14 +17,16 @@ It does not say which side is right where both sides implement an opcode.
 Owner decision: match the C# like for like on all four partial opcodes. The fixes follow the
 **C# as the authority** (our `src/` 1.1.1 plus the upstream fixes this tree has already taken,
 checked against upstream's C# v1.2.6). Upstream's C++ was used only to find what was missing,
-never as the specification. Each fix's oracle comparison is in `docs/WORK_LEDGER.md`.
+never as the specification. 159 is a port of upstream's C# commit 84ad71e4. Each fix's oracle
+comparison is in `docs/WORK_LEDGER.md`; the review fixes that followed are in the commit after
+fd0c005a.
 
 | Op | Commit | What now matches the C# |
 |---|---|---|
-| 226 | (the commit that adds this row) | `ObjectMotion.Swing` runs every tick for a `FlagSwinging` object (pitch, place, plane turn), and its rope is drawn (`RopeView`, pair 0). `L6_hazards_swing` equals the C# oracle byte for byte for 1200 steps, through the PENDHIT knock-down. |
-| 133 | (the commit that adds this row) | The level draw passes each animated batch the frame the scripts set for its texture in its arena (`LevelView.cs:139`, `FrameOf`), so M_COMM runs at 6 frames/s and 12 once hit. `L4_hazards_comm` and `L7_hazards_comm` (the frame and the drawn frame, through the chain-gun hit) equal the C# oracle byte for byte. |
-| 242 | (the commit that adds this row) | `RopeView`'s 0xFF mode: a line from each of reference points 1-4 (the dog's model has none, so its origin) to each non-zero block point, drawn on both frontends. `L5_hazards_dog` and `L8_hazards_dog` (the rope column: mask, points, line ends, bit hash) equal the C# oracle byte for byte. |
-| 159 | (the commit that adds this row) | A port of upstream **84ad71e4** (C# 1.2.0, "Stretch spawn_box sprites over the box"): the box sprite is `size.X / Width` by `size.Z / Height` texels, stretched, so a 64 x 36 BONEFLC is 9 x 6, not 9 x 5. `L3_hazards_boxsprites` (EffectsView's whole frame as bits) equals the C# oracle at v1.2.6 byte for byte; the same oracle with 84ad71e4 reverted differs on 60 of its 300 lines. |
+| 226 | 1e1324b7 | `ObjectMotion.Swing` runs every tick for a `FlagSwinging` object (pitch, place, plane turn), and its rope is drawn (`RopeView`, pair 0). `L6_hazards_swing` equals the C# oracle byte for byte for 1200 steps, through the PENDHIT knock-down. |
+| 133 | 076ccbf7 | The level draw passes each animated batch the frame the scripts set for its texture in its arena (`LevelView.cs:139`, `FrameOf`), so M_COMM runs at 6 frames/s and 12 once hit. `L4_hazards_comm` and `L7_hazards_comm` (the frame and the drawn frame, through the chain-gun hit) equal the C# oracle byte for byte. |
+| 242 | 3bace259 | `RopeView`'s 0xFF mode: a line from each of reference points 1-4 (the dog's model has none, so its origin) to each non-zero block point, drawn on both frontends. `L5_hazards_dog` and `L8_hazards_dog` (the rope column: mask, points, line ends, bit hash) equal the C# oracle byte for byte. |
+| 159 | fd0c005a | A port of upstream **84ad71e4** (C# 1.2.0, "Stretch spawn_box sprites over the box"): the box sprite is `size.X / Width` by `size.Z / Height` texels, stretched, so a 64 x 36 BONEFLC is 9 x 6, not 9 x 5. `L3_hazards_boxsprites` (EffectsView's whole frame as bits) equals the C# oracle at v1.2.6 byte for byte; the same oracle with 84ad71e4 reverted differs on 60 of its 300 lines. |
 
 ## Counts
 

@@ -30,9 +30,10 @@
 //     fade, the flashes, and an empty inventory -- the pickup and target-bar
 //     writers land with their own subsystems and the HUD must not invent them.
 //   * The ropes and the sniper scope — `_ropes.Draw` and `_sniper.Draw`
-//     between the objects and Kurt in C# Viewer.DrawScene (Viewer.cs:705-706).
-//     Neither is ported. The effects (`_effects.Draw`, Viewer.cs:707) ARE:
-//     pieces and sprite effects draw after the objects, before Kurt.
+//     between the objects and Kurt in C# Viewer.DrawScene (Viewer.cs:705-706)
+//     -- are drawn there too now: the ropes by game/rope_view.h (as thin quads:
+//     the PICA200 has no line primitive), the scope by SniperView. The effects
+//     (`_effects.Draw`, Viewer.cs:707) draw after the objects, before Kurt.
 //
 // THE OBJECT PASS IS HERE. The runtime's objects are drawn between the arena and
 // Kurt, which is the C#'s order (Viewer.cs:702-708), at the blended transform, and
@@ -2465,9 +2466,9 @@ int main(int argc, char** argv) {
             // -- and so LookDown's camera -- on the XE's current place each step, so the
             // XE is drawn there too (alpha 1), or it would lag under the camera.
             //
-            // And the ropes and sniper scope that the C# draws between the
-            // objects and Kurt (Viewer.cs:705-706) are not ported; see the
-            // header. The effects (Viewer.cs:707) draw below.
+            // The ropes and the sniper scope that the C# draws between the
+            // objects and Kurt (Viewer.cs:705-706), and the effects
+            // (Viewer.cs:707), draw below.
             const float tickAlpha = runtime->tick_blend(pending);
             // The object cull for this frame: the centre frustum, with the
             // sphere margin covering both stereo eyes (half the configured

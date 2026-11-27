@@ -291,9 +291,9 @@ private:
     float tinyPixels_ = 0.0f;
     int32_t tinyWidth_ = 0;
     int32_t tinyHeight_ = 0;
-    // Whether a sprite `texel` world units a texel on its texture (and its
-    // halo, kGlowHaloScale times larger and nudged towards the camera) is
-    // wholly outside the cull. False with no cull set.
+    // Whether a sprite `texelX` by `texelY` world units a texel on its texture
+    // (and its halo, kGlowHaloScale times larger and nudged towards the camera)
+    // is wholly outside the cull, by its larger side. False with no cull set.
     bool spriteCulled(const SpriteEntry& entry, const Vec3& position, float texelX,
                       float texelY) const;
 };

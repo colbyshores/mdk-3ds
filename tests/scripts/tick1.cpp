@@ -10277,8 +10277,16 @@ int main(int argc, char** argv) {
             {"L6_hazards_swing", "golden/L6_hazards_swing.txt", 6, 1200,
              "tp:1:OLYM_6:-1894:3154:-2048,rope:XSWINGB",
              "OLYM_6's pendulum XSWINGB swings under its pivot (jump_to, 226; ObjectMotion."
-             "Swing), turns its plane at the turning points, draws its rope and knocks Kurt "
-             "down (PENDHIT)"},
+             "Swing), draws its rope and knocks Kurt down (PENDHIT); Kurt is on the pivot's "
+             "line, so the plane stays at yaw 0"},
+            // Review fix: Kurt 100 units off the pivot's line, so at every turning point the
+            // plane turns towards him, clamped to 15 degrees, at 10 degrees a second (the
+            // yaw runs 0 to -15 and back). Equal to v1.2.6 byte for byte, and its rope column
+            // to 1.1.1 + 683a53ef's.
+            {"L6_hazards_swing_turn", "golden/L6_hazards_swing_turn.txt", 6, 1200,
+             "tp:1:OLYM_6:-1894:3254:-2048,rope:XSWINGB",
+             "the pendulum's plane turns towards Kurt off its line at the turning points "
+             "(Swing's clamp and MoveToward)"},
             // arena_texture_frame (133): the comm device's screen M_COMM, which every
             // frontend drew at frame 0 before the parity branch. The `frames` column is
             // the scripts' frame and the frame LevelView draws (FrameOf); both goldens are

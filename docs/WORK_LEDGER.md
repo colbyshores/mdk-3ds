@@ -3906,3 +3906,41 @@ against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new
   failures; `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds` 0 compiler
   warnings. The changed hazards probe still reproduces `L3_hazards_boxes` and
   `L6_hazards_swing` byte for byte at v1.2.6 without the new token.
+
+### Review of the four opcode commits, and the fixes it led to
+- **Review:** an independent read-only agent read 1e1324b7..fd0c005a against the C# (`src/` and
+  v1.2.6), AGENTS.md and the 3DS backend. It found no parity bug in the four ports (Swing,
+  RopeView/Carried, AllLines, the 84ad71e4 stretch, operation for operation) and confirmed the
+  3DS side (no per-frame texture work for a frame swap, the rope textures' lifetime inside the
+  level scope, the frames pointer set before the only draw).
+- **Fixed from it:**
+  - `L6_hazards_swing` kept Kurt on the pivot's line, so the plane never turned (yaw 0 on every
+    line): new golden `L6_hazards_swing_turn` (Kurt 100 units off the line; the yaw runs 0 to
+    -15 and back through the clamp and MoveToward), equal to v1.2.6 byte for byte and its rope
+    column to 1.1.1 + 683a53ef's. The old case's description no longer claims a turn.
+  - Nothing tested the 133 draw path itself (the goldens pin the scripts' frames): new
+    tests/formats case `LevelViewDrawsTheScriptsTextureFrame` loads LEVEL7 DANT_5's LevelView
+    and checks the M_COMM batch's queued frame: 0 without frames, before a frame is set and for
+    another arena's key, 3 after mode 0 sets 4.5. With the draw's lookup disabled it fails
+    (`got 0, want 3`). tests/formats now links `scripts/animated_textures.cpp` (it depends on
+    nothing; the Makefile says why, and the link-graph guard still passes).
+  - `RopeView` retried a refused mesh every frame and a refused colour texture for every rope:
+    both are latched now.
+  - `carriedPoint` (the rope's end on the object between ticks; render only, never at a tick)
+    takes the trig LUT, as presentation trig must (AGENTS.md R6, `audit_arm11_math`).
+  - Stale comments: main_3ds.cpp's header and object-pass note said the ropes were not ported;
+    effects_view.h's `spriteCulled` described one texel.
+- **Kept, with the reason:** the `@vfp-exempt R6` pin on `motionSwing` stays: the math audit
+  flags libm trig on cold code too, and the swing is gameplay (it places a damaging object), so
+  the LUT is not acceptable there. The 3DS rope quads take no depth pull (Vulkan's Lines do):
+  a rope hangs in the air, with no surface to fight.
+- **Not fixed (before this branch, outside the four opcodes):** when `updateCommand` kills an
+  object, the C# Update returns at once; our `motionVelocity` still runs gravity and the
+  velocity step on it (the new swing call is guarded). No retail case was checked.
+- **Checks (this commit):** Linux build 0 warnings; tick1 528/528, vm_tests pass;
+  `make -C tests/formats` 200681 checks, 0 failures; `tools/check.sh` all gates pass (smdh
+  skipped: no .cia); `make -C mdk_3ds` 0 compiler warnings. The full `make -C tests/scripts
+  test` passed on fd0c005a and again on this tree (below).
+- **Watch list:** `docs/OPCODE_WATCHLIST.md` names each fix's commit.
+- **Not done:** no hardware (owner away; no appliance use); no Mandarine run (optional; the
+  machine's load was ~98 through this work).

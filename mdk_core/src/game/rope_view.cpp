@@ -54,6 +54,11 @@ bool RopeView::ensureMesh(MdkRenderer renderer) {
     if (mesh_ >= 0) {
         return true;
     }
+    // Asked for once (the C# makes its mesh in the constructor): a refusal is not
+    // asked again every frame, and the ropes stay undrawn for the level.
+    if (failed_) {
+        return false;
+    }
     mesh_ = mdk_render_create_dynamic_mesh(renderer, kMaxVertices);
     failed_ = mesh_ < 0;
     return !failed_;
@@ -77,9 +82,8 @@ MdkTextureId RopeView::colourTexture(MdkRenderer renderer, uint32_t rgba) {
     }
     const MdkTextureId id =
         mdk_render_create_rgba_texture(renderer, kColourTextureSize, kColourTextureSize, texels);
-    if (id < 0) {
-        return -1;
-    }
+    // A refused texture is remembered as refused (-1), so it is not asked for again
+    // every frame for every rope of that colour.
     colourKeys_[colourCount_] = rgba;
     colourIds_[colourCount_] = id;
     colourCount_++;

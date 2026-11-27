@@ -8,6 +8,7 @@
 #include "formats/model_animation.h"
 #include "scripts/pose_cache.h"
 #include "scripts/script_runtime.h"
+#include "util/math_lut.h"
 #include "util/system_numerics_inverse.h"
 
 // The pose caches are NOT here. They are in scripts/pose_cache.cpp, which is
@@ -305,11 +306,14 @@ static mdk::Vec3 carriedPoint(const mdk::scripts::MdkObject& obj, float alpha, m
     }
     const mdk::Vec3 at = obj.position_at(alpha);
     const float turn = obj.yaw_at(alpha) - obj.yaw;
-    // A render-only position (the rope's drawn end), no gameplay reads it. libm
-    // cosf/sinf as the C#'s CreateRotationZ; a handful of points a frame.
+    // A render-only position (the rope's drawn end between ticks): no gameplay and no
+    // golden reads it (the probes draw with blending off, above). Presentation trig,
+    // so the turn's cos/sin are math_lut.h's (AGENTS.md R6), not the C#'s MathF: the
+    // drawn end can differ from the C#'s by the LUT's error mid-tick, never at a tick.
+    // Vector3.Transform by CreateRotationZ: (x c - y s, x s + y c, z).
     const float radians = turn * 3.14159265358979323846f / 180.0f;
-    const float c = cosf(radians);
-    const float s = sinf(radians);
+    const float c = mdk::fastCos(radians);
+    const float s = mdk::fastSin(radians);
     const float x = point.x - obj.position.x;
     const float y = point.y - obj.position.y;
     const float z = point.z - obj.position.z;
