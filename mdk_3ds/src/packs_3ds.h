@@ -5,7 +5,8 @@
 // cache's lookup into them.
 //
 //   * the HD pack (sdmc:/3ds/mdk/hd, docs/HD_TEXTURES_3DS_SPEC.md), indexed by
-//     its manifest and found BY NAME through the orig pack's byname.txt;
+//     its manifest and found BY NAME through the orig pack's name index
+//     (game/orig_byname.h: the build-time byname.bin, or byname.txt);
 //   * the orig pack (romfs:/orig): the original look pre-encoded on the host;
 //   * Kurt's compressed frames (romfs:/kurt/kurt.pak).
 // Cold: everything here runs at level load, except the lookup, which the
@@ -25,6 +26,7 @@
 #include "game/kurt_sprite.h"
 #include "game/level_data.h"
 #include "game/mod_images.h"
+#include "game/orig_byname.h"
 #include "hd_window_3ds.h"
 #include "render/surface_cache.h"
 
@@ -35,17 +37,6 @@ struct LoadingScreen;
 extern const char kHdPackRoot[];
 extern const char kKurtPackPath[];
 extern const char kOrigPackRoot[];
-
-// The name-keyed orig index (loadOrigByName): per (palette, lower-case name),
-// the orig file, its HD file and the original texture's size.
-struct OrigByName {
-    std::map<std::pair<const void*, std::string>, std::string> paths;
-    std::map<std::pair<const void*, std::string>, std::string> hdPaths;
-    std::map<std::pair<const void*, std::string>, uint32_t> dims;
-    // Every (arena, HD file) row the index pairs, for the HD window's per-arena
-    // lists (buildHdWindow3ds).
-    std::vector<std::pair<std::string, std::string>> hdArenaRows;
-};
 
 // Kurt's pack at level load (loadKurtPack).
 struct KurtPackLoad {
@@ -88,12 +79,17 @@ bool loadHdPack(int32_t level, ModImages* out, std::map<std::string, std::string
                 std::map<std::string, uint32_t>* shapes);
 // The bytes an HD file holds imported with its levels over `cap` dropped (0: none).
 uint32_t hdChainBytes(uint32_t shape, int32_t cap);
-// The orig pack's manifest for `level`, and each file's source size.
-bool loadOrigPack(int32_t level, ModImages* out, std::map<std::string, uint32_t>* dims);
-// romfs:/orig/byname.txt for `level`, joined with the HD pack by content key.
-bool loadOrigByName(int32_t level, LevelData& levelData,
-                    const std::map<std::string, std::string>& hdByKey,
-                    const std::map<std::string, uint32_t>& origDims, OrigByName* out);
+// The orig pack's manifest for `level`, each file's source size, and the
+// manifest's stamp (what byname.bin must have been built from).
+bool loadOrigPack(int32_t level, ModImages* out, std::map<std::string, uint32_t>* dims,
+                  OrigManifestStamp* stamp);
+// The orig pack's name index for `level` (game/orig_byname.h loadOrigByName on
+// romfs:/orig), joined with the HD pack by content key (`hdByKey` is swapped
+// into `out`). Logged: where the rows came from, why byname.bin was refused if
+// it was, and the time.
+bool loadOrigByName3ds(int32_t level, LevelData& levelData, const OrigManifestStamp& manifest,
+                       std::map<std::string, std::string>* hdByKey,
+                       const std::map<std::string, uint32_t>& origDims, OrigByName* out);
 // Kurt's pack: its header, index and start set in one read, checked.
 bool loadKurtPack(const char* path, KurtPackLoad* out);
 // The surface cache's lookup (SurfaceCache::setColourReplacementLookup).

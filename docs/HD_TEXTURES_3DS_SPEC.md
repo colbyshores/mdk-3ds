@@ -92,7 +92,8 @@ is drawn from its HD `.t3x` and nothing else: its standard-definition texture is
 never read, palette-expanded, filtered, mipped or content-hashed -- not the CPU
 expansion and not the packed original in `romfs:/orig`. It never blocks either.
 
-- **Found by name, not by hash.** The orig pack's `byname.txt` row (level, arena,
+- **Found by name, not by hash.** The orig pack's name index (`byname.txt`, read at
+  load as the build-time table `byname.bin`, `docs/3DS_ARCHITECTURE.md` 5) row (level, arena,
   name -> `textures/name@<key>`) carries the texture's content key in its file
   name; the HD pack's files carry the same key (`textures/LEVELn/NAME@<key>`, the
   PC mod's names). `main_3ds.cpp` joins the two at level load, by string, so the

@@ -113,6 +113,7 @@ set(SOURCES
     ${CORE}/src/formats/gif.cpp
     ${CORE}/src/formats/glb.cpp
     ${CORE}/src/formats/kurt_pack.cpp
+    ${CORE}/src/formats/byname_index.cpp
     ${CORE}/src/formats/local_paths.cpp
     ${CORE}/src/formats/mdk_data.cpp
     ${CORE}/src/formats/model.cpp
@@ -177,6 +178,7 @@ set(SOURCES
     ${CORE}/src/game/hd_key.cpp
     ${CORE}/src/game/mod_catalog.cpp
     ${CORE}/src/game/mod_images.cpp
+    ${CORE}/src/game/orig_byname.cpp
     ${CORE}/src/game/mod_info.cpp
     ${CORE}/src/game/mod_models.cpp
     ${CORE}/src/game/part_fit.cpp

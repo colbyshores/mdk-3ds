@@ -63,30 +63,64 @@ const char kOrigPackRoot[] = "romfs:/orig";
 // the file's key (column 1, no .t3x): for the orig pack that is the original
 // texture's width and stacked height (arena_etc1_convert.py), which the name
 // index checks a texture against (loadOrigByName). `files` (may be null) gets
-// the manifest's file list.
+// the manifest's file list. `stamp` (may be null) gets the file's size and
+// FNV-1a 64 hash: the orig manifest's is what romfs:/orig/byname.bin must have
+// been built from (game/orig_byname.h).
+//
+// ONE READ (AGENTS.md P5): the file is read whole and checked whole, then cut
+// into lines in memory -- a line-by-line fgets of a RomFS or SD file is a file
+// system request per stdio buffer. The lines are the ones fgets(512) gave
+// (BynameIndex::nextLine): one of more than 510 characters, its newline not
+// counted, is skipped (no pack line is that long; review F10).
 static bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImages* out,
                             int32_t* count, const char* tag, int32_t maxCap,
                             std::map<std::string, uint32_t>* dims = nullptr,
                             std::vector<std::string>* filesOut = nullptr,
-                            std::map<std::string, uint32_t>* shapes = nullptr) {
+                            std::map<std::string, uint32_t>* shapes = nullptr,
+                            OrigManifestStamp* stamp = nullptr) {
     const std::string manifest = std::string(root) + "/manifest.txt";
-    FILE* file = fopen(manifest.c_str(), "r");
+    FILE* file = fopen(manifest.c_str(), "rb");
     if (!file) {
         return false;
+    }
+    long size = -1;
+    if (fseek(file, 0, SEEK_END) == 0) {
+        size = ftell(file);
+    }
+    if (size < 0 || size > (long)(16u << 20) || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        mdk::log3dsPrintf("%s: manifest %s: size unreadable (%ld); not used", tag,
+                          manifest.c_str(), size);
+        return false;
+    }
+    std::vector<char> text((size_t)size);
+    const size_t got = size > 0 ? fread(text.data(), 1, text.size(), file) : 0;
+    fclose(file);
+    if (got != text.size()) {
+        mdk::log3dsPrintf("%s: manifest %s: short read (%u of %ld bytes); not used", tag,
+                          manifest.c_str(), (unsigned)got, size);
+        return false;
+    }
+    if (stamp) {
+        stamp->valid = true;
+        stamp->bytes = (uint32_t)text.size();
+        stamp->hash = mdk::formats::BynameIndex::hash((const uint8_t*)text.data(), text.size());
     }
     std::vector<std::string> files;
     char line[512];
     bool tooBig = false;
-    while (fgets(line, sizeof(line), file)) {
-        const size_t length = strlen(line);
-        if (length > 0 && line[length - 1] != '\n' && !feof(file)) {
-            // Longer than the buffer: no pack line is, so skip the rest of it
-            // rather than parse its tail as a line of its own (review F10).
-            int c;
-            while ((c = fgetc(file)) != EOF && c != '\n') {
-            }
-            continue;
+    size_t pos = 0;
+    const char* start = nullptr;
+    size_t length = 0;
+    bool newline = false;
+    while (mdk::formats::BynameIndex::nextLine(text.data(), text.size(), &pos, &start, &length,
+                                               &newline)) {
+        // As fgets gave it: the newline kept, NUL-terminated.
+        memcpy(line, start, length);
+        if (newline) {
+            line[length] = '\n';
         }
+        line[length + (newline ? 1 : 0)] = '\0';
         if (line[0] == '#' || line[0] == '\n') {
             continue;
         }
@@ -144,7 +178,6 @@ static bool loadCompressedManifest(const char* root, int32_t level, mdk::ModImag
         }
         files.push_back(std::string(line) + ".t3x");
     }
-    fclose(file);
     if (tooBig) {
         mdk::log3dsPrintf("%s: pack built above the %d cap the 3DS budgets for; not used", tag,
                           (int)maxCap);
@@ -229,22 +262,36 @@ uint32_t hdChainBytes(uint32_t shape, int32_t cap) {
 // -- so with the pack staged the ARM11 expands nothing for the arenas that
 // have a key, and the original look is the ETC1 copy sampled NEAREST at level 0
 // rather than the palette expansion.
-bool loadOrigPack(int32_t level, mdk::ModImages* out, std::map<std::string, uint32_t>* dims) {
+bool loadOrigPack(int32_t level, mdk::ModImages* out, std::map<std::string, uint32_t>* dims,
+                  OrigManifestStamp* stamp) {
     int32_t count = 0;
-    if (!loadCompressedManifest(kOrigPackRoot, level, out, &count, "orig", 1024, dims)) {
+    if (!loadCompressedManifest(kOrigPackRoot, level, out, &count, "orig", 1024, dims, nullptr,
+                                nullptr, stamp)) {
         return false;
     }
     mdk::log3dsPrintf("orig: pack manifest %d textures (%s)", (int)count, kOrigPackRoot);
     return true;
 }
 
-// THE NAME-KEYED ORIG INDEX (romfs:/orig/byname.txt). manifest.txt is keyed by
-// the CONTENT hash, so a ModImages lookup re-hashes the texture's whole index
-// array -- 60-150 ms per texture on the ARM11, measured, which is the entire
-// cost of the texture pumps. The build also knows every texture by name
-// (arena_etc1_convert.py writes byname.txt from the exporter's index.tsv), so
-// the pump and the draw can find the file by (arena, name) for free. A miss
-// falls through to the hash path: a stale or absent byname.txt costs time,
+static std::string lowerName3ds(const std::string& s) {
+    std::string out = s;
+    for (size_t i = 0; i < out.size(); i++) {
+        if (out[i] >= 'A' && out[i] <= 'Z') {
+            out[i] = (char)(out[i] - 'A' + 'a');
+        }
+    }
+    return out;
+}
+
+// THE NAME-KEYED ORIG INDEX (game/orig_byname.h: romfs:/orig/byname.bin, the
+// build-time table, or byname.txt when the table is refused; logged either way,
+// with the time it took). manifest.txt is keyed by the CONTENT hash, so a
+// ModImages lookup re-hashes the texture's whole index array -- 60-150 ms per
+// texture on the ARM11, measured, which is the entire cost of the texture pumps.
+// The build also knows every texture by name (arena_etc1_convert.py writes
+// byname.txt from the exporter's index.tsv), so the pump and the draw can find
+// the file by (arena, name) for free. A miss
+// falls through to the hash path: a stale or absent name index costs time,
 // never correctness. Keyed by the arena's PALETTE because that is what the
 // lookup is handed -- and the palette is what the .t3x's pixels were encoded
 // through. A corridor shares its arena's palette OBJECT (LevelData::paletteOf),
@@ -261,103 +308,35 @@ bool loadOrigPack(int32_t level, mdk::ModImages* out, std::map<std::string, uint
 // texture's width and stacked height from the orig manifest: a texture asked for
 // under a row's name but of another size is not that row's (no file is answered,
 // and the texture keeps the path a miss takes).
-static std::string lowerName3ds(const std::string& s) {
-    std::string out = s;
-    for (size_t i = 0; i < out.size(); i++) {
-        if (out[i] >= 'A' && out[i] <= 'Z') {
-            out[i] = (char)(out[i] - 'A' + 'a');
-        }
+bool loadOrigByName3ds(int32_t level, mdk::LevelData& levelData,
+                       const OrigManifestStamp& manifest,
+                       std::map<std::string, std::string>* hdByKey,
+                       const std::map<std::string, uint32_t>& origDims, OrigByName* out) {
+    const double started = mdk::nowSeconds();
+    BynameLoadReport report;
+    const bool have = loadOrigByName(kOrigPackRoot, level, levelData, manifest, hdByKey, origDims,
+                                     out, &report);
+    const double ms = (mdk::nowSeconds() - started) * 1000.0;
+    if (report.source == BynameSource::Text || report.source == BynameSource::None) {
+        mdk::log3dsPrintf("orig: byname.bin REFUSED (%s); the index is %s", report.refused.c_str(),
+                          report.source == BynameSource::Text ? "built from byname.txt"
+                                                              : "absent (no byname.txt either)");
     }
-    return out;
-}
-
-bool loadOrigByName(int32_t level, mdk::LevelData& levelData,
-                    const std::map<std::string, std::string>& hdByKey,
-                    const std::map<std::string, uint32_t>& origDims, OrigByName* out) {
-    FILE* file = fopen((std::string(kOrigPackRoot) + "/byname.txt").c_str(), "r");
-    if (!file) {
-        return false;
+    for (size_t i = 0; i < report.collisionLines.size(); i++) {
+        mdk::log3dsPrintf("orig: byname collision %s", report.collisionLines[i].c_str());
     }
-    char line[512];
-    while (fgets(line, sizeof(line), file)) {
-        const size_t length = strlen(line);
-        if (length > 0 && line[length - 1] != '\n' && !feof(file)) {
-            int c;
-            while ((c = fgetc(file)) != EOF && c != '\n') {
-            }
-            continue;
-        }
-        if (line[0] == '#' || line[0] == '\n') {
-            continue;
-        }
-        // level \t arena \t name \t rel   (arena_etc1_convert.py)
-        std::string fields[4];
-        size_t field = 0;
-        for (const char* p = line; *p && *p != '\n' && field < 4; p++) {
-            if (*p == '\t') {
-                field++;
-            } else {
-                fields[field] += *p;
-            }
-        }
-        if (field != 3 || atoi(fields[0].c_str()) != (int)level) {
-            continue;
-        }
-        const mdk::formats::Arena* arena = levelData.arenaNamed(fields[1]);
-        if (arena == nullptr) {
-            continue;
-        }
-        const mdk::formats::Palette& palette = levelData.paletteOf(arena);
-        const std::pair<const void*, std::string> key(
-            (const void*)&palette, lowerName3ds(fields[2]));
-        const std::string path = std::string(kOrigPackRoot) + "/" + fields[3] + ".t3x";
-        const std::map<std::pair<const void*, std::string>, std::string>::iterator known =
-            out->paths.find(key);
-        if (known != out->paths.end() && known->second != path) {
-            // Only reachable if the exporter ships a corridor and its arena
-            // different files for one name. The arena with colours of its own
-            // is the owner (a corridor borrows, so it has none): it wins.
-            const bool ownerRow = arena->paletteRgbBytes() != 0;
-            mdk::log3dsPrintf("orig: byname collision arena=%s name=%s keeping=%s ignoring=%s",
-                              fields[1].c_str(), fields[2].c_str(),
-                              ownerRow ? path.c_str() : known->second.c_str(),
-                              ownerRow ? known->second.c_str() : path.c_str());
-            if (!ownerRow) {
-                // The arena still draws the owner's file for this name: in its
-                // HD window under its own name too (buildHdWindow3ds).
-                const std::map<std::pair<const void*, std::string>, std::string>::const_iterator
-                    ownerHd = out->hdPaths.find(key);
-                if (ownerHd != out->hdPaths.end()) {
-                    out->hdArenaRows.push_back(std::make_pair(fields[1], ownerHd->second));
-                }
-                continue;
-            }
-        }
-        out->paths[key] = path;
-        const std::map<std::string, uint32_t>::const_iterator dims = origDims.find(fields[3]);
-        if (dims != origDims.end()) {
-            out->dims[key] = dims->second;
-        } else {
-            out->dims.erase(key);
-        }
-        // A strip over 1024 (orig-pack pages) is animated, so it never draws an HD
-        // copy (hdPackLookup): no pairing, or the level's HD set would pin the
-        // pack's squeezed EXPLODE (LEVEL3, 43 KiB at tier 256) for nothing.
-        const bool paged = dims != origDims.end() && (dims->second & 0xFFFFu) > 1024u;
-        const size_t mark = fields[3].find('@');
-        const std::map<std::string, std::string>::const_iterator hd =
-            mark == std::string::npos || paged
-                ? hdByKey.end()
-                : hdByKey.find(lowerName3ds(fields[3].substr(mark + 1)));
-        if (hd != hdByKey.end()) {
-            out->hdPaths[key] = hd->second;
-            out->hdArenaRows.push_back(std::make_pair(fields[1], hd->second));
-        } else {
-            out->hdPaths.erase(key);
-        }
+    if (report.collisions > (int32_t)report.collisionLines.size()) {
+        mdk::log3dsPrintf("orig: byname collisions: %d in all", (int)report.collisions);
     }
-    fclose(file);
-    return !out->paths.empty();
+    if (have) {
+        mdk::log3dsPrintf("orig: byname index %d textures, %d with an HD copy (%s: %d rows, %d "
+                          "arenas, %u bytes in %d reads, %.1f ms)",
+                          (int)out->answers, (int)out->hdAnswers,
+                          report.source == BynameSource::Binary ? "byname.bin" : "byname.txt",
+                          (int)out->index.rowCount(), (int)out->index.arenaCount(),
+                          (unsigned)report.bytesRead, (int)report.reads, ms);
+    }
+    return have;
 }
 
 // KURT'S PACK AT LEVEL LOAD (cold; AGENTS.md P5). ONE open of romfs:/kurt/kurt.pak,
@@ -473,33 +452,27 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // frames -- EXPLODE's 26 frames of 128 rows become 19.7 rows each -- and the
     // backend never draws an HD copy for a stacked texture (06_draw.inc).
     bool sizeMiss = false;
-    if (source->byname && !source->byname->paths.empty()) {
+    if (source->byname && source->byname->answers > 0) {
         std::string keys[2] = {lowerName3ds(name), lowerName3ds(surface.texture->name())};
         const uint32_t size =
             ((uint32_t)surface.texture->width() << 16) |
             ((uint32_t)(surface.texture->height() * surface.texture->frameCount()) & 0xFFFFu);
         for (int k = 0; k < 2; k++) {
-            const std::pair<const void*, std::string> key((const void*)palette, keys[k]);
-            std::map<std::pair<const void*, std::string>, std::string>::const_iterator hit =
-                source->byname->paths.find(key);
-            if (hit == source->byname->paths.end()) {
+            const int32_t hit = source->byname->find((const void*)palette, keys[k].c_str());
+            if (hit < 0) {
                 continue;
             }
-            std::map<std::pair<const void*, std::string>, uint32_t>::const_iterator dims =
-                source->byname->dims.find(key);
-            if (dims != source->byname->dims.end() && dims->second != size) {
+            const mdk::formats::BynameIndex::Row row = source->byname->index.row((uint32_t)hit);
+            if (row.hasDims() && row.dims != size) {
                 sizeMiss = true;
                 continue;
             }
-            source->path = hit->second;
+            source->byname->origPath(kOrigPackRoot, (uint32_t)hit, &source->path);
             out->compressedPath = source->path.c_str();
-            std::map<std::pair<const void*, std::string>, std::string>::const_iterator hd =
-                source->byname->hdPaths.find(key);
-            if (hd != source->byname->hdPaths.end()) {
-                if (surface.texture->frameCount() <= 1) {
-                    source->hdPath = hd->second;
-                    out->hdPath = source->hdPath.c_str();
-                }
+            const std::string* hd = source->byname->hd[(uint32_t)hit];
+            if (hd && surface.texture->frameCount() <= 1) {
+                source->hdPath = *hd;
+                out->hdPath = source->hdPath.c_str();
             }
             return true;
         }
@@ -638,9 +611,10 @@ uint32_t buildHdWindow3ds(int32_t level, const OrigByName& origByName,
     static const uint32_t kHdPlayReserve = 7u * 1024u * 1024u;
     out->clear();
     int32_t unsized = 0;
+    std::string arena;
     for (size_t r = 0; r < origByName.hdArenaRows.size(); r++) {
-        const std::map<std::string, uint32_t>::const_iterator shape =
-            hdShapes.find(origByName.hdArenaRows[r].second);
+        const std::string& path = *origByName.hdArenaRows[r].path;
+        const std::map<std::string, uint32_t>::const_iterator shape = hdShapes.find(path);
         if (shape == hdShapes.end()) {
             unsized++;
             continue;
@@ -648,7 +622,8 @@ uint32_t buildHdWindow3ds(int32_t level, const OrigByName& origByName,
         const uint32_t bytes[HdWindow::kTiers] = {hdChainBytes(shape->second, 0),
                                                   hdChainBytes(shape->second, 256),
                                                   hdChainBytes(shape->second, 128)};
-        out->addFile(origByName.hdArenaRows[r].first, origByName.hdArenaRows[r].second, bytes);
+        arena.assign(origByName.arenaOf(origByName.hdArenaRows[r].row));
+        out->addFile(arena, path, bytes);
     }
     if (out->fileCount() == 0) {
         mdk::log3dsPrintf("hd: level %d has no HD files (%d unsized)", (int)level, (int)unsized);
