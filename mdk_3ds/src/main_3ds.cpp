@@ -2016,14 +2016,14 @@ int main(int argc, char** argv) {
             }
             frameDrawn = scriptsDrew ? &runtime->drawnArenas() : &startDrawn;
             // THE DOOR BUBBLE: the arenas through doorways within this
-            // radius of the camera join the build list NOW, so their
-            // views, effect textures and (below) music are ready long
-            // before the scripts make them the second arena. At Kurt's
-            // turbo speed (~0.66 units a frame) 120 units is ~180 frames
-            // of lead. Residency: the pair plus at most three hinted
-            // names kept, the nearest built ahead first (up to the
-            // three kept can build over time as the nearest changes) --
-            // never the level.
+            // radius of the camera -- and through THEIR doorways within it,
+            // the far side of a short connector (doorBubbleArenas' second
+            // hop) -- join the build list NOW, so their views, effect and
+            // object textures and (below) music are ready long before the
+            // scripts make them the second arena. At Kurt's turbo speed
+            // (~0.66 units a frame) 120 units is ~180 frames of lead.
+            // Residency: the pair plus at most three hinted names kept,
+            // built one after another nearest first -- never the level.
             // The radius scales with the camera's speed IN UNITS PER
             // SECOND (time-normalised and smoothed, so a single long
             // frame cannot inflate it -- the feedback the alternative
@@ -2061,7 +2061,7 @@ int main(int argc, char** argv) {
             }
             // Hysteresis: a hinted arena stays hinted until it is 40
             // units past the radius, so idling at the bubble's edge does
-            // not release and rebuild its view repeatedly. At most two
+            // not release and rebuild its view repeatedly. At most three
             // hinted arenas (nearest first, per the query's order):
             // residency is the current room plus the approached one(s),
             // never the level.
@@ -2071,16 +2071,15 @@ int main(int argc, char** argv) {
                 runtime->doorBubbleArenas(runtime->eye, bubbleRadius, &fresh);
                 std::vector<std::string> wide;
                 runtime->doorBubbleArenas(runtime->eye, bubbleRadius + kBubbleHysteresis, &wide);
-                // Fresh names first, nearest first (the query's order):
-                // sync builds only the first hinted name ahead, so that
-                // is the build priority. Sticky names follow for KEEP
-                // only (hysteresis: released at the wider radius, never
-                // outranking the nearest door for the build slot).
-                // Already-resident names (the pair, the drawn list)
-                // never consume a slot. Residency bound: the pair, the
-                // drawn corridors, and at most three hinted names kept
-                // (one of them built ahead; the rest kept unbuilt until
-                // the scripts make them the pair).
+                // Fresh names first, in the query's order (the first hop
+                // nearest first, then the second hop's: the far side of a
+                // short connector): sync builds the hints one after another
+                // in this order (the next starts once the one before it is
+                // ready), so that is the build priority. Sticky names follow (hysteresis: released at the
+                // wider radius, never outranking a fresh name for the build
+                // slot). Already-resident names (the pair, the drawn list)
+                // never consume a slot. Residency bound: the pair, the drawn
+                // corridors, and at most three hinted names kept.
                 for (size_t i = 0; i < fresh.size(); i++) {
                     bubbleHints.push_back(fresh[i]);
                 }
@@ -2211,25 +2210,38 @@ int main(int argc, char** argv) {
                                          mdk::startEffectSurface, &warmAsk);
                 }
             }
-            // THE OBJECTS' TEXTURES for the pair (warmObjectStep): one model a
-            // frame per arena -- its own models, then every type the scripts
+            // THE OBJECTS' TEXTURES for the pair and the bubble (warmObjectStep):
+            // one model a frame per arena -- its own models, then every type the scripts
             // can spawn -- each Lit surface the orig pack holds asked for as a
             // pending id, read off the frame as a hint. Measured before it, on
             // the Old 3DS level-7 walk: every in-play draw-time pack read was an
             // object texture (doors, machinery, aliens) made the frame the
             // object first showed. A finished arena costs one map lookup.
             //
+            // THE BUBBLE'S ARENAS TOO, after the pair: the arena Kurt walks into
+            // is a hint until he crosses (the second arena is the one he LEFT),
+            // so a pair-only warm reached the next arena's objects only on the
+            // frame he entered it -- measured on the Old 3DS 2026-11-27, the
+            // doorway frames' draw-time reads were all such (LEVEL7 DANT_4:
+            // SW_HBOMB, LOCK, XBN_BOMB, 68 ms; LEVEL8 GUNT_2: XD1_DRON and four
+            // pickups, 102 ms of a 207 ms frame). One hint a frame, the first
+            // (nearest) whose warm is not finished, so the warm's frame cost is
+            // the pair's plus one model.
+            //
             // A RELEASED PALETTE TAKES ITS ASKS WITH IT (SurfaceCache::
             // releasePalette, an arena leaving the residency): an arena whose
-            // warm had finished would come back to the pair asking for nothing.
-            // So on any release, every arena NOT in the pair starts its warm
-            // over when it is next in it (the pair's own palettes are kept, so
-            // their cursors stand). Releases are rare; the check is one compare.
+            // warm had finished would come back asking for nothing. So on any
+            // release, every arena whose palette no view protects -- one not in
+            // the pair and with no view of its own (ArenaViews::release keeps a
+            // palette a resident view draws through) -- starts its warm over
+            // when it is next warmed. Releases are rare; the check is one compare.
             if (surfaces.paletteReleases() != objectWarmReleases) {
                 objectWarmReleases = surfaces.paletteReleases();
                 for (std::map<std::string, size_t>::iterator it = objectWarmAt.begin();
                      it != objectWarmAt.end();) {
-                    if (it->first != streamCurrent && it->first != streamSecond) {
+                    const bool kept = it->first == streamCurrent || it->first == streamSecond ||
+                                      arenaViews.find(it->first) != nullptr;
+                    if (!kept) {
                         objectWarmAt.erase(it++);
                     } else {
                         ++it;
@@ -2247,6 +2259,20 @@ int main(int argc, char** argv) {
                     mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr, objectLook(name),
                                         objectResolver, mdk::requestPackedSurface, &warmAsk,
                                         &cursor);
+                }
+            }
+            for (size_t i = 0; i < bubbleHints.size(); i++) {
+                const mdk::formats::Arena* owner = level.arenaNamed(bubbleHints[i]);
+                if (owner == nullptr) {
+                    continue;
+                }
+                size_t& cursor = objectWarmAt[bubbleHints[i]];
+                const size_t before = cursor;
+                mdk::warmObjectStep(*owner, cmiReady ? &cmi : nullptr,
+                                    objectLook(bubbleHints[i]), objectResolver,
+                                    mdk::requestPackedSurface, &warmAsk, &cursor);
+                if (cursor != before) {
+                    break;   // this hint took the frame's step
                 }
             }
             if (arenaViews.stats().failed != lastViewsFailed) {

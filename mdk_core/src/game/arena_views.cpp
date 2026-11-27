@@ -300,22 +300,32 @@ int32_t ArenaViews::sync(const std::string& current, const std::string& second,
     }
     int32_t built = 0;
     // The pair, then whatever else is drawn, then the bubble's hints.
-    // Hints are KEPT (their views survive). Only the first hinted name
-    // is built ahead in any one sync; as the nearest door changes, a
-    // later hint can become first and build too, so up to the hint cap
-    // (three, in main) hinted views can be built over time -- each is a
-    // mesh of a few hundred KiB against a measured 7.2 MB of linear
-    // headroom, and their textures ride the shared cache budget.
+    // Hints are KEPT (their views survive) and built ahead in the bubble's
+    // order, nearest first, ONE AT A TIME: the first hinted name with no view
+    // yet, once every hint before it is ready. With the bubble's second hop
+    // (ScriptRuntime::doorBubbleArenas) the first hint is often a connector
+    // already built and the arena beyond it is the one Kurt reaches next --
+    // building only hints[0] left LEVEL4's MEAT_5 to the synchronous finish
+    // (257 ms on the Old 3DS, 2026-11-27) behind its 31-unit CMEAT_5. The
+    // hint cap (three, in main) bounds the hinted views; each is a mesh of
+    // tens to a few hundred KiB, and their textures ride the shared cache
+    // budget (level 8's in-play linear minimum is ~2.4 MB: docs/WORK_LEDGER.md).
     for (size_t w = 0; w < 2 + drawn.size() + hints.size(); w++) {
         const bool isHint = w >= 2 + drawn.size();
         const std::string& name =
             w == 0 ? current
                    : (w == 1 ? second
                              : (w < 2 + drawn.size() ? drawn[w - 2] : hints[w - 2 - drawn.size()]));
-        // Only the FIRST hinted name is built ahead, ever (the rest are
-        // kept, not built, until the scripts make them the pair).
-        if (name.empty() || find(name) || waiting(name) ||
-            (isHint && w != 2 + drawn.size())) {
+        if (name.empty()) {
+            continue;
+        }
+        if (const LevelView* view = find(name)) {
+            if (isHint && !view->ready()) {
+                break;   // a hint still building: the next hint waits for it
+            }
+            continue;
+        }
+        if (waiting(name)) {
             continue;
         }
         if (build(name)) {

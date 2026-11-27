@@ -500,6 +500,56 @@ MDK_TEST(ArenaViewsReaskOnlyThePairAndTheDrawn) {
     views.clear();
 }
 
+// THE HINTS ARE BUILT IN ORDER, THE FIRST ONE WITHOUT A VIEW (ArenaViews::sync):
+// with the bubble's second hop the first hint is often a connector already built,
+// and the arena past it is the one Kurt reaches next. Building only hints[0] left
+// LEVEL4's MEAT_5 behind its 31-unit CMEAT_5 to the synchronous finish (257 ms on
+// the Old 3DS, 2026-11-27). Here the second hint is built once the first is.
+MDK_TEST(ArenaViewsBuildTheFirstHintWithoutAView) {
+    // The data stays in scope: a view's build reads texture pixels from the MTO
+    // through it (LevelData::loadPixelsFromMto), after the load returned.
+    mdk::formats::MdkData game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    mdk::LevelData level;
+    MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
+    if (level.arenas().empty()) {
+        return;
+    }
+    MdkRenderer renderer = (MdkRenderer)(uintptr_t)1;
+    mdk::SurfaceCache surfaces(renderer);
+    // Two arenas that each build a view.
+    std::vector<std::string> buildable;
+    for (size_t i = 0; i < level.arenas().size() && buildable.size() < 2; i++) {
+        mdk::LevelView view;
+        if (view.load(renderer, &level, level.arenas()[i], &surfaces)) {
+            buildable.push_back(level.arenas()[i]->name());
+        }
+        view.unload();
+    }
+    MDK_CHECK_EQ((int)buildable.size(), 2);
+    if (buildable.size() < 2) {
+        return;
+    }
+    mdk::ArenaViews views;
+    views.start(renderer, &level, &surfaces, mdk::Shading::Original);
+    const std::vector<std::string> none;
+    const std::vector<std::string> hints = buildable;
+    for (int i = 0; i < 2000 && !(views.find(buildable[1]) && views.find(buildable[1])->ready());
+         i++) {
+        views.sync("", "", none, hints);
+    }
+    MDK_CHECK(views.find(buildable[0]) != nullptr && views.find(buildable[0])->ready());
+    MDK_CHECK(views.find(buildable[1]) != nullptr && views.find(buildable[1])->ready());
+    // Hints are kept: both views stay while hinted, and go when no longer named.
+    views.sync("", "", none, hints);
+    MDK_CHECK_EQ(views.count(), 2);
+    views.sync("", "", none, none);
+    MDK_CHECK_EQ(views.count(), 0);
+    views.clear();
+}
+
 // THE CAMERA'S ARENA OVER THE OTHER ONE (upstream e1eb36bb; game/arena_views.cpp):
 // LevelView::draw's marks. Plain marks nothing (the frame as before); Back marks
 // every batch of the other arena; Cover marks the camera arena's batches whose box,
