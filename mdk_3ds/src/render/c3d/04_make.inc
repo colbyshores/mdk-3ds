@@ -117,11 +117,15 @@ static bool finishPackNow(RendererC3D* renderer, C3dTexture& texture) {
         ok = readWholeFile(texture.packPath.c_str(), &read);
         const double ms = (double)(svcGetSystemTick() - t0) / (double)(SYSCLOCK_ARM11 / 1000ull);
         renderer->packMainReads++;
-        mdk::log3dsPrintf("pack: MAIN-THREAD read %s (%u bytes, %.1f ms, %s; %d this session)",
+        mdk::log3dsPrintf("pack: MAIN-THREAD read %s (%u bytes, %.1f ms, %s; %d this session; "
+                          "created frame %d of %d, made %d, evicted %d)",
                           texture.packPath.c_str(), (unsigned)read.size(), ms,
                           texture.packState == C3dTexture::PackReading ? "its read in flight"
-                                                                       : "not yet asked for",
-                          (int)renderer->packMainReads);
+                          : texture.packState == C3dTexture::PackQueued ? "queued, not read yet"
+                                                                        : "not asked for",
+                          (int)renderer->packMainReads, (int)texture.createdFrame,
+                          (int)renderer->frame, (int)texture.madeCount,
+                          (int)texture.evictCount);
     }
     bool made = false;
     bool refused = false;
@@ -393,6 +397,7 @@ static bool makeTextureNow(RendererC3D* renderer, C3dTexture& texture, bool diag
     texture.valid = true;
     texture.format = format;
     renderer->texturesMade[texelStoreIndex(format)]++;
+    censusMade(renderer, texture, gpuBytes);
     renderer->textureBytesSaved +=
         mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,
                                 texture.paddedHeight, levels) -

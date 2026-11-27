@@ -101,7 +101,16 @@ owner first.
   unpacks tex3ds' default compression at only 0.77 MB/s of file, and one file's
   unpack held the worker 390 ms. The HD pack is ~85 MB raw against 55 MB.
 - Small 2D art made once per level (HUD, fonts, heads, scope, bomber, screens)
-  may stay uncompressed, made at level load, never at first show.
+  may stay uncompressed, made at level load, never at first show. The font
+  atlases' sliced expansion is finished behind the loading screen
+  (`mdk_render_finish_expansions`), without a mip chain.
+- **Measured, step 3 (2026-11-27):** the texture census (`textures: census`,
+  `texmake:` and `pack: miss` log lines, render_c3d_hd_set.h) finds no in-level
+  arena, object or effect texture left to palette-expand on levels 3-8 with HD on:
+  every Lit and Sprite surface the levels drew resolves to a pack. What core 0
+  still makes is the level's 2D art at load (63-68 textures, 2.65 MB, ~0.66 s
+  on the Old 3DS, 1.57 MB of it the two font atlases) and 1x1 flat colours in
+  play (256 bytes each). No new build-time pack was warranted.
 - The movie stays a streamed texture.
 
 ## 6. GPU visibility
@@ -123,7 +132,9 @@ The streaming work is one line of branches, each built on the last:
    the level-wide pinned HD set; the loading bar (`fix/3ds-load-bar`) follows
    what level start then loads; the per-texture flush (section 6) is part of
    the import path.
-3. **Remaining runtime expansion** to build-time packs (section 5).
+3. **Remaining runtime expansion** to build-time packs (section 5;
+   `perf/3ds-etc1-leftovers`: measured, nothing in-level left to convert; core-0
+   pack reads in play 0 on the L5-L8 door walks).
 4. **VRAM placement** (section 3, last row).
 
 Renderer and gameplay fixes (bullet cams, decals, upstream fixes, death flow)

@@ -435,6 +435,19 @@ bool loadKurtPack(const char* path, KurtPackLoad* out) {
 // surfaceId), answered by the pair and its names, never by the shading. `pack`
 // is the HD pack (the SD card's upscale), `orig` the orig pack (the RomFS's
 // original-resolution pre-encode); either may be absent.
+// THE LOOKUP'S MISSES, the in-level textures the console will expand from their
+// indices (docs/3DS_ARCHITECTURE.md 5): each name once a level (the source is the
+// level's), with its size and why. Cold: a set lookup, a line the first time.
+static void logLookupMiss(HdPackSource* source, const std::string& name,
+                          const mdk::formats::Texture& texture, const char* why) {
+    if (!source->missLogged.insert(name).second) {
+        return;
+    }
+    mdk::log3dsPrintf("pack: miss %s %dx%d x%d frames: %s (expanded on this core)",
+                      name.c_str(), (int)texture.width(), (int)texture.height(),
+                      (int)texture.frameCount(), why);
+}
+
 bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::Palette* palette,
                   mdk::ColourReplacement* out) {
     HdPackSource* source = static_cast<HdPackSource*>(user);
@@ -459,6 +472,7 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // resampled to a power of two (hd_pack_convert.py), which squeezes its
     // frames -- EXPLODE's 26 frames of 128 rows become 19.7 rows each -- and the
     // backend never draws an HD copy for a stacked texture (06_draw.inc).
+    bool sizeMiss = false;
     if (source->byname && !source->byname->paths.empty()) {
         std::string keys[2] = {lowerName3ds(name), lowerName3ds(surface.texture->name())};
         const uint32_t size =
@@ -474,6 +488,7 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
             std::map<std::pair<const void*, std::string>, uint32_t>::const_iterator dims =
                 source->byname->dims.find(key);
             if (dims != source->byname->dims.end() && dims->second != size) {
+                sizeMiss = true;
                 continue;
             }
             source->path = hit->second;
@@ -510,6 +525,8 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // expanded from its indices. (An HD pack is only kept for a level with a
     // name index: main refuses it without one.)
     if (source->pack) {
+        logLookupMiss(source, name, *surface.texture, sizeMiss ? "size differs from the index"
+                                                               : "not in the name index");
         return false;
     }
     // NOTHING OVER THE PICA'S 1024 IS HASHED. The orig pack holds the three
@@ -519,6 +536,7 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
     // (frame 650 of the L7 walk: obj 105.5 ms once Sprites asked the pack).
     if (surface.texture->width() > 1024 ||
         surface.texture->height() * surface.texture->frameCount() > 1024) {
+        logLookupMiss(source, name, *surface.texture, "over 1024, not in the name index");
         return false;
     }
     // THE ORIG PACK BY CONTENT, with no HD pack and a name the index does not
@@ -535,6 +553,7 @@ bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::P
         // thread and an import at a frame boundary.
         return true;
     }
+    logLookupMiss(source, name, *surface.texture, "in neither pack");
     return false;
 }
 

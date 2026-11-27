@@ -241,15 +241,33 @@ static void pumpExpansions(RendererC3D* renderer) {
     // One step a texture, oldest first, up to the frame's step budget: the
     // pump's work in a frame is bounded however many expansions are pending.
     int32_t steps = 0;
+    const u64 started = svcGetSystemTick();
     for (size_t i = 0; i < renderer->textures.size() && steps < kPumpStepsPerFrame; i++) {
         if (renderer->textures[i].expandPending) {
             advanceExpansion(renderer, renderer->textures[i], false);
             steps++;
         }
     }
+    if (steps > 0) {
+        renderer->makeTicks += svcGetSystemTick() - started;   // the census (01_types.inc)
+    }
 }
 
+static bool makeTextureTimed(RendererC3D* renderer, C3dTexture& texture, bool diagnostics);
+
+// The census' clock around every make on this core that is not a compressed
+// import (those are the packs' and Kurt's, counted apart): makeTextureTimed.
 static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnostics) {
+    if (texture.valid || texture.compressed) {
+        return makeTextureTimed(renderer, texture, diagnostics);
+    }
+    const u64 started = svcGetSystemTick();
+    const bool made = makeTextureTimed(renderer, texture, diagnostics);
+    renderer->makeTicks += svcGetSystemTick() - started;
+    return made;
+}
+
+static bool makeTextureTimed(RendererC3D* renderer, C3dTexture& texture, bool diagnostics) {
     if (texture.valid) {
         return true;
     }

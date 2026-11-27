@@ -168,6 +168,12 @@ public:
     // arena costs one map lookup.
     bool warmStep(const std::string& arena, SurfaceStartFn ask, SurfaceStartFn start,
                   void* user);
+    // An arena's warm starts over at its next warmStep: the frontend's answer
+    // to a released palette (the surface cache dropped that arena's textures
+    // with it, and a finished warm would never ask for them again). The
+    // cursors say which arenas have a warm to restart.
+    void restartWarm(const std::string& arena) { warmAt_.erase(arena); }
+    const std::map<std::string, size_t>& warmCursors() const { return warmAt_; }
 
     // THE EFFECTS CULL (the object cull's twin, ObjectView::setCullFrustum):
     // when set, build() skips a debris piece, a sprite effect or a spawn_box
