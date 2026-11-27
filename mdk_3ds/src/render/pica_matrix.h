@@ -869,6 +869,30 @@ bool prepareForFilteringStep(uint8_t* tiled, int32_t width, int32_t height, int3
 // PICA's 4-bit field caps the count at 15; a 1024 axis gives at most 7).
 int32_t mipLevelsFor(int32_t paddedWidth, int32_t paddedHeight);
 
+// How many of the `levels` a texture carries the GPU is told to sample (the LOD
+// register's max level, written per draw in 06_draw_submit.inc).
+//
+// THE PICA200 MISREADS ONE KIND OF LEVEL. Measured on the Old 3DS with a texture
+// whose every tile names its level and its place (docs/MIP_GLITCH.md,
+// mdk_3ds/tools/mipprobe on throwaway/mip-nonsquare-hw): in an ETC1 texture that
+// is NOT SQUARE, when the level whose short side is 16 texels is blended with
+// the level after it (short side 8, one tile), part of the 16 level is drawn
+// from the 8 level's tiles. In a texture taller than wide that part is a whole
+// quarter: a half-size copy of the picture in the corner of the surface (the
+// owner's small bullseye, and the block on the archway's leg). Every tall shape
+// measured does it (2:1, 4:1 and 8:1, from 256x512 down to 16x32). Of the wide
+// ones 4:1 and 8:1 do, in a smaller part, and 2:1 and 16:1 do not. Eight of
+// those chains were then told to stop at their 16 level, and each read right at
+// every level measured. Square ETC1 reads right, and so do ETC1A4, the 16-bit
+// formats and RGBA8 at any shape. The emulator reads all of them right.
+//
+// So a non-square ETC1 texture is sampled down to the level whose short side
+// is 16, and no further. The 8 level stays in the file and in memory (64 bytes
+// of BULLSEYE's 87,360) and is never sampled. The wide 2:1 and 16:1 shapes are
+// stopped with the rest: the line between the wide shapes that read right and
+// wrong is the hardware's own, and it is not one to build a rule on.
+int32_t mipLevelsSampled(bool etc1, int32_t paddedWidth, int32_t paddedHeight, int32_t levels);
+
 // One level from the one above it: `src` is tiled at width x height (powers of
 // two, >= 16), `dst` is tiled at width/2 x height/2. Each texel is the rounded
 // mean of its 2x2 parents, channel by channel, alpha included -- the colour a

@@ -3724,3 +3724,91 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   - Old 3DS appliance (`old3ds-lan167`, model 0, stereo on), the same walk, toggles and harness as the earlier entry, `--profile`, FRESH (`.git/worktrees/bullet-cam/hw-logs/hw-on1eye.log`): the 875 frames with a camera watching, mean **39.5 ms** (max 53.8; 857 over 33.3 ms), against 44.4 ms drawn in both eyes and 33.45 ms with the cameras off. Steady mean 35.7 ms (vblanks 2: 2295, 3: 190), against 37.7 (both eyes) and 33.6 (off). Longest command list 27,844 words (34,302 both eyes).
 - **Not verified:** the picture. No ATM screenshots (owner: suspected cause of the hard hangs), the harness on this base has no capture, Mandarine was not used. Whether the right eye's windows show the copied cam (the memory-row orientation is taken from the screenshot readback and the glow, not seen through the barrier) is open for the owner's look on the console.
 - **Commit:** this one.
+
+## 2026-11-27 -- the mip glitch: the PICA200 misreads the 16 level of a non-square ETC1 texture; such a chain is sampled to 16, not 8 (branch fix/3ds-mip-nonsquare)
+- **Owner's words:** a small half-size copy of the texture in the lower-left of
+  the surface at a distance, gone closer; "document the failed experiments",
+  drop them, fresh eyes.
+- **What:**
+  - `docs/MIP_GLITCH.md`: the record. Every experiment since 2026-11-25 with its
+    result, what is ruled out, the answer, what is not verified.
+    `docs/3DS_ARCHITECTURE.md` section 6 no longer calls the per-texture flush the
+    glitch's candidate cause (it stays, as P3 hygiene; the branch's first commit,
+    65af1616, with the record's first version), and section 5 states the rule.
+    The same stale sentence in 04_textures.inc's comment is corrected.
+  - `mdk::pica::mipLevelsSampled(etc1, width, height, levels)` (pica_matrix.h/cpp):
+    a non-square ETC1 texture is sampled down to the level whose short side is 16.
+    `drawRecorded`'s one write of `C3D_Tex::maxLevel` (06_draw_submit.inc) goes
+    through it. Nothing else changes: no file, no pack, no per-model path; the 8
+    level stays in memory, never sampled.
+  - Host tests: `testTheMipChain` pins the rule (the owner's two textures, every
+    non-square shape from 8 to 1024, shorter chains, squares and other formats
+    left whole); `c3d_frame_test.sh` pins that the submit writes the max level
+    once and through the rule.
+- **Why (measured, Old 3DS appliance `old3ds-lan167`, model 0, 268 MHz):**
+  - The fresh lead was the shape: both textures are tall ETC1 (256x512, 128x512).
+    A standalone test program (`mdk_3ds/tools/mipprobe` on
+    `throwaway/mip-nonsquare-hw`: one quad, a texture whose every tile is a colour
+    naming its level and place, the target read back through the transfer engine)
+    reads a quarter of the 16x32 level from the 8x16 level's tiles, at 512
+    placements in linear memory (p1: 3,072 of 12,288 tests off, all of them the
+    16-wide level). Mandarine reads the same program right (0 off).
+  - p3-p5 (62 configurations of format, shape and max level; p2 before them): wrong at the 16 level in every tall ETC1 shape (2:1, 4:1,
+    8:1) and in wide 4:1 and 8:1; right in wide 2:1 and 16:1, in square ETC1, and
+    in ETC1A4, RGB565, RGBA5551, RGBA4 and RGBA8 at any shape; only when the two
+    levels are blended (trilinear), or drawn one after the other with the texture
+    left bound. Twelve chains wrong with their whole chain read right told to
+    stop at the 16 level (p5's count: 638 tests, 0 wrong within the rule, 22 past
+    it).
+  - In the game, same appliance, the practice-room targets through the scope
+    (harness on `throwaway/mip-nonsquare-hw`, HD from the RomFS at tier 512, the
+    game's own frame readback, no ATM screenshots): edge smoothing off, without
+    the fix the small bullseye is in the targets' lower-left at 24 pixels across
+    and the targets smear at 16 (X1); with it, clean bullseyes at both (Y1,
+    DRAWLOG: BULLSEYE bound with max level 4 of 5). The start tunnel, edge
+    smoothing on: without the fix a hard-edged block on a leg of the inner arch
+    in all seven captures (XA), with it a smooth leg and no other pixel changed
+    (YA, C7_WALL bound with max level 3 of 4). With edge smoothing on the
+    targets' glitch needs a target half the size (D512C). So it was never the New
+    3DS: nobody had looked at the Old 3DS at the size where that level is used,
+    and the 2026-11-25 level-colour capture that had it was read as clean.
+- **Checks** (all at `nice -n 19 ionice -c2 -n7`):
+  - Linux build: 0 warnings. 3DS build (`make -C mdk_3ds`, devkitARM): 0 compiler
+    warnings.
+  - `make -C tests/scripts test`: exit 0, 1001 PASS, 0 FAIL, 4 SKIP (the frame
+    gate's oracle arms); `PASS PicaMatrix`, `PASS C3dFrame (66 checks, 167 arms
+    adjudicated red, 29 probes green)`; tick1 "All cases match the oracle".
+    Non-vacuity of the new host checks: four wrong rules (stop at 8, tall only,
+    squares too, width only) fail 51, 24, 8 and 24 checks.
+  - `make -C tests/formats`: 200,670 checks, 0 failures.
+  - `tools/check.sh`: ALL GATES PASSED (gates_smdh SKIP: no .cia built).
+  - Independent read-only review (two passes): no code defect; its findings (a
+    test that a "last level off" rule would have passed, a loose source check,
+    doc wording past the logs) are fixed here.
+  - Emulator (Mandarine r1.2.1, md5 0d2adab6 verified, `DISPLAY=:99`,
+    `mdk_3ds/tools/emurun.sh --secs 45`, no other MDK instance at launch), the
+    play build: exit 0, boots to the main menu (`backend: PICA200 Citro3D`,
+    `menu: slides loaded at frame 724`), guest log
+    `.git/worktrees/mip-nonsquare/hw-logs/emu-menu.guest.log`. The emulator reads
+    these levels right with or without the fix, so this is a boot check only.
+- **Builds kept** (`.git/worktrees/mip-nonsquare/hw-logs/`, with a README; not
+  uploaded): the play build (no harness, plain `make -C mdk_3ds`),
+  `mdk-mipfix.3dsx`, md5 `c5ce4f89f0c4c305bd240ef7b8886019` (234,561,652 bytes);
+  it reads HD from the SD card (the uncompressed pack). `mipprobe-owner.3dsx`,
+  md5 `59cb9570467799030a68c116b48dbcc4`: the test program for the New 3DS (40
+  seconds, writes `sdmc:/3ds/mipprobe/probe.log`).
+- **Evidence:** `.git/worktrees/mip-nonsquare-hw/hw-logs/`: `probe-p1..p5.log`
+  (hardware), `emu-probe1.log`, `emu-probe2.log`,
+  `hw-{T512C,D512C,X1,Y1,XA,YA}.log` and their `cap-*/` readbacks,
+  `pictures/before-after-frame950-6x.png`, `-frame800-6x.png` and
+  `tunnel-before-after-frame30-5x.png`, the payloads with their `*.vars.txt`
+  and md5. The harness, the readback and the test program are
+  `throwaway/mip-nonsquare-hw` 0369b912 (never for main).
+- **Not verified:** the owner's New 3DS with the fix. The owner reported "zero
+  improvements" from the live A/B's modes 1-3 together; modes 1 and 2 agree with
+  the appliance, mode 3 (max level one less) does not, since that is what cures
+  here. The fix build decides it. Also not run: the pause menu's MIPMAPS toggle
+  with the fix on hardware, and the wide shapes in the game (their cure is the
+  test program's). The hardware A/Bs ran on the throwaway's older base (72cfb30b
+  plus the harness) with this function, not on this branch's tree.
+- **Commits:** 65af1616 (the record's first version), and this one.

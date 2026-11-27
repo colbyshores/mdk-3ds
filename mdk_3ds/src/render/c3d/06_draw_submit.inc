@@ -98,7 +98,12 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     {
         const GPU_TEXTURE_FILTER_PARAM filter = (GPU_TEXTURE_FILTER_PARAM)p->filter;
         C3D_TexSetFilter(texture, filter, filter);
-        texture->maxLevel = (u8)(p->mipped ? submitMipLevels : 0);
+        // The levels sampled: the texture's own, less the one kind of level the
+        // PICA200 misreads (mdk::pica::mipLevelsSampled, docs/MIP_GLITCH.md).
+        texture->maxLevel =
+            (u8)(p->mipped ? mdk::pica::mipLevelsSampled(texture->fmt == GPU_ETC1, texture->width,
+                                                         texture->height, submitMipLevels)
+                           : 0);
         C3D_TexSetFilterMipmap(texture, filter);
     }
     bindTexUnitIfChanged(r, p->texUnit, texture);
