@@ -5400,3 +5400,9 @@ What is worse, plainly:
 - **Logs:** `/tmp/kilo/byname/{A-L8,B-L3,B-L8}.{log,session.log,cycle.txt}`,
   `/tmp/kilo/vram-load/C-L3.session.log`, `/tmp/kilo/byname/emu-B-L3.txt`.
 - **Commits:** e01b39db (code, tests, docs) and this one (ledger).
+
+## 2026-11-27 -- Findings write-up (docs/FINDINGS_2026-11-27.md) and vault notes
+
+**What:** one-page summary of the overnight findings in `docs/FINDINGS_2026-11-27.md`; the same findings written to the Obsidian vault (seven pattern notes under `30-architecture/patterns/` and `10-projects/mdk-sdl/findings/2026-11-27-overnight-findings.md`).
+**Why:** owner asked for the findings documented in the vault and in the repo.
+**Evidence:** the ledger entries it summarises; owner confirmation on the New 3DS of main 06fae827.
