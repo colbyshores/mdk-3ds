@@ -1498,6 +1498,10 @@ int main(int argc, char** argv) {
                       "the HD hold included)",
                       (double)(svcGetSystemTick() - levelLoadTick) / (double)(SYSCLOCK_ARM11 / 1000ull));
     mdk::log3dsPrintf("loop: entering main loop");
+    // The effects decoded from here on are decoded DURING PLAY, on this core: what
+    // the level-end line says (docs/3DS_ARCHITECTURE.md 2: none).
+    const int32_t playDecodesFrom = bank.stats().decodes;
+    const int64_t playDecodedSamplesFrom = bank.stats().decodedSampleCount;
     // THE PAUSE MENU'S FALLBACK. Without the menu's fonts there is no menu to
     // open, and so no Quit row: holding START and SELECT together is then the
     // way out (one press of either alone does nothing), and the log says so.
@@ -3030,6 +3034,11 @@ int main(int argc, char** argv) {
         scopeMonoOn = false;
     }
     music.reset();
+    mdk::log3dsPrintf("audio: level end: %d sound(s) decoded on main during play (%lld samples); "
+                      "%d before the loop (load, first spawn)",
+                      (int)(bank.stats().decodes - playDecodesFrom),
+                      (long long)(bank.stats().decodedSampleCount - playDecodedSamplesFrom),
+                      (int)playDecodesFrom);
     mdk::audioDspClose();
     // The HD window goes with the level (its copies are nobody's from here and
     // the pump frees them). Its record for the run first.

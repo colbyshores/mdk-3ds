@@ -157,6 +157,11 @@ public:
         int32_t readFailures = 0;     // a read that failed (the sound is then missing)
         int32_t evictions = 0;        // decoded sounds dropped for the budget
         int32_t musicReleased = 0;    // tracks dropped by releaseMusicExcept()
+        // Sounds decoded into the store (get()'s decode, a prefetch's last slice)
+        // and the samples they made: what a frontend counts to say how much decode
+        // ran during play (the 3DS: none, its effects are placed at load).
+        int32_t decodes = 0;
+        int64_t decodedSampleCount = 0;
     };
 
     // The original's music step (0x4317d8): 0xf768 bytes while more than
@@ -230,6 +235,13 @@ public:
     // Convert every sound of the archives now (a level's load: none while
     // playing). Here that means reading every WAV header.
     void preload();
+
+    // The level's EFFECTS: every name a get() can answer whose winning entry is
+    // not a music track (SNI flag 2) and is not registered as streamed music --
+    // each name once, in archive then file order. What a frontend that places
+    // every effect ahead of play (the 3DS's DSP sample arena, at level load)
+    // walks. Reads nothing: the directories are resident.
+    void effectNames(std::vector<std::string>* out) const;
 
     // The decoded store's budget, in bytes (0 = unbounded, the shipped
     // default: the C#'s bank keeps everything it decoded). Over the
