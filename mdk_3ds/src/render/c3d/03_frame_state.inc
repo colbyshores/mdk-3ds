@@ -191,6 +191,7 @@ static void settleDeferredTextures(RendererC3D* renderer) {
 // comes first in the file.
 static void settleDeferredMeshes(RendererC3D* renderer);
 static void replayQueue(RendererC3D* r);
+static void copyInsetsToSecondEye(RendererC3D* r);
 static void drawDiagnostic(RendererC3D* r, float canvasWidth);
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
 static void prepareHaze(RendererC3D* r);
