@@ -4218,3 +4218,29 @@ against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new
 - **Not verified:** no layered frame with a rope in the other arena was looked at (no retail
   rope sits at a two-arena doorway that was found); no hardware, no Mandarine.
 
+
+### The ride end's `back` arena: its objects are now actually queued `back` (fix/opcodes-parity)
+- **What was wrong (on the combined line since eaef0d79):** both frontends switched
+  `mdk_render_set_back` on around `ObjectView::addObject` for the objects of the arena
+  `ArenaViews::draw` drew `back`. `addObject` only fills the object stream; `ObjectDraw::draw`
+  submits it after the loop, when the flag is off again, and it set no `MeshDraw::back`. So the
+  other arena's objects were drawn in the ordinary buckets, not under its glass with it as the
+  ride-end entry says, and the ropes made `back` by the merge would have been out of step with
+  their objects.
+- **What:** `ObjectStream::back` (the frontend sets it per object, where it called
+  `mdk_render_set_back`; cleared at reset and after the loop), copied into each
+  `ObjectStreamDraw::back` by `addObject`, and `ObjectDraw::draw` sets `MeshDraw::back` from it.
+  The ridden board, the strike's subject and the sniper rounds are added after the loop, unmarked,
+  as before. `mdk_render_set_back` stays in the render API (unused by the frontends now).
+- **Evidence:** a scratch build counting the `back` draws the Vulkan backend receives (not
+  committed): at the ride end (`--level=4 --arena=CMEAT_1 --at=62.35,2582.81,-392.90,90`,
+  60 frames) 2706 non-identity-world (object) draws arrive `back` with this fix, and by
+  construction none did before (the only path was the renderer flag, off when the stream is
+  submitted). The ride end's frames 60 and 120 at 320x240 are pixel-identical before and after
+  (no MEAT_3 object is in view there), and `ArenaCover` still passes; no frame where the change
+  shows was found or looked at.
+- **Checks:** Linux build 0 warnings; `make -C tests/scripts test` exit 0 (1014 PASS);
+  `make -C tests/formats` 200692 checks, 0 failures; `tools/check.sh` all gates pass (smdh
+  skipped); `make -C mdk_3ds` 0 compiler warnings.
+- **Not verified:** no hardware, no Mandarine; no host test pins the stream's `back` (ObjectDraw
+  is not linked by either host suite).

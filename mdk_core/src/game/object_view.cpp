@@ -591,6 +591,7 @@ bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look
         draw.palette = look.palette;
         draw.frame = frame;
         draw.world = transform;
+        draw.back = stream->back;
         stream->draws.push_back(draw);
     }
 

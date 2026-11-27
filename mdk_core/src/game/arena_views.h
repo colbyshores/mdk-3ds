@@ -124,7 +124,7 @@ public:
     // the frame is drawn as before. `eyeMargin` is the stereo separation (at
     // least kLayerEyeMargin). Returns the other arena's name while it is drawn
     // `back`, "" otherwise: the frontend draws that arena's objects `back` too
-    // (mdk_render_set_back), so its glass stays over them.
+    // (ObjectStream::back), so its glass stays over them.
     std::string draw(const std::vector<std::string>& drawn, const std::string& cameraArena,
                      const Vec3& eye, float eyeMargin);
 

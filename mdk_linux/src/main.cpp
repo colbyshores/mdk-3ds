@@ -2622,7 +2622,7 @@ int main(int argc, char** argv) {
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
         // the runtime's first tick has named one.
         // The arena ArenaViews::draw drew `back` this frame ("" when none): its
-        // objects are drawn `back` too (mdk_render_set_back, below).
+        // objects are drawn `back` too (ObjectStream::back, below).
         std::string layeredBack;
         if (arena && frameDrawn && !strikeFrame) {
             // The end of a level's torn triangles leave the arena's mesh first (the C#'s
@@ -2697,12 +2697,15 @@ int main(int argc, char** argv) {
                 // The pose between its frames at the tick's alpha (upstream ae746b5d,
                 // Viewer's blend.PoseOf), the driven and carried ones too.
                 // The other arena's objects with it, under its glass (upstream
-                // e1eb36bb bands them by arena too; render/draw_queue.h).
-                mdk_render_set_back(renderer, !layeredBack.empty() && obj.arena == layeredBack);
+                // e1eb36bb bands them by arena too; render/draw_queue.h). Marked on
+                // the stream, not with mdk_render_set_back: the stream is submitted
+                // after this loop (objectDraw.draw), when the renderer flag would be
+                // off again.
+                objectStream.back = !layeredBack.empty() && obj.arena == layeredBack;
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
                                      &objectStream, nullptr, tickAlpha);
             }
-            mdk_render_set_back(renderer, false);
+            objectStream.back = false;
             // THE RIDDEN BOARD (upstream a27ca2f4, Viewer.DrawBoard): after the objects,
             // scaled towards the eye in front of the floors its box dips under (the
             // original draws an object after its leaf's floor, with no depth buffer).

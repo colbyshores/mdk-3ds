@@ -52,7 +52,7 @@ public:
     // quads face it). `level` gives each arena's palette. `backArena` is the arena
     // ArenaViews::draw drew `back` this frame ("" for none): an object of it has
     // its rope queued `back` too (MeshDraw::back), as the frontends queue the
-    // object itself (mdk_render_set_back), so the camera's arena covers both.
+    // object itself (ObjectStream::back), so the camera's arena covers both.
     void draw(MdkRenderer renderer, const scripts::ScriptRuntime& runtime, LevelData& level,
               const Camera& camera, float tickAlpha, const std::string& backArena);
 
