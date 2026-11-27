@@ -4920,3 +4920,120 @@ already has perf/3ds-view-prebuild's object warm over the bubble's hints).
   d71b8904's fonts at load), L5-L8 from d71b8904's runs.
 - **Checks:** documentation only; no code, build, hardware or emulator run.
 - **Commit:** this one.
+
+## 2026-11-27 -- items 12 and 13 measured first: static VRAM placement NOT KEPT; level-load overlap measured large
+
+- **Why:** overnight items 12 (static VRAM placement, `docs/3DS_ARCHITECTURE.md` 3 last row)
+  and 13 (level-load overlap of core 0 and the core-1 worker), both measure-first under the
+  owner's payoff rule: no complexity without a measured gain.
+- **Instrument** (throwaway, not for merge: `throwaway/vram-load-hw` 611ae339 + 08d9b4d1 on
+  `throwaway/combined-hw` + 12118fd0): per play frame the GPU's time for the previous frame
+  (`C3D_GetDrawingTime`, `C3D_FrameEnd`'s queue run to its finish), the CPU time between
+  frames, and how far the GPU's finish ran past the next `C3D_FrameBegin` call (an upper bound
+  on the CPU's wait for the GPU: the vblank wait is not taken out); a load-phase clock on every
+  `mem[...]` probe with the main thread's seam reads (files/bytes/ms); core-0 import time and
+  the reader's busy time at the end of the HD hold. `VRAMSTATIC=1` moves the strip pages
+  (EXPLODE/FIRE/SL_BIG) and the ETC1 sky slices into VRAM between frames once made: a VRAM
+  texture of the same shape, `C3D_SyncTextureCopy` out of frame, the linear copy freed, never
+  evicted. (`C3D_SyncTextureCopy` inside a frame only QUEUES the copy, and tex3ds frees its
+  staging buffer straight after -- the likely reason 04_make.inc's comment says
+  `C3D_TexInitVRAM` "fails". Out of frame it worked: 8 textures, 1,081,344 bytes, 0 refused.)
+- **Conditions:** old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, default toggles (HD
+  on, cap off), HD from RomFS, PROFILE builds through `hw_cycle.sh --profile`, all FRESH.
+  Scenes: L8 noclip door route (`AUTOQUIT=189 GOD=1 NOCLIP=1 ROUTE=` the etc1-leftovers R8),
+  the L7 bomber (the halo-batch entry's recipe, FIXED=1, a bomb every 60 frames, no TOGGLES).
+
+### Item 12 -- is the GPU texture-fetch bound? (A = linear, B = strips + sky in VRAM)
+
+| scene | frames | period ms | CPU ms | GPU ms (max) | CPU waited on GPU ms | over 33.3 ms |
+|---|---|---|---|---|---|---|
+| L8 route A | 7730 | 24.44 | 12.73 | 13.39 (27.9) | 9.77 | 1662 |
+| L8 route B | 7782 | 24.28 | 12.88 | 12.81 (26.8) | 9.12 | 1692 |
+| L7 bomber A | 3407 | 26.37 | 14.17 | 15.47 (24.4) | 10.55 | 362 |
+| L7 bomber B | 3437 | 26.14 | 14.36 | 14.86 (23.9) | 9.86 | 384 |
+
+- **The frame is CPU record + GPU, nearly serial:** after `C3D_FrameEnd` the CPU does only
+  ~3-4 ms before the next `C3D_FrameBegin` waits ~9-10 ms for the GPU (13-15 ms a frame,
+  both eyes). So a GPU saving would reach the frame -- but VRAM for the strips and the sky
+  saves 0.6 ms of GPU (4%), and the frame period moved 0.16-0.23 ms (<1%, noise); frames over
+  33.3 ms went up, not down. Slow frames (>34 ms) are CPU-bound (L8: CPU 24.5 ms, GPU 20.2).
+- **Memory:** linear free minimum in play on L8 2.24 -> 3.33 MB (+1.08 MB, exactly the moved
+  bytes); VRAM free minimum 2.94 -> 1.86 MB. The extra linear changed nothing measurable: the
+  same 385 reader files and bytes, 0 HD waits, the same one main-thread TRAIL read, in both.
+  L5/L6/L7 have 8.6-10.0 MB linear free minimum (etc1-leftovers runs); only L8 is tight, and
+  nothing fails there.
+- **Decision: NOT KEPT.** No frame gain; the memory gain buys no behaviour today and costs a
+  megabyte of the VRAM the shadow map (made lazily, after the sky in B) and the edge-smoothing
+  targets are sized against. Code stays on the throwaway branch. If L8's linear ever fails,
+  this is a measured 1.08 MB lever (strips + sky), out-of-frame copy only.
+
+### Item 13 -- where a level load goes (A runs, ms)
+
+| phase | L3 | L7 (bomber) | L8 | what |
+|---|---|---|---|---|
+| run start to level data | 4371 (1539 SD) | 4001 (1524 SD) | 4459 (1764 SD) | 54-56 files, 11.4-13.7 MB, then parse; ~0.6 s of it is before the loading screen (not in `loaded in`) |
+| orig byname index | 2560 | (in next) | (in next) | text parse, pure CPU |
+| byname + CMI | -- | 2748 | 2831 | CMI read 118-171 ms |
+| light rigs | 1508 | 1699 | 1699 | 19 arenas, pure CPU |
+| sky, sprites read, Kurt decode, HUD, fonts | 1210 | 1218 | 1219 | 0.34 s SD |
+| SNI bank | 784 (708 SD) | 606 (543 SD) | 657 (571 SD) | 61-65 files |
+| Kurt pack + DSP open | 446 | 508 | 435 | |
+| sfx placement | 292 | 241 | 245 | |
+| HD window build | 1057 | 1462 | 1442 | pure CPU |
+| HD hold | 3143 | 3778 | 2957 | worker read 3.0 / 3.6 / 2.8 s; core-0 imports 0.34 / 0.37 / 0.33 s |
+| **level: loaded in** | **15212** | **15936** | **15575** | |
+
+- The worker read nothing until the hold (`stream:` 0.0% reads over the load's first 10 s),
+  then core 0 slept through ~90% of the hold. Core-0 work that could run while the worker
+  reads the start window, once the window is sized: the light rigs (1.5-1.7 s, no file, no
+  linear) -- well over the 1 s threshold, so the overlap is implemented (next entry).
+- **Bigger than the overlap, and not overlap:** three pure-CPU steps take 5.1-5.6 s of every
+  load: the byname index parse (2.56 s on L3), the HD window build (1.06-1.46 s), the light
+  rigs (1.5-1.7 s). The first two are text and map work a build-time binary index would remove;
+  the rigs depend only on (dti, arena) and could be precomputed at build time. Not done
+  tonight (owner's call: the payoff is measured here).
+- **Not verified:** New 3DS; levels 4-6 loads; the bomber's L7 load starts in DANT_5 (AT/ARENA),
+  so its window differs from a plain L7 start (plain L7: next entry).
+- **Logs:** `/tmp/kilo/vram-load/{A,B}-{L8,bomb}.log`, `A-L3.log` (the console's mdk.log pulls).
+- **Commits:** this entry only (docs/measure-vram-load); instruments on `throwaway/vram-load-hw`.
+
+## 2026-11-27 -- level load: the light rigs run behind the start HD window's reads (branch perf/3ds-load-overlap): KEPT
+
+- **What:** the per-arena light-rig precompute (`cachedLighting` over the level's arenas)
+  moves from the middle of the load to after the start HD window is sized and asked for, just
+  before the HD hold, with one `mdk_render_settle_streams(renderer, 1)` between arenas: what
+  landed is imported, the freed slots get the next reads, so core 1 reads the window while
+  core 0 scans. The rigs read no file and take no linear memory, so the window's arithmetic
+  (sized before them) is unchanged; nothing used `lightCache` before the first frame (the frame
+  loop fills it lazily anyway). No Citro3D on the worker, one worker thread, no per-model path.
+  The `start:` line now says how many textures landed during the scan (the hold's own `hd:
+  wait` count no longer includes them). +26 -9 lines in main_3ds.cpp.
+- **Why:** previous entry -- the worker sat idle until the hold, then core 0 slept through
+  ~90% of a 3.0-3.8 s hold; the rigs are 1.5-1.7 s of core-0 work with no dependency on it.
+- **Measured** (old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, default toggles, HD
+  from RomFS, `AUTOQUIT=30 LEVEL=n HDROMFS=1 PROFILE=1`, `hw_cycle.sh --profile`, all FRESH;
+  before = `throwaway/vram-load-hw` 08d9b4d1, after = `throwaway/load-overlap-hw` 45a37f4a, the
+  same instruments + this change):
+
+  | level | loaded in, before -> after | HD hold | worker read during the rigs | rig scan |
+  |---|---|---|---|---|
+  | L3 | 15212 -> **14236 ms (-976)** | 3143 -> 2243 ms | 24 files, 2.05 MB, 906 ms | -- |
+  | L7 | 15343 -> **14271 ms (-1072)** | 3271 -> 2126 ms | 32 files, 2.27 MB, 1119 ms | -- |
+  | L8 | 15524 -> **14551 ms (-973)** | 2887 -> 1806 ms | 33 files, 2.19 MB, 1044 ms | 1703 -> 1800 ms |
+
+  About 1 s (6-7%) off every load. The scan costs ~0.1 s more (the imports it now does: ~0.24
+  s of core-0 imports moved into it). Same end state: linear free at the first frame
+  identical on all three (12,062,848 / 11,850,752 / 12,596,480), the same window resident
+  (90/84/65 files), 0 HD waits, 0 draws without their HD copy, play frame means within noise.
+- **Not more, and why:** the worker reads ~65% of the scan (a pump only between arenas,
+  ~85 ms apart, refills at most the free slots). The rest of core 0's load work either feeds
+  the window's linear arithmetic (Kurt's start set, the DSP arena, the HUD) or is the window
+  itself; moving the window earlier would need a linear estimate for everything after it --
+  more complexity than this entry's payoff justifies, and not done.
+- **Checks:** Linux build 0 warnings; tests/scripts all cases match the oracle; tests/formats
+  200,698 checks, 0 failures; tools/check.sh ALL GATES PASSED (smdh SKIP, no .cia); 3DS build
+  0 compiler warnings; independent review (no defects; its note on the hold's count is the
+  `start:` line change).
+- **Not verified:** New 3DS; levels 4-6; HOME/sleep pressed during the scan (it makes no
+  applet call for its ~1.7 s, exactly as before it moved).
+- **Commits:** 77c72890 (code) and this one (ledger).

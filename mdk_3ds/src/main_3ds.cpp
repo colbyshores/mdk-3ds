@@ -716,13 +716,9 @@ int main(int argc, char** argv) {
                 // the audio worker (measured 2026-11-22). The pump makes them
                 // over the first frames, which are the load-in frames the
                 // original also spent inside BSPShow (0x41ba68).
-                // The light rigs too: the scan is ~113 ms an arena and no door
-                // frame must pay it.
-                for (const mdk::formats::Arena* a : level.arenas()) {
-                    mdk::cachedLighting(lightCache, level, a);
-                }
-                mdk::log3dsPrintf("start: %d views, %d light rigs precomputed",
-                                  (int)viewsBuilt, (int)lightCache.size());
+                // The light rigs are precomputed too, but later: behind the start
+                // window's reads, just before the HD hold (below).
+                mdk::log3dsPrintf("start: %d views", (int)viewsBuilt);
                 if (const mdk::LevelView* startView = arenaViews.find(startArenaName)) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
                                       (int)startView->batchCount(), (int)startView->vertexCount(),
@@ -1512,8 +1508,9 @@ int main(int argc, char** argv) {
     // the textures of every model the arena or its scripts can show), so their
     // ids exist and their packed originals -- the uncovered surfaces' -- are read
     // in the same hold.
-    if (enhancedToggles.enableHdTextures && hdSource.pack && hdSource.byname &&
-        !startArenaName.empty()) {
+    const bool holdForHd = enhancedToggles.enableHdTextures && hdSource.pack && hdSource.byname &&
+                           !startArenaName.empty();
+    if (holdForHd) {
         arenaViews.pumpSurfaces(1 << 20);
         if (const mdk::formats::Arena* owner = level.arenaNamed(startArenaName)) {
             size_t& cursor = objectWarmAt[startArenaName];
@@ -1522,6 +1519,26 @@ int main(int argc, char** argv) {
                                         mdk::requestPackedSurface, &warmAsk, &cursor, &objectView)) {
             }
         }
+    }
+    // THE LIGHT RIGS, BEHIND THE START WINDOW'S READS (docs/3DS_ARCHITECTURE.md 2:
+    // core 1 reads while core 0 works). The rig per arena (cachedLighting) is pure
+    // core-0 work, ~80-90 ms an arena on the Old 3DS (1.5-1.7 s a level), so no
+    // door frame pays it; it reads no file and takes no linear memory, so it can
+    // run after the window above was sized and asked for. Between two arenas the
+    // streams are pumped once (what landed is imported, the freed slots get the
+    // next reads), so the worker keeps reading the window through the scan and the
+    // hold below waits only for the rest. Measured on the Old 3DS before this
+    // (docs/WORK_LEDGER.md 2026-11-27): the worker sat idle until the hold, which
+    // then took 3.0-3.8 s while core 0 imported for 0.3 s of it.
+    int32_t madeDuringRigs = 0;
+    for (const mdk::formats::Arena* a : level.arenas()) {
+        mdk::cachedLighting(lightCache, level, a);
+        madeDuringRigs += mdk_render_settle_streams(renderer, 1);
+    }
+    // The textures made during the scan are not in the hold's own `hd: wait` count.
+    mdk::log3dsPrintf("start: %d light rigs precomputed, %d textures imported meanwhile",
+                      (int)lightCache.size(), (int)madeDuringRigs);
+    if (holdForHd) {
         mdk::holdHdWindow3ds(renderer, nullptr, 0, "loading screen", loading.get(), holdFrom,
                              frame);
     }
