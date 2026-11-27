@@ -490,6 +490,12 @@ int main(int argc, char** argv) {
     // Viewer.RunTests with FatalDamage 1000), the first level only -- how a death's
     // LASTGAME and the level's reload are run without a console.
     bool dieTest = false;
+    // --die-every-level: --die in EVERY level, not only the first, and --sniper with
+    // it. A death opens the main menu with Continue first (LASTGAME), and --press
+    // takes it, so a run goes die -> menu -> reload -> die... -- the console's
+    // death-menu flow, which is how a reload's memory is tested
+    // (tests/scripts/death_reload_test.sh). A test aid, not the C#'s.
+    bool dieEveryLevel = false;
     // --arena=NAME (with --at): Kurt starts in that arena the way a script's teleport
     // puts him there (ScriptRuntime::teleportKurt; the C# console's map,
     // Viewer.EnterStartArena), so an arena only a teleport reaches (LEVEL3's HMO_7)
@@ -838,6 +844,8 @@ int main(int argc, char** argv) {
             }
         } else if (std::strcmp(argv[i], "--die") == 0) {
             dieTest = true;
+        } else if (std::strcmp(argv[i], "--die-every-level") == 0) {
+            dieEveryLevel = true;
         } else if (std::strcmp(argv[i], "--god") == 0) {
             godCheat = true;
         } else if (std::strcmp(argv[i], "--noclip") == 0) {
@@ -914,6 +922,10 @@ int main(int argc, char** argv) {
     // canvas follows the window, so a 5:3 projection there would be stretched.
     if (eventEveryLevel && !hasEvent) {
         std::fprintf(stderr, "[main] --event-every-level needs --event=N: there is no event to repeat\n");
+        return 1;
+    }
+    if (dieEveryLevel && !dieTest) {
+        std::fprintf(stderr, "[main] --die-every-level needs --die: there is no death to repeat\n");
         return 1;
     }
     if (trueAspect && !headless) {
@@ -2267,7 +2279,7 @@ int main(int argc, char** argv) {
                 // C# Viewer.RunTests (Viewer.cs:664-680), ahead of Kurt's step: the
                 // --event fires on the step whose game time first reaches TestStart.
                 testTime += kStep;
-                if (dieTest && firstLevel &&
+                if (dieTest && (firstLevel || dieEveryLevel) &&
                     !(testTime < kTestStart || testTime - kStep >= kTestStart)) {
                     std::printf("[main] --die: Kurt hurt by 1000 at frame %u\n", frame);
                     player.combat().hurt(1000);  // C# Viewer.FatalDamage
@@ -2281,7 +2293,7 @@ int main(int argc, char** argv) {
                 }
                 // C# SniperTest.Step (Viewer.cs:507), before Kurt's step: sniper mode
                 // once he stands (after SettleTime 0.5 s), then the zoom key and the shot.
-                if (sniperTest && (firstLevel || eventEveryLevel)) {
+                if (sniperTest && (firstLevel || eventEveryLevel || dieEveryLevel)) {
                     if (sniperTestEntered < 0.0f && player.onFloor && testTime >= 0.5f) {
                         player.enterSniper();
                         player.scope().zoom = sniperTestZoom;

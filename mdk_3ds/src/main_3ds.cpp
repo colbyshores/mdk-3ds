@@ -594,15 +594,28 @@ int main(int argc, char** argv) {
     bool hudReady = false;
     // The Video/Graphics settings menu (SPEC.md 7.9): its fonts, and
     // its readiness. SELECT opens it when ready; without the fonts
-    // there is no menu and SELECT keeps its old quit meaning. STATIC,
-    // not stack: a FontView carries a whole Font (256 glyph records,
+    // there is no menu and SELECT keeps its old quit meaning. Not on
+    // the stack: a FontView carries a whole Font (256 glyph records,
     // ~11 KB), and two of them as main() locals overflowed the main
     // thread's stack -- the first printf of the run wrote below it
     // and the guest died before its first log line (measured in
     // Mandarine, 2026-11-14; AGENTS.md section 10's stack rule).
+    //
+    // The two FontViews are THE LEVEL'S, on the heap, and go with it --
+    // not statics. Each load copies its Font in (font_ = font: ~250 glyph
+    // pixel blocks per pair), and a static kept the blocks the FIRST
+    // level's load made, wherever the heap had room at that moment: in
+    // the middle of the level's data, ~4-20 MiB up. They outlived the
+    // level, so every later load had to place its large blocks around
+    // them, and the heap's top rose 5.5 MiB from the first load to the
+    // second (mem[loop] arena 25.18 -> 30.69 MiB, Mandarine, LEVEL3
+    // death-reload loop; docs/WORK_LEDGER.md 2026-11-27). The menu itself
+    // holds no allocation that matters and stays static.
     static mdk::EnhancedMenu menu;
-    static mdk::FontView menuBig;
-    static mdk::FontView menuSmall;
+    std::unique_ptr<mdk::FontView> menuBigOwned(new mdk::FontView());
+    std::unique_ptr<mdk::FontView> menuSmallOwned(new mdk::FontView());
+    mdk::FontView& menuBig = *menuBigOwned;
+    mdk::FontView& menuSmall = *menuSmallOwned;
     bool menuReady = false;
     // The level's script bytecode. The C# Viewer loads it next to the geometry
     // and the runtime cannot exist without it.
@@ -3048,6 +3061,10 @@ int main(int argc, char** argv) {
     mdk::scripts::MdkObject::forget_poses();
     // 4. The arenas' GPU objects, while their views still know them.
     arenaViews.clear();
+    // 4b. The options pages are static and keep the fonts they were opened with;
+    //     those are the level's and go at the brace below (the next level's
+    //     Options sets them again).
+    pauseOptions.items().setFonts(nullptr, nullptr);
     }   // END OF THE LEVEL: its objects are destroyed here, in reverse order
     // 5. What the level made through the renderer and no object released, newest
     //    first (the deferred release: freed at the next frame boundary).
