@@ -3612,3 +3612,108 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   level's own split differs a little), HD off (no hold: the bar goes 72% -> full
   at the end), the menu's HD-toggle hold (unchanged, draws no bar), Mandarine.
 - **Commit:** this one.
+
+## 2026-11-26 -- the combined test build: HD window + upstream fixes + decals + bullet cams + load bar (branch test/3ds-combined-11-26)
+
+- **What:** one branch the owner can test as one build, in worktree `.claude/worktrees/combined`,
+  from `perf/3ds-hd-bubble` e7dcd1a9 (which holds `arch/3ds-platform` and
+  `fix/3ds-second-core-streaming`'s code commit c95310c9; that branch's later ledger-only commit
+  00172ca1 is not in it). Each branch is its own `--no-ff` merge, in this order:
+  1. 49db95d9 `fix/upstream-gameplay` (with `fix/level2-cannons`)
+  2. c5221a5b `fix/upstream-presentation`
+  3. 2315ec29 `fix/3ds-decal-zfight`
+  4. d2ba986f `fix/3ds-bullet-cam`
+  5. 59150ee1 `fix/3ds-load-bar`, then 7802a292 (its HD step reworked onto the HD window)
+  6. b1bf4428 review fixes (below)
+  No throwaway, harness or FAST-toggle branch is merged.
+- **Why:** owner request: a single build of the 11-26 work to test.
+- **Conflicts and how they were resolved:**
+  - `docs/WORK_LEDGER.md`, every merge: both sides appended entries; both kept, in merge order.
+  - `tests/scripts/fall_frontend_test.sh` (merge 2): the PASS line takes both intents -- health 84
+    (upstream 93743b33, gameplay) and Esc pausing the fall (upstream 75ec50e2, presentation).
+  - **46 tick1 goldens** (merge 2), moved by both upstream branches (arena sounds 683a53ef and the
+    fall's explosions here; newest-first objects, chains, platforms, missiles there). Each was
+    rewritten from the merged C++ (scratch `bless`: the C++'s output written over the golden it
+    failed; the five save goldens from `tick1 dump save`, which the bless writes three times) and
+    compared byte for byte with the C# oracle, the branches' own probes (`tests/scripts/*_probe`)
+    built with .NET 10.0.404 against `git archive` of upstream `src`:
+    - 42 equal upstream **7f0dfca8** (it holds every fix either branch ported except 6ccc0cf4, a
+      LEVEL4 board fix none of these touch) with the probes passing `levelData.Arenas` as
+      upstream's Viewer does: the L5 tick tables, the hazards, bomber, plat_keeper, ride_xd2,
+      rounds_mortar goldens, and the five saves (`town_total` is native at 7f0dfca8);
+    - the three skydive goldens equal C# 1.1.1 + 93743b33, 683a53ef, 04c25852, 8bc42528 (the
+      fall probe does not build against 7f0dfca8's later FallSim API);
+    - `L8_effects_storm` has no oracle twin (the C++'s effects view over `L8_hazards_debris`'s
+      storm, which equals the oracle), as on both branches.
+    - Two goldens that merged as text but not in behaviour: `L7_ride_lost` and `L7_ride_test`
+      (jump arc a91c0870 on one side, arena sounds on the other); the merged C++ printed new
+      bytes, rewritten, both equal the 7f0dfca8 oracle.
+  - `mdk_3ds/src/main_3ds.cpp` (merge 4, the bullet cams): the effects build keeps both -- the
+    tiny-debris cull off while a round camera watches, and the build with the tick blend
+    (7740deb1). The `sniperView.draw` call merged with both new arguments; the insets read the
+    blended round cameras (a73a5cd2's `hudOf(..., tickAlpha)`), so the two compose. Not clean as
+    the agents expected, but one hunk.
+  - `packs_3ds.{h,cpp}`, `main_3ds.cpp` (merge 5, the load bar): the branch's `holdHdSet3ds`
+    over the removed pinned set was dropped for the HD window's `holdHdWindow3ds`; the bar steps,
+    the kept screen and the loading frames that skip the pumps kept; the `level: loaded in` timer
+    starts once the screen is up.
+- **The load bar on the HD window (7802a292):** `holdHdWindow3ds` takes the loading screen, the
+  bar's start (0.72) and the frame index. At level start it reads `mdk_render_hd_pending` over the
+  window against the level-start window's size (the files still to come when the wait starts) and
+  draws `from + (1 - from) * landed`, a frame only when the count moved and at most every 0.25 s.
+  The "toggled on" and in-play waits pass no screen and are unchanged.
+- **Independent review** (a separate read-only agent over the merges and the rework), fixed in
+  b1bf4428:
+  - a real semantic conflict: the decal depth pull read `r->cameraPos`, which the bullet cams'
+    scene insets never change, so inside a round-camera window every layered or line draw was
+    pulled towards Kurt's camera (off its place, still z-fighting). The pull now reads
+    `r->pullEye`, set with the frame camera and to the inset camera during `drawSceneInsets`,
+    restored after (the Vulkan backend's `activeCamera` already did this);
+  - the bar's share is clamped and never goes back (the whole-window count can rise when the
+    pumps queue a linked copy); two stale comments.
+  - Not changed, recorded: the loading screen's picture is now resident while the start window
+    is sized, so `room` is smaller by its size than in hd-bubble's measurements (the
+    `hd: level N window` line logs room and any step-down); on a full heap the hold's pumps
+    could evict it (the next bar frame would draw without it).
+- **Checks** (all at `nice -n 19 ionice -c2 -n7`, on b1bf4428):
+  - Linux build (RelWithDebInfo, the default): 0 warnings. 3DS build (`make -C mdk_3ds`,
+    devkitARM): 0 warnings.
+  - `make -C tests/scripts test` (Linux built first; LinuxBinaryFresh PASS): exit 0, 1001 PASS,
+    0 FAIL, 4 SKIP (the frame gate's oracle arms); tick1 "All cases match the oracle".
+  - `make -C tests/formats`: 200,670 checks, 0 failures.
+  - `tools/check.sh`: ALL GATES PASSED (gates_smdh SKIP: no .cia built).
+  - Merge 2's commit carries `tests/frames/{capture_oracle.sh,reference.sha256}`, protected
+    files changed by fix/upstream-presentation's own 887339fc and identical to that branch; the
+    pre-commit gate refuses them without `MDK_OWNER_APPROVED=1`, which was set for that commit
+    only, for that reason. Nothing else protected changed.
+  - Emulator (Mandarine r1.2.1, md5 0d2adab6 verified, `DISPLAY=:99`, `mdk_3ds/tools/emurun.sh`,
+    the only MDK instance; a perfect_dark instance was also running): the
+    `throwaway/combined-hw` payload `AUTOQUIT=90 LEVEL=7 HDROMFS=1 TOGGLES=enableLighting=0`
+    (the raw pack from `.claude/worktrees/hd-bubble/build-hd-pack/`). The bar logged 23, 42, 57,
+    66, 68, 71, 72, 100 %; `hd: level 7 window: 19 arenas, 144 files ... largest window 5959360
+    bytes, room 10383360`; `hd: wait loading screen: 84 files asked, 0 left, 100 made in
+    1662 ms`; `level: loaded in 9300 ms`; `exiting after 5367 frames ... harness autoquit`,
+    `--- session end ---`; `hd: level end: 0 waits, 0 draws without their HD copy`. emurun
+    exits 5 on these runs because this tree logs frame lines 1-5 only (its frame counter reads
+    5); the guest log is the evidence. Capture `hw-logs/emu-L7.png`: DANT_1, Kurt, the HUD. The
+    emulator's heap and timing are not the Old 3DS's.
+- **Builds kept** (`.git/worktrees/combined/hw-logs/`):
+  - Player (no harness, plain `make -C mdk_3ds`) of b1bf4428: `mdk-combined-b1bf4428.3dsx`,
+    md5 `a4446585c5ea67eec05aa3a97c9abb2e` (234,561,092 bytes). It reads HD from the SD card and
+    needs the uncompressed pack (`hd_pack_convert.py`, `-z none`): already converted at
+    `.claude/worktrees/hd-bubble/build-hd-pack/` (not regenerated).
+  - Harness payloads for the appliance, on `throwaway/combined-hw` 33b97b0a (this branch plus
+    the harness and route commits of `throwaway/hd-bubble-change-hw`, cherry-picked; never on
+    this branch): `mdk-combined-hw-once-33b97b0a.3dsx` (`AUTOQUIT=90`, md5
+    `2353cdb53e2235c0232388239f845648`) and `mdk-combined-hw-profile-33b97b0a.3dsx`
+    (`AUTOQUIT=90 PROFILE=1`, md5 `49c159a506a8cf366c23dff8f66162be`); build logs and the
+    emulator logs beside them.
+- **Not measured / not verified:**
+  - Nothing on hardware. The Old 3DS appliance is hard-hung (other agents' campaigns hold its
+    lock); the owner's New 3DS was not used. Every branch's own hardware A/B is still open, and
+    the combination adds its own: the decal pull's cost inside the round-camera insets, the HD
+    window's margins with the loading screen resident, and the load bar's step fractions, which
+    were measured with the pinned set (level 4, 12.6 s) and not on the window's shorter wait.
+  - The C# oracle covers the host goldens only; the 3DS frontends' behaviour (bar, insets, pull)
+    is not oracle-checked.
+- **Commit:** the merges and fixes above, and this ledger commit.
