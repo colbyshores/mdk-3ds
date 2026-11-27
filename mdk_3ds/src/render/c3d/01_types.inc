@@ -797,6 +797,10 @@ struct RendererC3D {
     int sunDirLocation = -1, sunColourLocation = -1, skyLocation = -1, groundLocation = -1;
     int cameraLocation = -1, lightParamsLocation = -1;
     float cameraPos[3] = {0.0f, 0.0f, 0.0f};
+    // The eye the depth pull draws towards (06_draw_submit.inc): the frame's
+    // camera, or a sniper round camera's while its scene inset is replayed
+    // (drawSceneInsets), as the Vulkan backend's activeCamera.
+    float pullEye[3] = {0.0f, 0.0f, 0.0f};
     // The frame's six geometry-shader uniforms (prepareLighting), kept so every
     // bind of the lit program can write them again (installLitUniforms).
     float litUniforms[6][4] = {};

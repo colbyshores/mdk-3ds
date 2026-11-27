@@ -410,6 +410,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     r->cameraPos[0] = cam->position.x;
     r->cameraPos[1] = cam->position.y;
     r->cameraPos[2] = cam->position.z;
+    memcpy(r->pullEye, r->cameraPos, sizeof(r->pullEye));
 }
 
  void mdk_render_set_lighting(MdkRenderer rr, const mdk::Lighting* light) {

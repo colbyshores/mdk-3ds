@@ -260,6 +260,7 @@ static void drawSceneInsets(RendererC3D* r) {
         setVsMatrix(r, kDedupeMvp, r->mvpLocation, &gpuMtx);
         r->matrixIsFrame = true;
         setLitCamera(r, inset.position);
+        memcpy(r->pullEye, inset.position, sizeof(r->pullEye));   // the depth pull's eye
         for (int32_t i = 0; i < r->preparedGlowAt; i++) {
             if (!r->prepared[(size_t)i].overlay) {
                 drawRecorded(r, &r->prepared[(size_t)i]);
@@ -271,6 +272,7 @@ static void drawSceneInsets(RendererC3D* r) {
     memcpy(r->frustum, frameFrustum, sizeof(frameFrustum));
     r->matrixIsFrame = false;
     setLitCamera(r, r->cameraPos);
+    memcpy(r->pullEye, r->cameraPos, sizeof(r->pullEye));
     C3D_SetViewport(0, 0, r->targetWidth, r->targetHeight);
     C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, r->targetWidth, r->targetHeight);
 }

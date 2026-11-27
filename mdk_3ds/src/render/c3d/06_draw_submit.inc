@@ -238,7 +238,7 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     if (overlay) {
         upload = draw->world;
     } else if (draw->material.depth_layer != 0 || draw->primitive == mdk::Primitive::Lines) {
-        const mdk::Vec3 eye = {r->cameraPos[0], r->cameraPos[1], r->cameraPos[2]};
+        const mdk::Vec3 eye = {r->pullEye[0], r->pullEye[1], r->pullEye[2]};
         float pull[16];
         mdk::buildDepthPullMatrix(eye, draw->primitive, draw->material.depth_layer, pull);
         if (p->worldIdentity) {

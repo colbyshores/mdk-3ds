@@ -100,7 +100,7 @@ struct MdkFrameParams {
     // A loading screen's frame, drawn while a level loads (the 3DS's moving bar):
     // the 3DS backend draws and presents it but neither counts it nor runs its
     // between-frame texture pumps, which would otherwise make the level's
-    // textures before the load has sized the HD set (and slow the HD hold).
+    // textures before the load has sized the HD window (and slow the HD hold).
     bool loading = false;
 };
 
