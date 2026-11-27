@@ -5037,3 +5037,195 @@ already has perf/3ds-view-prebuild's object warm over the bubble's hints).
 - **Not verified:** New 3DS; levels 4-6; HOME/sleep pressed during the scan (it makes no
   applet call for its ~1.7 s, exactly as before it moved).
 - **Commits:** 77c72890 (code) and this one (ledger).
+
+## 2026-11-27 -- the final hardware pass on test/3ds-combined-11-26 (71962017): six door walks, L8 combat, ride end, mip pictures, death reloads, the ATM evidence -- MERGE VERDICT
+
+- **Build under test:** test/3ds-combined-11-26 at 71962017 (8ec873d2 + the checklist commit),
+  with the harness on `throwaway/final-pass-hw` (not merged anywhere): throwaway/load-overlap-hw's
+  instruments (per-frame GPU/CPU split, load probes; it carries throwaway/combined-hw 25180768's
+  AT/ARENA/GOD/NOCLIP/ROUTE and the in-play memory sampler), throwaway/heap-growth-hw's death-menu
+  walk (b545cc32, KILLAT/MENUPLAN), and new throwaway pieces: `WIN=n` (per-window spans: sim split
+  into Kurt and scripts, views, warm, C3D_FrameBegin, arenas, objects, effects build+draw,
+  C3D_FrameEnd, the frame's CPU, the GPU's time), `AUTOAIM`, the frame readback and KILL/ZOOMSET
+  ported from throwaway/mip-nonsquare-hw, and GIVE/AIM actually parsed (this harness built them
+  only with UNLOCK, so the first combat run had no pickups -- caught in its log, rerun).
+- **Conditions:** old3ds-lan167, CFGU model 0 (Old 3DS), 268 MHz, L2 off, stereo on, HD on **from
+  the RomFS** (`HDROMFS=1`, `.claude/worktrees/hd-bubble/build-hd-pack`, as every pass tonight),
+  the appliance's own config (owner toggles); the two mip scenes use the Fable agent's TOGGLES so
+  the pictures compare. 15 cycles, every one FRESH and push-verified (`transfers.log` bytes_out),
+  appliance lock held 07:59-11:03, **no ATM screenshot requested**, the console never went dark.
+  Everything: `.git/mdk-review/final-pass-2026-11-27/` (`run.log`, `*.session.log`, `cap-*/`,
+  `scripts/` with the exact make lines and routes).
+- **Routes:** L5-L8 the hd-bubble/etc1 door walks (etc1-leftovers-logs/build_payload.sh), L4 the
+  combined-hw/doorway-2 MEAT_6 route, L3 the hd-bubble 11-26 route (rebuilt from its log's
+  waypoint lines: same 16 waypoints, speeds, arena order; it completes at 144.4 s vs 147.4 s).
+  `WIN=5` on the walks (a log line per 5 s; the earlier runs had none or the doorway-2 5 s one).
+
+### Per level (this pass / the latest previous run of the same route)
+
+Previous = L3 hd-bubble change 11-26 (the only L3 door walk; before tonight's merges), L4/L7/L8
+doorway-2 after (dw2-*, fbfa9459's run), L5/L6 etc1-leftovers after (d71b8904's run). Frame
+columns: mean ms / p95 ms / frames over 33.3 ms. Every run: **HD waits 0, draws without their HD
+copy 0, music underruns 0, failed allocations 0** (no FAILED/FATAL/REFUSED line).
+
+| level | load s | frames (this / prev) | core-0 file reads in play | linear free min MB | main free min MB |
+|---|---|---|---|---|---|
+| L3 | 14.80 / 14.51 | 21.23/33.9/721 of 9373 / 20.98/33.4/549 of 11155 | 0 | 9.40 / not sampled | 7.12 / not sampled |
+| L4 | 13.91 / 14.70 | 17.07/18.9/4 / 17.08/19.0/2 | 0 | 11.59 / 11.59 | 7.92 / 7.64 |
+| L5 | 11.71 / 12.23 | 19.44/29.2/275 / 19.00/28.0/182 | 0 | 9.99 / 9.98 | 8.35 / 8.43 |
+| L5 rerun | 11.76 | 19.31/32.7/408 | **1** (SW_EWJ, below) | 9.98 | 8.37 |
+| L6 | 12.76 / 13.44 | 18.26/27.9/129 / 17.44/21.9/89 | 0 | 9.85 / 9.77 | 9.36 / 9.48 |
+| L6 rerun | 12.78 | 17.24/19.2/93 | 0 | 9.85 | 9.23 |
+| L7 | 14.77 / 15.70 | 18.44/33.0/502 / 18.44/33.0/536 | 0 | 8.62 / 8.62 | 8.34 / 8.31 |
+| L8 | 14.82 / 15.83 | 24.42/39.5/1693 / 24.85/40.1/1837 | 0 | 2.99 / 3.18 | 4.95 / 4.90 |
+
+Worst frame per doorway, ms (previous in brackets):
+- L3: HMO_1->CHMO_1 36.4 (36.9); CHMO_1->HMO_2 48.0 (52.1); HMO_2->CHMO_2 38.8 (38.6); CHMO_2->HMO_3
+  39.1 (35.3); HMO_3->CHMO_2 35.1 (35.3); CHMO_2->HMO_2 34.5 (34.0); HMO_2->CHMO_1 52.3 (52.0);
+  CHMO_1->HMO_1 35.2 (35.8).
+- L4: MEAT_6->CMEAT_5 20.0 (20.0); CMEAT_5->MEAT_5 45.4 (45.5); MEAT_5->CMEAT_5 30.1 (32.1);
+  CMEAT_5->MEAT_6 18.4 (18.3); second pass 18.0 (17.9), 33.8 (30.1), 31.3 (30.0), 18.5 (20.0).
+- L5: **MUSE_1->CMUSE_1 238.0 (73.3)**; CMUSE_1->MUSE_2 19.4 (23.7); MUSE_2->CMUSE_2 21.4 (22.2);
+  CMUSE_2->MUSE_3 37.9 (38.1); MUSE_3->CMUSE_3 27.2 (26.2); CMUSE_3->MUSE_4 31.0 (65.6);
+  MUSE_4->CMUSE_3 33.6 (30.0); CMUSE_3->MUSE_3 32.6 (28.0); MUSE_3->CMUSE_2 21.7 (21.2);
+  CMUSE_2->MUSE_2 19.3 (18.0); MUSE_2->CMUSE_1 24.5 (27.4); **CMUSE_1->MUSE_1 217.6 (67.9)**.
+  Rerun: MUSE_1->CMUSE_1 70.8, CMUSE_1->MUSE_1 68.0.
+- L6: OLYM_1->COLYM_1 26.9 (30.7); COLYM_1->OLYM_2 26.1 (37.9); OLYM_2->COLYM_2 38.1 (38.0);
+  COLYM_2->OLYM_3 40.2 (40.9); OLYM_3->COLYM_2 19.0 (18.2); COLYM_2->OLYM_2 34.5 (34.3);
+  OLYM_2->COLYM_1 36.1 (33.9); COLYM_1->OLYM_1 33.9 (31.9). Rerun max 40.1.
+- L7: DANT_1->CDANT_1 38.0 (36.9); CDANT_1->DANT_2 30.0 (35.0); DANT_2->CDANT_2 28.6 (29.6);
+  CDANT_2->DANT_3 42.0 (41.2); DANT_3->CDANT_3 38.9 (48.0); CDANT_3->DANT_4 47.2 (47.5);
+  DANT_4->CDANT_3 37.9 (43.7); CDANT_3->DANT_4 33.7 (34.8).
+- L8: GUNT_1->CGUNT_1 50.0 (59.9); CGUNT_1->GUNT_2 68.5 (68.5); GUNT_2->CGUNT_2 26.5 (25.7);
+  CGUNT_2->GUNT_3 42.0 (43.8); GUNT_3->CGUNT_3 33.8 (30.9); CGUNT_3->GUNT_4 35.2 (37.6);
+  GUNT_4->CGUNT_3 36.6 (36.0); CGUNT_3->GUNT_3 32.8 (32.5); GUNT_3->CGUNT_2 34.0 (31.5);
+  CGUNT_2->GUNT_2 31.2 (32.5); GUNT_2->CGUNT_1 35.0 (34.4); CGUNT_1->GUNT_1 48.9 (38.0).
+
+What is worse, plainly:
+- **L5's MUSE_1 doorway stall (238 / 218 ms, ~12 frames each way, ~2.5 s at 4-5 fps) is the
+  SCRIPTS**, not textures: `slow:` lines give sim 200 ms a frame, scripts 198 ms of it, Kurt 0.1,
+  everything else normal; it builds up while Kurt (noclip) flies under MUSE_1's floor toward the
+  doorway (scripts 4.5 -> 7.5 ms a frame over the 10 s before). It is **intermittent**: this pass
+  1 of 2 runs (the rerun shows 70.8 / 68.0, the usual figure); earlier runs of the same route: the
+  etc1 "base" run on 12118fd0 had it at the same two doorways and size (238.0 / 218.0 ms -- that
+  entry blamed TRAIL's core-0 read; the spans here say scripts), d71b8904's run and both 11-26
+  hd-bubble runs did not. Not shown caused by any one merge; not shown to happen with Kurt on foot
+  (the route flies him through geometry the enemies cannot reach). Open, not fixed.
+- L5 rerun: one core-0 file read in play, `romfs:/orig/textures/sw_ewj...` (1,365 bytes, 11.7 ms):
+  the Earthworm Jim pickup drawn on its spawn frame, no warm asked for it. Rare (an easter-egg
+  drop); against the "0 in play" rule.
+- L6's first run (mean +0.8 ms, over 33 ms 129) did not repeat: the rerun is 17.24/19.2/93 against
+  17.44/21.9/89. Run-to-run spread, not a regression.
+- L3: over 33 ms 7.7 % of frames vs 4.9 % in the 11-26 run, mean +0.25 ms, doorways within 4 ms.
+  The baseline predates every merge tonight (incl. the upstream object order + pose blend the L7
+  analysis measured at ~+40 frames over 33 ms); no newer L3 walk exists, so not attributable.
+- L8 CGUNT_1->GUNT_1 48.9 vs 38.0 ms (50 vs 30 frames over); GUNT_1->CGUNT_1 went the other way
+  (50.0 vs 59.9). One run each.
+- Better: load -0.5 to -1.0 s on L4-L8 (the load overlap); L8 over 33 ms 1693 vs 1837, mean
+  -0.43 ms; L7 over 33 ms 502 vs 536; L4 equal; memory minima equal (L8 linear 2.99 vs 3.18 MB,
+  main free 4.95 vs 4.90 MB).
+
+### L8 combat and explosions (owner: "22 fps is before explosions; could drop into the teens")
+
+- **Scene:** LEVEL8, Kurt teleported into GUNT_2 (`AT=-200,53,-7,0 ARENA=GUNT_2`), god mode, not
+  noclip, AUTOAIM (Kurt faces the nearest live enemy, 9-12 within 1500 units), the chain gun held
+  from frame 90 for 2 minutes, two short advances, 13 `useitem` presses; run 2 with
+  GIVE=SW_GATT + 4x SW_HBOMB (the pickups confirmed in its log; whether each grenade left his hand
+  is not logged). `WIN=1` spans, `--profile`. Results run 1 / run 2 (logs `combat-L8`,
+  `combat2-L8`):
+  - **frame mean 38.1 / 39.0 ms (26.3 / 25.6 fps); p95 49.1 / 48.9; frames over 33.3 ms 3041 /
+    3051 of 3151 / 3073 (97 %) -- the scene runs at 2-3 vblanks (vblanks 2:2444 3:704 / 2:2238
+    3:831).**
+  - **Lowest 1 s: 20.0 fps both runs** (50 ms frames, 3 vblanks): the GUNT_2 entry before any shot
+    (seconds 1-3: sim 13.5 incl. Kurt 7.2, objects 11.5, end 9.1, GPU 21 ms), and the kill /
+    explosion bursts (run 1 second 80: 2 kills, 58 effect draws a frame, scripts 10.5, fx 3.6,
+    end 10.8 ms; run 2 seconds 4-5: 3 kills, up to 79 effect draws, 20.6-23 fps, worst frame
+    73.4 ms). fps per second: min 20.0, p10 23.3 / 23.8, median 27.0 / 26.0. **Never in the teens.**
+  - Per frame over the whole fight (run 1; run 2 within 0.6 ms): **C3D_FrameBegin 11.0 (vblank +
+    GPU wait), scripts 5.2, Kurt 3.3 (firing), objects 7.1, effects 1.2, C3D_FrameEnd (both eyes'
+    submission) 8.2, views+warm+arenas 0.5, unattributed 1.2; CPU 27.6 ms, GPU 17.5 ms, CPU waited
+    on the GPU ~7.8 ms.** Kills 5 / 3, hits 160 / 46 (the nearest enemy, an XG 395 units off,
+    stayed unhittable for most of both runs).
+  - Same arena without combat (the L8 walk's GUNT_1 tail, 50 s, the scripts' enemy count at 40): 36.6 ms,
+    27.3 fps -- so continuous fire costs ~2 ms a frame (Kurt's firing), bursts of kills and
+    explosions take 1-2 s down to 20-21 fps.
+- **What dominates:** the CPU. The frame is CPU then GPU, nearly serial (C3D_FrameBegin waits for
+  the last frame's GPU): ~28 ms of CPU -- objects ~7, frame-end submission ~8, scripts ~5, Kurt's
+  firing ~3 -- then the GPU's ~17.5 ms overlaps only part of it. Effects themselves are ~1-3.6 ms
+  even in a burst; what an explosion adds is scripts (deaths) and submission (more draws). No fix
+  tonight (owner).
+
+### Pictures (the game's own left-eye readback, 400x480 targets; looked at)
+
+- **LEVEL4 ride end** (`AT=62.35,2582.81,-392.90,90 ARENA=CMEAT_1 FIXED=1`, frames 120 / 400
+  standing, 700 walking back; `cap-ridecap-L4/ride-sheet.png`): Kurt whole, feet and shadow on the
+  tube floor in all three; no grey plane, nothing cut at the knees. **Right.**
+- **LEVEL7 practice room, DANT_2** (the Fable T512C scene: XBANG killed at 40, AIM 101/-5, scope
+  zoom stepped 0.7 -> 0.05, frames 650-1850; `cap-dant2cap-L7/`): the three bullseyes crisp red /
+  white / blue at every zoom; side by side with T512C (the fix's own after) at 800 and 950 they
+  match (`dant2-crop-T512C-left-mine-right.png`); none of the washed pink of the before. **Right.**
+- **Start tunnel arch** (the Fable YA walk from CDANT_1, frames 30-750; `cap-tunnelcap-L7/`): the
+  inner arch's left leg clean, no dark block; matches YA (after) and not XA (before) at 30 and 390
+  (`tunnel-arch-crop-XA-YA-mine.png`). **Right.**
+- (A first capture build wrote nothing: this tip's renderer only counts capture requests. The
+  readback was ported and those three runs redone. The first DANT_2 pull returned BMPs left on the
+  card by the 11-26 mip campaign -- quarantined as `cap-dant2-L7.STALE-from-earlier-sessions`;
+  every picture above has its `screenshot: wrote` line in its own session.)
+
+### Death reloads and a quit from the main menu
+
+- `LEVEL=3 KILLAT=240 MENUPLAN=A/A/A/A/D,D,D,D,D,D,D,D,A`, HD on: five LEVEL3 loads, four deaths
+  (the second in the scope) each followed by the main menu and Continue, the fifth death then Quit
+  from the main menu. **`exiting after 5505 frames: menu Quit`, `--- session end ---`, FRESH; no
+  failure line; 0 underruns.**
+- **In use: flat.** After every teardown 848,552 / 848,504 / 848,480 / 848,504 / 848,480 bytes; at
+  every level start 20.98 MB (+-1 KB). Load 14.64-14.85 s each time.
+- **Heap top: flat across the reloads, but not at the first load's figure.** At teardown 21.59 MB,
+  then 21.50 MB x4. At each level's start: **23.11 MB first load, then 29.52 / 27.84 / 29.52 /
+  27.84 MB** (+6.4 / +4.7 MB), alternating, no trend, of a 33.77 MB cap. fix/3ds-heap-growth held
+  the top at the first load's in Mandarine without HD (25.58-25.71); on the console with HD the
+  step of ~5 MB on the first reload is back (the open HD-copies-table note in that entry is the
+  likely cause; not measured).
+- Unexplained: the reader's final line says 553 files, **1 failed**, between the last hold and the
+  exit (no error line names it; likely a read cut by the quit).
+
+### Item 7: the ATM log, crash dumps and errdisp (pulled read-only 08:11, nothing purged)
+
+- Files: `.git/mdk-review/atm-evidence-2026-11-27/` (`atm-0811.log`, `artifacts-0811.txt`, 8 arm11
+  + 2 arm9 dumps, errdisp 1-6, `DECODE.txt`; the 00:35 atm.log kept). ATM's clock: `t=` is ms
+  since 1900 on an RTC ~8615 days fast (anchored on the logged 01:57 `cmd reboot`).
+- **All 10 dumps are byte-identical to the set pulled 11-26 11:12** (`atm-retrieved-2026-11-26/`):
+  no exception dump has been written since, so **neither the 11-26 13:2x-13:5x hang nor ~02:46 left
+  one.** Decoded (Luma3DS v1.3): arm11 30-33 an unnamed `.3dsx` app, prefetch abort (IFSR 2,
+  a breakpoint) at pc 001f8664 four times; 34 `Turok` (the t2k port) data abort; 35-36 an unnamed
+  `.3dsx`, data abort writing VRAM (far 1f0bb800); 37 the perfect_dark port ("PD3DS: main: enter",
+  a path string used as a pointer); arm9 00/01 aborts with no process name. errdisp 1-6: all the
+  HOME Menu, FS not-found (0xC8804464 x5, 0xC8804478), the newest 11-26 ~11:52 -- not at a hang.
+- **The ATM log at the 11-26 hang:** 13:30:00 `cmd screenshot decal-after-3`, 13:30:03 shot set
+  committed, 13:30:04 one `http_accept` -- then nothing (not even ATM's own heartbeat) until the
+  18:50 power-on boot. The ~02:46 wedge has rolled out of the 64 KiB log.
+- **Reading:** the hangs are lock-ups, not caught faults (no dump), and the only timed evidence
+  puts the freeze within ~4 s of an ATM screenshot commit with MDK running. That implicates ATM's
+  live screenshot path, not the game; one hang, a correlation. Keep ATM screenshots banned.
+  (Tonight's 15 cycles, no screenshots, no hang.)
+
+### Not run / not verified
+
+- New 3DS; HOME / lid sleep; the CIA; the fall and the stream (not on these routes); the L5 storm
+  with Kurt on foot; whether the run-2 grenades were thrown (not logged).
+
+### Verdict
+
+- Everything the combined branch set out to fix measured fixed on the Old 3DS: 0 HD waits, 0 draws
+  without HD, 0 underruns, 0 failed allocations on all six levels; core-0 reads in play 0 on every
+  route run but one easter-egg pickup; loads 0.5-1.0 s faster; doorways equal or better than the
+  per-branch numbers; the ride end, the practice-room bullseyes and the tunnel arch look right on
+  hardware; a death/reload loop ends in a clean main-menu quit with in-use memory flat. L8 combat
+  holds 25.6-26.3 fps over two minutes, lowest second 20.0 fps, never the teens.
+- Open and flagged, none shown to be caused by this branch: the intermittent L5 MUSE_1 script
+  stall (238/218 ms; 1 of 2 runs tonight, seen before on 12118fd0); the ~5 MB heap-top step on the
+  first reload with HD; the SW_EWJ core-0 read.
+- **MERGE TO MAIN: yes** -- with the L5 MUSE_1 doorway on the owner's playthrough list (look for a
+  ~2 s freeze entering or leaving CMUSE_1); if it shows on foot, it is a scripts bug to bisect.
+- **Commit:** this one (ledger only). Instruments stay on `throwaway/final-pass-hw` (c57dcbf0,
+  a742dab2, 56a48d98, ad4c564a on the load-overlap-hw merge and b545cc32's pick).
