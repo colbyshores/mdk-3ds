@@ -66,6 +66,7 @@
 #include "game/sniper_view.h"
 #include "render/arena_scene.h"
 #include "render/material_resolver.h"
+#include "game/effects_view.h"
 #include "scripts/script_runtime.h"
 #include "util/matrix.h"
 #include "util/math_lut.h"
@@ -4278,7 +4279,8 @@ std::vector<std::string> splitColons(const std::string& token) {
 bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* holds,
                           std::vector<ItemsGive>* gives, std::vector<HazardsTeleport>* teleports,
                           std::vector<HazardsRun>* runs, std::vector<std::string>* watched,
-                          bool* flying) {
+                          bool* flying, std::vector<std::string>* roped, bool* textures,
+                          bool* sprites) {
     std::string items;
     size_t start = 0;
     while (start < schedule.size()) {
@@ -4323,6 +4325,21 @@ bool parseHazardsSchedule(const std::string& schedule, std::vector<ItemsHold>* h
                 return false;
             }
             *flying = true;
+        } else if (f[0] == "sprites") {
+            if (f.size() != 1) {
+                return false;
+            }
+            *sprites = true;
+        } else if (f[0] == "frames") {
+            if (f.size() != 1) {
+                return false;
+            }
+            *textures = true;
+        } else if (f[0] == "rope") {
+            if (f.size() != 2) {
+                return false;
+            }
+            roped->push_back(f[1]);
         } else {
             items += (items.empty() ? "" : ",") + token;
         }
@@ -4357,7 +4374,11 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
     std::vector<HazardsRun> runs;
     std::vector<std::string> watched;
     bool flying = false;
-    if (!parseHazardsSchedule(schedule, &holds, &gives, &teleports, &runs, &watched, &flying)) {
+    std::vector<std::string> roped;
+    bool textures = false;
+    bool quads = false;
+    if (!parseHazardsSchedule(schedule, &holds, &gives, &teleports, &runs, &watched, &flying,
+                              &roped, &textures, &quads)) {
         *why = "the schedule did not parse: " + schedule;
         return false;
     }
@@ -4402,6 +4423,19 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
            " seed=1 schedule=" + schedule + "\n";
     const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
     char buffer[1024];
+    // The `sprites` token's view (EffectsView, the Linux build's: no cull), under a camera
+    // whose view-projection has exact 0/1 entries -- right +X, forward +Y, up +Z -- so the
+    // C# probe's View carries the same bits.
+    MaterialResolver spriteResolver(&levelData.dti(), Shading::Original);
+    EffectsView spriteView(spriteResolver, &levelData, Shading::Original);
+    EffectsFrame spriteFrame;
+    Camera spriteCamera;
+    for (int k = 0; k < 16; k++) {
+        spriteCamera.view[k] = 0.0f;
+        spriteCamera.projection[k] = (k % 5) == 0 ? 1.0f : 0.0f;
+    }
+    spriteCamera.view[0] = 1.0f;   // M11: right
+    spriteCamera.view[7] = 1.0f;   // M24: forward
     for (int step = 1; step <= steps; step++) {
         for (size_t i = 0; i < teleports.size(); i++) {
             if (teleports[i].step == step) {
@@ -4535,6 +4569,94 @@ bool kurtHazardsDump(int level, int steps, const std::string& schedule, const Md
             }
             snprintf(buffer, sizeof(buffer), " fly=%08X,%08X", pieces, effects);
             *out += buffer;
+        }
+        if (!roped.empty()) {
+            // The `rope:TYPE` token: per live object of that type, its place, pitch, yaw,
+            // the swing's speed and plane (jump_to, opcode 226), its flags, the rope's
+            // colour and mask and RopeView.LinesOf's ends (blending off), at 1/10000, and
+            // `#` an FNV-1a over the bits of every one of those floats, so a difference in
+            // the last bit fails too.
+            std::string rope;
+            for (size_t i = 0; i < objects.size(); i++) {
+                const scripts::MdkObject& o = objects[i];
+                if (o.dead ||
+                    std::find(roped.begin(), roped.end(), o.type_name) == roped.end()) {
+                    continue;
+                }
+                uint32_t bits = 2166136261u;
+                const float values[] = {o.position.x, o.position.y, o.position.z, o.pitch,
+                                        o.yaw, o.swing_speed, o.swing_yaw};
+                for (size_t k = 0; k < sizeof(values) / sizeof(values[0]); k++) {
+                    bits = fnvFloat(bits, values[k]);
+                }
+                snprintf(buffer, sizeof(buffer),
+                         "%s%s#%d@%.4f,%.4f,%.4f/p%.4f/y%.4f/w%.4f/sy%.4f/f%X/c%d/m%X/l",
+                         rope.empty() ? "" : ";", o.type_name.c_str(), o.instance_id,
+                         o.position.x, o.position.y, o.position.z, o.pitch, o.yaw,
+                         o.swing_speed, o.swing_yaw, (unsigned)o.flags, o.rope_color,
+                         (unsigned)o.rope_mask);
+                rope += buffer;
+                Vec3 ends[scripts::MdkObject::kMaxRopeEnds];
+                const int32_t count = o.rope_lines(1.0f, ends);
+                for (int32_t k = 0; k < count; k++) {
+                    snprintf(buffer, sizeof(buffer), "%s%.4f,%.4f,%.4f", k == 0 ? "" : "|",
+                             ends[k].x, ends[k].y, ends[k].z);
+                    rope += buffer;
+                    bits = fnvFloat(bits, ends[k].x);
+                    bits = fnvFloat(bits, ends[k].y);
+                    bits = fnvFloat(bits, ends[k].z);
+                }
+                snprintf(buffer, sizeof(buffer), "%s#%08X", count == 0 ? "-" : "", bits);
+                rope += buffer;
+            }
+            *out += " rope=";
+            *out += rope.empty() ? "-" : rope;
+        }
+        if (quads) {
+            // The `sprites` token: EffectsView's frame (EffectsView.Draw) -- the effects'
+            // and the spawn_box boxes' quads (opcode 159) -- as its draw count, vertex
+            // count, each draw's first:count:frame, and an FNV-1a over every vertex's
+            // position and uv bits. Debris pieces would be in it too; the cases using it
+            // have none.
+            spriteView.build(runtime, spriteCamera, &spriteFrame, 1.0f);
+            uint32_t bits = 2166136261u;
+            for (size_t k = 0; k < spriteFrame.vertices.size(); k++) {
+                const Vertex& v = spriteFrame.vertices[k];
+                bits = fnvFloat(bits, v.pos.x);
+                bits = fnvFloat(bits, v.pos.y);
+                bits = fnvFloat(bits, v.pos.z);
+                bits = fnvFloat(bits, v.uv.x);
+                bits = fnvFloat(bits, v.uv.y);
+            }
+            std::string list;
+            for (size_t k = 0; k < spriteFrame.draws.size(); k++) {
+                snprintf(buffer, sizeof(buffer), "%s%d:%d:%d", k == 0 ? "" : ",",
+                         spriteFrame.draws[k].first, spriteFrame.draws[k].count,
+                         spriteFrame.draws[k].frame);
+                list += buffer;
+            }
+            snprintf(buffer, sizeof(buffer), " spr=%d/%d/%08X/", (int)spriteFrame.draws.size(),
+                     (int)spriteFrame.vertices.size(), bits);
+            *out += buffer;
+            *out += list.empty() ? "-" : list;
+        }
+        if (textures) {
+            // The `frames` token: the scripts' arena texture frames (arena_texture_frame,
+            // opcode 133; AnimatedTextures.Frames) in (arena, texture) order, each as
+            // arena/texture:value (1/10000):drawn frame (FrameOf, what LevelView draws).
+            std::string list;
+            const std::map<std::pair<std::string, std::string>, float>& all =
+                runtime.animatedTextures.frames();
+            for (std::map<std::pair<std::string, std::string>, float>::const_iterator it =
+                     all.begin();
+                 it != all.end(); ++it) {
+                snprintf(buffer, sizeof(buffer), "%s%s/%s:%.4f:%d", list.empty() ? "" : ";",
+                         it->first.first.c_str(), it->first.second.c_str(), it->second,
+                         runtime.animatedTextures.frameOf(it->first.first, it->first.second));
+                list += buffer;
+            }
+            *out += " tex=";
+            *out += list.empty() ? "-" : list;
         }
         *out += "\n";
         if (trace != nullptr) {
@@ -10270,6 +10392,55 @@ int main(int argc, char** argv) {
              "tp:1:OLYM_2:-1574:-47:-708,watch:XBG_B1",
              "OLYM_2's XBG_B1 balls with COLYM_2 as the second arena: its fan's sparks (from "
              "s=22) are live there too"},
+            // The opcode parity branch (2026-11-26, docs/OPCODE_WATCHLIST.md): jump_to (226)
+            // swings OLYM_6's pendulum, and before the port it hung still. The golden is the
+            // C# oracle's (hazards_probe at v1.2.6, whose Swing, jump_to and RopeView lines
+            // equal 1.1.1's); the rope column also equals 1.1.1 + 683a53ef's byte for byte.
+            {"L6_hazards_swing", "golden/L6_hazards_swing.txt", 6, 1200,
+             "tp:1:OLYM_6:-1894:3154:-2048,rope:XSWINGB",
+             "OLYM_6's pendulum XSWINGB swings under its pivot (jump_to, 226; ObjectMotion."
+             "Swing), draws its rope and knocks Kurt down (PENDHIT); Kurt is on the pivot's "
+             "line, so the plane stays at yaw 0"},
+            // Review fix: Kurt 100 units off the pivot's line, so at every turning point the
+            // plane turns towards him, clamped to 15 degrees, at 10 degrees a second (the
+            // yaw runs 0 to -15 and back). Equal to v1.2.6 byte for byte, and its rope column
+            // to 1.1.1 + 683a53ef's.
+            {"L6_hazards_swing_turn", "golden/L6_hazards_swing_turn.txt", 6, 1200,
+             "tp:1:OLYM_6:-1894:3254:-2048,rope:XSWINGB",
+             "the pendulum's plane turns towards Kurt off its line at the turning points "
+             "(Swing's clamp and MoveToward)"},
+            // arena_texture_frame (133): the comm device's screen M_COMM, which every
+            // frontend drew at frame 0 before the parity branch. The `frames` column is
+            // the scripts' frame and the frame LevelView draws (FrameOf); both goldens are
+            // the C# oracle's (v1.2.6; L4's also equals 1.1.1 + 683a53ef byte for byte).
+            {"L4_hazards_comm", "golden/L4_hazards_comm.txt", 4, 400,
+             "tp:1:MEAT_3:293:4166:-548,frames",
+             "MEAT_3's comm screen M_COMM runs at 6 frames a second (arena_texture_frame, "
+             "133, mode 1), wrapping over its 6 frames"},
+            {"L7_hazards_comm", "golden/L7_hazards_comm.txt", 7, 600,
+             "tp:1:DANT_5:100:2320:-60,frames,left:20-85,fire:100-400",
+             "DANT_5's comm device shot by the chain gun: its screen goes from 6 to 12 "
+             "frames a second (133)"},
+            // set_2d0_block (242): the dog XBN's four tethers, drawn by RopeView's 0xFF mode
+            // from reference points 1-4 (the dog's model has none, so its origin) to the
+            // block's points. Both goldens are the C# oracle's (v1.2.6); their rope column
+            // also equals 1.1.1 + 683a53ef's byte for byte.
+            {"L5_hazards_dog", "golden/L5_hazards_dog.txt", 5, 300,
+             "tp:1:MUSE_5:465:-6:-2263,rope:XBN",
+             "MUSE_5's dog XBN held by four tether lines (set_2d0_block, 242; RopeView "
+             "AllLines)"},
+            {"L8_hazards_dog", "golden/L8_hazards_dog.txt", 8, 300,
+             "tp:1:GUNT_10:-43:3300:-380,rope:XBN",
+             "GUNT_10's dog XBN and its four tethers (242)"},
+            // spawn_box's sprites (159, upstream 84ad71e4): L3_hazards_boxes' schedule with
+            // the `sprites` column, EffectsView's whole frame (the effects' and the boxes'
+            // quads) as bits. The golden is the C# oracle's (v1.2.6, which has 84ad71e4); the
+            // same oracle with 84ad71e4 reverted differs on 60 lines, so the column sees it.
+            {"L3_hazards_boxsprites", "golden/L3_hazards_boxsprites.txt", 3, 300,
+             "tp:1:HMO_3:3:1241:-931,run:5:XG:44160:0:0:0,run:9:XG:8127:10:0:0,"
+             "run:13:XG:52115:-10:0:0,watch:PULSE,watch:FIRE,sprites",
+             "the PULSE and FIRE boxes' sprites stretched over the box's width and height "
+             "(spawn_box, 159; EffectsView as upstream 84ad71e4)"},
         };
         for (size_t i = 0; i < sizeof(kHazardsCases) / sizeof(kHazardsCases[0]); i++) {
             const HazardsCase& c = kHazardsCases[i];

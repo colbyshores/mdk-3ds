@@ -233,7 +233,8 @@ private:
     const ObjectLook& lookOf(const std::string& arena);
     void addEndPieces(const scripts::EndLevel& end);
     SpriteEntry& sprite(const std::string& arena, const std::string& texture);
-    void queueSprite(SpriteEntry& entry, const Vec3& position, float texel, int32_t textureFrame,
+    void queueSprite(SpriteEntry& entry, const Vec3& position, float texelX, float texelY,
+                     int32_t textureFrame,
                      const Vec3& right, const Vec3& up, const Vec3& forward,
                      EffectsFrame* frame);
     Batch& batchFor(const Surface& surface, const formats::Palette* palette);
@@ -290,10 +291,11 @@ private:
     float tinyPixels_ = 0.0f;
     int32_t tinyWidth_ = 0;
     int32_t tinyHeight_ = 0;
-    // Whether a sprite `texel` world units a texel on its texture (and its
-    // halo, kGlowHaloScale times larger and nudged towards the camera) is
-    // wholly outside the cull. False with no cull set.
-    bool spriteCulled(const SpriteEntry& entry, const Vec3& position, float texel) const;
+    // Whether a sprite `texelX` by `texelY` world units a texel on its texture
+    // (and its halo, kGlowHaloScale times larger and nudged towards the camera)
+    // is wholly outside the cull, by its larger side. False with no cull set.
+    bool spriteCulled(const SpriteEntry& entry, const Vec3& position, float texelX,
+                      float texelY) const;
 };
 
 } // namespace mdk

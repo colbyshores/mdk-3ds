@@ -531,11 +531,11 @@ std::string ArenaViews::draw(const std::vector<std::string>& drawn,
                 // still building -- or failed and is waiting out its
                 // retry -- draws nothing this frame.
                 if (layered && &views_[i] == back) {
-                    views_[i].view->draw(ArenaLayer::Back, backMin, backMax, eye, margin);
+                    views_[i].view->draw(ArenaLayer::Back, backMin, backMax, eye, margin, frames_);
                 } else if (layered && &views_[i] == cover) {
-                    views_[i].view->draw(ArenaLayer::Cover, backMin, backMax, eye, margin);
+                    views_[i].view->draw(ArenaLayer::Cover, backMin, backMax, eye, margin, frames_);
                 } else {
-                    views_[i].view->draw(ArenaLayer::Plain, backMin, backMax, eye, margin);
+                    views_[i].view->draw(ArenaLayer::Plain, backMin, backMax, eye, margin, frames_);
                 }
                 break;
             }

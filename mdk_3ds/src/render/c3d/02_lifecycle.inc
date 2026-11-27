@@ -605,6 +605,7 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     caps.canvas_filtering = false;  // the palette lookup is fixed-function
     caps.panorama_linear = false;
     caps.vertex_colours = false;    // the vertex is position + UV (03_frame.inc's loaders)
+    caps.line_primitive = false;    // triangles, strips and fans only (06_draw_submit.inc)
     caps.max_texture_size = 1024;
     // ONE NUMBER, ONE DEFINITION. This used to say 512 while
     // `mdk_render_canvas_capacity` — the value the queue and the mesh actually

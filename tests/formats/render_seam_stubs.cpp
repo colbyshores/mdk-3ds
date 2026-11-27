@@ -10,6 +10,7 @@
 // colour replacement records its call for them to read.
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "render/render.h"
@@ -133,8 +134,14 @@ void mdk_render_update_mesh(MdkRenderer, MdkMeshId, const mdk::Vertex* vertices,
     mdk_test_lastUpdate.assign(vertices, vertices + count);
 }
 
+// Each queued draw's frame and frame count (arena_view_tests' opcode 133 case).
+std::vector<std::pair<int32_t, int32_t> > mdk_test_drawFrames;
+
 void mdk_render_draw_mesh(MdkRenderer, const mdk::MeshDraw* draw) {
     mdk_test_meshDraws++;
+    if (draw != nullptr) {
+        mdk_test_drawFrames.push_back(std::make_pair(draw->frame, draw->material.frame_count));
+    }
     if (draw != nullptr && draw->back) {
         mdk_test_backDraws++;
     }

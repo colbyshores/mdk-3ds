@@ -522,6 +522,11 @@ struct MdkCapabilities {
     // Gouraud colour there draws it from a texture instead (stream/stream_view.h,
     // the tube). True by default: the C#'s renderer has them.
     bool vertex_colours = true;
+    // Whether a Primitive::Lines draw is drawn as lines. The Vulkan backend has the
+    // line pipelines (the C#'s DrawLines); the PICA200 has no line primitive (its
+    // primitives are triangles, strips and fans), so a caller that needs a line
+    // there -- the ropes (game/rope_view.h) -- draws a thin camera-facing quad.
+    bool line_primitive = true;
     int32_t max_texture_size = 1024;
     int32_t max_canvas_quads = 256;
 

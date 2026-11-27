@@ -440,9 +440,9 @@ void EffectsView::addEndPieces(const scripts::EndLevel& end) {
 // One sprite's quad at `position`, `texel` world units per texel, showing
 // `textureFrame`, and its halo when the texture glows: the sprite effects' and the
 // spawn_box boxes' common half of EffectsView.Draw (AddQuad).
-void EffectsView::queueSprite(SpriteEntry& entry, const Vec3& position, float texel,
-                              int32_t textureFrame, const Vec3& right, const Vec3& up,
-                              const Vec3& forward, EffectsFrame* frame) {
+void EffectsView::queueSprite(SpriteEntry& entry, const Vec3& position, float texelX,
+                              float texelY, int32_t textureFrame, const Vec3& right,
+                              const Vec3& up, const Vec3& forward, EffectsFrame* frame) {
     lastSprites_++;
     if (!entry.glowMeasured) {
         // Its pixels were away when the entry was made: measured now if
@@ -460,7 +460,7 @@ void EffectsView::queueSprite(SpriteEntry& entry, const Vec3& position, float te
         return;
     }
     Vertex quad[6];
-    effectsQuadVertices(position, scaled(right, texel), scaled(up, texel),
+    effectsQuadVertices(position, scaled(right, texelX), scaled(up, texelY),
                         entry.surface.texture->width(), entry.surface.texture->height(), quad);
     EffectsDrawItem queued;
     queued.first = (int32_t)frame->vertices.size();
@@ -474,15 +474,20 @@ void EffectsView::queueSprite(SpriteEntry& entry, const Vec3& position, float te
     // times the size, the measured colour at the bloom's gain and share.
     if (entry.glow > 0.0f) {
         GlowQuad glow;
-        const float haloTexel = texel * kGlowHaloScale;
+        const float haloTexelX = texelX * kGlowHaloScale;
+        const float haloTexelY = texelY * kGlowHaloScale;
         // Half the sprite's size towards the camera: the sprite writes depth,
         // and a coplanar halo tested LEQUAL could round behind it on the
         // console's 24-bit floats and leave a hole where it is brightest.
         const int32_t w = entry.surface.texture->width();
         const int32_t h = entry.surface.texture->height();
-        const float nudge = texel * (float)(w > h ? w : h) * 0.5f;
+        // The larger side (texelX * w against texelY * h: the same value as the one-texel
+        // form's texel * max(w, h) when the two texels are equal, as an effect's are).
+        const float sideX = texelX * (float)w;
+        const float sideY = texelY * (float)h;
+        const float nudge = (sideX > sideY ? sideX : sideY) * 0.5f;
         effectsQuadVertices(sub(position, scaled(forward, nudge)),
-                            scaled(right, haloTexel), scaled(up, haloTexel), w, h,
+                            scaled(right, haloTexelX), scaled(up, haloTexelY), w, h,
                             glow.corners);
         // What the PC's bloom adds over a dark ground: to_srgb(gain * the
         // excess), and as much of it as the texture's bright share.
@@ -495,14 +500,16 @@ void EffectsView::queueSprite(SpriteEntry& entry, const Vec3& position, float te
     }
 }
 
-bool EffectsView::spriteCulled(const SpriteEntry& entry, const Vec3& position,
-                               float texel) const {
+bool EffectsView::spriteCulled(const SpriteEntry& entry, const Vec3& position, float texelX,
+                               float texelY) const {
     if (!hasCullFrustum_) {
         return false;
     }
     const int32_t w = entry.surface.texture->width();
     const int32_t h = entry.surface.texture->height();
-    const float side = texel * (float)(w > h ? w : h);
+    const float sideX = texelX * (float)w;
+    const float sideY = texelY * (float)h;
+    const float side = sideX > sideY ? sideX : sideY;
     // The halo's half-diagonal (0.7072 of its side, kGlowHaloScale sides) plus
     // the half-side it is nudged by: a sphere around the quad and its halo.
     const float radius = side * (0.7072f * kGlowHaloScale + 0.5f);
@@ -633,14 +640,17 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
                                                               scripts::ScriptRuntime::kTick)
                             ? frame_blend::lerp(effect.tickedPosition, effect.position, alpha)
                             : effect.position;
-        if (spriteCulled(entry, at, texel)) {
+        if (spriteCulled(entry, at, texel, texel)) {
             continue;
         }
-        queueSprite(entry, at, texel, effect.frame(), right, up, forward, frame);
+        queueSprite(entry, at, texel, texel, effect.frame(), right, up, forward, frame);
     }
 
-    // spawn_box sprites (EffectsView.cs:66-76): as wide as the box, playing at 30
-    // frames per second -- the FIRE and PULSE hazards the scripts make (opcode 159).
+    // spawn_box sprites (EffectsView.cs:66-76, as upstream 84ad71e4 has it): the box's
+    // width and height, the image STRETCHED over them (0x43b2b0: the box sizes at 0x316
+    // and 0x31e -- a 64 x 36 BONEFLC is shown 9 x 6, not 9 x 5 at the image's aspect),
+    // playing at 30 frames per second -- the FIRE and PULSE hazards the scripts make
+    // (opcode 159) and spawn_flagged's sprite boxes (the bones, the worms).
     const std::vector<scripts::MdkObject*>& boxes = scripts.boxes();
     for (size_t i = 0; i < boxes.size(); i++) {
         const scripts::MdkObject& box = *boxes[i];
@@ -653,9 +663,12 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
         }
         const float sizeX = box.model->bounds.max.x - box.model->bounds.min.x;
         const float sizeZ = box.model->bounds.max.z - box.model->bounds.min.z;
+        // size.X / Math.Max(Width, 1) and size.Z / Math.Max(Height, 1) (84ad71e4).
         const int32_t width = entry.surface.texture->width();
-        const float texel = mathMax(sizeX, sizeZ) / (float)(width > 1 ? width : 1);
-        if (spriteCulled(entry, box.position, texel)) {
+        const int32_t height = entry.surface.texture->height();
+        const float texelX = sizeX / (float)(width > 1 ? width : 1);
+        const float texelZ = sizeZ / (float)(height > 1 ? height : 1);
+        if (spriteCulled(entry, box.position, texelX, texelZ)) {
             continue;
         }
         const int32_t frames = entry.surface.frameCount > 0 ? entry.surface.frameCount : 1;
@@ -664,7 +677,7 @@ void EffectsView::build(const scripts::ScriptRuntime& scripts, const Camera& cam
          * frame (a handful), by the texture's small positive frame count. measured n/a
          * (corpus empty). Verified 2026-11-20. */
         const int32_t boxFrame = scripts.tickCount() % frames;
-        queueSprite(entry, box.position, texel, boxFrame, right, up, forward, frame);
+        queueSprite(entry, box.position, texelX, texelZ, boxFrame, right, up, forward, frame);
     }
 
     // The twisters' ribbons (AddRibbon): one draw of WMIBTEX each, its corners in

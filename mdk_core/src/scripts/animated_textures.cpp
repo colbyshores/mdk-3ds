@@ -42,11 +42,5 @@ void AnimatedTextures::set(const std::string& arena, const std::string& texture,
     frames_[key] = target;
 }
 
-int32_t AnimatedTextures::frameOf(const std::string& arena, const std::string& texture) const {
-    const std::map<std::pair<std::string, std::string>, float>::const_iterator found =
-        frames_.find(std::pair<std::string, std::string>(arena, texture));
-    return found != frames_.end() ? (int32_t)found->second : 0;
-}
-
 } // namespace scripts
 } // namespace mdk

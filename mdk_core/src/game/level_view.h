@@ -43,6 +43,10 @@
 
 namespace mdk {
 
+namespace scripts {
+class AnimatedTextures;
+} // namespace scripts
+
 // How LevelView::draw marks the batches it queues (render/arena_scene.h's box
 // arithmetic; ArenaViews::draw).
 enum class ArenaLayer : uint8_t {
@@ -121,8 +125,14 @@ public:
     //
     // `layer` marks the batches queued (ArenaLayer above; ArenaViews::draw):
     // only Cover reads `boxMin`/`boxMax`/`eye`/`eyeMargin`.
+    //
+    // An animated texture (frameCount > 1) is drawn at the frame the scripts set
+    // for it in this arena (arena_texture_frame, opcode 133: LevelView.cs:139,
+    // `frames.FrameOf(arena, batch.Animated)`), frame 0 with no `frames` or before a
+    // script sets one. The frame only moves the texture's uv (its frames are one
+    // stacked strip): no texture is made or read for it. Orthogonal to `layer`.
     void draw(ArenaLayer layer, const Vec3& boxMin, const Vec3& boxMax, const Vec3& eye,
-              float eyeMargin);
+              float eyeMargin, const scripts::AnimatedTextures* frames = nullptr);
 
     // The box around this arena's VISIBLE batches whose boxes cut `boxMin`..
     // `boxMax` (ArenaViews::draw: the other arena's batches that may hide the

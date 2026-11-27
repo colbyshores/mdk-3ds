@@ -8,6 +8,7 @@
 #include "formats/model_animation.h"
 #include "scripts/pose_cache.h"
 #include "scripts/script_runtime.h"
+#include "util/math_lut.h"
 #include "util/system_numerics_inverse.h"
 
 // The pose caches are NOT here. They are in scripts/pose_cache.cpp, which is
@@ -294,6 +295,60 @@ mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
     float c = cosf(radians);
     float s = sinf(radians);
     return Vec3{position.x + (x * c - y * s), position.y + (x * s + y * c), position.z + z};
+}
+
+// FrameBlend.Carried (FrameBlend.cs:102-111): a point on the object, moved with it
+// to the frame between ticks -- the blended place, and turned about it by how far
+// the blended yaw is from the tick's. Blending off (alpha >= 1) is the point itself.
+static mdk::Vec3 carriedPoint(const mdk::scripts::MdkObject& obj, float alpha, mdk::Vec3 point) {
+    if (alpha >= 1.0f) {
+        return point;
+    }
+    const mdk::Vec3 at = obj.position_at(alpha);
+    const float turn = obj.yaw_at(alpha) - obj.yaw;
+    // A render-only position (the rope's drawn end between ticks): no gameplay and no
+    // golden reads it (the probes draw with blending off, above). Presentation trig,
+    // so the turn's cos/sin are math_lut.h's (AGENTS.md R6), not the C#'s MathF: the
+    // drawn end can differ from the C#'s by the LUT's error mid-tick, never at a tick.
+    // Vector3.Transform by CreateRotationZ: (x c - y s, x s + y c, z).
+    const float radians = turn * 3.14159265358979323846f / 180.0f;
+    const float c = mdk::fastCos(radians);
+    const float s = mdk::fastSin(radians);
+    const float x = point.x - obj.position.x;
+    const float y = point.y - obj.position.y;
+    const float z = point.z - obj.position.z;
+    return mdk::Vec3{at.x + (x * c - y * s), at.y + (x * s + y * c), at.z + z};
+}
+
+// RopeView.AddLines (Objects/RopeView.cs:47-70).
+int32_t mdk::scripts::MdkObject::rope_lines(float alpha, Vec3* out) const {
+    const int32_t kPairs = 2;
+    const float kPairLift = 5.0f;
+    int32_t count = 0;
+    if (rope_mask == kRopeAllLines) {
+        // set_2d0_block (opcode 242; the LEVEL5 MUSE_5 / LEVEL8 GUNT_10 dog XBN's four
+        // tethers): a line from reference point i+1, carried with the object, to rope
+        // point i -- for each point that is not exactly zero (the C#'s `!= Vector3.Zero`,
+        // so -0 counts as zero too), which is how the script drops a line.
+        for (size_t i = 0; i < rope_points.size(); i++) {
+            const mdk::Vec3& point = rope_points[i];
+            if (point.x == 0.0f && point.y == 0.0f && point.z == 0.0f) {
+                continue;
+            }
+            out[count++] = carriedPoint(*this, alpha, reference_point((int)i + 1));
+            out[count++] = point;
+        }
+        return count;
+    }
+    for (int32_t i = 0; i < kPairs; i++) {
+        if ((rope_mask & (1 << i)) != 0) {
+            mdk::Vec3 near = carriedPoint(*this, alpha, rope_points[(size_t)(i * 2)]);
+            near.z += kPairLift;  // + Vector3.UnitZ * PairLift
+            out[count++] = near;
+            out[count++] = rope_points[(size_t)(i * 2 + 1)];
+        }
+    }
+    return count;
 }
 
 // Vector3.Transform(position, matrix) as .NET computes it: row X times x, then Y and Z

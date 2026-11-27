@@ -116,6 +116,7 @@ void ObjectDraw::draw(MdkRenderer renderer, SurfaceCache* surfaces, const Object
         draw.first_vertex = queued.first;
         draw.vertex_count = queued.corners;
         draw.frame = queued.frame;
+        draw.back = queued.back;
         draw.primitive = Primitive::Triangles;
         // Mat4 and MeshDraw::world are both row-major row-vector 4x4s.
         memcpy(draw.world, queued.world.m, sizeof(draw.world));

@@ -3724,6 +3724,234 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   - Old 3DS appliance (`old3ds-lan167`, model 0, stereo on), the same walk, toggles and harness as the earlier entry, `--profile`, FRESH (`.git/worktrees/bullet-cam/hw-logs/hw-on1eye.log`): the 875 frames with a camera watching, mean **39.5 ms** (max 53.8; 857 over 33.3 ms), against 44.4 ms drawn in both eyes and 33.45 ms with the cameras off. Steady mean 35.7 ms (vblanks 2: 2295, 3: 190), against 37.7 (both eyes) and 33.6 (off). Longest command list 27,844 words (34,302 both eyes).
 - **Not verified:** the picture. No ATM screenshots (owner: suspected cause of the hard hangs), the harness on this base has no capture, Mandarine was not used. Whether the right eye's windows show the copied cam (the memory-row orientation is taken from the screenshot readback and the glow, not seen through the barrier) is open for the owner's look on the console.
 - **Commit:** this one.
+
+### Script opcode watch list for the playthrough (2026-11-26, branch docs/opcode-watchlist)
+- **What:** `docs/OPCODE_WATCHLIST.md`, a read-only coverage comparison of our VM
+  (test/3ds-combined-11-26 f517348b) against upstream's C++ 2.0 (origin/main 367cc6fc). The C#
+  (1.1.1 and 1.2.6) is the authority. Rows are sorted in level order, with the arenas and objects
+  where each opcode is used.
+- **Why:** the owner's full playthrough. These are the places where our handling is thinner than
+  upstream's.
+- **Findings:** both VMs dispatch the same 238 opcodes. 234 are equal. Four are partial in ours,
+  where the state is written but nothing consumes it:
+  - 133: the M_COMM screen does not animate (LEVEL4 MEAT_3, LEVEL7 DANT_5).
+  - 159: the box sprites are not stretched over their box (upstream 84ad71e4).
+  - 226: the LEVEL6 OLYM_6 pendulum does not swing, which is a gameplay difference.
+  - 242: the dog's tether lines are not drawn (LEVEL5 MUSE_5, LEVEL8 GUNT_10).
+
+  None is weaker upstream. Opcode 5 (LEVEL7 DANT_2 XBANG) is unhandled everywhere and is counted
+  by `noteUnimplemented`. The demo's five opcodes (300-361) have no case in ours, and ours
+  cannot load the demo.
+- **Evidence:** the case-label set difference is empty. A scratch census walks every script from
+  its entry point through this tree's decoder (236 opcodes used, 107,856 reachable sites).
+  `tick1 probe 18000` reports nothing unimplemented on LEVEL3-8.
+- **Not done:** no code changed, and nothing was run on hardware or in the emulator.
+- **Commit:** this one.
+
+## 2026-11-26 -- script opcode parity with the C# (branch fix/opcodes-parity)
+
+Owner decision: the four opcodes `docs/OPCODE_WATCHLIST.md` lists as partial in our C++ are made
+to match the C# like for like, one commit each, in priority order. The C# is the authority (our
+`src/` 1.1.1 plus the upstream fixes this tree has taken); upstream's C++ only pointed at what
+was missing. Oracle: `tests/scripts/hazards_probe` built with .NET SDK 10.0.404 (scratch) against
+`git archive` of upstream's C# at v1.2.6 (it has every upstream fix this tree has taken) and
+against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new tokens are
+`rope:TYPE` (place, pitch, yaw, swing speed and plane, flags, rope colour and mask, and
+`RopeView.LinesOf`'s ends at 1/10000, plus an FNV-1a over the bits of every float) and, with
+133, `frames`.
+
+### 226 jump_to -- the LEVEL6 OLYM_6 pendulum swings
+- **What was wrong:** the VM set the pivot, speed, gain, plane and `FlagSwinging`, but no tick
+  code read them: XSWINGB hung still ~1985 units under its pivot, with no rope, and hit Kurt
+  only when he walked into it.
+- **What:** `ScriptRuntime::motionSwing` is `ObjectMotion.Swing` (0x43cfe8) operation for
+  operation, called where `ObjectMotion.Update` calls it (after the command, before gravity;
+  not for an object its command killed): w -= sin(pitch) * gain, pitch += w * gain, the object
+  at pivot + (h.x sin, h.y sin, -cos) * length, the plane turned towards the scripts' target by
+  at most 15 degrees (folded to +-90) at each turning point and the yaw moved there at 10 degrees
+  a second, rope colour 1, mask 1, points object and pivot. libm sinf/cosf (bit-identical to
+  .NET's MathF here, the fromAngle probe note), .NET's left-associative degrees-to-radians.
+  `MdkObject::rope_lines` is `RopeView.AddLines` (pair mode; FrameBlend.Carried for the end on
+  the object, blending off at alpha 1). `game/rope_view.{h,cpp}` draws them after the objects,
+  where Viewer.cs:705 does, on both frontends: Lines with a flat palette colour where the
+  backend has a line primitive (Vulkan; new capability `line_primitive`), and on the PICA200
+  (no line primitive, no vertex colour) a ~1.5-pixel camera-facing quad per line, textured with
+  an 8x8 RGBA texture of the colour (made the first time a colour is seen, freed with the level
+  scope; no file read, no per-frame import).
+- **Oracle:** new golden `L6_hazards_swing` (Kurt in the pendulum's path in OLYM_6, 1200 steps):
+  the C++ equals hazards_probe at v1.2.6 **byte for byte**, including the PENDHIT knock-down at
+  s=320. Against 1.1.1 + 683a53ef the `rope=` column (place, pitch, yaw, swing state, rope ends,
+  bit hash) is byte-identical on every line; the other columns part from s=130 (another
+  object's state: an upstream gameplay fix 1.1.1 lacks). 1.2.6 does not differ from 1.1.1 for
+  this opcode: `Swing`, the jump_to case and `RopeView`'s lines are unchanged, 1.2.x only puts
+  the rope draw in its arena's depth band. A 300-step run from Kurt's landing spot in OLYM_6
+  equals 1.2.6 byte for byte too. No existing golden moved: tick1 522 of 522 pass with the new one.
+- **Frames (Linux, headless, --fixed-step, 640x480, DISPLAY=:99, lavapipe):**
+  `pendulum_linux.png` in the session scratchpad (`opframes/`, frames 240, 330, 450 from
+  `--level=6 --arena=OLYM_6 --at=-1895,2857,-2048,85`): the white rope from the pivot ~2000 units
+  up down to the bob, at a different swing angle each frame.
+- **Cost on the 3DS:** one object a tick runs the swing (two sinf, one cosf, a few multiplies);
+  the rope is one draw of 6 vertices a frame while XSWINGB is drawn, from one 4096-vertex
+  dynamic mesh made the first frame a rope exists, plus one 8x8 RGBA8 texture per rope colour.
+  Nothing per frame touches a file.
+- **Not verified:** no hardware run (owner away; no appliance use) and no Mandarine run for this
+  commit. The 3DS quad's width is a judgement (C# lines are one pixel on the PC); it has not
+  been looked at on a console.
+- **Commit:** see `git log` (this entry's commit, "opcodes: 226 jump_to ...").
+- **Checks:** Linux build (RelWithDebInfo) 0 warnings; `make -C tests/scripts test` exit 0
+  (tick1 522/522); `make -C tests/formats` 200670 checks, 0 failures; `tools/check.sh` all
+  gates pass (smdh skipped: no .cia) after the swing's libm trig got its `@vfp-exempt R6` pin
+  (gameplay: the LUT would move a damaging object); `make -C mdk_3ds` 0 compiler warnings.
+
+### 133 arena_texture_frame -- the comm device's screen (M_COMM) animates
+- **What was wrong:** the VM kept the scripts' frames in `runtime.animatedTextures`
+  (`AnimatedTextures.Set`, mode 1: frames per second), but the level draw always passed frame 0,
+  so the comm device's screen on LEVEL4 MEAT_3 and LEVEL7 DANT_5 never moved.
+- **What:** `LevelView::draw` takes the scripts' frames and gives an animated batch
+  (frameCount > 1) `frameOf(arena, texture name)`, the C#'s
+  `frames.FrameOf(view.Arena.Name, batch.Animated)` (LevelView.cs:139); `ArenaViews` carries the
+  pointer, which both frontends set each frame before `arenaViews.draw` (a runtime replaced at a
+  level change is never read through a stale pointer). A level whose scripts never set a frame
+  skips the lookup on the map's emptiness.
+- **3DS texture paths:** the frame only moves the uv. M_COMM is one stacked strip of 6 frames,
+  128 x 774 (6 x 129), under the PICA's 1024: the arena ETC1 set has it as one 128 x 1024 texture
+  per palette (`build-arena-etc1` manifest), whose draw takes its frame's slice through
+  `pica::compressedFrameUv`; an expanded original takes `offsetY = frame * frameHeight`. A
+  stacked texture never gets an HD copy (`hdPackLookup` gives no `hdPath` for frameCount > 1,
+  06_draw.inc never binds one for frame_count > 1), so the HD window holds no M_COMM and a frame
+  swap neither imports a texture nor reads a file on core 0. The `Texture::parseAnimated`
+  delta-decode fix (build/hd-pack-native, M_COMM only) is in this tree, so the frames differ as
+  the C#'s do (frame 1: 78 texels from frame 0, frame 2: 2656). The known ETC1 limit stays: a
+  frame height of 129 puts a frame boundary inside a 4x4 block, so the screen's edge row can
+  bleed (ledger, the compressed strip frame entry).
+- **Oracle:** the hazards probe's new `frames` token prints `AnimatedTextures.Frames` and
+  `FrameOf` per step. New goldens, both the C# oracle's bytes: `L4_hazards_comm` (MEAT_3, 400
+  steps at 6 frames/s; equal to v1.2.6 and to 1.1.1 + 683a53ef) and `L7_hazards_comm` (DANT_5,
+  Kurt turns and fires: the chain gun hits the device and the screen goes to 12 frames/s; 600
+  steps equal to v1.2.6 byte for byte; 1.1.1 + 683a53ef parts from s=20, Kurt's landing, an
+  upstream gameplay fix 1.1.1 lacks, which shifts the hit by a few ticks). 1.2.6's 133 path is
+  1.1.1's (its LevelView only adds depth bands). tick1 524/524.
+- **Frames (Linux, headless, --fixed-step, DISPLAY=:99, lavapipe):** `comm_linux_frames.png`
+  in the session scratchpad (`opframes/`): the DANT_5 device through the scope
+  (`--level=7 --arena=DANT_5 --at=80,2255,-60,90 --sniper=0.6,2`), capture frames 100, 110 and
+  120, top row this build (the screen's red indicator changes), bottom row the same build with
+  the frames pointer forced to null (frame 0 every time, the old picture). Pixels differ between
+  the two at 5 of 6 captures (up to 2098 pixels), only on the screen.
+- **Cost on the 3DS:** per frame, one `std::map` lookup per animated batch in a drawn arena of a
+  level whose scripts set a frame (MEAT_3, DANT_5: one batch); nothing in other levels.
+- **Not verified:** not run on hardware or in Mandarine; the ETC1 strip's edge-row bleed was not
+  looked at on a console.
+- **Checks:** Linux build 0 warnings; tick1 524/524 and vm_tests pass; `make -C tests/formats`
+  200670 checks, 0 failures (its link-graph guard: `AnimatedTextures::frameOf` is inline now, so
+  the level draw links no scripts translation unit); `tools/check.sh` all gates pass (smdh
+  skipped); `main_3ds_flow_test.sh` pass; `make -C mdk_3ds` 0 compiler warnings. The slow
+  shell half of `make -C tests/scripts test` was run on the 226 commit and the final tree.
+
+### 242 set_2d0_block -- the dog's tether lines are drawn
+- **What was wrong:** the VM set `rope_mask` 0xFF and the four points, save/load kept them, but
+  nothing drew them: the dog XBN (LEVEL5 MUSE_5, LEVEL8 GUNT_10) looked free.
+- **What:** `MdkObject::rope_lines` gains `RopeView.AddLines`' 0xFF branch: for each rope point
+  that is not exactly zero (`!= Vector3.Zero`, so a zeroed point is a dropped line), a line from
+  reference point i+1 (`reference_point`, carried with the object between ticks) to the point.
+  The draw is the 226 commit's `RopeView` (Lines on Vulkan, quads on the PICA200), so nothing
+  in the frontends changed. The VM's own 0xFF is now `MdkObject::kRopeAllLines`. The XBN model
+  has no reference points, so every line starts at the dog's origin (the C#'s ReferencePoint
+  returns Position past the list, as ours does).
+- **Oracle:** new goldens `L5_hazards_dog` (MUSE_5) and `L8_hazards_dog` (GUNT_10), 300 steps
+  each with `rope:XBN`, both the C# oracle's bytes at v1.2.6; 600-step runs equal v1.2.6 byte
+  for byte, and their rope column equals 1.1.1 + 683a53ef's on every line (the other columns
+  part on other objects' upstream fixes). 1.2.6's 242 and RopeView lines are 1.1.1's.
+- **Frames (Linux, headless, --fixed-step, 640x480, DISPLAY=:99, lavapipe):** `dog_linux.png`
+  in the session scratchpad (`opframes/`): left, MUSE_5 (`--level=5 --arena=MUSE_5
+  --at=465,-6,-2263,112`, frame 120), the dog high on its perch with white tether lines down to
+  the platforms; right, GUNT_10 (`--at=-43,3250,-380,90`), the lines at the top of the view.
+- **Cost on the 3DS:** up to 4 quads (24 vertices) a frame while the dog is drawn, in the rope
+  view's mesh; four `reference_point` calls (each a cosf/sinf for the yaw) a frame.
+- **Not verified:** the scripts' line drops (4, 3, 2, then 0 lines before the howl) were not
+  reached in a probe run: standing at the arena's start and firing at the dog (it is
+  indestructible, 65000 hp) leaves all four lines up in both arenas for 2400-3000 steps. The
+  drop path is the same `rope_lines` loop over zeroed points, but no golden shows it. Not run on
+  hardware or in Mandarine.
+- **Checks:** Linux build 0 warnings; tick1 526/526, vm_tests pass; `make -C tests/formats`
+  200670 checks, 0 failures; `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds`
+  0 compiler warnings.
+
+### 159 spawn_box -- the box sprites are stretched over the box (a port of upstream 84ad71e4)
+- **What was wrong:** our EffectsView drew a spawn_box sprite at its image's own aspect, scaled by
+  `max(sizeX, sizeZ) / width`, which is C# 1.1.1. Upstream 84ad71e4 (C# 1.2.0) corrected it to
+  the original's (0x43b2b0, box sizes at 0x316 and 0x31e): the image stretched over the box's
+  width and height. LEVEL4's bones (BONEFLC, 64 x 36 in a 9 x 9 x 6 box) drew 9 x 5, not 9 x 6;
+  the FIRE/PULSE hazards and the EWJ worms take the same path.
+- **What:** `EffectsView::build`'s box loop takes `texelX = size.X / max(Width, 1)` and
+  `texelZ = size.Z / max(Height, 1)`; `queueSprite` and `spriteCulled` take the two texels
+  (the effects pass the one texel twice). The 3DS halo (a 3DS-only glow billboard) is stretched
+  with its sprite, and its nudge and the cull's radius take the larger side; for an effect
+  (equal texels) `max(t*w, t*h)` is bit-identical to the old `t * max(w, h)`, so nothing else
+  moved (tick1's `L8_effects_storm` passes unchanged).
+- **Oracle:** the hazards probe's new `sprites` token runs the C#'s own `EffectsView.cs` and
+  `MaterialResolver.cs`, compiled into the probe against a CPU-only Renderer (as table_probe
+  does), under a view-projection with exact 0/1 entries (right +X, forward +Y), and prints the
+  frame's draws and an FNV-1a over every vertex's position and uv bits; tick1 builds our
+  EffectsView under the same matrix. New golden `L3_hazards_boxsprites` (L3_hazards_boxes'
+  schedule + `sprites`, 300 steps): the C# oracle's at v1.2.6, which has 84ad71e4, byte for
+  byte. Non-vacuity: the same v1.2.6 tree with 84ad71e4 reverse-applied differs from it on the
+  `spr=` column of 60 lines and on nothing else. The probe calls either C# `Draw` signature
+  (1.1.1's, 1.2.x's with tick and camera arena; tick 1 = blending off) and shims the internal
+  `ScriptMath.Size` with the same expression. (A 1.1.1 tree with 84ad71e4's two lines
+  hand-applied parts from our C++ on other columns from s=6 -- upstream gameplay fixes 1.1.1
+  lacks -- so v1.2.6 is the oracle here.)
+- **Frames (Linux, headless, --fixed-step, 640x480, DISPLAY=:99, lavapipe):** `bones_crop.png`
+  in the session scratchpad (`opframes/`): LEVEL4 CMEAT_3's snowboard run
+  (`--level=4 --arena=CMEAT_3 --at=420,4285,-570,91`), a red bone at capture frames 150 and 250,
+  this build then the build before (the 242 commit) side by side: the new bone is a row taller
+  (9 x 6 against 9 x 5); `bones_linux.png` is the whole frame 250 pair. 32 and 78 pixels differ,
+  only on the bone.
+- **Cost on the 3DS:** one more float divide per drawn box a frame (a handful of boxes); the
+  halo and cull take a max of two products instead of one product.
+- **Not verified:** not run on hardware or in Mandarine.
+- **Checks:** Linux build 0 warnings; tick1 527/527; `make -C tests/formats` 200670 checks, 0
+  failures; `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds` 0 compiler
+  warnings. The changed hazards probe still reproduces `L3_hazards_boxes` and
+  `L6_hazards_swing` byte for byte at v1.2.6 without the new token.
+
+### Review of the four opcode commits, and the fixes it led to
+- **Review:** an independent read-only agent read 1e1324b7..fd0c005a against the C# (`src/` and
+  v1.2.6), AGENTS.md and the 3DS backend. It found no parity bug in the four ports (Swing,
+  RopeView/Carried, AllLines, the 84ad71e4 stretch, operation for operation) and confirmed the
+  3DS side (no per-frame texture work for a frame swap, the rope textures' lifetime inside the
+  level scope, the frames pointer set before the only draw).
+- **Fixed from it:**
+  - `L6_hazards_swing` kept Kurt on the pivot's line, so the plane never turned (yaw 0 on every
+    line): new golden `L6_hazards_swing_turn` (Kurt 100 units off the line; the yaw runs 0 to
+    -15 and back through the clamp and MoveToward), equal to v1.2.6 byte for byte and its rope
+    column to 1.1.1 + 683a53ef's. The old case's description no longer claims a turn.
+  - Nothing tested the 133 draw path itself (the goldens pin the scripts' frames): new
+    tests/formats case `LevelViewDrawsTheScriptsTextureFrame` loads LEVEL7 DANT_5's LevelView
+    and checks the M_COMM batch's queued frame: 0 without frames, before a frame is set and for
+    another arena's key, 3 after mode 0 sets 4.5. With the draw's lookup disabled it fails
+    (`got 0, want 3`). tests/formats now links `scripts/animated_textures.cpp` (it depends on
+    nothing; the Makefile says why, and the link-graph guard still passes).
+  - `RopeView` retried a refused mesh every frame and a refused colour texture for every rope:
+    both are latched now.
+  - `carriedPoint` (the rope's end on the object between ticks; render only, never at a tick)
+    takes the trig LUT, as presentation trig must (AGENTS.md R6, `audit_arm11_math`).
+  - Stale comments: main_3ds.cpp's header and object-pass note said the ropes were not ported;
+    effects_view.h's `spriteCulled` described one texel.
+- **Kept, with the reason:** the `@vfp-exempt R6` pin on `motionSwing` stays: the math audit
+  flags libm trig on cold code too, and the swing is gameplay (it places a damaging object), so
+  the LUT is not acceptable there. The 3DS rope quads take no depth pull (Vulkan's Lines do):
+  a rope hangs in the air, with no surface to fight.
+- **Not fixed (before this branch, outside the four opcodes):** when `updateCommand` kills an
+  object, the C# Update returns at once; our `motionVelocity` still runs gravity and the
+  velocity step on it (the new swing call is guarded). No retail case was checked.
+- **Checks (this commit):** Linux build 0 warnings; tick1 528/528, vm_tests pass;
+  `make -C tests/formats` 200681 checks, 0 failures; `tools/check.sh` all gates pass (smdh
+  skipped: no .cia); `make -C mdk_3ds` 0 compiler warnings. The full `make -C tests/scripts
+  test` passed on fd0c005a and again on this tree (below).
+- **Watch list:** `docs/OPCODE_WATCHLIST.md` names each fix's commit.
+- **Not done:** no hardware (owner away; no appliance use); no Mandarine run (optional; the
+  machine's load was ~98 through this work).
+
 ## 2026-11-27 -- LEVEL4's ride end: the camera's arena over the other one, at full depth precision (branch fix/l4-ride-end-depth)
 - **The bug (upstream e1eb36bb), and that this port showed it.** At the end of LEVEL4's
   snowboard tube (CMEAT_1, by the doorway to MEAT_3) both arenas are drawn, and MEAT_3's flat
@@ -3961,6 +4189,62 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   Before any of them: pull `/luma/atm/atm.log` and `/luma/dumps/arm11/` for 13:2x-13:4x.
 - **Commit:** 1fde4fbd (the fix and its test); this entry.
 
+## 2026-11-27 -- test/3ds-combined-11-26 (ff13fd11) merged into fix/opcodes-parity
+- **What:** the combined line's ride-end ordering (fix/l4-ride-end-depth), the fall's pause menu
+  and the run-end fix merged into the opcode branch. Conflicts resolved keeping both intents:
+  `LevelView::draw(ArenaLayer, box, eye, margin, frames)` -- the ride end's back/cover marks
+  and opcode 133's per-batch frame are independent fields of the same MeshDraw; `ArenaViews::draw`
+  passes the frames on all three layers; both frontends set the frames pointer, then make the
+  ride end's `arenaViews.draw(*frameDrawn, cameraArena, eye, separation)` call; both host tests
+  (`LevelViewMarksTheLayers`, `LevelViewDrawsTheScriptsTextureFrame`) kept, the seam stub
+  records frames and back/cover counts; the ledger is the union of both sides.
+- **Ropes in the ride-end ordering:** `RopeView::draw` takes the frame's `layeredBack` and queues
+  the rope of an object in that arena `back` (`MeshDraw::back`; the same buckets
+  `mdk_render_set_back` routes to), so the pendulum's rope and the dog's tethers go under the
+  camera arena's cover with their arena. Ropes are never `cover` and never make a frame layered
+  on their own.
+- **Found by the resolution's review (a gap on the combined line, not made by the merge):** the
+  objects of the `back` arena are not actually queued `back`. The frontends switch
+  `mdk_render_set_back` on around `ObjectView::addObject`, but that only fills the object
+  stream; `ObjectDraw::draw` submits it later, after the flag is off, and sets no `back`. Fixed
+  in the next commit on this branch (kept separate from the merge so it can be judged alone).
+- **Checks:** Linux build 0 warnings; `make -C tests/scripts test` exit 0 (1014 PASS, 0 FAIL,
+  ArenaCover pass, the seven opcode goldens pass); `make -C tests/formats` 200692 checks, 0
+  failures; `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds` 0 compiler
+  warnings. Linux frames of the pendulum (OLYM_6 f330), the dog (MUSE_5 f120) and the comm
+  screen (DANT_5 scope f110) are pixel-identical to the pre-merge captures (those spots draw
+  one arena or nothing layered). An independent read-only review of the resolution found no
+  lost or duplicated code and no caller of an old signature.
+- **Not verified:** no layered frame with a rope in the other arena was looked at (no retail
+  rope sits at a two-arena doorway that was found); no hardware, no Mandarine.
+
+
+### The ride end's `back` arena: its objects are now actually queued `back` (fix/opcodes-parity)
+- **What was wrong (on the combined line since eaef0d79):** both frontends switched
+  `mdk_render_set_back` on around `ObjectView::addObject` for the objects of the arena
+  `ArenaViews::draw` drew `back`. `addObject` only fills the object stream; `ObjectDraw::draw`
+  submits it after the loop, when the flag is off again, and it set no `MeshDraw::back`. So the
+  other arena's objects were drawn in the ordinary buckets, not under its glass with it as the
+  ride-end entry says, and the ropes made `back` by the merge would have been out of step with
+  their objects.
+- **What:** `ObjectStream::back` (the frontend sets it per object, where it called
+  `mdk_render_set_back`; cleared at reset and after the loop), copied into each
+  `ObjectStreamDraw::back` by `addObject`, and `ObjectDraw::draw` sets `MeshDraw::back` from it.
+  The ridden board, the strike's subject and the sniper rounds are added after the loop, unmarked,
+  as before. `mdk_render_set_back` stays in the render API (unused by the frontends now).
+- **Evidence:** a scratch build counting the `back` draws the Vulkan backend receives (not
+  committed): at the ride end (`--level=4 --arena=CMEAT_1 --at=62.35,2582.81,-392.90,90`,
+  60 frames) 2706 non-identity-world (object) draws arrive `back` with this fix, and by
+  construction none did before (the only path was the renderer flag, off when the stream is
+  submitted). The ride end's frames 60 and 120 at 320x240 are pixel-identical before and after
+  (no MEAT_3 object is in view there), and `ArenaCover` still passes; no frame where the change
+  shows was found or looked at.
+- **Checks:** Linux build 0 warnings; `make -C tests/scripts test` exit 0 (1014 PASS);
+  `make -C tests/formats` 200692 checks, 0 failures; `tools/check.sh` all gates pass (smdh
+  skipped); `make -C mdk_3ds` 0 compiler warnings.
+- **Not verified:** no hardware, no Mandarine; no host test pins the stream's `back` (ObjectDraw
+  is not linked by either host suite).
+
 ## 2026-11-27 -- every sound effect placed in the DSP arena at level load; core 0 decodes and copies none in play (branch perf/3ds-sfx-core1)
 
 - **What:** docs/3DS_ARCHITECTURE.md 2 gave core 1 "feeding sound-effect samples to their
@@ -4033,3 +4317,13 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   five levels on hardware; a heavier fight (the bomber ride); the owner's New 3DS; Mandarine
   (not run); HOME/sleep (no lifecycle change).
 - **Commits:** fe00876a (instrumentation, `tick1 sfxset`), 358597f0 (the placement), this entry.
+
+## 2026-11-27 -- test/3ds-combined-11-26 (6c5b3bcb, perf/3ds-sfx-core1) merged into fix/opcodes-parity
+- **What:** the combined line's new tip (sound effects placed in the DSP arena at level load)
+  merged after the ff13fd11 merge and the object `back` fix, so the coordinator's merge of this
+  branch is clean. Only the ledger conflicted (union); `main_3ds.cpp` and `tick1.cpp` merged
+  without conflict (their sfx-set dump and audio calls beside this branch's rope draw and
+  hazards tokens).
+- **Checks:** Linux build 0 warnings; `make -C tests/scripts test` exit 0 (1014 PASS, ArenaCover
+  and the eight opcode goldens pass); `make -C tests/formats` 200692 checks, 0 failures;
+  `tools/check.sh` all gates pass (smdh skipped); `make -C mdk_3ds` 0 compiler warnings.

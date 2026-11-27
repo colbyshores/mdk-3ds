@@ -226,6 +226,10 @@ struct ObjectStreamDraw {
     // The object's transform (the C#'s Draw `world` argument). Row-major,
     // row-vector, like MeshDraw::world.
     Mat4 world = Mat4::identity();
+
+    // Queued as the other drawn arena's (MeshDraw::back; ArenaViews::draw's
+    // ride-end ordering): ObjectStream::back when the object was added.
+    bool back = false;
 };
 
 // The frame's streamed corners and the draws they make: the C#'s
@@ -241,11 +245,16 @@ struct ObjectStreamDraw {
 struct ObjectStream {
     std::vector<Vertex> vertices;
     std::vector<ObjectStreamDraw> draws;
+    // The objects added while this is set are the arena ArenaViews::draw drew
+    // `back` (the frontend sets it per object): their draws are queued `back`
+    // when ObjectDraw submits the stream, which is after the whole pass.
+    bool back = false;
 
     void reset()
     {
         vertices.clear();
         draws.clear();
+        back = false;
     }
 };
 

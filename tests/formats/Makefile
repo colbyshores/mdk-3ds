@@ -56,6 +56,7 @@ SOURCES := \
 	$(CORE)/formats/glb.cpp \
 	$(CORE)/formats/png.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
+	$(CORE)/scripts/animated_textures.cpp \
 	$(CORE)/game/level_data.cpp \
 	$(CORE)/formats/font.cpp \
 	$(CORE)/game/enhanced_config.cpp \
@@ -85,6 +86,9 @@ SOURCES := \
 # needs game/frame_blend.cpp and ScriptRuntime, and the runtime needs the BSP,
 # the mixer, Kurt and the player. Linking that would make this the whole game
 # rather than a format test. The split is documented in pose_cache.cpp.
+# scripts/animated_textures.cpp is the other one, and only because it depends on
+# nothing (a std::map of frames and fmod): arena_view_tests drives the level
+# draw's opcode-133 frames with a real AnimatedTextures. It pulls in no runtime.
 
 # The formats the port has landed so far. The list grows as the batches
 # land; a source that is missing from BOTH this list and the tree is a

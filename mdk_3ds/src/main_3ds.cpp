@@ -30,9 +30,10 @@
 //     fade, the flashes, and an empty inventory -- the pickup and target-bar
 //     writers land with their own subsystems and the HUD must not invent them.
 //   * The ropes and the sniper scope — `_ropes.Draw` and `_sniper.Draw`
-//     between the objects and Kurt in C# Viewer.DrawScene (Viewer.cs:705-706).
-//     Neither is ported. The effects (`_effects.Draw`, Viewer.cs:707) ARE:
-//     pieces and sprite effects draw after the objects, before Kurt.
+//     between the objects and Kurt in C# Viewer.DrawScene (Viewer.cs:705-706)
+//     -- are drawn there too now: the ropes by game/rope_view.h (as thin quads:
+//     the PICA200 has no line primitive), the scope by SniperView. The effects
+//     (`_effects.Draw`, Viewer.cs:707) draw after the objects, before Kurt.
 //
 // THE OBJECT PASS IS HERE. The runtime's objects are drawn between the arena and
 // Kurt, which is the C#'s order (Viewer.cs:702-708), at the blended transform, and
@@ -88,6 +89,7 @@
 #include "game/mod_images.h"
 #include "game/level_view.h"
 #include "game/effects_draw.h"
+#include "game/rope_view.h"
 #include "game/effects_view.h"
 #include "game/object_draw.h"
 #include "game/object_view.h"
@@ -958,6 +960,8 @@ int main(int argc, char** argv) {
     bool sniperClipFailureLogged = false;
     mdk::EffectsView effectsView(objectResolver, &level, mdk::Shading::Sprite);
     mdk::EffectsDraw effectsDraw;
+    // The objects' ropes (C# RopeView, Viewer.cs:705), as thin quads (no line primitive).
+    mdk::RopeView ropeView;
     mdk::EffectsFrame effectsFrame;
     mdk::ObjectStream objectStream;
     // The tiny-enemy cull's per-object state (kTinyKnown...) and hysteresis
@@ -2416,7 +2420,7 @@ int main(int argc, char** argv) {
         // (C# Viewer.cs:702, LevelView.Draw(DrawnArenas)); the start arena until
         // the runtime's first tick has named one.
         // The arena ArenaViews::draw drew `back` this frame ("" when none): its
-        // objects are drawn `back` too (mdk_render_set_back, below).
+        // objects are drawn `back` too (ObjectStream::back, below).
         std::string layeredBack;
         if (arena && frameDrawn && !strikeFrame) {
             // The end of a level's torn triangles leave the arena's mesh first (the C#'s
@@ -2432,6 +2436,9 @@ int main(int argc, char** argv) {
                                       runtime->endLevel()->arena().c_str());
                 }
             }
+            // The comm screen's frames (arena_texture_frame, opcode 133): the
+            // C#'s LevelView.Draw(DrawnArenas, AnimatedTextures).
+            arenaViews.setAnimatedTextures(runtime ? &runtime->animatedTextures : nullptr);
             // The camera's arena over the other drawn one (upstream e1eb36bb; the
             // original's 0x490db4 and 0x41df35): ArenaViews::draw.
             const std::string cameraArena =
@@ -2478,9 +2485,9 @@ int main(int argc, char** argv) {
             // -- and so LookDown's camera -- on the XE's current place each step, so the
             // XE is drawn there too (alpha 1), or it would lag under the camera.
             //
-            // And the ropes and sniper scope that the C# draws between the
-            // objects and Kurt (Viewer.cs:705-706) are not ported; see the
-            // header. The effects (Viewer.cs:707) draw below.
+            // The ropes and the sniper scope that the C# draws between the
+            // objects and Kurt (Viewer.cs:705-706), and the effects
+            // (Viewer.cs:707), draw below.
             const float tickAlpha = runtime->tick_blend(pending);
             // The object cull for this frame: the centre frustum, with the
             // sphere margin covering both stereo eyes (half the configured
@@ -2544,12 +2551,15 @@ int main(int argc, char** argv) {
                 // The pose between its frames at the tick's alpha (upstream ae746b5d,
                 // Viewer's blend.PoseOf), the driven and carried ones too.
                 // The other arena's objects with it, under its glass (upstream
-                // e1eb36bb bands them by arena too; render/draw_queue.h).
-                mdk_render_set_back(renderer, !layeredBack.empty() && obj.arena == layeredBack);
+                // e1eb36bb bands them by arena too; render/draw_queue.h). Marked on
+                // the stream, not with mdk_render_set_back: the stream is submitted
+                // after this loop (objectDraw.draw), when the renderer flag would be
+                // off again.
+                objectStream.back = !layeredBack.empty() && obj.arena == layeredBack;
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
                                      &objectStream, tinyHidden, tickAlpha);
             }
-            mdk_render_set_back(renderer, false);
+            objectStream.back = false;
             // THE RIDDEN BOARD (upstream a27ca2f4, Viewer.DrawBoard): after the objects,
             // scaled towards the eye in front of the floors its box dips under (the
             // original draws an object after its leaf's floor, with no depth buffer).
@@ -2659,9 +2669,15 @@ int main(int argc, char** argv) {
             }
         }
         if (runtime && !strikeFrame) {
+            // C# RopeView.Draw (Viewer.cs:705): the objects' ropes after the objects,
+            // blended as they are. The PICA200 has no line primitive, so each line is
+            // a thin camera-facing quad in its arena's colour (game/rope_view.h).
+            ropeView.draw(renderer, *runtime, level, sceneCamera, runtime->tick_blend(pending),
+                          layeredBack);
+        }
+        if (runtime && !strikeFrame) {
             // The pieces and sprite effects, where the C# draws them:
-            // after the objects, before Kurt (Viewer.cs:707). The ropes
-            // and sniper scope the C# draws alongside are not ported.
+            // after the objects, before Kurt (Viewer.cs:707).
             // A refusal is reported like the object pass's, edge-triggered
             // and re-armed, but on this pass's own latch.
             // The effects cull (EffectsView::setCullFrustum): the object cull's

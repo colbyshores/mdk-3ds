@@ -53,8 +53,14 @@ public:
     void set(const std::string& arena, const std::string& texture, Mode mode, float value,
              float dt);
 
-    // The frame drawn for an arena's texture (0 until a script sets it).
-    int32_t frameOf(const std::string& arena, const std::string& texture) const;
+    // The frame drawn for an arena's texture (0 until a script sets it). Inline: the
+    // level draw (game/level_view.cpp) reads it, and tests/formats links that draw
+    // without any scripts translation unit but pose_cache.cpp (its link-graph guard).
+    int32_t frameOf(const std::string& arena, const std::string& texture) const {
+        const std::map<std::pair<std::string, std::string>, float>::const_iterator found =
+            frames_.find(std::pair<std::string, std::string>(arena, texture));
+        return found != frames_.end() ? (int32_t)found->second : 0;
+    }
 
     // The textures animated so far, by (arena, name), and their frames.
     const std::map<std::pair<std::string, std::string>, float>& frames() const { return frames_; }
