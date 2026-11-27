@@ -20,7 +20,7 @@ owner first.
 | Core | Thread | Owns |
 |---|---|---|
 | 0 (application core) | main | input, simulation, scripts, the camera, building and submitting frames, every Citro3D call, handing finished assets to the renderer at a frame boundary |
-| 1 (system core) | the streaming worker | every file read, every decompress or decode that is not the GPU's or the DSP's, music streaming, feeding sound-effect samples to their buffer, releasing what an arena no longer needs, log writes |
+| 1 (system core) | the streaming worker | every file read, every decompress or decode that is not the GPU's or the DSP's, music streaming, releasing what an arena no longer needs, log writes |
 
 - **One worker thread on core 1.** The kernel allows one application thread
   there. It serves a queue with fixed priority: music first, then what the
@@ -39,12 +39,20 @@ owner first.
   time (AGENTS.md P4); every worker thread sets FZ/DN at entry (R1).
 - **Audio is native.** The DSP decodes the music (DSP-ADPCM) and plays and
   mixes the sound effects on its hardware channels; neither core mixes audio.
+- **The sound effects are level-resident, so nothing feeds them in play.** At
+  level load (and when the fall or the stream screen opens), behind the loading
+  screen, every effect the level can play is decoded and copied into the 2 MiB
+  DSP sample buffer, pinned there, and the bank's own copy is freed
+  (`audioDspPlaceEffects`). Measured on the retail data (`tick1 sfxset`): 1.14-1.44
+  MB a level (74-81 effects), 1.06 MB for the fall. Core 0 decodes and copies no
+  effect during play; the level-end and `audio: dsp close` lines count any that
+  do (must be 0).
 
 ## 3. Memory
 
 | Class | What | Lifetime |
 |---|---|---|
-| Level-resident | level data and geometry, scripts, HUD, fonts, heads, scope, Kurt's start set, the 2 MiB sound-effect buffer, music buffers | loaded behind the loading screen, freed at level end |
+| Level-resident | level data and geometry, scripts, HUD, fonts, heads, scope, Kurt's start set, the 2 MiB sound-effect buffer with every effect of the level in it, music buffers | loaded behind the loading screen, freed at level end |
 | Arena-streamed | each arena's textures: HD copies where they exist (512 target), else the packed originals; effect and object textures | requested through the door bubble, released when the arena leaves it |
 | Streamed on demand | Kurt's other animations, music | by their streams, bounded caches |
 | VRAM (later phase) | static, level-resident textures that are read heavily | placed at level load |

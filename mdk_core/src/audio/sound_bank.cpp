@@ -383,6 +383,43 @@ void SoundBank::preload() {
     }
 }
 
+void SoundBank::effectNames(std::vector<std::string>* out) const {
+    out->clear();
+    std::set<std::string> seen;
+    for (size_t i = 0; i < archives_.size(); i++) {
+        const std::vector<formats::Sni::Entry>& entries = archives_[i].entries();
+        for (size_t e = 0; e < entries.size(); e++) {
+            if (!archives_[i].isSound(entries[e])) {
+                continue;
+            }
+            const std::string name = entries[e].nameString();
+            if (name.empty() || !seen.insert(name).second || streamsMusic(name)) {
+                continue;
+            }
+            // The entry get() would decode (newest archive wins), not this one.
+            size_t archive = 0;
+            const formats::Sni::Entry* winner = nullptr;
+            if (find(name, &archive, &winner) && (winner->flags & formats::Sni::kFlagMusic) == 0) {
+                out->push_back(name);
+            }
+        }
+    }
+}
+
+bool SoundBank::dropSamples(const std::string& name) {
+    std::map<std::string, Sound>::iterator sound = sounds_.find(name);
+    if (sound == sounds_.end() || cache_.find(name) == cache_.end()) {
+        return false;
+    }
+    Sound::Samples().swap(sound->second.samples);
+    // Pinned for the bank's life: a dropped sound holds no bytes, so the budget's
+    // eviction would take it first and free nothing -- and erasing it would leave
+    // the frontend's copy keyed to a map node that is gone, and decode the sound
+    // again on its next play.
+    pins_[name]++;
+    return true;
+}
+
 size_t SoundBank::decodedSamples() const {
     size_t n = 0;
     for (std::map<std::string, Sound>::const_iterator it = sounds_.begin(); it != sounds_.end();
@@ -601,6 +638,8 @@ bool SoundBank::stagingDecodeStep() {
     // Sound.Frames, which is Wav::frames() of the same samples (once per sound).
     out.frames = sound.frames();
     out.sound = &sound;
+    stats_.decodes++;
+    stats_.decodedSampleCount += (int64_t)sound.samples.size();
     stagingDrop();
     readFailures_.erase(name);
     cache_[name] = out;
@@ -706,6 +745,8 @@ bool SoundBank::decode(const std::string& name, const formats::Sni::Entry& entry
     soundFromPcm(wav.data(), wav.dataSize(), wav.channels(), wav.sampleRate(),
                  wav.bitsPerSample(), out->looping, &sound);
     out->sound = &sound;
+    stats_.decodes++;
+    stats_.decodedSampleCount += (int64_t)sound.samples.size();
     return true;
 }
 

@@ -27,7 +27,7 @@
 // software mix interpolates.
 //
 // THE SAMPLES. ndsp reads linear (DSP-visible) memory, and the bank's decoded
-// store is the C++ heap. So an effect is copied, the first time it plays, into a
+// store is the C++ heap. So an effect is copied into a
 // SAMPLE ARENA reserved ONCE at open (kSampleArenaBytes, one linearAlloc): a
 // per-event linearAlloc is what failed on the PD port once textures filled the
 // linear heap (vault 10-projects/perfect-dark/findings/dsp-sound-system.md:
@@ -38,6 +38,20 @@
 // (byte-128)*256, so their low byte is always zero; such a sound is put in the
 // arena as signed PCM8 (half the bytes, the exact same values). A 16-bit sound
 // stays PCM16.
+//
+// EVERY EFFECT IS PLACED AT LOAD (audioDspPlaceEffects; docs/3DS_ARCHITECTURE.md
+// 2 and 3: the effects are level-resident). Behind the loading screen each of the
+// level's effects (SoundBank::effectNames) is decoded and copied into the arena,
+// pinned there for the level, and the bank's int16 copy is dropped -- so during
+// play core 0 decodes no effect and copies no samples, and the main heap holds
+// none of them. Measured with `tick1 sfxset <level>` on the retail data: a level's
+// whole set is 1.14-1.44 MB of the 2 MiB arena (74-81 effects; level 3 the
+// largest), the fall's 1.06 MB, so it always fits. The first-play copy below stays
+// only as the fallback for a sound that was not placed -- one that did not fit, or
+// a music-flagged entry (SNI flag 2) a script plays on the EFFECTS bus, which
+// effectNames leaves out (no retail CMI spells one outside its arena music table,
+// `tick1 sfxset`); the close line counts it ("IN PLAY"), and the level-end line
+// counts any decode during play.
 //
 // THE MUSIC is DSP-ADPCM from the level's own files (mdk_3ds/music, made from
 // the soundtrack by mdk_3ds/tools/music_dsp_convert.py; audioDspMusicRegister),
@@ -139,6 +153,15 @@ struct AudioDspStats {
     uint32_t dspDropped;
 };
 AudioDspStats audioDspStats();
+
+// THE LEVEL'S EFFECTS INTO THE ARENA, NOW (a level's or the fall's load, behind
+// its loading screen, after audioDspOpen): every SoundBank::effectNames sound
+// decoded (if it is not yet) and copied in, never evicted, and its int16 copy
+// dropped from the bank (SoundBank::dropSamples) -- the bank must be the one this
+// opening's voices play from, and it must stay alive until audioDspClose. Main
+// thread, cold. The count placed, logged with its time. 0 when the DSP path is
+// not open (the bank then keeps its samples).
+int32_t audioDspPlaceEffects(audio::SoundBank* bank);
 
 // The streaming worker's pass over the music (platform/stream_worker_3ds.h):
 // the worker only, while the DSP path is attached. `tickDue`: its 25 ms refill
