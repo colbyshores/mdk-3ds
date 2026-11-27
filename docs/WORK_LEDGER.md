@@ -3785,6 +3785,18 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   frame gate's oracle arms); `make -C tests/formats` 200,681 checks, 0 failures;
   `tools/check.sh` ALL GATES PASSED (gates_smdh SKIP). (This worktree needed the usual
   untracked `logs/ralph/disabled` park marker for gates_batch_integrity.)
-- **Not verified:** nothing on hardware; the stencil path ran only in Mandarine (below); no C#
-  oracle frame of e1eb36bb (no dotnet host on this machine), so "same pixels as upstream" is
-  argued, not measured; the ride itself (from its start) was not driven.
+- **Emulator (the stencil path):** the same harness build with this branch merged
+  (`throwaway/l4-ride-end-hw`, merge left uncommitted there), Mandarine r1.2.1 md5 0d2adab6,
+  `DISPLAY=:99`, `emurun.sh --secs 40 --shot`: base shows the grey plane and Kurt cut at the
+  knees; fixed shows the tube's snow and walls, Kurt whole with the board at his feet. Both runs
+  logged the harness teleport into CMEAT_1 and reached frame 5 in the log (the tree logs frames
+  1-5 only); the emulator's timing is not the Old 3DS's. During the fixed run another
+  emulator (`/tmp/kilo/heap-growth/before.3dsx`, owner unknown, possibly MDK) was also running.
+- **Evidence kept** (`.git/worktrees/l4-ride-end/evidence/`, not committed): the Linux A/B at
+  the ride end (original f120, enhanced f60), the Mandarine pair (`emu_3ds_{base,fix,ab}.png`,
+  their emurun logs), the doorway sweep's table.
+- **Not verified:** nothing on hardware (no appliance); the 3DS cost is argued (no added
+  draws), not measured; no C# oracle frame of e1eb36bb (no dotnet host on this machine), so
+  "same pixels as upstream" is argued, not measured; the ride itself (from its start) was not
+  driven.
+- **Commits:** eaef0d79 (the fix, tests, this entry) and this ledger update.
