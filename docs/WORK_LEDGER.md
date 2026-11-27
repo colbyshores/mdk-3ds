@@ -4898,3 +4898,25 @@ already has perf/3ds-view-prebuild's object warm over the bubble's hints).
   doorway's hitch there is the synchronous view build, a views/bubble change. L8 linear headroom
   is 2.45 MB in play -- tight; the play reserve should be re-measured rather than assumed.
 - **Commit:** this one (ledger only).
+
+## 2026-11-27 -- the owner's playthrough checklist for the combined build (branch docs/playthrough-checklist)
+
+- **What:** `docs/PLAYTHROUGH_CHECKLIST.md`, for the owner's hand playthrough on the New 3DS:
+  per level in game order (LEVEL7, 6, 3, 4, 8, 5; the fall counted with its level), what each
+  merge on test/3ds-combined-11-26's first-parent line (pre-overnight-2026-11-27..fbfa9459)
+  changed, where to look, what right and wrong look like, and the merge's hash, so each bug can
+  be compared against the build before that merge first. Also: what was measured with no
+  visible change, known gaps, decisions waiting, and a placeholder for the VRAM placement /
+  load overlap measurement.
+- **Why:** owner request: play every level, note every bug, cross-reference it against
+  tonight's changes before anyone root-causes it.
+- **Sources:** this ledger's entries since the tag, docs/OPCODE_WATCHLIST.md,
+  docs/MIP_GLITCH.md, docs/3DS_ARCHITECTURE.md; and perf/3ds-hd-bubble's ledger-only commits
+  b52d2159 / 5f04c266 (the HD window's appliance A/B: load times, worker busy), which are not
+  merged into this line.
+- **Not reconciled, recorded:** L8 CGUNT_1->GUNT_2 measured 97.0 ms after 12118fd0 but 74.1 ms
+  as the "before" of fbfa9459 on d71b8904 (one run each; d71b8904's own A/B says 84.0 -> 85.1);
+  the checklist quotes each merge's own pair. L4 and L3 load times come from the HD A/B (before
+  d71b8904's fonts at load), L5-L8 from d71b8904's runs.
+- **Checks:** documentation only; no code, build, hardware or emulator run.
+- **Commit:** this one.
