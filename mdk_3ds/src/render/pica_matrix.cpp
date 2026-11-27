@@ -629,6 +629,20 @@ int32_t mipLevelsFor(int32_t paddedWidth, int32_t paddedHeight) {
     return levels;
 }
 
+int32_t mipLevelsSampled(bool etc1, int32_t paddedWidth, int32_t paddedHeight, int32_t levels) {
+    if (!etc1 || paddedWidth == paddedHeight) {
+        return levels;
+    }
+    // The last level sampled is the one whose short side is 16 (or level 0, if
+    // the texture is narrower than that).
+    const int32_t shortSide = paddedWidth < paddedHeight ? paddedWidth : paddedHeight;
+    int32_t sampled = 0;
+    while (sampled < levels && (shortSide >> (sampled + 1)) >= 16) {
+        sampled++;
+    }
+    return sampled;
+}
+
 // downsampleTiled over the output's rows of 8x8 tiles [firstTileRow,
 // endTileRow) only: the mip chain is made in slices across pump steps. Each
 // output tile reads only the level above, so any boundary gives the same bytes.

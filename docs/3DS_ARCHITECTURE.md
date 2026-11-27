@@ -100,6 +100,11 @@ owner first.
   Measured on the Old 3DS: core 1 at its 30% share reads 3.5 MB/s, but reads and
   unpacks tex3ds' default compression at only 0.77 MB/s of file, and one file's
   unpack held the worker 390 ms. The HD pack is ~85 MB raw against 55 MB.
+- **A non-square ETC1 texture is sampled down to the level whose short side is
+  16 texels, never to its 8 level**, on both consoles
+  (`mdk::pica::mipLevelsSampled`). The PICA200 draws part of the 16 level from
+  the 8 level's tiles when it blends the two; measured on the Old 3DS,
+  `docs/MIP_GLITCH.md`. The packs keep their whole chains.
 - Small 2D art made once per level (HUD, fonts, heads, scope, bomber, screens)
   may stay uncompressed, made at level load, never at first show.
 - The movie stays a streamed texture.
@@ -107,8 +112,9 @@ owner first.
 ## 6. GPU visibility
 
 - Every texture written by the CPU is flushed from the CPU cache before the GPU
-  can sample it, per texture, not only by the end-of-frame flush (candidate
-  cause of the New 3DS mip glitch, branch `fix/3ds-mip-chain`).
+  can sample it, per texture, not only by the end-of-frame flush. This is P3
+  hygiene. It is NOT the fix for the New 3DS mip glitch: the owner's console
+  shows the glitch with the flush in place (`docs/MIP_GLITCH.md`).
 - Imports happen at a frame boundary, never inside a draw, and nothing in flight
   on the GPU is freed or overwritten before the frame that used it completed
   (AGENTS.md P3).

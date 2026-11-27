@@ -348,9 +348,9 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture, const u
     // its one GSPGPU_FlushDataCache is the VRAM path's staging buffer), so the
     // chain is in the CPU's write-back cache until C3D_FrameEnd's heap-wide flush.
     // Cleaned here by range, as makeTextureNow does for an expanded texture, while
-    // maxLevel is still the import's (the draw rewrites it). See
-    // docs/WORK_LEDGER.md, the mip-chain entry: the candidate for the New 3DS's
-    // distant-surface glitch, unproven until the owner's A/B.
+    // maxLevel is still the import's (the draw rewrites it). P3 hygiene: it was
+    // once the candidate for the distant-surface mip glitch and is not its fix
+    // (docs/MIP_GLITCH.md).
     C3D_TexFlush(&texture.tex);
     texture.paddedWidth = texture.tex.width;
     texture.paddedHeight = texture.tex.height;
