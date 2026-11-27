@@ -66,7 +66,10 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
     }
     f.heapProbe("stream-open");
     audio::SoundMixer& mixer = screen->mixer();
-    audioDspOpen();
+    // The screen's effects into the DSP arena now, so its frames copy none.
+    if (audioDspOpen()) {
+        audioDspPlaceEffects(&screen->bank());
+    }
     mixer.device().setSampleMix(false);
 
     // The circle pad steers too (its range is about +-156; a third of it is a push).

@@ -406,6 +406,20 @@ void SoundBank::effectNames(std::vector<std::string>* out) const {
     }
 }
 
+bool SoundBank::dropSamples(const std::string& name) {
+    std::map<std::string, Sound>::iterator sound = sounds_.find(name);
+    if (sound == sounds_.end() || cache_.find(name) == cache_.end()) {
+        return false;
+    }
+    Sound::Samples().swap(sound->second.samples);
+    // Pinned for the bank's life: a dropped sound holds no bytes, so the budget's
+    // eviction would take it first and free nothing -- and erasing it would leave
+    // the frontend's copy keyed to a map node that is gone, and decode the sound
+    // again on its next play.
+    pins_[name]++;
+    return true;
+}
+
 size_t SoundBank::decodedSamples() const {
     size_t n = 0;
     for (std::map<std::string, Sound>::const_iterator it = sounds_.begin(); it != sounds_.end();

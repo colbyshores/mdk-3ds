@@ -243,6 +243,17 @@ public:
     // walks. Reads nothing: the directories are resident.
     void effectNames(std::vector<std::string>* out) const;
 
+    // Free a decoded sound's SAMPLES and keep everything else: get() still
+    // answers the name with the same Entry (volume, loop flag, channels, rate,
+    // frames, the same `sound` pointer), but the pointed-to Sound's samples are
+    // empty, so only a frontend that keeps its own copy of them may call it --
+    // the 3DS, once an effect is in the DSP's sample arena and the device's
+    // sample plane is off (a SoundDevice mixing in software mixes an empty
+    // sound as silence). The name stays decoded and is pinned for the bank's
+    // life (never evicted), so it is not decoded again. False when the name is
+    // not decoded.
+    bool dropSamples(const std::string& name);
+
     // The decoded store's budget, in bytes (0 = unbounded, the shipped
     // default: the C#'s bank keeps everything it decoded). Over the
     // budget, decoding a sound evicts the least recently gotten decoded

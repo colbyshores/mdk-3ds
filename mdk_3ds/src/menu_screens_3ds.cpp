@@ -315,6 +315,11 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         audio::SoundDevice& device = fall->mixer().device();
         fallAudio = audioDspOpen();
         device.setSampleMix(false);
+        // The fall's effects into the arena now (its bank decoded them at open),
+        // so the fall copies none on its frames.
+        if (fallAudio) {
+            audioDspPlaceEffects(fall->bank());
+        }
         front->settings->applyAudio(&device);
         log3dsPrintf("flow: the fall before level %d (seed %d, audio %d)", (int)flow.state().level,
                      (int)seed, fallAudio ? 1 : 0);
