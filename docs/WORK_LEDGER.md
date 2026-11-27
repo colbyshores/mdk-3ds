@@ -4790,3 +4790,111 @@ already has perf/3ds-view-prebuild's object warm over the bubble's hints).
   THE TWO-CORE LAYOUT); the owner's New 3DS (same build, same layout -- only the owner
   can confirm, from the `stream: worker running on core 1` line).
 - **Commits:** c95310c9 (the worker), this entry.
+## 2026-11-26 -- HD window: the appliance A/B (docs/3DS_ARCHITECTURE.md 8), base vs change (branch perf/3ds-hd-bubble)
+
+- **What:** the section-8 runs of the HD window against its parent. Base: c95310c9 (second-core
+  worker) + harness, the old tex3ds-compressed pack, the level-wide pinned set, 28 MiB linear.
+  Change: f5c94f6c + 17889b9d + the same harness, the raw pack, the HD window, 30 MiB linear.
+  Both: harness branches throwaway/hd-bubble-{base,change}-hw, `AUTOQUIT HDROMFS=1 LEVEL=n GOD=1
+  NOCLIP=1 PROFILE=1 ROUTE=...`: a waypoint door walk (Kurt carried through each doorway's box,
+  noclip) forward at 40 u/s (turbo) and back at 20 u/s (walk), the same route on both sides.
+- **Conditions:** old3ds-lan167, CFGU model 0 (Old 3DS), 268 MHz, L2 off, stereo on, HD on, the
+  appliance's config; every run FRESH (`hw_cycle --profile`, PROFILE OG). Logs:
+  `.git/worktrees/hd-bubble-{base,change}-hw/hw-logs/L3..L8.log`.
+- **HD tier:** base L3 256, L4 512, L5 512, L6 256, L7 256, L8 256 (whole level). Change: **every
+  arena of every level at 512**, no arena stepped down; largest window / room: L3 5.88/10.93,
+  L4 4.53/10.94, L5 4.91/11.25, L6 5.13/11.31, L7 5.96/10.91, L8 8.40/10.92 MB.
+- **Level load** (loading screen to first frame, base -> change): L3 22.3 -> 14.5 s, L4 17.1 ->
+  13.8, L5 17.9 -> 11.2, L6 22.0 -> 12.4, L7 23.9 -> 14.7, L8 36.0 -> 14.8.
+- **Frames, whole run** (mean / p95 / frames over 33.3 ms; max is frame 1 on both sides):
+  L3 20.95/33.4/554 -> 20.98/33.4/549; L4 16.74/17.4/2 -> 16.74/17.4/2 (no crossings, below);
+  L5 18.51/26.7/80 -> **18.71/27.4/168**; L6 17.44/22.1/46 -> **17.57/23.6**/46;
+  L7 17.77/24.0/214 -> 17.76/24.0/211; L8 25.10/38.0/2160 -> **25.24/38.1/2243**.
+- **Frames at each doorway** (max ms, frames over 33.3 ms, 10 frames before to 60 after; base ->
+  change). Worse in the change: L3 CHMO_1->HMO_1 21.3/0 -> 35.8/3, HMO_1->CHMO_1 3 -> 8 over;
+  L5 CMUSE_2->MUSE_3 21.7 -> 38.0, MUSE_3->CMUSE_2 18.1 -> 35.6; L6 OLYM_2->COLYM_2 34.0/9 ->
+  37.9/12, COLYM_2->OLYM_3 41.8 -> 46.1, COLYM_2->OLYM_2 3 -> 8 over; L7 CDANT_1->DANT_2 55.4 ->
+  67.1, CDANT_3->DANT_4 86.1 -> 101.6; L8 GUNT_1->CGUNT_1 22 -> 28 over, GUNT_2->CGUNT_2 32.1 ->
+  39.3, CGUNT_1->GUNT_1 35.9 -> 45.8. Better: L8 CGUNT_1->GUNT_2 180.4/61 -> 173.2/56,
+  GUNT_4->CGUNT_3 28 -> 21 over; the rest within ~3 ms. Likely cause (not measured apart): the
+  base imports no HD in play and the change imports each window's new files at the boundary,
+  2 a frame, 3-4 ms each.
+- **Transitions that waited: 0** on every level (`hd: level end: 0 waits`). **Draws without
+  their HD copy: 0** on every level. Each window's new files arrived 0.14-2.77 s after it was
+  asked for (L8: 24-45 files in 1.4-2.8 s; L3 CHMO_1: 12 files in 1.37 s at turbo against a
+  73-unit lead = 1.8 s, 21 files in 1.68 s at walk against 59 units = 2.95 s).
+- **Core 1 / streaming:** worker busy max per 10 s 40-49% (base 84-89%, the LZ unpack); read
+  queue max 3 both; reader 1.84-2.01 MB/s of the worker's time (base 0.65-0.77); 0 failed reads;
+  **music underruns 0** on both sides.
+- **Core 0 reads in play:** NOT 0, the same files on both sides -- packed originals of objects
+  and effects read by their first draw (`pack: MAIN-THREAD read`): L5 3, L6 3, L7 6, L8 7, L3 0
+  (sl_sma, trail, lock, sw_* bombs). Not HD and not this change; it breaks section 2's rule and
+  belongs to step 3 (the warms).
+- **Memory:** HD evictions 0 and failed imports 0 on every run; no allocation failed. Linear free
+  at the first frame: change 11.85-13.85 MB (base 5.99-11.31). Main heap at the first frame,
+  L8: change cap 33.74 MB, peak 23.45 MB (base 35.86 / 23.36). **The in-play minimum of either
+  heap was not sampled** (this harness has no sampler; the profile's `linear free min` reads 0
+  KiB on both sides), so the owner's level-8 main-heap condition is met only as "a 129 s level-8
+  walk over 12 doorways with 30 MiB linear and no allocation failure", not as a measured minimum.
+- **L4 MEAT_6 <-> CMEAT_5 NOT MEASURED:** the harness on both sides lacked `AT=`/`ARENA=`
+  (absent from the cherry-picked harness, never logged), so Kurt started at MEAT_1 and the
+  route flew toward MEAT_6 without passing a doorway: 0 crossings, no connector data, no L4 door
+  walk. From the measured delivery (L3 CHMO_1 above: about half the 3.4 MB/s planned), the
+  connector's 11-unit lead would likely leave ~0.1-0.2 s to wait at turbo and close to 0 at walk.
+- **Not run:** a capture per level, a heavy combat scene, HOME/lid sleep (no thread change).
+- **Worse than base, plainly:** L5 frames over 33 ms 80 -> 168, L8 2160 -> 2243, L5/L6/L8 mean
+  +0.13-0.19 ms and p95 +0.1-1.5 ms, and the doorway maxima listed above. Better: level load on
+  every level (-3.3 to -21.2 s), 512 everywhere, linear free at start +2-6 MB, core 1 busy -40
+  points.
+- **Recommendation (not decided):** rerun L4 with `AT=`/`ARENA=` working, at turbo and walk,
+  before deciding on the short-connector rule; if CMEAT_5 waits, add the second hop through it.
+  Try `kHdImportsPerFrame` 1 against the doorway maxima (the reader delivers ~32 files/s, one a
+  frame keeps up at 40+ fps), measured against this run.
+- **Commit:** this one (ledger only).
+
+## 2026-11-27 -- HD window on the combined tip: the L4 short connector, imports 2 vs 1 a frame, in-play memory minima (branch perf/3ds-hd-bubble)
+
+- **What:** appliance runs of the HD window on test/3ds-combined-11-26 20e2521f (which carries
+  f5c94f6c/17889b9d) through throwaway/combined-hw 25180768: the harness with `AT=`/`ARENA=`
+  ported from throwaway/decal-zfight-hw (missing in the 11-26 A/B), an in-play memory sampler
+  (linear free every 4th frame, the main heap's mallinfo every 30th, said every 10 s) and an
+  `HDIMPORTS=n` knob for kHdImportsPerFrame. Same waypoint routes as the 11-26 campaign; PROFILE
+  builds only; no ATM screenshot. old3ds-lan167, Old 3DS, 268 MHz, L2 off, stereo on, HD on.
+  Logs: `.git/worktrees/combined-hw/hw-logs/change-L{4,4w,7,8}-i{1,2}.log`.
+- **The sky table (fix-arena-entry-stutter):** already in every build measured -- main,
+  combined, both sides of the 11-26 A/B carry d0a80228 (the same change as c657187e). The
+  doorway worst frames are not the powf storm.
+- **L4 MEAT_6 <-> CMEAT_5 <-> MEAT_5** (AT in MEAT_6 at the CMEAT_5 doorway, ARENA=MEAT_6;
+  MEAT_5 is not in MEAT_6's window, so the first pass is cold):
+  - turbo first (40 u/s): entering CMEAT_5 asked for MEAT_5's 9 files; resident 996 ms later,
+    ~0.24 s before Kurt crossed into MEAT_5 (CMEAT_5 is 31 units): **no wait, margin +0.24 s**.
+  - walk first (20 u/s): 9 files resident 1047 ms after, ~1.4 s before the crossing: **no wait,
+    margin +1.4 s**. The later passes found the files resident (0 to come).
+  - **0 waits, 0 draws without their HD copy** on both runs.
+  - The connector's real hitch is not HD: entering MEAT_5 finishes its view synchronously
+    (`views: 3 drawn view(s) finished synchronously ... last MEAT_5, 256.9 ms`): frames of 337 ms
+    (turbo, cold), 86 ms (walk), 274 ms (turbo, third pass). The bubble's view prebuild gets no
+    lead through 31 units either.
+- **Imports 2 vs 1 a frame** (doorway max ms / frames over 33 ms; base = the old pinned set,
+  11-26):
+  - L7: CDANT_3->DANT_4 86.1 (base) / 101.6 (11-26 change) / 99.6 (combined, 2) / 96.1 (1);
+    CDANT_1->DANT_2 55.4 / 67.1 / 59.6 / 65.8; DANT_3->CDANT_3 19.6 / 36.1 / 38.0 / 38.6; whole
+    run over 33 ms 214 / 211 / 481 / 503.
+  - L8: CGUNT_1->GUNT_2 180.4 / 173.2 / 207.2 / 190.1; GUNT_2->CGUNT_1 34.0 / 34.0 / 37.9 / 45.1;
+    CGUNT_1->GUNT_1 35.9 / 45.8 / 37.0 / 38.1; whole run over 33 ms 2160 / 2243 / 1745 / 1744.
+  - Window arrival 2 vs 1 a frame: L7 0.23-1.43 s vs 0.16-1.44 s; L8 0.56-2.82 s vs
+    0.57-2.81 s; 0 waits either way.
+  - **1 a frame is not better** (some doorways better, as many worse, within run-to-run noise),
+    so kHdImportsPerFrame stays 2: no commit, no re-merge.
+  - The combined tip is slower overall on L7 than the 11-26 builds (mean 18.3 vs 17.8 ms, over
+    33 ms 481 vs 211) and faster on L8 (over 33 ms 1745 vs 2243): the other branches merged into
+    it, not the HD window (its HD numbers are unchanged).
+- **In-play memory minima** (the owner's 30 MiB condition):
+  - **L8: main heap free minimum 4,880,744 bytes** (used max 28,833,432 of 33,714,176); linear free
+    minimum 2,450,560 bytes, against 12.6 MB at the first frame: play took ~10 MB of linear
+    beyond the start window, more than the 7 MiB play reserve assumed, with no failed allocation.
+  - L7: main free min 8.24 MB, linear free min 8.23 MB. L4: main free min 7.71 MB, linear 11.14 MB.
+- **Recommendation (not decided):** no second hop through CMEAT_5 for HD (it does not wait); the
+  doorway's hitch there is the synchronous view build, a views/bubble change. L8 linear headroom
+  is 2.45 MB in play -- tight; the play reserve should be re-measured rather than assumed.
+- **Commit:** this one (ledger only).
