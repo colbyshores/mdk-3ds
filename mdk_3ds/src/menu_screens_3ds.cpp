@@ -39,6 +39,7 @@
 #include "platform/controls_3ds.h"
 #include "platform/input_3ds.h"
 #include "platform/log_3ds.h"
+#include "platform/run_end_3ds.h"
 #include "render/render_types.h"
 
 namespace mdk {
@@ -591,8 +592,10 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         }
         }
         (*front->frame)++;
-        if (front->frameBudget != 0 && *front->frame >= front->frameBudget) {
-            front->exitReason = "frame budget reached";
+        // The run's own end holds on the front screens too (platform/run_end_3ds.h):
+        // a run that died into the main menu ends here, through this function's
+        // closes and the caller's ordinary exit.
+        if (runEnded3ds(*front->frame, &front->exitReason)) {
             break;
         }
         if (next == flow::Event::None) {

@@ -67,9 +67,9 @@ struct FrontScreens3ds {
     // The frame clock (main_3ds.cpp's nowSeconds) and its wake flag (P1).
     double (*now)() = nullptr;
     volatile bool* resumePending = nullptr;
-    // The run's frame count, shared with the level loop (the frame budget).
+    // The run's frame count, shared with the level loop (and so with the run's
+    // own end, platform/run_end_3ds.h).
     uint32_t* frame = nullptr;
-    uint32_t frameBudget = 0;
     // Set when the run ends here: why.
     const char* exitReason = nullptr;
 };

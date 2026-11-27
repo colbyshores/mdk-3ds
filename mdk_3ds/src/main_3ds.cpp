@@ -105,6 +105,7 @@
 #include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
+#include "platform/run_end_3ds.h"
 #include "platform/stream_worker_3ds.h"
 #include "config_3ds.h"
 #include "level_load_3ds.h"
@@ -116,12 +117,6 @@
 #include "stream_3ds.h"
 
 namespace {
-
-// The deterministic frame budget for a test run: `--frames N` runs exactly N
-// frames and then exits, so a host-side harness gets a reproducible run
-// instead of one that has to be interrupted. 0 means "run until asked to
-// stop".
-uint32_t g_frameBudget = 0;
 
 // Set by the APT lifecycle hook when the console wakes (lid opened /
 // resumed): the main loop rebases its frame clock on the next frame
@@ -189,9 +184,12 @@ int main(int argc, char** argv) {
             nullptr);
     // The command line. A 3DS title's arguments are short; --frames is the
     // one the test harness needs.
+    // `--frames N` is the deterministic frame budget for a test run: exactly N
+    // frames and then the ordinary exit, in whichever frame loop the run is in
+    // (platform/run_end_3ds.h). 0 (the default) means "run until asked to stop".
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
-            g_frameBudget = (uint32_t)strtoul(argv[i + 1], nullptr, 10);
+            mdk::runEndSetFrameBudget((uint32_t)strtoul(argv[i + 1], nullptr, 10));
             i++;
         }
     }
@@ -359,7 +357,6 @@ int main(int argc, char** argv) {
     front.now = mdk::nowSeconds;
     front.resumePending = &g_resumePending;
     front.frame = &frame;
-    front.frameBudget = g_frameBudget;
     // The main menu's Continue and Saved Game page read the saves (package #19).
     front.saves = &saves;
     // The START menu's OPTIONS row opens the C# PauseMenu's options pages
@@ -420,7 +417,6 @@ int main(int argc, char** argv) {
             streamFrontend.renderer = renderer;
             streamFrontend.controls = &controls;
             streamFrontend.frame = &frame;
-            streamFrontend.frameBudget = g_frameBudget;
             streamFrontend.resumePending = &g_resumePending;
             streamFrontend.heapProbe = mdk::heapProbe;
             streamFrontend.difficulty = (mdk::Kurt::Difficulty)mdk::g_gameSettings.difficulty;
@@ -2868,8 +2864,9 @@ int main(int argc, char** argv) {
                               (int)objectPeakCorners, (int)objectPeakDraws);
         }
 
-        if (g_frameBudget != 0 && frame >= g_frameBudget) {
-            exitReason = "frame budget reached";
+        // The run's own end (the frame budget; a harness's deadline), asked here
+        // as in every frame loop (platform/run_end_3ds.h).
+        if (mdk::runEnded3ds(frame, &exitReason)) {
             break;
         }
 
