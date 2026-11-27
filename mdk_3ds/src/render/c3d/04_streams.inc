@@ -117,8 +117,10 @@ static void pumpPackOriginals(RendererC3D* renderer, uint32_t previousFrameStart
         }
         forgetTextureBinds(renderer);   // texel memory refilled (THE DEDUPE)
         bool refused = false;
+        const u64 importStarted = svcGetSystemTick();
         const bool made = importCompressed(renderer, texture, bytes, size, previousFrameStart,
                                            demanded, &refused);
+        renderer->packImportTicks += svcGetSystemTick() - importStarted;
         free(bytes);
         imported++;
         if (made) {

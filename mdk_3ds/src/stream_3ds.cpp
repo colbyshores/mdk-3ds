@@ -12,6 +12,7 @@
 #include "platform/input_3ds.h"
 #include "platform/log_3ds.h"
 #include "platform/run_end_3ds.h"
+#include "render/render_c3d_hd_set.h"
 #include "stream/stream_screen.h"
 
 namespace mdk {
@@ -62,9 +63,17 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
     setup.log = logStreamLine;
     log3dsPrintf("stream: after level %d, health %d, seed %lu", (int)level, (int)health,
                       (unsigned long)seed);
+    // THE TEXTURE CENSUS (render_c3d_hd_set.h): what the screen makes on core 0,
+    // at its open and over its frames -- measured, not converted (owner,
+    // 2026-11-26: the fall and the stream are measured only).
+    MdkTextureCensus censusAtOpen;
+    mdk_render_texture_census(renderer, &censusAtOpen);
     if (!screen->open(setup)) {
         log3dsPrintf("stream: could not open; it ends at once with health %d", (int)health);
     }
+    MdkTextureCensus censusAtRun;
+    mdk_render_texture_census(renderer, &censusAtRun);
+    mdk_render_log_texture_census("stream open", censusAtOpen, censusAtRun);
     f.heapProbe("stream-open");
     audio::SoundMixer& mixer = screen->mixer();
     // The screen's effects into the DSP arena now, so its frames copy none.
@@ -143,6 +152,11 @@ flow::Event runStream3ds(const Stream3dsFrontend& f, const formats::MdkData& dat
     // The output before the bank it plays from: the DSP worker joined and its
     // pins given back while the screen's bank lives (audio_dsp_3ds.h).
     audioDspClose();
+    {
+        MdkTextureCensus censusAtEnd;
+        mdk_render_texture_census(renderer, &censusAtEnd);
+        mdk_render_log_texture_census("stream run", censusAtRun, censusAtEnd);
+    }
     screen.reset();
     f.heapProbe("stream-end");
     return result;

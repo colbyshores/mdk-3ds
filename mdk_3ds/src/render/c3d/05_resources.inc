@@ -8,6 +8,9 @@ static void logCreation(RendererC3D* renderer, uint8_t kind, int32_t id) {
     created.kind = kind;
     created.id = id;
     renderer->creationLog.push_back(created);
+    if (kind == 0 && id >= 0 && (size_t)id < renderer->textures.size()) {
+        renderer->textures[(size_t)id].createdFrame = renderer->frame;
+    }
 }
 
 static void recordHdPath(MdkRenderer r, MdkTextureId t, const char* path, bool canvas);
@@ -58,6 +61,7 @@ static MdkTextureId createIndexTexture(MdkRenderer r, int32_t w, int32_t h, cons
                                                         texture.source.size(), true);
     texture.palette.assign(paletteRgba, paletteRgba + 256 * 4);
     texture.lastUsed = ++renderer->drawCounter;
+    texture.createdFrame = renderer->frame;   // the census (logCreation stamps it again)
     if (renderDebugFlags() & kRenderDebugTexLog) {
         // rdebug `texlog`: what the expansion will be given, for the first 24.
         static int32_t logged = 0;
@@ -212,6 +216,7 @@ MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r, int32_t w, int32_t h,
     texture.hasHoles = mdk::pica::textureSourceHasHoles(texture.source.data(),
                                                         texture.source.size(), false);
     texture.lastUsed = ++renderer->drawCounter;
+    texture.createdFrame = renderer->frame;   // the census (logCreation stamps it again)
 
     const int32_t id = acquireTextureSlot(renderer);
     C3dTexture& slot = renderer->textures[(size_t)id];
@@ -810,6 +815,16 @@ void mdk_render_mark_canvas(MdkRenderer r, MdkTextureId t) {
     // And no mip chain from its next make on (said at creation, that is its
     // first): a canvas draw is Original-shaded, level 0 only.
     texture.noMips = true;
+    // A CHUNKED EXPANSION ALREADY UNDER WAY was started at creation, a call
+    // before this one, with a chain and the 16-bit store's choice still open: it
+    // starts over without the chain (the frame pump restarts it). Measured with
+    // the texture census on level 7 (Mandarine): the two font atlases, 1024x128
+    // and 1024x256, were made in play as RGBA8 WITH a chain -- 698368 and 1397760
+    // bytes, a third of them levels no canvas draw samples.
+    if (texture.expandPending && texture.expandLevels > 0 && !texture.valid) {
+        dropExpansion(texture);
+        texture.expandWanted = true;
+    }
 }
 
 // NO MIP CHAIN for a texture only ever drawn Original-shaded (render.h): a
