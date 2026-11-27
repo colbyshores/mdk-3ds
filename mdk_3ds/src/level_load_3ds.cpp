@@ -165,7 +165,7 @@ bool loadMenuFonts3ds(MdkRenderer renderer, const formats::MdkData& data, FontVi
         if (palette >= 0 && menuBig->load(renderer, *bigFont, palette, sysPalette.rgba()) &&
             menuSmall->load(renderer, *smallFont, palette, sysPalette.rgba())) {
             ready = true;
-            mdk::log3dsPrintf("menu: pause menu ready (START or SELECT)");
+            mdk::log3dsPrintf("menu: pause menu ready (START)");
             // The HUD's messages draw in the same pair (the C#
             // HudView's fonts are these: FONTBIG, FONTSML, SYS_PAL),
             // so they share the menu's atlases rather than upload

@@ -192,6 +192,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->scopeClip = value;
     } else if (keyIs(begin, keyEnd, "sniperRoundCams")) {
         toggles->sniperRoundCams = value;
+    } else if (keyIs(begin, keyEnd, "swapSticks")) {
+        toggles->swapSticks = value;
     }
 }
 
@@ -255,6 +257,8 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     // 3DS: the scene clipped to the scope's window (render_types.h).
     appendToggle(&out, "scopeClip", toggles.scopeClip);
     appendToggle(&out, "sniperRoundCams", toggles.sniperRoundCams);
+    // 3DS, New 3DS only: the circle pad walks and the C-Stick looks (render_types.h).
+    appendToggle(&out, "swapSticks", toggles.swapSticks);
     // 3DS: debris this many pixels or smaller is not drawn, 0 = off (render_types.h).
     snprintf(size, sizeof(size), "tinyDebrisPixels=%d\n", (int)toggles.tinyDebrisPixels);
     out.append(size);

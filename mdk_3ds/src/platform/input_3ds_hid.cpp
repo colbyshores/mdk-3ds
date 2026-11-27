@@ -12,13 +12,15 @@
 // double buffer swap made every release undetectable and the player could not
 // respawn). A frontend that needs the mask takes it from the return value.
 //
-// WHAT IS NOT HERE, with its cause: the C-Stick. Its analog read is not in
-// hid.h at all — libctru's `hidCstickRead` is a compatibility macro for
-// `irrstCstickRead` in irrst.h, so a C-Stick costs an extra service
-// (irrstInit/irrstExit) on a path that only exists on a New 3DS, while the
-// original 3DS is this port's target. The circle pad carries the look on both
-// models, so nothing is missing on either; the C-Stick is a New 3DS comfort,
-// deferred with that cause recorded in docs/CONTINUATION.md.
+// THE C-STICK (New 3DS only). Its read is irrst.h's `irrstCstickRead` (libctru's
+// `hidCstickRead` is a macro for it), served by IRRST, not HID. No irrstInit of
+// ours: libctru 2.7.0's hidInit -- run by its default startup -- calls
+// irrstInit itself when its weak hidShouldUseIrrst() says so (by default
+// APT_CheckNew3DS), and hidScanInput calls irrstScanInput and ors in
+// irrstKeysHeld, which is also where ZL and ZR come from. Checked against the
+// linked libctru.a on 2026-11-27 (objdump of hid.o: hidInit tail-calls
+// irrstInit, hidScanInput calls irrstScanInput), so ONE hidScanInput still
+// latches both services. On an Old 3DS the stick is never read.
 // ============================================================================
 
 #include "platform/input_3ds.h"
@@ -49,7 +51,8 @@ static_assert(mdk::kHidZR == (uint32_t)KEY_ZR, "kHidZR drifted from libctru's KE
 
 namespace mdk {
 
-uint32_t input3dsPoll(Input* input, float seconds, const ControlBindings& bindings) {
+uint32_t input3dsPoll(Input* input, float seconds, const ControlBindings& bindings,
+                      bool hasCStick, bool swapSticks) {
     hidScanInput();
 
     // The order matters: the reads return what the scan latched, so the pad is
@@ -61,6 +64,14 @@ uint32_t input3dsPoll(Input* input, float seconds, const ControlBindings& bindin
     frame.held = hidKeysHeld();
     frame.padX = pad.dx;
     frame.padY = pad.dy;
+    frame.hasCStick = hasCStick;
+    frame.swapSticks = swapSticks;
+    if (hasCStick) {
+        circlePosition stick;
+        hidCstickRead(&stick);
+        frame.stickX = stick.dx;
+        frame.stickY = stick.dy;
+    }
 
     input3dsApply(frame, seconds, bindings, input);
     return frame.held;

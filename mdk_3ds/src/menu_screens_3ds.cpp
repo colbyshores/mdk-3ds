@@ -468,7 +468,8 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
 
         // ONE HID scan for the frame (input_3ds.h's trap), its edges.
         Input input;
-        const u32 held = input3dsPoll(&input, elapsed, *front->controls);
+        // The menus read no stick walk and no swap: the D-pad and the face buttons.
+        const u32 held = input3dsPoll(&input, elapsed, *front->controls, false, false);
         const u32 pressed = held & ~prevHeld;
         prevHeld = held;
         menu::Keys keys;

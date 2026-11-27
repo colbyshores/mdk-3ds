@@ -89,6 +89,28 @@ its fall; run the **Every fall** list (under "Every level") on at least one.
   - Where: START menu (level).
   - Right: the row exists, on by default; off = empty bullet-cam windows, steady 30 fps.
 
+### Controls
+
+- [ ] **Controls** -- feat/3ds-run-controls (owner 2026-11-27)
+  - Where: any level, first boot of this build with the old `controls.ini` still
+    on the SD card.
+  - Log: `controls: ... loaded (version 1)`, then `controls: migrated version 1 -> 2:
+    fire R+ZR->R turbo ZL->none ...`, the old file kept as `controls.v1.ini`; the
+    next boot says `version 2` and migrates nothing.
+  - Right: ZL or SELECT flips the run (Kurt runs until pressed again, the log says
+    `input: run toggle on/off`); ZR held with the toggle off runs, with it on
+    jogs, and letting go goes back to the toggle. R fires, ZR does not. START
+    opens the pause menu, SELECT does not. The C-Stick walks (up forward, down
+    back, sideways strafe) while X/B/Y/A still walk and the circle pad looks.
+    Pause menu SWAP STICKS (last setting row): on, the circle pad walks and the
+    C-Stick looks at the same speed; it is still set after a restart. In the
+    scope X and B still zoom.
+  - Wrong: the run toggles twice per press or toggles while the menu is open,
+    SELECT opens the menu, the C-Stick walks when resting, swapped look much
+    slower or faster than the circle pad's.
+  - Old 3DS (if tried): SELECT toggles the run; SWAP STICKS is greyed, reads
+    NO C-STICK and does nothing.
+
 ### LEVEL7 (game level 1)
 
 - [ ] **Mip glitch: the start tunnel** -- 5ec993b7

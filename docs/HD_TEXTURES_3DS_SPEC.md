@@ -29,7 +29,7 @@ Reference implementation: `../forsaken` (`regen_hd_textures_*.sh`,
   the PNG; the 3DS build ships the `.t3x` the build made from it, under the same
   key.
 - **Behind a toggle.** `enableHdTextures` joins SPEC.md 7.9's EnhancedToggles
-  (config.ini, the SELECT menu). It is a LOAD-TIME toggle (a texture is imported
+  (config.ini, the START menu). It is a LOAD-TIME toggle (a texture is imported
   or not when it is made), like `enableMipmaps`' allocation; off means the
   original texture.
 
