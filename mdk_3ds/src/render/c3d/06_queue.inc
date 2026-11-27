@@ -172,8 +172,10 @@ static void sceneWindowScissor(RendererC3D* r, u32* left, u32* top, u32* right, 
 // has no rectangle depth clear (a target clear is the whole buffer), so the
 // depth is reset by a quad over the viewport at the far plane, depth test
 // ALWAYS, depth written and colour not (vault: forsaken
-// citro3d-missile-chase-cam-per-eye-scissored-clear). The eye's offset is the
-// scene's, as the C#'s View.Eye per inset. It leaves the scissor off.
+// citro3d-missile-chase-cam-per-eye-scissored-clear). It leaves the scissor off.
+// ONE EYE (owner, 2026-11-26: "we dont need stereoscopy there"): the insets are
+// drawn in the first eye only, at zero parallax (no eye offset), and the second
+// eye gets the same pixels by a copy after its replay (copyInsetsToSecondEye).
 // The lit programs turn each face to the camera (mdk_c3d.g.pica): the inset's
 // camera while its records draw, the eye's again after. Their uniforms are
 // written at every bind from these rows, and now if one is bound.
@@ -192,7 +194,7 @@ static void setLitCamera(RendererC3D* r, const float position[3]) {
 }
 
 static void drawSceneInsets(RendererC3D* r) {
-    if (r->sceneInsetCount <= 0 || r->preparedGlowAt <= 0) {
+    if (r->sceneInsetCount <= 0 || r->preparedGlowAt <= 0 || r->eyeTarget != r->targetLeft) {
         return;
     }
     float frameVp[16];
@@ -248,11 +250,10 @@ static void drawSceneInsets(RendererC3D* r) {
         }
 
         // The inset's camera in place of the eye's, for the matrix and the cull.
-        mdk::pica::eyeViewProjection(inset.view, inset.projection, r->eyeOffset, r->eyeVp);
+        mdk::pica::eyeViewProjection(inset.view, inset.projection, 0.0f, r->eyeVp);
         {
             float vpEngine[16];
-            mdk::pica::eyeViewProjectionEngine(inset.view, inset.projection, r->eyeOffset,
-                                               vpEngine);
+            mdk::pica::eyeViewProjectionEngine(inset.view, inset.projection, 0.0f, vpEngine);
             mdk::pica::frustumPlanes(vpEngine, r->frustum);
         }
         C3D_Mtx gpuMtx;
@@ -275,6 +276,52 @@ static void drawSceneInsets(RendererC3D* r) {
     memcpy(r->pullEye, r->cameraPos, sizeof(r->pullEye));
     C3D_SetViewport(0, 0, r->targetWidth, r->targetHeight);
     C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, r->targetWidth, r->targetHeight);
+}
+
+// THE SECOND EYE'S INSETS: the first eye's pixels of each inset's rectangle,
+// copied into the second eye's target after its replay (the canvas is flat, so
+// both eyes drew the same canvas there). The rectangle on the panel, through the
+// rotation writeScreenshotBmp measured (memory row = panel x, memory column =
+// 239 - panel y, both times the target's scale), grown out to whole 8x8 tiles:
+// within one row of tiles the tiles are consecutive, 256 bytes each, so each
+// rectangle is one GX_TextureCopy of tile-row lines with a gap. The few pixels
+// the growth adds lie under the opaque frame around the windows. One split (the
+// eye's commands run before the copy) and one copy per inset in the GX queue.
+static void copyInsetsToSecondEye(RendererC3D* r) {
+    if (r->sceneInsetCount <= 0 || r->eyes.passes < 2 || r->preparedGlowAt <= 0) {
+        return;
+    }
+    frameSplit(r);
+    const float canvasWidth = mdk_render_canvas_width((MdkRenderer)r);
+    const int32_t width = (int32_t)r->targetWidth;     // kScreenWidth * scale x
+    const int32_t height = (int32_t)r->targetHeight;   // kScreenHeight * scale y
+    const int32_t tilesPerRow = width / 8;
+    for (int32_t n = 0; n < r->sceneInsetCount; n++) {
+        const float* rect = r->sceneInsets[n].rect;
+        const float panelX0 = rect[0] * (float)kScreenHeight / canvasWidth;
+        const float panelX1 = (rect[0] + rect[2]) * (float)kScreenHeight / canvasWidth;
+        const float panelY0 = rect[1] * (float)kScreenWidth / (float)mdk::kCanvasHeight;
+        const float panelY1 = (rect[1] + rect[3]) * (float)kScreenWidth / (float)mdk::kCanvasHeight;
+        int32_t row0 = (int32_t)floorf(panelX0 * (float)r->targetScaleY);
+        int32_t row1 = (int32_t)ceilf(panelX1 * (float)r->targetScaleY);
+        int32_t col0 = width - (int32_t)ceilf(panelY1 * (float)r->targetScaleX);
+        int32_t col1 = width - (int32_t)floorf(panelY0 * (float)r->targetScaleX);
+        row0 = (row0 < 0 ? 0 : row0) / 8;
+        row1 = ((row1 > height ? height : row1) + 7) / 8;
+        col0 = (col0 < 0 ? 0 : col0) / 8;
+        col1 = ((col1 > width ? width : col1) + 7) / 8;
+        if (row1 <= row0 || col1 <= col0) {
+            continue;
+        }
+        const u32 lineBytes = (u32)(col1 - col0) * 256u;
+        const u32 gapBytes = (u32)(tilesPerRow - (col1 - col0)) * 256u;
+        const size_t start = ((size_t)row0 * (size_t)tilesPerRow + (size_t)col0) * 256u;
+        const u8* from = static_cast<const u8*>(r->targetLeft->frameBuf.colorBuf) + start;
+        u8* to = static_cast<u8*>(r->targetRight->frameBuf.colorBuf) + start;
+        GX_TextureCopy((u32*)from, GX_BUFFER_DIM(lineBytes >> 4, gapBytes >> 4), (u32*)to,
+                       GX_BUFFER_DIM(lineBytes >> 4, gapBytes >> 4),
+                       lineBytes * (u32)(row1 - row0), GX_TRANSFER_RAW_COPY(1));
+    }
 }
 
 static void replayQueue(RendererC3D* r) {

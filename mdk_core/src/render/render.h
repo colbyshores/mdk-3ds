@@ -536,7 +536,8 @@ int32_t mdk_render_canvas_capacity(MdkRenderer r);
 //   * Citro3D draws an Own inset's meshes the canvas's way (one composed matrix
 //     onto the rectangle, no depth, no cull), and a Scene inset as the frame's
 //     scene records again through its camera in its viewport, its depth reset by
-//     a far-plane quad, in each eye (at most three a frame).
+//     a far-plane quad, in the first eye at zero parallax and copied into the
+//     second (at most three a frame).
 // A zero-area inset draws nothing.
 void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* inset);
 void mdk_render_end_inset(MdkRenderer r);

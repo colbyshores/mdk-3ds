@@ -373,8 +373,9 @@ struct EnhancedToggles {
 
     // 3DS: the sniper's round cameras (the three windows at the top of the scope)
     // show the round's chase view, as the C#'s: the scene again through each
-    // watching camera, in both eyes. Off, a watching window is an empty fill.
-    // Measured on the Old 3DS (level 3, stereo): ~44 ms a frame while a camera
+    // watching camera, drawn in one eye at zero parallax and copied into the
+    // other. Off, a watching window is an empty fill. Measured on the Old 3DS
+    // (level 3, stereo, drawn in both eyes): ~44 ms a frame while a camera
     // watches, against ~33.5 with it off. On by default. The PC ignores it.
     bool sniperRoundCams = true;
 };

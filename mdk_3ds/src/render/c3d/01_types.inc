@@ -701,9 +701,11 @@ struct RendererC3D {
     // over the canvas wait in `insetOverDraws` for the end of each eye's Overlay
     // bucket (replayQueue). A Scene inset (a sniper round camera: the frame's scene
     // again through the round's camera, in its window under the canvas; C#
-    // Renderer.Insets.cs RenderInset) is kept in `sceneInsets` and drawn in each
-    // eye's replay after the scene and the glow, before the canvas
-    // (drawSceneInsets, 06_queue.inc). The sniper screen has three windows.
+    // Renderer.Insets.cs RenderInset) is kept in `sceneInsets` and drawn in the
+    // first eye's replay after the scene and the glow, before the canvas
+    // (drawSceneInsets, 06_queue.inc), at zero parallax; the second eye gets a copy
+    // of those pixels after its replay (copyInsetsToSecondEye). The sniper screen
+    // has three windows.
     bool insetOpen = false;
     struct SceneInset {
         float rect[4];          // x, y, width, height on the canvas
@@ -714,8 +716,6 @@ struct RendererC3D {
     static const int32_t kMaxSceneInsets = 3;
     SceneInset sceneInsets[kMaxSceneInsets];
     int32_t sceneInsetCount = 0;
-    // The eye installEye installed last (its offset), for the insets' own matrices.
-    float eyeOffset = 0.0f;
     // THE SCENE WINDOW (mdk_render_set_scene_window), this frame's: the canvas
     // rectangle the scene's draws are scissored to in replayQueue.
     bool sceneWindowOn = false;
