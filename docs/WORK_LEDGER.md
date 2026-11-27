@@ -4654,3 +4654,68 @@ already has perf/3ds-view-prebuild's object warm over the bubble's hints).
   made at load in a 16-bit store and the canvas pin re-makes a canvas one in RGBA8 at its
   first draw); the owner's New 3DS; HOME/sleep (no thread change).
 - **Commit:** this one.
+
+## 2026-11-27 -- doorways, second round: no in-play shadow readback, view builds under a budget, indexed texture lookup, own-model layouts warmed (branch perf/3ds-doorway-2)
+
+- **Causes** (perf/3ds-view-prebuild's runs, slow-frame spans; host route probe + callgrind for L8):
+  - **L4 MEAT_5 (84.5 ms):** the first sunlit arena's one-time readback of the native shadow
+    map (frame end 41.6 ms: a 1 MiB copy, waited for, and a scan). Both of its answers kept
+    native mode, so it decided nothing; the boot probe (testNativeShadowWrites, outside any
+    frame, its frame waited for: it writes natively AND samples in one list, which is the
+    emulator's failure) is the decision. The same readback was L7's 65 ms CDANT_1->DANT_2 frame
+    (DANT_2 is L7's first sunlit arena) and 39 ms of L8's first frame.
+  - **L8 GUNT_2 (object pass 30.7 ms on the entry frame):** first object layouts -- 12 built on
+    that frame (host), half their cost TextureArchive::findTexture's linear name scan; 4 of
+    the 12 are GUNT_2's own models, 8 are spawned CMI types (keyed by the runtime's own parse,
+    so they cannot be made ahead under a temporary pointer).
+  - **L8 GUNT_2 scripts (sim 25-36 ms on the entry frames):** the C#'s per-tick work plus two
+    first-run costs: the spawned types' model parse (ScriptRuntime::findModel's cache, ~13% of
+    the entry ticks on host) and the scripts' instructions decoded on first execution
+    (ScriptDecoder::find, ~29%). The C# preloads the whole decode at level load; measured on
+    the host (64-bit) that is 2.0-4.8 MB of heap per level (L8 4.78 MB, L7 4.78, L4 4.05; the
+    3DS's 32-bit pointers make it smaller, not measured) against L8's 4.9 MB in-play main-heap
+    minimum, so it is NOT done; left and reported.
+  - **L4 approach:** one 600-unit build step a frame (~5 ms).
+- **What:**
+  - Shadows: the in-play readback is gone, and with it the recast forced every frame until it
+    ran (03_frame.inc, 03_shadows.inc, 01_types.inc); c3d_frame_test pins "play reads the map
+    back never and never leaves native mode" (two arms red).
+  - Views: steps of 150 triangles / depth units (were 600; MEAT_5 589 steps, worst step a third);
+    `ArenaViews::stepBuild(sliceOnly)` -- sync takes one step, main takes more scene slices while
+    the frame's view work is under 3 ms (an integer tick deadline); Mesh and Large stay alone.
+  - `TextureArchive::findTexture`: a stable name-sorted index made at parse/add (one
+    allocation, at load), the scan's exact answer (each name's first entry).
+  - `warmObjectStep(..., ObjectView*)`: the warm makes an arena's own models' layouts (not
+    those a CMI model of the same name shadows).
+  - Review (independent agent): the new archive test's `> 100` was wrong (70 entries) and never
+    tried a repeated name; the map index allocated per entry in play (now a sorted index at
+    load); Mesh/Large could stack on slices (now slice-only); integer deadline (T2); preload
+    skips CMI-shadowed names; stats comment. All fixed before the hardware runs.
+- **Hardware** (old3ds-lan167, Old 3DS, 268 MHz, L2 off, stereo on, HD on, PROFILE OG; the same
+  routes and harness as the first round; before = test/3ds-combined-11-26 d71b8904 + harness,
+  after = this branch merged with d71b8904 + the same harness; one run each, all FRESH; logs
+  `.git/mdk-review/l7-view-logs/{tip2,dw2}-L{4,7,8}.log`). Doorway max frame ms, before -> after:
+  - **L4:** CMEAT_5->MEAT_5 (turbo) **84.6 -> 45.5**; later passes 35.0 -> 30.1 at most;
+    MEAT_5's build in the first 5 s window: 2 -> 1 frames over 33.3 ms (the 15 of the first
+    round's run did not recur on d71b8904); whole run over 33.3 ms **6 -> 2**, mean 17.09 -> 17.08.
+  - **L7:** worst doorway **65.4 -> 48.0**; CDANT_1->DANT_2 65.4 -> 35.0 (the readback);
+    DANT_1->CDANT_1 45.9 -> 36.9; DANT_3->CDANT_3 47.9 -> 48.0; CDANT_3->DANT_4 48.1 -> 47.5;
+    whole run 545 -> 536, mean 18.47 -> 18.44.
+  - **L8:** CGUNT_1->GUNT_2 **74.1 -> 68.5** (entry frame's object pass 32.4 -> 23.9 ms; sim 20 ->
+    19 ms, the next frame's 29.6 -> 29.1: the scripts, above); GUNT_1->CGUNT_1 63.9 -> 59.9;
+    CGUNT_1->GUNT_1 41.5 -> 38.0; whole run 1,868 -> 1,837, mean 24.80 -> 24.85; 3-vblank frames
+    146 -> 231 (the 2-vblank ones fell 3,318 -> 3,192) -- not explained by the spans (views
+    0.09 -> 0.10 ms, warm 0.22 -> 0.22 ms a frame), one run each.
+  - Main-thread file reads in play: 0 on every run (the ETC1 work's).
+- **Goal (every doorway <= ~67 ms):** L4 45.5, L7 48.0 met; L8 68.5 at the line (its frame is
+  the arena's scripts, ~29 ms, and first spawns).
+- **Memory** (in-play minima, before -> after): L4 linear 11.59 -> 11.59 MB, main 7.71 -> 7.64 MB;
+  L7 linear 8.62 -> 8.62 MB, main 8.35 -> 8.31 MB; L8 linear 2.85 -> 3.18 MB, main 4.99 -> 4.90 MB.
+  No failed allocation, 0 HD waits, 0 draws without their HD copy.
+- **Checks** (on the merge with d71b8904): Linux build 0 warnings; tests/formats 0 failures (new
+  FindTextureIsTheFirstEntryOfItsName); tests/scripts all cases match (c3d_frame_test's shadow
+  pin and arms); tools/check.sh all gates passed; 3DS build 0 warnings.
+- **Not verified:** a capture per level (the shadow map's look after the change: the boot
+  probe's decision is the same, so the map is the same, but not looked at); the walk-first L4
+  route; the owner's New 3DS.
+- **Commits:** 5df08b16 (code, tests), the merge of d71b8904, and this one (ledger).
