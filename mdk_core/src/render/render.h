@@ -118,6 +118,14 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc);
 // struct copy, never per-draw work.
 void mdk_render_set_enhanced_toggles(MdkRenderer r, const mdk::EnhancedToggles* toggles);
 
+// Replace the stereo pair's SEPARATION and CONVERGENCE on a live renderer (the
+// 3DS pause menu's 3D DEPTH / 3D SCREEN DISTANCE rows, and the scope's
+// magnification-scaled separation, set by the 3DS frontend every frame before
+// mdk_render_begin_frame). `mode` is NOT taken: a backend's stereo layout is
+// fixed at creation (the Linux composites' targets are built for it). Read at
+// the next frame's begin; a null renderer or settings is a safe no-op.
+void mdk_render_set_stereo(MdkRenderer r, const mdk::StereoSettings* stereo);
+
 // Destroy a renderer created by mdk_render_create. nullptr is a safe no-op.
 void mdk_render_destroy(MdkRenderer r);
 

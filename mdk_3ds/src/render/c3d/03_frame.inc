@@ -188,7 +188,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // 2D, EnhancedToggles::scopeMono) the panel shows the left buffer alone,
     // so the frame is planned as with the slider closed: one eye, no offset.
     const float slider = gfxIs3D() ? (float)osGet3DSliderState() : 0.0f;
-    r->eyes = mdk::pica::eyePlan(slider, r->eyeSeparation);
+    r->eyes = mdk::pica::eyePlan(slider, r->eyeSeparation, r->eyeConvergence);
 
     // Both eye buffers are cleared here, whether or not both get drawn: a buffer
     // that is not cleared keeps the previous frame's picture, and the right

@@ -44,6 +44,7 @@
 namespace mdk {
 
 class FontView;
+struct GameSettings;
 struct LookDial;
 
 class EnhancedMenu {
@@ -74,22 +75,27 @@ public:
     // SLIDER moves an int by its step within [lo, hi] (the look dials, ranges
     // from enhanced_config.h kLookDials) and shows it as a percent; a CHOICE
     // cycles an int through a fixed list of values, each with its own label.
-    enum class Kind : uint8_t { Toggle, Slider, Choice };
+    // A SETTING steps one of the game's own float settings (GameSettings, the
+    // stereo pair) through a fixed list like a choice -- `choices` in
+    // hundredths -- but stops at both ends like a slider.
+    enum class Kind : uint8_t { Toggle, Slider, Choice, Setting };
     struct Item {
         const char* label;
         Kind kind;
         bool EnhancedToggles::*flag;      // Toggle
         const LookDial* dial;             // Slider: its field, range and step
         int32_t EnhancedToggles::*value;  // Choice: its field,
-        const int32_t* choices;           // ... the values, in order
+        const int32_t* choices;           // ... the values, in order (Setting too)
         const char* const* choiceLabels;  // ... and what each is shown as
         int32_t choiceCount;
+        float GameSettings::*setting;     // Setting: its field
     };
 
     // The rows: RESUME, the settings (MOVIES HALF RATE, package #20c, then the
     // 3DS draw culls: TINY DEBRIS, TINY ENEMIES, then SCOPE IN 2D, SCOPE CLIP and
-    // ROUND CAMERAS), CHEATS (#21), OPTIONS, MAIN MENU, QUIT.
-    static const int32_t kItemCount = 24;
+    // ROUND CAMERAS, then 3D DEPTH and 3D SCREEN DISTANCE), CHEATS (#21), OPTIONS,
+    // MAIN MENU, QUIT.
+    static const int32_t kItemCount = 26;
     static const int32_t kResumeRow = 0;
     static const int32_t kCheatsRow = kItemCount + 1;
     static const int32_t kOptionsRow = kItemCount + 2;
@@ -113,24 +119,29 @@ public:
     // The first row the panel shows.
     int32_t top() const { return top_; }
 
-    // Advance the menu by one frame's edges over `toggles`. Up and down wrap
+    // Advance the menu by one frame's edges over `toggles` and `settings` (the
+    // SETTING rows' fields; null leaves those rows inert). Up and down wrap
     // (up from RESUME is QUIT). On a TOGGLE row left/right/A flip it; on a
     // SLIDER left/right step it (A does nothing); on a CHOICE left/right cycle
-    // it backwards/forwards and A forwards. Changed only when a value really
+    // it backwards/forwards and A forwards; on a SETTING left/right step it and
+    // stop at its ends (A does nothing). Changed only when a value really
     // moved: a slider at its end answers None, so nothing is written. A on
     // RESUME closes; A on QUIT is Quit and on MAIN MENU MainMenu (the menu
     // stays open: the caller is leaving); A on OPTIONS is Options and on CHEATS
     // Cheats (the menu stays open under the page).
-    Action handle(const Input& input, EnhancedToggles* toggles);
+    Action handle(const Input& input, EnhancedToggles* toggles,
+                  GameSettings* settings = nullptr);
 
     // The label of a row ("RESUME", "HAZE", "OPTIONS", "MAIN MENU", "QUIT").
     static const char* rowLabel(int32_t row);
     // The setting a row edits, or null for RESUME / OPTIONS / MAIN MENU / QUIT /
     // out of range.
     static const Item* rowItem(int32_t row);
-    // A row's value as the panel shows it ("ON", "125%", "AUTO"); empty for
-    // RESUME and QUIT. `out` holds at least 16 bytes.
-    static void rowValue(int32_t row, const EnhancedToggles& toggles, char* out, int32_t size);
+    // A row's value as the panel shows it ("ON", "125%", "AUTO", "FAR"); empty
+    // for RESUME and QUIT, and for a SETTING row without `settings`. `out` holds
+    // at least 16 bytes.
+    static void rowValue(int32_t row, const EnhancedToggles& toggles, char* out, int32_t size,
+                         const GameSettings* settings = nullptr);
 
     // The panel's footer line.
     static const char* const kHint;
@@ -141,7 +152,7 @@ public:
     // `canvasWidth` is the canvas's current width; the panel centres
     // itself in it.
     void draw(MdkRenderer renderer, FontView& big, FontView& small, float canvasWidth,
-              const EnhancedToggles& toggles) const;
+              const EnhancedToggles& toggles, const GameSettings* settings = nullptr) const;
 
 private:
     bool open_ = false;

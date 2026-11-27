@@ -573,7 +573,16 @@ std::string GameSettings::formatConsole() const {
     out += std::string("music_filter=") + boolText(musicFilter) + "\n";
     out += "difficulty=" + enumText(difficulty, kDifficultyNames, MDK_COUNT(kDifficultyNames)) + "\n";
     out += std::string("gore=") + boolText(gore) + "\n";
+    // The pause menu's 3D DEPTH and 3D SCREEN DISTANCE (enhanced_menu.h).
+    out += "stereo_separation=" + formatShortestFloat(stereoSeparation) + "\n";
+    out += "stereo_convergence=" + formatShortestFloat(stereoConvergence) + "\n";
     return out;
+}
+
+GameSettings GameSettings::console() {
+    GameSettings settings;
+    settings.stereoSeparation = kConsoleStereoSeparation;
+    return settings;
 }
 
 void GameSettings::applyAudio(audio::SoundDevice* device) const {

@@ -62,8 +62,17 @@ bool isIdentity(const float m[16]) {
     return memcmp(m, kIdentity, sizeof(kIdentity)) == 0;
 }
 
+float stereoScreenShift(float eyeOffset, float projectionX, float convergence) {
+    // Two cheap tests and no NaN rescue, as eyePlan: mono and the parallel pair
+    // must leave the matrix untouched, bit for bit.
+    if (eyeOffset == 0.0f || !(convergence > 0.0f)) {
+        return 0.0f;
+    }
+    return eyeOffset * projectionX / convergence;
+}
+
 void eyeViewProjectionEngine(const float view[16], const float projection[16],
-                             float eyeOffset, float out[16]) {
+                             float eyeOffset, float convergence, float out[16]) {
     // The view matrix, with the eye's offset applied.
     //
     // The view is a row-major, row-vector look-at matrix: its translation row
@@ -88,12 +97,23 @@ void eyeViewProjectionEngine(const float view[16], const float projection[16],
     // projection` (Renderer.cs:115, FollowCamera.cs, FallView.cs). The
     // product below is the ordinary row-times-column product of that.
     multiply(shifted, projection, out);
+
+    // THE CONVERGENCE (see stereoScreenShift): clip.x += shift * clip.w, a
+    // COLUMN operation in this row-vector layout (clip.x is column 0, clip.w
+    // column 3). Skipped outright when the shift is zero, so a mono pass and the
+    // parallel pair are the plain product above.
+    const float shift = stereoScreenShift(eyeOffset, projection[0], convergence);
+    if (shift != 0.0f) {
+        for (int k = 0; k < 4; k++) {
+            out[k * 4 + 0] += shift * out[k * 4 + 3];
+        }
+    }
 }
 
 void eyeViewProjection(const float view[16], const float projection[16],
-                       float eyeOffset, float out[16]) {
+                       float eyeOffset, float convergence, float out[16]) {
     float m[16];
-    eyeViewProjectionEngine(view, projection, eyeOffset, m);
+    eyeViewProjectionEngine(view, projection, eyeOffset, convergence, m);
 
     // (A) The depth remap: D3D [0,1] -> PICA [-1,0].
     //
@@ -314,7 +334,7 @@ bool depthPasses(const DepthState& state, float zNdc, float stored) {
     return storedDepth(zNdc) <= stored;
 }
 
-EyePlan eyePlan(float slider, float separation) {
+EyePlan eyePlan(float slider, float separation, float convergence) {
     // Clamp first, before anything is multiplied: see the declaration. A NaN
     // fails both comparisons and passes through, which is what a NaN should do
     // here -- it is not a value this function can rescue, and the two comparisons
@@ -326,6 +346,7 @@ EyePlan eyePlan(float slider, float separation) {
     EyePlan plan;
     plan.offset[0] = 0.0f;
     plan.offset[1] = 0.0f;
+    plan.convergence = convergence;
     if (depth <= 0.0f) {
         // Mono. The panel shows the left buffer, and the left eye of a mono
         // frame is the camera itself: no offset, one pass.

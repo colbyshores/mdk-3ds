@@ -293,10 +293,13 @@ static void drawSceneInsets(RendererC3D* r) {
         }
 
         // The inset's camera in place of the eye's, for the matrix and the cull.
-        mdk::pica::eyeViewProjection(inset.view, inset.projection, 0.0f, r->eyeVp);
+        // Offset 0 and no convergence: an inset is drawn once, flat, and copied
+        // into the second eye (copyInsetsToSecondEye) -- zero parallax by design.
+        mdk::pica::eyeViewProjection(inset.view, inset.projection, 0.0f, 0.0f, r->eyeVp);
         {
             float vpEngine[16];
-            mdk::pica::eyeViewProjectionEngine(inset.view, inset.projection, 0.0f, vpEngine);
+            mdk::pica::eyeViewProjectionEngine(inset.view, inset.projection, 0.0f, 0.0f,
+                                               vpEngine);
             mdk::pica::frustumPlanes(vpEngine, r->frustum);
         }
         C3D_Mtx gpuMtx;

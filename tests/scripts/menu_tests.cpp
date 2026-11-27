@@ -482,6 +482,142 @@ void testConsoleConfig() {
     MENU_CHECK(read.formatConsole() == settings.formatConsole());
 }
 
+// THE STEREO PAIR ON THE 3DS (2026-11-27): the console's own separation default
+// (the C#'s 0.25 stays the shared one, so the PC's settings file and its golden
+// are unchanged), the two config.ini lines, and the START menu's 3D DEPTH and 3D
+// SCREEN DISTANCE rows, which step GameSettings and stop at their ends.
+void testConsoleStereo() {
+    using Action = EnhancedMenu::Action;
+    const GameSettings shared;
+    MENU_CHECK(shared.stereoSeparation == 0.25f && shared.stereoConvergence == 10.0f);
+    const GameSettings console = GameSettings::console();
+    MENU_CHECK(console.stereoSeparation == GameSettings::kConsoleStereoSeparation);
+    MENU_CHECK(console.stereoSeparation == 1.0f && console.stereoConvergence == 10.0f);
+    // Only the stereo separation differs: the rest of the file is the C#'s.
+    GameSettings sameAsShared = console;
+    sameAsShared.stereoSeparation = shared.stereoSeparation;
+    MENU_CHECK(sameAsShared.format() == shared.format());
+
+    // The lines, and a round trip through config.ini (toggles first).
+    MENU_CHECK(console.formatConsole().find("stereo_separation=1\nstereo_convergence=10\n") !=
+               std::string::npos);
+    GameSettings edited = console;
+    edited.stereoSeparation = 1.25f;
+    edited.stereoConvergence = 0.0f;   // FAR
+    const std::string text = writeEnhancedConfig(EnhancedToggles()) + edited.formatConsole();
+    GameSettings read = GameSettings::console();
+    read.parseOver(text.c_str());
+    MENU_CHECK(read.stereoSeparation == 1.25f && read.stereoConvergence == 0.0f);
+    MENU_CHECK(read.formatConsole() == edited.formatConsole());
+    // A config.ini without the lines (every console's before this) keeps the
+    // console's defaults.
+    GameSettings old = GameSettings::console();
+    old.parseOver("master_volume=40\ndifficulty=Hard\n");
+    MENU_CHECK(old.stereoSeparation == 1.0f && old.stereoConvergence == 10.0f);
+
+    // THE ROWS, right after ROUND CAMERAS (so every row above keeps its number).
+    int32_t depthRow = -1;
+    int32_t distanceRow = -1;
+    for (int32_t row = 0; row < EnhancedMenu::kRowCount; row++) {
+        if (strcmp(EnhancedMenu::rowLabel(row), "3D DEPTH") == 0) depthRow = row;
+        if (strcmp(EnhancedMenu::rowLabel(row), "3D SCREEN DISTANCE") == 0) distanceRow = row;
+    }
+    MENU_CHECK(depthRow == 25 && distanceRow == 26);
+    MENU_CHECK(strcmp(EnhancedMenu::rowLabel(24), "ROUND CAMERAS") == 0);
+    MENU_CHECK(EnhancedMenu::rowItem(depthRow)->kind == EnhancedMenu::Kind::Setting);
+
+    EnhancedToggles toggles;
+    const EnhancedToggles shipped;
+    GameSettings settings = GameSettings::console();
+    char value[16];
+    EnhancedMenu::rowValue(depthRow, toggles, value, (int32_t)sizeof(value), &settings);
+    MENU_CHECK(strcmp(value, "100%") == 0);
+    EnhancedMenu::rowValue(distanceRow, toggles, value, (int32_t)sizeof(value), &settings);
+    MENU_CHECK(strcmp(value, "10") == 0);
+    // Without the settings the rows show nothing and change nothing.
+    EnhancedMenu::rowValue(depthRow, toggles, value, (int32_t)sizeof(value));
+    MENU_CHECK(value[0] == '\0');
+
+    EnhancedMenu menu;
+    menu.setOpen(true);
+    EnhancedMenu::Input down;
+    down.down = true;
+    EnhancedMenu::Input left;
+    left.left = true;
+    EnhancedMenu::Input right;
+    right.right = true;
+    EnhancedMenu::Input confirm;
+    confirm.confirm = true;
+    for (int32_t i = 0; i < depthRow; i++) {
+        menu.handle(down, &toggles, &settings);
+    }
+    MENU_CHECK(menu.selected() == depthRow);
+    MENU_CHECK(menu.handle(right, &toggles, nullptr) == Action::None);
+    MENU_CHECK(menu.handle(right, &toggles, &settings) == Action::Changed);
+    MENU_CHECK(settings.stereoSeparation == 1.25f);
+    // A does nothing on it (a slider's rule).
+    MENU_CHECK(menu.handle(confirm, &toggles, &settings) == Action::None);
+    // To the top, 200%, and it stops there (no wrap to 25%).
+    for (int32_t i = 0; i < 3; i++) {
+        MENU_CHECK(menu.handle(right, &toggles, &settings) == Action::Changed);
+    }
+    MENU_CHECK(settings.stereoSeparation == 2.0f);
+    MENU_CHECK(menu.handle(right, &toggles, &settings) == Action::None);
+    // To the bottom, 25%, and it stops there.
+    for (int32_t i = 0; i < 7; i++) {
+        MENU_CHECK(menu.handle(left, &toggles, &settings) == Action::Changed);
+    }
+    MENU_CHECK(settings.stereoSeparation == 0.25f);
+    MENU_CHECK(menu.handle(left, &toggles, &settings) == Action::None);
+    EnhancedMenu::rowValue(depthRow, toggles, value, (int32_t)sizeof(value), &settings);
+    MENU_CHECK(strcmp(value, "25%") == 0);
+
+    // The distance: 10 -> 12, and to FAR (0, the parallel pair) at the top.
+    menu.handle(down, &toggles, &settings);
+    MENU_CHECK(menu.selected() == distanceRow);
+    MENU_CHECK(menu.handle(right, &toggles, &settings) == Action::Changed);
+    MENU_CHECK(settings.stereoConvergence == 12.0f);
+    for (int32_t i = 0; i < 5; i++) {
+        MENU_CHECK(menu.handle(right, &toggles, &settings) == Action::Changed);
+    }
+    MENU_CHECK(settings.stereoConvergence == 0.0f);
+    EnhancedMenu::rowValue(distanceRow, toggles, value, (int32_t)sizeof(value), &settings);
+    MENU_CHECK(strcmp(value, "FAR") == 0);
+    MENU_CHECK(menu.handle(right, &toggles, &settings) == Action::None);
+    // ... and back down from FAR to 50.
+    MENU_CHECK(menu.handle(left, &toggles, &settings) == Action::Changed);
+    MENU_CHECK(settings.stereoConvergence == 50.0f);
+    // A hand-edited value off the grid shows as a number and steps to its
+    // nearest grid neighbour in the direction pressed, never across the grid.
+    settings.stereoConvergence = 9.0f;
+    EnhancedMenu::rowValue(distanceRow, toggles, value, (int32_t)sizeof(value), &settings);
+    MENU_CHECK(strcmp(value, "9.00") == 0);
+    MENU_CHECK(menu.handle(left, &toggles, &settings) == Action::Changed);
+    MENU_CHECK(settings.stereoConvergence == 8.0f);
+    settings.stereoConvergence = 9.0f;
+    MENU_CHECK(menu.handle(right, &toggles, &settings) == Action::Changed);
+    MENU_CHECK(settings.stereoConvergence == 10.0f);
+    // Past the grid's far end (but not FAR): left steps to 50, right to FAR.
+    settings.stereoConvergence = 80.0f;
+    MENU_CHECK(menu.handle(right, &toggles, &settings) == Action::Changed);
+    MENU_CHECK(settings.stereoConvergence == 0.0f);
+    // A separation of 0 (the parser allows it) steps UP to 25%, and left stays.
+    {
+        EnhancedMenu depthMenu;
+        depthMenu.setOpen(true);
+        for (int32_t i = 0; i < depthRow; i++) {
+            depthMenu.handle(down, &toggles, &settings);
+        }
+        settings.stereoSeparation = 0.0f;
+        MENU_CHECK(depthMenu.handle(left, &toggles, &settings) == Action::None);
+        MENU_CHECK(settings.stereoSeparation == 0.0f);
+        MENU_CHECK(depthMenu.handle(right, &toggles, &settings) == Action::Changed);
+        MENU_CHECK(settings.stereoSeparation == 0.25f);
+    }
+    // The toggles never moved.
+    MENU_CHECK(writeEnhancedConfig(toggles) == writeEnhancedConfig(shipped));
+}
+
 // The 3DS's START menu carries the C# PauseMenu's Options and Main menu rows,
 // just above QUIT, which stays the last row (up from RESUME).
 void testEnhancedMenuRows() {
@@ -618,6 +754,7 @@ int runMenuTests(const formats::MdkData& data) {
         testConsoleHost(fonts);
         testConsoleConfig();
         testEnhancedMenuRows();
+        testConsoleStereo();
         testSavesAndBeta(fonts);
         testTheMenuSongs(fonts);
     }

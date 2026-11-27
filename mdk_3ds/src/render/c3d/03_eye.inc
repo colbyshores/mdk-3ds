@@ -24,7 +24,8 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // baked in. It is KEPT on the renderer, because a draw that carries a
     // world matrix composes it against this matrix instead of rebuilding the
     // whole chain per draw.
-    mdk::pica::eyeViewProjection(r->view, r->projection, offset, r->eyeVp);
+    mdk::pica::eyeViewProjection(r->view, r->projection, offset, r->eyes.convergence,
+                                 r->eyeVp);
     // THE PER-EYE FRUSTUM for drawRecorded's cull: the same eye matrix BEFORE
     // the PICA conversions (the conversions are right-multiplications by fixed
     // matrices, so the volume is the same and the engine's clip convention
@@ -32,7 +33,8 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // replay that follows tests each opted-in draw against it.
     {
         float vpEngine[16];
-        mdk::pica::eyeViewProjectionEngine(r->view, r->projection, offset, vpEngine);
+        mdk::pica::eyeViewProjectionEngine(r->view, r->projection, offset, r->eyes.convergence,
+                                           vpEngine);
         mdk::pica::frustumPlanes(vpEngine, r->frustum);
         r->frustumValid = true;
     }

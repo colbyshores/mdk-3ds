@@ -50,6 +50,34 @@ bool buildFrustum(const Camera& camera, Frustum* out);
 // by at most that much, eyePlan's clamped symmetric split).
 bool frustumSphereOutside(const Frustum& frustum, const Vec3& center, float radius);
 
+// THE STEREO PAIR'S CULL VOLUME, for the 3DS's converged eyes (the backend's
+// pica::eyeViewProjection with a convergence distance). Each eye is this
+// camera moved `halfSeparation` along its right axis AND its picture slid
+// sideways by up to
+//
+//     shift = halfSeparation * |P00| / convergence      (NDC x)
+//
+// (pica::stereoScreenShift at full slider), so beyond the convergence distance
+// an eye sees past the centre frustum's side planes by a strip that widens with
+// depth -- a constant sphere margin cannot cover it. This is buildFrustum with
+// the horizontal bounds widened from |x_ndc| <= 1 to |x_ndc| <= 1 + shift (the
+// projection's x column scaled by 1 / (1 + shift)); the caller still inflates
+// each sphere by `halfSeparation` for the eyes' translation. With
+// `halfSeparation` or `convergence` not positive it is buildFrustum exactly.
+bool buildStereoFrustum(const Camera& camera, float halfSeparation, float convergence,
+                        Frustum* out);
+
+// THE SEPARATION FOR A MAGNIFIED VIEW (the sniper scope). Both the eyes'
+// translation parallax and the convergence shift scale with the projection's
+// x scale, so at the scope's zoom (up to ~250x a far locked target) a pair
+// spaced for the follow camera would split the picture by hundreds of pixels.
+// The separation is divided by the view's magnification over `reference` (the
+// follow camera: |view P00| / |reference P00|, never below 1), which keeps the
+// on-screen disparity of every depth the same as the unmagnified view gives
+// it: the scope's far scene sits behind the panel at the follow camera's
+// background depth instead of tearing apart.
+float stereoSeparationForView(float separation, const Camera& view, const Camera& reference);
+
 // THE PROJECTED PIXEL SIZE: how many screen pixels `worldSize` world units
 // cover at view depth `zNear` on a `width` x `height` picture,
 //

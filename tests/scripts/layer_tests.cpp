@@ -18,6 +18,7 @@
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <vector>
 
@@ -300,6 +301,66 @@ void pulledCamera(const Camera& camera, Primitive primitive, int32_t layer, floa
     multiply(pull, viewProjection, out);
 }
 
+// THE STEREO PAIR'S CULL (camera_builder.h buildStereoFrustum, 2026-11-27): the
+// converged eyes see past the centre frustum's side planes by a strip that
+// widens with depth, so the 3DS's object and effects culls widen the side
+// planes by the eyes' slide. A far point just past the right edge is culled by
+// the centre frustum and kept by the stereo one; with no separation or no
+// convergence the two are the same volume; the depth planes do not move.
+void testStereoFrustum() {
+    Camera camera;
+    // The 3DS's follow camera's projection, looking down +y from the origin, so
+    // the view's right axis is world +x and depth is world y.
+    LAYER_CHECK(buildLookAtCamera(&camera, Vec3{0.0f, 0.0f, 0.0f}, Vec3{0.0f, 1.0f, 0.0f},
+                                  Vec3{0.0f, 0.0f, 1.0f}, 71.5f, 400.0f / 240.0f, 0.5f,
+                                  20000.0f));
+    const float half = 0.5f;
+    const float convergence = 10.0f;
+    const float p00 = camera.projection[0];
+    const float shift = half * p00 / convergence;
+    const float depth = 1000.0f;
+    const Vec3 past{(1.0f + shift * 0.5f) * depth / p00, depth, 0.0f};
+    Frustum centre;
+    Frustum wide;
+    LAYER_CHECK(buildFrustum(camera, &centre));
+    LAYER_CHECK(buildStereoFrustum(camera, half, convergence, &wide));
+    LAYER_CHECK(frustumSphereOutside(centre, past, 0.01f));
+    LAYER_CHECK(!frustumSphereOutside(wide, past, 0.01f));
+    // Past the widened edge it is culled again.
+    const Vec3 beyond{(1.0f + shift * 2.0f) * depth / p00, depth, 0.0f};
+    LAYER_CHECK(frustumSphereOutside(wide, beyond, 0.01f));
+    // The far plane is the camera's.
+    LAYER_CHECK(frustumSphereOutside(wide, Vec3{0.0f, 30000.0f, 0.0f}, 1.0f));
+    // No pair, or the parallel pair: buildFrustum, plane for plane.
+    Frustum same;
+    LAYER_CHECK(buildStereoFrustum(camera, 0.0f, convergence, &same));
+    LAYER_CHECK(memcmp(&same, &centre, sizeof(Frustum)) == 0);
+    LAYER_CHECK(buildStereoFrustum(camera, half, 0.0f, &same));
+    LAYER_CHECK(memcmp(&same, &centre, sizeof(Frustum)) == 0);
+}
+
+// THE SCOPE'S SEPARATION (camera_builder.h stereoSeparationForView): divided by
+// the view's magnification over the follow camera, never multiplied.
+void testStereoSeparationForView() {
+    Camera follow;
+    follow.projection[0] = 0.8f;
+    Camera scope = follow;
+    scope.projection[0] = 3.2f;   // 4x
+    LAYER_CHECK(fabsf(stereoSeparationForView(1.0f, scope, follow) - 0.25f) < 1e-6f);
+    // A wider view than the reference keeps the separation.
+    Camera wider = follow;
+    wider.projection[0] = 0.4f;
+    LAYER_CHECK(stereoSeparationForView(1.0f, wider, follow) == 1.0f);
+    LAYER_CHECK(stereoSeparationForView(1.0f, follow, follow) == 1.0f);
+    // The on-screen disparity is what matters: separation x P00 is the follow
+    // camera's at any zoom (both parallax terms scale with it).
+    LAYER_CHECK(fabsf(stereoSeparationForView(1.0f, scope, follow) * scope.projection[0] -
+                      1.0f * follow.projection[0]) < 1e-6f);
+    // A degenerate reference keeps the separation rather than dividing by 0.
+    Camera none;
+    LAYER_CHECK(stereoSeparationForView(1.0f, scope, none) == 1.0f);
+}
+
 // The object cull's frustum: a sphere ahead of the camera is kept, one
 // behind or far to the side is outside, and a sphere crossing a plane is
 // kept (the test is conservative). Ahead uses the C# camera's own axes.
@@ -433,6 +494,8 @@ int runDepthLayerTests(const formats::MdkData& data) {
     testLevel6Arenas(data);
     testPlainTrianglesStayPut();
     testFrustumSphere();
+    testStereoFrustum();
+    testStereoSeparationForView();
     testProjectedPixelSize();
     testAnEdgeIsPulledTowardsTheEye();
     testALayerIsNearerThanItsWallInTheDepthBuffer();

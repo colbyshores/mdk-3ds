@@ -160,6 +160,32 @@ bool buildFrustum(const Camera& camera, Frustum* out) {
     return true;
 }
 
+bool buildStereoFrustum(const Camera& camera, float halfSeparation, float convergence,
+                        Frustum* out) {
+    if (!(halfSeparation > 0.0f) || !(convergence > 0.0f)) {
+        return buildFrustum(camera, out);
+    }
+    const float shift = halfSeparation * fabsf(camera.projection[0]) / convergence;
+    Camera wide = camera;
+    const float scale = 1.0f / (1.0f + shift);
+    // Column 0 of the row-vector projection is clip.x: scaling it scales x_ndc,
+    // so the side planes |x_ndc| <= 1 become |x_ndc| <= 1 + shift.
+    wide.projection[0] *= scale;
+    wide.projection[4] *= scale;
+    wide.projection[8] *= scale;
+    wide.projection[12] *= scale;
+    return buildFrustum(wide, out);
+}
+
+float stereoSeparationForView(float separation, const Camera& view, const Camera& reference) {
+    const float viewScale = fabsf(view.projection[0]);
+    const float referenceScale = fabsf(reference.projection[0]);
+    if (!(viewScale > referenceScale) || !(referenceScale > 0.0f)) {
+        return separation;
+    }
+    return separation * referenceScale / viewScale;
+}
+
 bool frustumSphereOutside(const Frustum& frustum, const Vec3& center, float radius) {
     for (int p = 0; p < 6; p++) {
         const float* plane = frustum.planes[p];

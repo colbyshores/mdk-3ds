@@ -218,11 +218,11 @@ void testIdentityWorldChangesNothing() {
     float eye[16];
     float out[16];
 
-    mdk::pica::eyeViewProjection(kView, kProjection, 0.0f, eye);
+    mdk::pica::eyeViewProjection(kView, kProjection, 0.0f, 0.0f, eye);
     mdk::pica::drawMatrix(kIdentity, eye, out);
     PICA_CHECK(allEqual(out, eye, 16));
 
-    mdk::pica::eyeViewProjection(kView, kProjection, 0.25f, eye);
+    mdk::pica::eyeViewProjection(kView, kProjection, 0.25f, 0.0f, eye);
     mdk::pica::drawMatrix(kIdentity, eye, out);
     PICA_CHECK(allEqual(out, eye, 16));
 }
@@ -232,7 +232,7 @@ void testThePicaRecipe() {
     // point, so the whole of the matrix's effect is the two conversions:
     // clip becomes (y, -x, z-w, w).
     float eye[16];
-    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, eye);
+    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, 0.0f, eye);
 
     const float p[4] = {1, 2, 3, 1};
     float got[4];
@@ -254,7 +254,7 @@ void testTheEyeOffset() {
     // view the origin lands at x = -offset in ENGINE clip space, which the
     // quarter turn then carries into the second component.
     float eye[16];
-    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.5f, eye);
+    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.5f, 0.0f, eye);
 
     const float origin[4] = {0, 0, 0, 1};
     float got[4];
@@ -265,7 +265,7 @@ void testTheEyeOffset() {
     // And it changes nothing else: with the offset at zero the same point gives
     // the unshifted answer.
     float mono[16];
-    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, mono);
+    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, 0.0f, mono);
     float unshifted[4];
     xform(mono, origin, unshifted);
     const float wantMono[4] = {0, 0, -1, 1};
@@ -276,7 +276,7 @@ void testAWorldTranslationPlacesThePoint() {
     // p = (1,2,3,1) through a translation of (10,2,-3) is (11,4,0,1), and the
     // recipe makes that (4, -11, -1, 1). Hand-derived, exact.
     float eye[16];
-    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, eye);
+    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, 0.0f, eye);
 
     float world[16];
     memcpy(world, kIdentity, sizeof(world));
@@ -296,7 +296,7 @@ void testAWorldTranslationPlacesThePoint() {
 
 void testTheWorldComposesOnTheLeftOfTheView() {
     float eye[16];
-    mdk::pica::eyeViewProjection(kView, kProjection, 0.25f, eye);
+    mdk::pica::eyeViewProjection(kView, kProjection, 0.25f, 0.0f, eye);
 
     float composed[16];
     mdk::pica::drawMatrix(kWorld, eye, composed);
@@ -307,7 +307,7 @@ void testTheWorldComposesOnTheLeftOfTheView() {
     float worldView[16];
     mulIndependent(kWorld, kView, worldView);
     float rebuilt[16];
-    mdk::pica::eyeViewProjection(worldView, kProjection, 0.25f, rebuilt);
+    mdk::pica::eyeViewProjection(worldView, kProjection, 0.25f, 0.0f, rebuilt);
     PICA_CHECK(allNear(composed, rebuilt, 16, 1e-4f));
 
     // The negative control: the reversed order must be materially different,
@@ -351,7 +351,7 @@ void testTheShaderReadsTheRegistersTheWayTheMatrixMeansThem() {
     // (y, -x, z-w, w) -- the same answer `testThePicaRecipe` gets through the
     // matrix, reached the way the PICA200 actually reaches it.
     float eye[16];
-    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, eye);
+    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, 0.0f, eye);
     float reg[16];
     mdk::pica::registers(eye, reg);
 
@@ -426,7 +426,7 @@ void testTheCanvasUsesTheScenesQuarterTurn() {
     // answer, so this row compares the canvas against the scene rather than
     // against a copy of itself.
     float rotate[16];
-    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, rotate);
+    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, 0.0f, rotate);
     float ortho[16];
     oracleCanvasOrtho(ortho, kW, kH);
 
@@ -747,7 +747,7 @@ void testTheRealMatrixPutsTheNearPlaneNearest() {
     // is the near plane (engine NDC z 0) and z -> -infinity is the far plane.
     // After the conversion zNdc = 4/z, which is exact for all three points.
     float eye[16];
-    mdk::pica::eyeViewProjection(kIdentity, kProjection, 0.0f, eye);
+    mdk::pica::eyeViewProjection(kIdentity, kProjection, 0.0f, 0.0f, eye);
 
     const float zs[3] = {-4.0f, -8.0f, -16.0f};
     const float wantNdc[3] = {-1.0f, -0.5f, -0.25f};
@@ -775,7 +775,7 @@ void testTheEyePlanFollowsTheSlider() {
     // The slider is the physical 3D depth, 0..1. Closed means the panel shows the
     // LEFT buffer only, so a second pass is invisible work: one pass, no offset.
     const float kSep = 30.0f;
-    const mdk::pica::EyePlan mono = mdk::pica::eyePlan(0.0f, kSep);
+    const mdk::pica::EyePlan mono = mdk::pica::eyePlan(0.0f, kSep, 0.0f);
     PICA_CHECK(mono.passes == 1);
     PICA_CHECK(mono.offset[0] == 0.0f);
 
@@ -783,14 +783,14 @@ void testTheEyePlanFollowsTheSlider() {
     // sign is the convention `testTheEyeOffset` pins for the matrix, and a swap
     // here is inverted stereo -- the same geometry, crossed, which is a headache
     // and not a crash, so it is pinned as an equality rather than argued.
-    const mdk::pica::EyePlan half = mdk::pica::eyePlan(0.5f, kSep);
+    const mdk::pica::EyePlan half = mdk::pica::eyePlan(0.5f, kSep, 0.0f);
     PICA_CHECK(half.passes == 2);
     PICA_CHECK(half.offset[0] == -7.5f);
     PICA_CHECK(half.offset[1] == 7.5f);
     PICA_CHECK(half.offset[1] - half.offset[0] == kSep * 0.5f);
 
     // Full depth is the whole separation, split.
-    const mdk::pica::EyePlan full = mdk::pica::eyePlan(1.0f, kSep);
+    const mdk::pica::EyePlan full = mdk::pica::eyePlan(1.0f, kSep, 0.0f);
     PICA_CHECK(full.passes == 2);
     PICA_CHECK(full.offset[0] == -15.0f);
     PICA_CHECK(full.offset[1] == 15.0f);
@@ -799,22 +799,228 @@ void testTheEyePlanFollowsTheSlider() {
     // sibling port multiplied that straight into the eye offset and got a black
     // screen. Out-of-range in, in-range out -- and still stereo, because a
     // positive reading is a slider that is open.
-    const mdk::pica::EyePlan junk = mdk::pica::eyePlan(1.34e8f, kSep);
+    const mdk::pica::EyePlan junk = mdk::pica::eyePlan(1.34e8f, kSep, 0.0f);
     PICA_CHECK(junk.passes == 2);
     PICA_CHECK(junk.offset[0] == -15.0f);
     PICA_CHECK(junk.offset[1] == 15.0f);
 
     // A negative reading clamps to closed, not to a full-depth stereo with the
     // eyes crossed.
-    const mdk::pica::EyePlan neg = mdk::pica::eyePlan(-5.0f, kSep);
+    const mdk::pica::EyePlan neg = mdk::pica::eyePlan(-5.0f, kSep, 0.0f);
     PICA_CHECK(neg.passes == 1);
     PICA_CHECK(neg.offset[0] == 0.0f);
 
     // And a zero separation is still stereo, just with both eyes where the
     // camera is: the pass count is the slider's business, not the hardware's.
-    const mdk::pica::EyePlan flat = mdk::pica::eyePlan(0.5f, 0.0f);
+    const mdk::pica::EyePlan flat = mdk::pica::eyePlan(0.5f, 0.0f, 0.0f);
     PICA_CHECK(flat.passes == 2);
     PICA_CHECK(flat.offset[0] == 0.0f && flat.offset[1] == 0.0f);
+}
+
+// THE CONVERGENCE (pica::stereoScreenShift, owner 2026-11-27: the 3D "doesn't
+// pop"). The eyes' pictures are slid apart so that the plane `convergence`
+// units out has zero parallax (the panel's surface), nearer things come out of
+// the panel and farther ones go behind it.
+//
+// The fixture is the 3DS's own follow camera: 71.5 degrees vertical over the
+// 400x240 top screen (follow_camera.h kFieldOfView, main_3ds.cpp kAspect),
+// near 0.5 / far 20000 in the C#'s right-handed [0,1] form, looking down -z
+// from the origin (identity view) -- so a view-space point IS the world point.
+namespace stereo {
+
+float panelScaleX() {
+    return 1.0f / (tanf(71.5f * 0.5f * 3.14159265f / 180.0f) * (400.0f / 240.0f));
+}
+
+void projection3ds(float out[16]) {
+    const float yScale = 1.0f / tanf(71.5f * 0.5f * 3.14159265f / 180.0f);
+    const float nearPlane = 0.5f;
+    const float farPlane = 20000.0f;
+    memset(out, 0, sizeof(float) * 16);
+    out[0] = panelScaleX();
+    out[5] = yScale;
+    out[10] = farPlane / (nearPlane - farPlane);
+    out[11] = -1.0f;
+    out[14] = nearPlane * farPlane / (nearPlane - farPlane);
+}
+
+// The panel x of a view-space point (w = 1) or direction (w = 0) through an
+// ENGINE matrix, in pixels from the centre of the 400-px-wide picture.
+float panelPixelsX(const float m[16], float x, float y, float z, float w) {
+    const float p[4] = {x, y, z, w};
+    float clip[4];
+    xform(m, p, clip);
+    return clip[0] / clip[3] * 200.0f;
+}
+
+// Inside all six (unnormalised) planes of pica::frustumPlanes.
+bool insidePlanes(const float planes[6][4], const float p[3]) {
+    for (int i = 0; i < 6; i++) {
+        if (planes[i][0] * p[0] + planes[i][1] * p[1] + planes[i][2] * p[2] + planes[i][3] < 0.0f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace stereo
+
+void testTheConvergence() {
+    float proj[16];
+    stereo::projection3ds(proj);
+    const float kConvergence = 10.0f;
+
+    // THE SHIFT ITSELF: offset * P00 / convergence, and exactly zero for a mono
+    // eye or a convergence at infinity (0 or less).
+    const float p00 = stereo::panelScaleX();
+    PICA_CHECK(mdk::pica::stereoScreenShift(0.5f, p00, kConvergence) == 0.5f * p00 / kConvergence);
+    PICA_CHECK(mdk::pica::stereoScreenShift(0.0f, p00, kConvergence) == 0.0f);
+    PICA_CHECK(mdk::pica::stereoScreenShift(0.5f, p00, 0.0f) == 0.0f);
+    PICA_CHECK(mdk::pica::stereoScreenShift(0.5f, p00, -3.0f) == 0.0f);
+
+    // MONO IS BIT-IDENTICAL: with the offset at zero, whatever the convergence,
+    // both matrices are exactly what they were before the convergence existed
+    // (the plain product, and its two conversions).
+    const float convergences[3] = {0.0f, kConvergence, 4000.0f};
+    float before[16];
+    mulIndependent(kView, kProjection, before);
+    float beforePica[16];
+    mdk::pica::eyeViewProjection(kView, kProjection, 0.0f, 0.0f, beforePica);
+    for (int i = 0; i < 3; i++) {
+        float engine[16];
+        mdk::pica::eyeViewProjectionEngine(kView, kProjection, 0.0f, convergences[i], engine);
+        PICA_CHECK(allEqual(engine, before, 16));
+        float pica[16];
+        mdk::pica::eyeViewProjection(kView, kProjection, 0.0f, convergences[i], pica);
+        PICA_CHECK(allEqual(pica, beforePica, 16));
+    }
+    // And the slider at zero plans exactly that: one pass, offset 0.
+    const mdk::pica::EyePlan closed = mdk::pica::eyePlan(0.0f, 1.0f, kConvergence);
+    PICA_CHECK(closed.passes == 1 && closed.offset[0] == 0.0f);
+
+    // THE PARALLEL PAIR (convergence 0 or less, the 3D SCREEN DISTANCE row's
+    // FAR) is the eye translation alone: the plain shifted product.
+    float shiftedView[16];
+    memcpy(shiftedView, kView, sizeof(shiftedView));
+    shiftedView[12] -= 0.5f;
+    float parallel[16];
+    mulIndependent(shiftedView, kProjection, parallel);
+    float far0[16];
+    mdk::pica::eyeViewProjectionEngine(kView, kProjection, 0.5f, 0.0f, far0);
+    PICA_CHECK(allEqual(far0, parallel, 16));
+
+    // THE PLAN carries the convergence for both eyes, left negative.
+    const mdk::pica::EyePlan full = mdk::pica::eyePlan(1.0f, 1.0f, kConvergence);
+    PICA_CHECK(full.passes == 2);
+    PICA_CHECK(full.offset[0] == -0.5f && full.offset[1] == 0.5f);
+    PICA_CHECK(full.convergence == kConvergence);
+
+    float left[16];
+    float right[16];
+    mdk::pica::eyeViewProjectionEngine(kIdentity, proj, full.offset[0], full.convergence, left);
+    mdk::pica::eyeViewProjectionEngine(kIdentity, proj, full.offset[1], full.convergence, right);
+
+    // ZERO PARALLAX AT THE CONVERGENCE DISTANCE, across the picture: the same
+    // panel pixel in both eyes (to float rounding), for points left, right, up
+    // and down of the centre.
+    const float probes[5][2] = {{0, 0}, {3, 0}, {-5, 1}, {2, -4}, {-7, 6}};
+    for (int i = 0; i < 5; i++) {
+        const float l = stereo::panelPixelsX(left, probes[i][0], probes[i][1], -kConvergence, 1);
+        const float r = stereo::panelPixelsX(right, probes[i][0], probes[i][1], -kConvergence, 1);
+        PICA_CHECK(fabsf(r - l) < 1e-3f);
+    }
+
+    // THE SIGN, and the numbers the defaults were chosen by (docs/WORK_LEDGER.md
+    // 2026-11-27; 3D DEPTH 100% = 1 unit, 3D SCREEN DISTANCE 10, full slider).
+    // Disparity = right eye's x minus left eye's, in top-screen pixels:
+    // positive (uncrossed) is behind the panel, negative (crossed) in front.
+    //   * infinity (a direction, w = 0; the sky dome at 10000 is within 0.02 px
+    //     of it): +16.7 px, 8.3 px each way -- behind, and inside the ~10-12 px
+    //     per eye comfort budget;
+    //   * Kurt, ~8 units out: -4.2 px -- just in front of the panel;
+    //   * a wall 4 units out (the camera pushed in, FollowCamera.ClipView):
+    //     -25.0 px -- in front.
+    const float infinity = stereo::panelPixelsX(right, 0, 0, -1, 0) -
+                           stereo::panelPixelsX(left, 0, 0, -1, 0);
+    PICA_CHECK(infinity > 16.6f && infinity < 16.8f);
+    PICA_CHECK(stereo::panelPixelsX(left, 0, 0, -1, 0) < 0.0f);   // the left eye's slides left
+    const float sky = stereo::panelPixelsX(right, 0, 0, -10000, 1) -
+                      stereo::panelPixelsX(left, 0, 0, -10000, 1);
+    PICA_CHECK(sky > 0.0f && infinity - sky < 0.02f);
+    const float kurt = stereo::panelPixelsX(right, 0, 0, -8, 1) -
+                       stereo::panelPixelsX(left, 0, 0, -8, 1);
+    PICA_CHECK(kurt < -4.1f && kurt > -4.3f);
+    const float wall = stereo::panelPixelsX(right, 0, 0, -4, 1) -
+                       stereo::panelPixelsX(left, 0, 0, -4, 1);
+    PICA_CHECK(wall < -24.9f && wall > -25.1f);
+    // Monotonic: nearer is always more in front.
+    PICA_CHECK(wall < kurt && kurt < 0.0f && 0.0f < sky && sky <= infinity);
+
+    // THE CONVERGENCE IS APPLIED BEFORE THE PICA CONVERSIONS: the PICA matrix
+    // is the engine matrix with the depth remap (column 2 -= column 3) and the
+    // quarter turn (column 0 = column 1, column 1 = -column 0) after it, so the
+    // slide reaches the panel's horizontal axis (the PICA's second component,
+    // negated) and leaves z and w as mono has them.
+    float pica[16];
+    mdk::pica::eyeViewProjection(kIdentity, proj, full.offset[0], full.convergence, pica);
+    float want[16];
+    for (int k = 0; k < 4; k++) {
+        want[k * 4 + 0] = left[k * 4 + 1];
+        want[k * 4 + 1] = -left[k * 4 + 0];
+        want[k * 4 + 2] = left[k * 4 + 2] - left[k * 4 + 3];
+        want[k * 4 + 3] = left[k * 4 + 3];
+    }
+    PICA_CHECK(allEqual(pica, want, 16));
+    float monoEngine[16];
+    mdk::pica::eyeViewProjectionEngine(kIdentity, proj, 0.0f, 0.0f, monoEngine);
+    for (int k = 0; k < 4; k++) {
+        PICA_CHECK(left[k * 4 + 2] == monoEngine[k * 4 + 2]);
+        PICA_CHECK(left[k * 4 + 3] == monoEngine[k * 4 + 3]);
+    }
+
+    // A ROTATED, TRANSLATED CAMERA (kView) converges at its own view depth, not
+    // at world z: the world point that kView puts 10 units straight ahead
+    // (view (0, 0, -10)) is on the same pixel in both eyes. kView's rotation is
+    // orthonormal, so the world point is (v - t) * R^T.
+    {
+        const float v[3] = {1.5f, -0.5f, -kConvergence};
+        float world[3];
+        for (int j = 0; j < 3; j++) {
+            world[j] = 0.0f;
+            for (int i = 0; i < 3; i++) {
+                world[j] += (v[i] - kView[12 + i]) * kView[j * 4 + i];
+            }
+        }
+        float l[16];
+        float r[16];
+        mdk::pica::eyeViewProjectionEngine(kView, proj, -0.5f, kConvergence, l);
+        mdk::pica::eyeViewProjectionEngine(kView, proj, 0.5f, kConvergence, r);
+        const float lx = stereo::panelPixelsX(l, world[0], world[1], world[2], 1);
+        const float rx = stereo::panelPixelsX(r, world[0], world[1], world[2], 1);
+        PICA_CHECK(fabsf(rx - lx) < 1e-3f);
+        // Non-vacuity: the parallel pair does NOT converge there.
+        mdk::pica::eyeViewProjectionEngine(kView, proj, -0.5f, 0.0f, l);
+        mdk::pica::eyeViewProjectionEngine(kView, proj, 0.5f, 0.0f, r);
+        const float plx = stereo::panelPixelsX(l, world[0], world[1], world[2], 1);
+        const float prx = stereo::panelPixelsX(r, world[0], world[1], world[2], 1);
+        PICA_CHECK(prx - plx < -1.0f);
+    }
+
+    // THE PER-EYE CULL VOLUME follows the slide: a far point just past the
+    // centre frustum's right edge is inside the LEFT eye's planes (its picture
+    // slid left, so it sees further right) and outside the right eye's.
+    {
+        const float depth = 1000.0f;
+        const float shift = 0.5f * p00 / kConvergence;
+        const float x = (1.0f + shift * 0.5f) * depth / p00;
+        float planesL[6][4];
+        float planesR[6][4];
+        mdk::pica::frustumPlanes(left, planesL);
+        mdk::pica::frustumPlanes(right, planesR);
+        const float p[3] = {x, 0.0f, -depth};
+        PICA_CHECK(stereo::insidePlanes(planesL, p));
+        PICA_CHECK(!stereo::insidePlanes(planesR, p));
+    }
 }
 
 void testTheClearColourByteOrder() {
@@ -2722,7 +2928,7 @@ void testTheFrustumPlanesFollowTheCamera() {
         for (int pr = 0; pr < 2; pr++) {
             float vp[16];
             float planes[6][4];
-            mdk::pica::eyeViewProjectionEngine(views[v], projs[pr], 0.0f, vp);
+            mdk::pica::eyeViewProjectionEngine(views[v], projs[pr], 0.0f, 0.0f, vp);
             mdk::pica::frustumPlanes(vp, planes);
             for (const auto& p : probes) {
                 const bool want = clipInside(vp, p);
@@ -2739,9 +2945,9 @@ void testTheFrustumPlanesFollowTheCamera() {
     // THE EYE OFFSET moves the volume: the backend extracts per eye, with the
     // offset, so the two eyes' planes must differ.
     float vp[16], planesL[6][4], planesR[6][4];
-    mdk::pica::eyeViewProjectionEngine(kView, kProjection, -0.5f, vp);
+    mdk::pica::eyeViewProjectionEngine(kView, kProjection, -0.5f, 0.0f, vp);
     mdk::pica::frustumPlanes(vp, planesL);
-    mdk::pica::eyeViewProjectionEngine(kView, kProjection, 0.5f, vp);
+    mdk::pica::eyeViewProjectionEngine(kView, kProjection, 0.5f, 0.0f, vp);
     mdk::pica::frustumPlanes(vp, planesR);
     bool anyDiffers = false;
     for (int i = 0; i < 6; i++) {
@@ -2779,6 +2985,7 @@ int runPicaMatrixTests() {
     testNearerFragmentsWinAndFartherOnesLose();
     testTheRealMatrixPutsTheNearPlaneNearest();
     testTheEyePlanFollowsTheSlider();
+    testTheConvergence();
     testTheClearColourByteOrder();
     testTheTexelByteOrder();
     testTheTexelTileOrder();

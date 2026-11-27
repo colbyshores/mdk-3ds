@@ -472,6 +472,7 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
     mdk::log3dsPrintf("renderer created: target=%p dvlb=%p numDVLE=%d scratch=%p",
                       (void*)r->targetLeft, (void*)r->dvlb, (int)r->dvlb->numDVLE, r->scratch);
     r->eyeSeparation = desc ? (float)desc->stereo.separation : 0.0f;
+    r->eyeConvergence = desc ? (float)desc->stereo.convergence : 0.0f;
     if (desc) {
         r->toggles = desc->enhanced_toggles;
     }
