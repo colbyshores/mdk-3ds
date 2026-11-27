@@ -157,6 +157,31 @@ static bool buildEyeTargets(RendererC3D* r, int sx, int sy) {
 
     RendererC3D* r = new RendererC3D();
 
+    // THE RUN-LONG TABLES, AT THEIR WORKING SIZE NOW. Each lives as long as
+    // the renderer, and each used to reach its size by growing during the
+    // first level, so its block was made in the middle of that level's data
+    // and stayed there after the level was gone: eight blocks, 151 KB, 16-23
+    // MiB up the heap after a LEVEL3 teardown (Mandarine heap map). The next
+    // load had to place its large blocks around them. Made here, at boot, they
+    // sit under every level instead; with the menu fonts made per level
+    // (main_3ds.cpp), the heap's top in play stopped rising on a reload:
+    // 25.58 MiB on the first load and on every reload, against 25.18 then
+    // 30.69 before (docs/WORK_LEDGER.md 2026-11-27). The sizes are about twice
+    // LEVEL3's measured capacities (the texture table: 356 slots used of 512,
+    // 224 bytes a slot), because a bigger level would otherwise grow one
+    // mid-level, which is the same pin and, while the copy runs, both blocks
+    // at once. Not limits: a level that needs more grows the table as before.
+    // (hdQueue is not here: 04_streams.inc swaps a new vector in.)
+    r->textures.reserve(1024);
+    r->creationLog.reserve(1024);
+    r->palettes.reserve(16);
+    r->prepared.reserve(256);
+    r->canvasQuads.reserve(256);
+    r->canvasVerts.reserve(1024);
+    r->insetOverDraws.reserve(16);
+    r->packQueue.reserve(64);
+    r->queue.reserve(256, 64);
+
     // The command buffer is 4x the default (256 KB -> 1 MB).
     //
     // IT IS LINEAR MEMORY, AND THE LINEAR HEAP STARTS IN THE VRAM. A 4 MB

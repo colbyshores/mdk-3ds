@@ -26,6 +26,15 @@ DrawQueue::DrawQueue() {
     }
 }
 
+void DrawQueue::reserve(int32_t solid, int32_t other) {
+    for (int32_t i = 0; i < kDrawQueuePassCount; i++) {
+        const int32_t want = i == (int32_t)Pass::Solid ? solid : other;
+        if (want > 0) {
+            buckets_[i].reserve((size_t)want);
+        }
+    }
+}
+
 void DrawQueue::add(const MeshDraw& draw) {
     // The pass is a `Pass` value. A value outside the enum would be a bug in
     // the caller, and the safe reading of that bug is the first bucket: the

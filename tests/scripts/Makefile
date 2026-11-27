@@ -228,6 +228,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh linux_refusal_report_test.sh
 	@sh linux_arg_parse_test.sh
 	@sh level_chain_test.sh
+	@sh death_reload_test.sh
 	@sh harness_aids_test.sh
 	@sh menu_frontend_test.sh
 	@sh stream_screen_test.sh

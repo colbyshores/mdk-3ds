@@ -110,6 +110,13 @@ public:
     // frame and per-frame growth is what AGENTS.md 10 forbids in a hot path.
     void reset();
 
+    // Capacity up front: `solid` draws for `Solid`, `other` for each other
+    // pass (never less than the constructor's). A backend whose queue lives
+    // for the whole run calls it once at its creation, so a bucket's first
+    // growth is not made in the middle of a level, where the block would
+    // stay for good among the level's own (mdk_3ds 02_lifecycle.inc).
+    void reserve(int32_t solid, int32_t other);
+
     bool empty() const { return total_ == 0; }
     int32_t total() const { return total_; }
 
