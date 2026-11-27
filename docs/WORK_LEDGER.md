@@ -5426,3 +5426,9 @@ What is worse, plainly:
 - Player build (no harness): `hw-logs/mdk-run-controls.3dsx`, md5 in `hw-logs/mdk-run-controls.md5` (not committed).
 **Not verified:** any button feel (the owner tests on the New 3DS); the C-Stick's real reach (normalised by the circle pad's 155, unmeasured); an Old 3DS; the menu row drawn on hardware.
 **Commit:** feat/3ds-run-controls (this commit).
+
+## 2026-11-27 -- SPEC.md 7.9: the menu opens with START only
+
+**What:** SPEC.md 7.9 now says START opens and closes the pause/settings menu, SELECT is the run toggle, and with no menu fonts START held for two seconds quits.
+**Why:** owner, 2026-11-27: "the menu should open up with the start button only" (matches feat/3ds-run-controls 04109ba2). Protected file edited with the owner's explicit approval in chat.
+**Evidence:** the code already behaves this way (input_3ds_tests run-toggle and menu cases).
