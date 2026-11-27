@@ -59,6 +59,7 @@ static bool evictTextures(RendererC3D* renderer, uint32_t protectFrom) {
     C3dTexture& victim = renderer->textures[(size_t)oldest];
     C3D_TexDelete(&victim.tex);
     victim.valid = false;
+    victim.evictCount++;
     return true;
 }
 
@@ -348,9 +349,9 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture, const u
     // its one GSPGPU_FlushDataCache is the VRAM path's staging buffer), so the
     // chain is in the CPU's write-back cache until C3D_FrameEnd's heap-wide flush.
     // Cleaned here by range, as makeTextureNow does for an expanded texture, while
-    // maxLevel is still the import's (the draw rewrites it). See
-    // docs/WORK_LEDGER.md, the mip-chain entry: the candidate for the New 3DS's
-    // distant-surface glitch, unproven until the owner's A/B.
+    // maxLevel is still the import's (the draw rewrites it). P3 hygiene: it was
+    // once the candidate for the distant-surface mip glitch and is not its fix
+    // (docs/MIP_GLITCH.md).
     C3D_TexFlush(&texture.tex);
     texture.paddedWidth = texture.tex.width;
     texture.paddedHeight = texture.tex.height;
@@ -368,12 +369,39 @@ static bool importCompressed(RendererC3D* renderer, C3dTexture& texture, const u
                    texture.realWidth == texture.paddedWidth ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,
                    texture.realHeight == texture.paddedHeight ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
     texture.valid = true;
+    texture.madeCount++;
     renderer->compressedMade++;
     renderer->compressedBytesSaved +=
         mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, texture.paddedWidth,
                                 texture.paddedHeight, 0) -
         mdk::pica::textureBytes(texture.format, texture.paddedWidth, texture.paddedHeight, 0);
     return true;
+}
+
+// THE CENSUS of a texture made on this core from its indices or RGBA (an
+// expansion, a streamed picture): its GPU bytes counted, and while the frontend
+// names a phase (censusPhase) one line for it, up to kCensusLines a phase -- the evidence of
+// what the console still makes at run time (docs/3DS_ARCHITECTURE.md 5). Cold:
+// a counter add, and a log line while a phase is named (the level's load and
+// its play).
+static const int32_t kCensusLines = 96;
+static void censusMade(RendererC3D* renderer, C3dTexture& texture, size_t bytes) {
+    texture.madeCount++;
+    renderer->madeBytes += bytes;
+    if (renderer->censusPhase != nullptr && renderer->censusLines < kCensusLines) {
+        renderer->censusLines++;
+        mdk::log3dsPrintf("texmake: in %s frame %d: %dx%d %s %s%s, %d mip levels, %u bytes "
+                          "(created frame %d, made %d, evicted %d)",
+                          renderer->censusPhase, (int)renderer->frame, (int)texture.realWidth, (int)texture.realHeight,
+                          texture.streamed ? "streamed" : texture.indexed ? "indexed" : "rgba",
+                          texture.format == mdk::pica::TexelFormat::Rgb565     ? "rgb565"
+                          : texture.format == mdk::pica::TexelFormat::Rgba5551 ? "rgba5551"
+                          : texture.format == mdk::pica::TexelFormat::Rgba4    ? "rgba4"
+                                                                               : "rgba8",
+                          texture.keepRgba8 ? " canvas" : "", (int)texture.mipLevels,
+                          (unsigned)bytes, (int)texture.createdFrame, (int)texture.madeCount,
+                          (int)texture.evictCount);
+    }
 }
 
 // A STREAMED picture's store (C3dTexture::streamed, package #20c): RGB565, no
@@ -412,6 +440,7 @@ static bool makeStreamed(RendererC3D* renderer, C3dTexture& texture) {
     texture.mipLevels = 0;
     texture.hasHoles = false;
     renderer->texturesMade[texelStoreIndex(texture.format)]++;
+    censusMade(renderer, texture, bytes);
     return true;
 }
 

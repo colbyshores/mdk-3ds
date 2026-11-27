@@ -1441,6 +1441,23 @@ def adjudicate(text, quiet=False):
               % ("yes" if "C3D_TexSetFilter(" in prep_b2 else "no",
                  "yes" if "texture->maxLevel" in rec_b2 else "NO"))
 
+    # THE LEVELS SAMPLED GO THROUGH THE ONE RULE (docs/MIP_GLITCH.md): the
+    # submit writes the drawn texture's max level once, from
+    # mdk::pica::mipLevelsSampled with the bound texture's own format, width and
+    # height in that order, and never through the whole LOD word. The count
+    # written bare hands the PICA200 the 8-wide level of a tall ETC1 texture
+    # again -- the half-size copy in a quarter of the surface -- and width and
+    # height swapped would cap the wide textures instead of the tall ones.
+    max_writes = re.findall(r"texture->maxLevel[ \t\r\n]*=[^;]*;", rec_b2)
+    max_flat = re.sub(r"[ \t\r\n]+", " ", max_writes[0]) if max_writes else ""
+    rep.check("sampled-levels-go-through-the-one-rule",
+              len(max_writes) == 1 and "lodParam" not in rec_b2
+              and "mdk::pica::mipLevelsSampled(texture->fmt == GPU_ETC1, texture->width, "
+                  "texture->height, submitMipLevels)" in max_flat,
+              "drawRecorded writes texture->maxLevel %d time(s), as `%s`; lodParam "
+              "written there: %s"
+              % (len(max_writes), max_flat, "yes" if "lodParam" in rec_b2 else "no"))
+
     # THE SUN SHADOW: MADE ONCE A FRAME, TAKEN IN THE LIT DRAW ITSELF (Enhanced
     # Mode enableSkyShadows; 03_shadows.inc castShadows, 06_draw.inc
     # installShadowLitStages). Measured on the Old 3DS, 2026-11-18: the old

@@ -1096,6 +1096,70 @@ void testTheMipChain() {
     PICA_CHECK(mdk::pica::mipLevelsFor(1024, 16) == 1);     // the short axis
     PICA_CHECK(mdk::pica::mipLevelsFor(128, 256) == 4);
 
+    // THE LEVELS SAMPLED. The PICA200 draws the level of a non-square ETC1
+    // texture whose short side is 16 with part of it taken from the level after
+    // it, short side 8 (measured on the Old 3DS, docs/MIP_GLITCH.md), so such a
+    // chain is sampled down to its 16 level only. The owner's two: BULLSEYE
+    // 256x512 with levels 0-5 (its level 5 is 8x16) and C7_WALL 128x512 with
+    // levels 0-4 (8x32).
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 256, 512, 5) == 4);   // ends at 16x32
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 128, 512, 4) == 3);   // ends at 16x64
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 64, 512, 3) == 2);
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 16, 64, 1) == 0);     // its level 1 is 8 wide
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 8, 16, 0) == 0);
+    // The wide shapes the same, by their height: 512x64 and 512x128 measured
+    // wrong at their 16-high level.
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 512, 64, 3) == 2);    // ends at 128x16
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 512, 256, 5) == 4);   // ends at 32x16
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 64, 16, 1) == 0);
+    // A chain that already stops at 16 or above keeps every level: only the 8
+    // level is taken off, never "the last level" of whatever is there.
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 256, 512, 4) == 4);
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 256, 512, 3) == 3);
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 128, 512, 1) == 1);
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 512, 64, 2) == 2);
+    // A residency tier's dropped top (hdUnpack: 256x512 becomes 128x256, levels
+    // 0-4) ends at 8 as well, one level sooner.
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 128, 256, 4) == 3);
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 64, 128, 3) == 2);
+    // Every level a non-square ETC1 texture is told to sample is at least 16 on
+    // its short side, at every size the packs hold, tall and wide, and no level
+    // is dropped that did not have to be.
+    for (int32_t w = 8; w <= 1024; w <<= 1) {
+        for (int32_t h = 8; h <= 1024; h <<= 1) {
+            if (w == h) {
+                continue;
+            }
+            const int32_t shortSide = w < h ? w : h;
+            const int32_t levels = mdk::pica::mipLevelsFor(w, h);
+            const int32_t sampled = mdk::pica::mipLevelsSampled(true, w, h, levels);
+            PICA_CHECK(sampled >= 0 && sampled <= levels);
+            PICA_CHECK(sampled == 0 || (shortSide >> sampled) >= 16);
+            PICA_CHECK(sampled == levels || (shortSide >> (sampled + 1)) < 16);
+            // A shorter chain is never lengthened, and loses nothing while its
+            // last level is still 16 or more.
+            for (int32_t carried = 0; carried <= levels; carried++) {
+                const int32_t kept = mdk::pica::mipLevelsSampled(true, w, h, carried);
+                PICA_CHECK(kept == (carried < sampled ? carried : sampled));
+            }
+            // Any other format keeps whatever chain it carries at the same shape.
+            for (int32_t carried = 0; carried <= levels; carried++) {
+                PICA_CHECK(mdk::pica::mipLevelsSampled(false, w, h, carried) == carried);
+            }
+        }
+    }
+    // What measured right is left alone: square ETC1 at every size.
+    for (int32_t side = 8; side <= 1024; side <<= 1) {
+        const int32_t levels = mdk::pica::mipLevelsFor(side, side);
+        for (int32_t carried = 0; carried <= levels; carried++) {
+            PICA_CHECK(mdk::pica::mipLevelsSampled(true, side, side, carried) == carried);
+            PICA_CHECK(mdk::pica::mipLevelsSampled(false, side, side, carried) == carried);
+        }
+    }
+    PICA_CHECK(mdk::pica::mipLevelsSampled(true, 256, 256, 5) == 5);
+    PICA_CHECK(mdk::pica::mipLevelsSampled(false, 256, 512, 5) == 5);
+    PICA_CHECK(mdk::pica::mipLevelsSampled(false, 512, 64, 3) == 3);
+
     // THE BYTES, per format, chain included: 256x256 with 5 levels is
     // 256^2 + 128^2 + ... + 8^2 = 87360 texels. RGBA8 4 bytes, ETC1 half a byte,
     // ETC1A4 one byte -- the HD layer's 8x and 4x against the original look.

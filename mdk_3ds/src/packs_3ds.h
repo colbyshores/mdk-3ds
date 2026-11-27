@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -67,6 +68,8 @@ struct HdPackSource {
     // Set by the warms around their ask (requestPackedSurface): the ask is
     // a HINT, and a hint never brings a texture's pixels back (below).
     bool hint = false;
+    // The names whose lookup missed both packs this level (hdPackLookup's log).
+    std::set<std::string> missLogged;
 };
 
 // The warms' ask (game/object_view.h warmObjectStep, EffectsView::warmStep): a

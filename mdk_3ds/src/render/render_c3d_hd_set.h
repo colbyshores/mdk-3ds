@@ -24,3 +24,31 @@ struct MdkHdSetState {
 };
 
 void mdk_render_hd_set_state(MdkRenderer r, MdkHdSetState* out);
+
+// THE TEXTURE CENSUS (docs/3DS_ARCHITECTURE.md 2 and 5): what core 0 made and
+// read for textures, cumulative since the renderer started; the frontend logs
+// the differences over a level's load and its play. "Made" is a GPU copy built
+// on this core from indices or RGBA (an expansion, a streamed picture), not a
+// compressed import.
+struct MdkTextureCensus {
+    int32_t made = 0;               // textures made (each store's count, summed)
+    uint64_t madeBytes = 0;         // ... their GPU bytes
+    uint64_t makeTicks = 0;         // ... core-0 ticks making them (SYSCLOCK_ARM11)
+    int32_t packImported = 0;       // packed originals imported at a frame boundary
+    uint64_t packImportTicks = 0;   // ... core-0 ticks importing them
+    int32_t packMainReads = 0;      // packed originals READ on core 0 (must stay 0 in play)
+    int32_t compressedImported = 0; // every compressed import (packs, Kurt)
+};
+
+void mdk_render_texture_census(MdkRenderer r, MdkTextureCensus* out);
+// One log line: what core 0 made and read for textures between two snapshots
+// (`what`: "level load", "level play", "fall", "stream"). Cold.
+void mdk_render_log_texture_census(const char* what, const MdkTextureCensus& from,
+                                   const MdkTextureCensus& to);
+// Every chunked expansion still pending or deferred, finished now (between
+// frames only: the level load's end, behind the loading screen). Returns how
+// many were finished.
+int32_t mdk_render_finish_expansions(MdkRenderer r);
+// While a phase is named ("load", "play": a string literal; null for none) each
+// make on core 0 is logged with it, up to a cap a phase.
+void mdk_render_texture_census_log(MdkRenderer r, const char* phase);

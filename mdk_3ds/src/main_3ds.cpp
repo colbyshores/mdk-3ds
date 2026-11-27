@@ -501,6 +501,12 @@ int main(int argc, char** argv) {
                           (mdk::nowSeconds() - loadStart) * 1000.0);
     };
     mdk::log3dsPrintf("level loop: level %d", (int)flow.state().level);
+    // THE TEXTURE CENSUS (render_c3d_hd_set.h): core 0's texture makes and pack
+    // reads over the load and over the play, logged at each end.
+    MdkTextureCensus censusAtLoad;
+    mdk_render_texture_census(renderer, &censusAtLoad);
+    mdk_render_texture_census_log(renderer, "load");
+    MdkTextureCensus censusAtPlay = censusAtLoad;
     bool nextLevel = false;
     {
     // ---------------------------------------------------------------------
@@ -1050,6 +1056,11 @@ int main(int argc, char** argv) {
     // against it (see the frame's object warm).
     std::map<std::string, size_t> objectWarmAt;
     int32_t objectWarmReleases = 0;
+    // The surface cache's palette-release count when the effects warm was last
+    // checked against it, and the names a release restarts (see the frame's
+    // effects warm; kept to reuse their storage).
+    int32_t effectsWarmReleases = 0;
+    std::vector<std::string> effectsRestart;
     mdk::WarmAsk warmAsk;
     warmAsk.surfaces = &surfaces;
     warmAsk.source = &hdSource;
@@ -1514,6 +1525,13 @@ int main(int argc, char** argv) {
         mdk::holdHdWindow3ds(renderer, nullptr, 0, "loading screen", loading.get(), holdFrom,
                              frame);
     }
+    // THE LEVEL'S LARGE 2D PICTURES MADE NOW, behind the loading screen: a
+    // chunked expansion still pending -- the font atlases, made from their
+    // indices at creation and sliced over the first play frames until now
+    // (measured on the Old 3DS, level 7: 2.1 MB and 484 ms of core 0 in play)
+    // -- is finished here (docs/3DS_ARCHITECTURE.md 5: made once per level, at
+    // level load, never at first show).
+    mdk_render_finish_expansions(renderer);
     loadingBar(1.0f);
     loading->release(renderer);
     loading.reset();
@@ -1522,6 +1540,9 @@ int main(int argc, char** argv) {
                       "the HD hold included)",
                       (double)(svcGetSystemTick() - levelLoadTick) / (double)(SYSCLOCK_ARM11 / 1000ull));
     mdk::log3dsPrintf("loop: entering main loop");
+    mdk_render_texture_census(renderer, &censusAtPlay);
+    mdk_render_log_texture_census("level load", censusAtLoad, censusAtPlay);
+    mdk_render_texture_census_log(renderer, "play");
     // The effects decoded from here on are decoded DURING PLAY, on this core: what
     // the level-end line says (docs/3DS_ARCHITECTURE.md 2: none).
     const int32_t playDecodesFrom = bank.stats().decodes;
@@ -2191,6 +2212,30 @@ int main(int argc, char** argv) {
             // resolving all six in the arena-change frame was most of that
             // frame's remaining stall, so the warm is spread like the
             // builds above it.
+            //
+            // A RELEASED PALETTE TAKES THE EFFECTS' ASKS WITH IT, as the objects'
+            // (below): an arena whose effects warm had finished would come back
+            // asking for nothing, and its first drop or trail is read HERE, on
+            // core 0, by its draw -- measured on the appliance: L5's MUSE_1
+            // re-entered at the route's end (SL_SMA, SL_MED, TRAIL), L7's CDANT_3
+            // re-entered from DANT_4 and L8's TRAIL (`pack: MAIN-THREAD read`).
+            // So on any release, every arena whose palette no view protects (the
+            // objects' rule) starts its effects warm over when it is next warmed.
+            if (surfaces.paletteReleases() != effectsWarmReleases) {
+                effectsWarmReleases = surfaces.paletteReleases();
+                effectsRestart.clear();
+                const std::map<std::string, size_t>& warmed = effectsView.warmCursors();
+                for (std::map<std::string, size_t>::const_iterator it = warmed.begin();
+                     it != warmed.end(); ++it) {
+                    if (it->first != streamCurrent && it->first != streamSecond &&
+                        arenaViews.find(it->first) == nullptr) {
+                        effectsRestart.push_back(it->first);
+                    }
+                }
+                for (size_t i = 0; i < effectsRestart.size(); i++) {
+                    effectsView.restartWarm(effectsRestart[i]);
+                }
+            }
             effectsView.warmStep(streamCurrent, mdk::requestPackedSurface, mdk::startEffectSurface,
                                  &warmAsk);
             // The bubble's arenas warm too: they are approached, not yet
@@ -3137,6 +3182,12 @@ int main(int argc, char** argv) {
                           (int)hdState.imported);
     }
     mdk_render_set_hd_window(renderer, nullptr, nullptr, 0);
+    {
+        MdkTextureCensus censusAtEnd;
+        mdk_render_texture_census(renderer, &censusAtEnd);
+        mdk_render_texture_census_log(renderer, nullptr);
+        mdk_render_log_texture_census("level play", censusAtPlay, censusAtEnd);
+    }
     runtime.reset();
     // 3. The pose caches key on the runtime's Model addresses, which the reset just
     //    freed (scripts/pose_cache.h; the C#'s next Viewer calls ForgetPoses).

@@ -293,6 +293,14 @@ struct C3dTexture {
     std::vector<int32_t> pages;
     int32_t framesPerPage = 0;
 
+    // THE CENSUS' HISTORY (render_c3d_hd_set.h MdkTextureCensus): the renderer
+    // frame the texture was created in, how often a GPU copy was made for it and
+    // how often the LRU took it -- what a `pack: MAIN-THREAD read` line says, so
+    // a read's cause (never asked, asked too late, evicted) is in the log.
+    int32_t createdFrame = -1;
+    uint16_t madeCount = 0;
+    uint16_t evictCount = 0;
+
     // The source changed while the old GPU copy may still be in flight. The
     // replacement waits for the next frame boundary (AGENTS.md P3).
     bool stale = false;
@@ -987,6 +995,17 @@ struct RendererC3D {
     // not allocate against the RGBA8 expansion of the same padded size.
     int32_t compressedMade = 0;
     size_t compressedBytesSaved = 0;
+    // THE TEXTURE CENSUS (render_c3d_hd_set.h): the GPU bytes of every texture
+    // made on this core from indices or RGBA (an expansion, a streamed picture),
+    // the core-0 ticks spent making them (makeTexture, the expansion pump), and
+    // the ticks the packed originals' boundary imports took. `censusPhase` (set by
+    // the frontend: "load", "play", or null for none) logs each such make, up to
+    // kCensusLines a phase.
+    uint64_t madeBytes = 0;
+    uint64_t makeTicks = 0;
+    uint64_t packImportTicks = 0;
+    const char* censusPhase = nullptr;
+    int32_t censusLines = 0;
 
     // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
     // may still be reading the last frame's textures then. C3D_FrameBegin

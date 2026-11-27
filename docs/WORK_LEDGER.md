@@ -4474,3 +4474,183 @@ against 1.1.1 + 683a53ef (the arena sounds, which our bank has); the probe's new
   `tests/formats/arena_view_tests.cpp` loadLevel3 keeps no MdkData alive for lazy MTO reads
   (pre-existing; the new test keeps its own).
 - **Commits:** fe117e29 (code, tests) and this one (ledger).
+## 2026-11-27 -- the mip glitch: the PICA200 misreads the 16 level of a non-square ETC1 texture; such a chain is sampled to 16, not 8 (branch fix/3ds-mip-nonsquare)
+- **Owner's words:** a small half-size copy of the texture in the lower-left of
+  the surface at a distance, gone closer; "document the failed experiments",
+  drop them, fresh eyes.
+- **What:**
+  - `docs/MIP_GLITCH.md`: the record. Every experiment since 2026-11-25 with its
+    result, what is ruled out, the answer, what is not verified.
+    `docs/3DS_ARCHITECTURE.md` section 6 no longer calls the per-texture flush the
+    glitch's candidate cause (it stays, as P3 hygiene; the branch's first commit,
+    65af1616, with the record's first version), and section 5 states the rule.
+    The same stale sentence in 04_textures.inc's comment is corrected.
+  - `mdk::pica::mipLevelsSampled(etc1, width, height, levels)` (pica_matrix.h/cpp):
+    a non-square ETC1 texture is sampled down to the level whose short side is 16.
+    `drawRecorded`'s one write of `C3D_Tex::maxLevel` (06_draw_submit.inc) goes
+    through it. Nothing else changes: no file, no pack, no per-model path; the 8
+    level stays in memory, never sampled.
+  - Host tests: `testTheMipChain` pins the rule (the owner's two textures, every
+    non-square shape from 8 to 1024, shorter chains, squares and other formats
+    left whole); `c3d_frame_test.sh` pins that the submit writes the max level
+    once and through the rule.
+- **Why (measured, Old 3DS appliance `old3ds-lan167`, model 0, 268 MHz):**
+  - The fresh lead was the shape: both textures are tall ETC1 (256x512, 128x512).
+    A standalone test program (`mdk_3ds/tools/mipprobe` on
+    `throwaway/mip-nonsquare-hw`: one quad, a texture whose every tile is a colour
+    naming its level and place, the target read back through the transfer engine)
+    reads a quarter of the 16x32 level from the 8x16 level's tiles, at 512
+    placements in linear memory (p1: 3,072 of 12,288 tests off, all of them the
+    16-wide level). Mandarine reads the same program right (0 off).
+  - p3-p5 (62 configurations of format, shape and max level; p2 before them): wrong at the 16 level in every tall ETC1 shape (2:1, 4:1,
+    8:1) and in wide 4:1 and 8:1; right in wide 2:1 and 16:1, in square ETC1, and
+    in ETC1A4, RGB565, RGBA5551, RGBA4 and RGBA8 at any shape; only when the two
+    levels are blended (trilinear), or drawn one after the other with the texture
+    left bound. Twelve chains wrong with their whole chain read right told to
+    stop at the 16 level (p5's count: 638 tests, 0 wrong within the rule, 22 past
+    it).
+  - In the game, same appliance, the practice-room targets through the scope
+    (harness on `throwaway/mip-nonsquare-hw`, HD from the RomFS at tier 512, the
+    game's own frame readback, no ATM screenshots): edge smoothing off, without
+    the fix the small bullseye is in the targets' lower-left at 24 pixels across
+    and the targets smear at 16 (X1); with it, clean bullseyes at both (Y1,
+    DRAWLOG: BULLSEYE bound with max level 4 of 5). The start tunnel, edge
+    smoothing on: without the fix a hard-edged block on a leg of the inner arch
+    in all seven captures (XA), with it a smooth leg and no other pixel changed
+    (YA, C7_WALL bound with max level 3 of 4). With edge smoothing on the
+    targets' glitch needs a target half the size (D512C). So it was never the New
+    3DS: nobody had looked at the Old 3DS at the size where that level is used,
+    and the 2026-11-25 level-colour capture that had it was read as clean.
+- **Checks** (all at `nice -n 19 ionice -c2 -n7`):
+  - Linux build: 0 warnings. 3DS build (`make -C mdk_3ds`, devkitARM): 0 compiler
+    warnings.
+  - `make -C tests/scripts test`: exit 0, 1001 PASS, 0 FAIL, 4 SKIP (the frame
+    gate's oracle arms); `PASS PicaMatrix`, `PASS C3dFrame (66 checks, 167 arms
+    adjudicated red, 29 probes green)`; tick1 "All cases match the oracle".
+    Non-vacuity of the new host checks: four wrong rules (stop at 8, tall only,
+    squares too, width only) fail 51, 24, 8 and 24 checks.
+  - `make -C tests/formats`: 200,670 checks, 0 failures.
+  - `tools/check.sh`: ALL GATES PASSED (gates_smdh SKIP: no .cia built).
+  - Independent read-only review (two passes): no code defect; its findings (a
+    test that a "last level off" rule would have passed, a loose source check,
+    doc wording past the logs) are fixed here.
+  - Emulator (Mandarine r1.2.1, md5 0d2adab6 verified, `DISPLAY=:99`,
+    `mdk_3ds/tools/emurun.sh --secs 45`, no other MDK instance at launch), the
+    play build: exit 0, boots to the main menu (`backend: PICA200 Citro3D`,
+    `menu: slides loaded at frame 724`), guest log
+    `.git/worktrees/mip-nonsquare/hw-logs/emu-menu.guest.log`. The emulator reads
+    these levels right with or without the fix, so this is a boot check only.
+- **Builds kept** (`.git/worktrees/mip-nonsquare/hw-logs/`, with a README; not
+  uploaded): the play build (no harness, plain `make -C mdk_3ds`),
+  `mdk-mipfix.3dsx`, md5 `c5ce4f89f0c4c305bd240ef7b8886019` (234,561,652 bytes);
+  it reads HD from the SD card (the uncompressed pack). `mipprobe-owner.3dsx`,
+  md5 `59cb9570467799030a68c116b48dbcc4`: the test program for the New 3DS (40
+  seconds, writes `sdmc:/3ds/mipprobe/probe.log`).
+- **Evidence:** `.git/worktrees/mip-nonsquare-hw/hw-logs/`: `probe-p1..p5.log`
+  (hardware), `emu-probe1.log`, `emu-probe2.log`,
+  `hw-{T512C,D512C,X1,Y1,XA,YA}.log` and their `cap-*/` readbacks,
+  `pictures/before-after-frame950-6x.png`, `-frame800-6x.png` and
+  `tunnel-before-after-frame30-5x.png`, the payloads with their `*.vars.txt`
+  and md5. The harness, the readback and the test program are
+  `throwaway/mip-nonsquare-hw` 0369b912 (never for main).
+- **Not verified:** the owner's New 3DS with the fix. The owner reported "zero
+  improvements" from the live A/B's modes 1-3 together; modes 1 and 2 agree with
+  the appliance, mode 3 (max level one less) does not, since that is what cures
+  here. The fix build decides it. Also not run: the pause menu's MIPMAPS toggle
+  with the fix on hardware, and the wide shapes in the game (their cure is the
+  test program's). The hardware A/Bs ran on the throwaway's older base (72cfb30b
+  plus the harness) with this function, not on this branch's tree.
+- **Commits:** 65af1616 (the record's first version), and this one.
+
+## 2026-11-27 -- core 0 reads no texture file in play; the level's runtime-made textures measured, the font atlases made at load (branch perf/3ds-etc1-leftovers)
+
+docs/3DS_ARCHITECTURE.md 7, step 3 (section 5), on test/3ds-combined-11-26 12118fd0 (which
+already has perf/3ds-view-prebuild's object warm over the bubble's hints).
+
+- **What:**
+  - **The texture census** (`render_c3d_hd_set.h`, cold): per level `textures: census level
+    load|level play` -- textures made on core 0 from indices/RGBA, their GPU bytes and core-0
+    ms; packed originals imported at the boundary (ms); packed originals READ on core 0. Fall
+    and stream get `fall open|fall run` / `stream open|stream run` lines (measured only, owner
+    2026-11-26). `texmake:` lines name each core-0 make during the load and the play (size,
+    store, canvas, mip levels, bytes; 96 a phase). `pack: MAIN-THREAD read` now says whether
+    the read was queued or never asked for and the texture's creation frame, makes and
+    evictions. `pack: miss` names, once a level, an in-level texture the packs do not hold
+    (it would be palette-expanded on core 0).
+  - **Effects warm restarts on a palette release** (main_3ds.cpp; `EffectsView::restartWarm`,
+    `warmCursors`): the objects' rule from fe117e29 -- an arena not in the pair and without a
+    view starts its effects warm over. Before, a finished warm never re-asked, so an arena
+    re-entered after its palette was released drew its first drop/trail with a core-0 read.
+  - **The font atlases are made at level load, without a mip chain**: `mdk_render_mark_canvas`
+    restarts a chunked expansion already started with a chain (it was started at creation, a
+    call before the canvas pin), and `mdk_render_finish_expansions` (waits for the GPU, then
+    finishes every pending or deferred expansion) runs behind the loading screen before the
+    bar's last step.
+  - docs/3DS_ARCHITECTURE.md 5 and 7: the step's result.
+- **Why:** section 2 (core 0 does no file I/O in play) and section 5 (nothing level-related
+  expanded at run time, 2D art made at load, never at first show); owner rules: memory over
+  texture precision, fall/stream measured only, no complexity without a measured payoff.
+- **Core-0 reads before:** the hd-bubble A/B (11-26): L5 3, L6 3, L7 6, L8 7 per run -- object
+  pickups/locks seen in the next arena, and effect strips. fe117e29 fixed the object half; on
+  12118fd0 (base below) the effect half remained: L5 SL_MED, SL_SMA, TRAIL (MUSE_1 re-entered,
+  238 ms frame), L6 TRAIL, L8 TRAIL -- every one "queued, not read yet", created the frame it
+  was drawn (no warm had asked for it).
+- **Goal 2, what is still made at run time** (census, Old 3DS and Mandarine): **no in-level
+  arena, object or effect texture** -- `pack: miss` printed nothing on L3-L8 (L5-L8 appliance
+  walks, L3/L4 Mandarine loads), and every core-0 make in play was a 1x1 flat colour (256 bytes,
+  8-37 a level). At load, per level: 2 font atlases (1024x256 + 1024x128, canvas RGBA8), ~50
+  small 2D pictures (heads, HUD and panels: 63x63, 140x72 ... 16-bit with a chain), 8 flat
+  colours. So no new build-time pack: there is nothing in-level to convert, and the 2D art may
+  stay (section 5). README and build scripts unchanged for the same reason.
+- **Appliance A/B** (old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, HD on from the
+  RomFS, PROFILE OG; harness `AUTOQUIT HDROMFS=1 LEVEL=n GOD=1 NOCLIP=1 PROFILE=1 ROUTE=...`,
+  the hd-bubble door walks recovered from the 11-26 logs (`.git/mdk-review/etc1-leftovers-logs/
+  build_payload.sh`); one run each, all FRESH. Base = 12118fd0 + harness + census
+  (throwaway/etc1-leftovers-hw a21f718d), after = this branch + the same harness (e79db521).
+  Logs: `.git/mdk-review/etc1-leftovers-logs/{base,after}-L{5..8}.session.log`.)
+
+  | | L5 | L6 | L7 | L8 |
+  |---|---|---|---|---|
+  | core-0 pack reads in play | 3 -> **0** | 1 -> **0** | 0 -> **0** | 1 -> **0** |
+  | made on core 0 in play | 10, 2.10 MB, 478.6 ms -> 8, 2 KB, 3.6 ms | 36, 2.10 MB, 488.5 ms -> 37, 9 KB, 13.3 ms | 19, 2.10 MB, 484.3 ms -> 17, 4 KB, 6.1 ms | 38, 2.11 MB, 496.0 ms -> 36, 9 KB, 16.0 ms |
+  | made on core 0 at load | 61, 1.08 MB, 322.6 ms -> 63, 2.65 MB, 659.9 ms | 62, 1.08 MB, 323.6 ms -> 64, 2.66 MB, 652.9 ms | 64, 1.08 MB, 322.9 ms -> 66, 2.66 MB, 655.5 ms | 63, 1.08 MB, 323.1 ms -> 65, 2.66 MB, 658.7 ms |
+  | linear free min in play | 9.46 -> 9.98 MB | 9.25 -> 9.77 MB | 8.09 -> 8.62 MB | 2.25 -> 2.83 MB |
+  | level load | 12.02 -> 12.23 s | 13.07 -> 13.44 s | 15.27 -> 15.62 s | 15.54 -> 15.92 s |
+  | frame max | 238.0 (f1675) -> 73.3 ms | 205.5 (f1) -> 42.5 ms | 205.3 (f1) -> 59.9 ms | 293.0 (f1) -> 125.7 ms (f1) |
+  | mean / p95 / over 33.3 ms | 19.07/27.7/153 -> 19.00/28.0/182 | 18.07/27.0/98 -> 17.44/21.9/89 | 18.38/33.0/471 -> 18.41/33.0/504 | 24.28/39.1/1588 -> 24.30/39.2/1620 |
+  | doorway max | 238 -> 73.3 ms | 40.3 -> 40.9 | 54.3 -> 59.9 | 84.0 -> 85.1 |
+
+  The 2.1 MB / ~480 ms of core-0 play work on the base was the two font atlases, expanded in
+  slices over the first ~45 frames as RGBA8 with a mip chain (698,368 + 1,397,760 bytes); they
+  are now 524,288 + 1,048,576 bytes, made at load (+~330 ms of load, behind the bar). Linear
+  free in play +0.52-0.58 MB on every level (the chains a canvas never samples). Packed
+  originals imported in play went up 0-10 a level (the restarted effects warms: L5 53 -> 63,
+  L6 78 -> 88, L8 122 -> 132; 0.8 ms each).
+- **Worse than base, plainly:** level load +0.21-0.38 s; frames over 33.3 ms L5 153 -> 182, L7
+  471 -> 504, L8 1588 -> 1620 (L6 98 -> 89), means within 0.03 ms on L5/L7/L8; one run a side,
+  so these are within the run-to-run spread seen in the 11-26 A/B, not shown to be caused here.
+  Doorway maxima L7 +5.6 ms, L8 +1.1 ms.
+- **.3dsx:** after payloads 4,032 bytes larger than base (code only; no RomFS change). Plain
+  build 234,586,764 bytes.
+- **Emulator** (Mandarine r1.2.1 md5 0d2adab6, `DISPLAY=:99`, emurun.sh): L7 final code (with
+  the review's GPU wait in `mdk_render_finish_expansions`), the door walk to DANT_3: 0 core-0
+  reads, fonts made at load (`texmake: in load ... 1024x256 indexed rgba8 canvas, 0 mip
+  levels`), capture `.git/mdk-review/etc1-leftovers-logs/emu-final-L7.png` looked at (scene,
+  objects and HUD gauge drawn). L3/L4 load census: 68 / 63 made, 2.66 MB, 0 misses.
+- **Visual check:** no texture's encoding changed. The font atlases lose only levels a canvas
+  draw never samples (06_draw.inc holds canvas draws at level 0), so their pixels are the same.
+- **Review** (independent agents, two rounds): round 1 -- a live-object warm of mine counted its
+  cursor from the deque's front while spawns go to the front (dropped when 12118fd0 brought
+  fe117e29's warm); a stale re-make guard in mark_canvas (added); createdFrame stamped before
+  the make. Round 2 -- `mdk_render_finish_expansions` ran with the last loading frame possibly
+  on the GPU, so it could not evict (now waits, as settle_streams does), and it skipped stale
+  re-makes (now finishes them). Both fixed; the appliance's after payloads predate round 2
+  (only the Mandarine L7 run has it).
+- **Checks:** Linux build 0 warnings; `make -C tests/formats` 200,698 checks, 0 failures;
+  `make -C tests/scripts test` all cases match; `tools/check.sh` all gates passed; 3DS build
+  0 warnings.
+- **Not verified:** L3/L4 on the appliance; the fall and stream census on hardware (lines in
+  place, not run); scope/bomber/heads first shows (not on these routes -- their pictures are
+  made at load in a 16-bit store and the canvas pin re-makes a canvas one in RGBA8 at its
+  first draw); the owner's New 3DS; HOME/sleep (no thread change).
+- **Commit:** this one.

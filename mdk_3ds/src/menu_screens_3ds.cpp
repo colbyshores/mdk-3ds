@@ -40,6 +40,7 @@
 #include "platform/input_3ds.h"
 #include "platform/log_3ds.h"
 #include "platform/run_end_3ds.h"
+#include "render/render_c3d_hd_set.h"
 #include "render/render_types.h"
 
 namespace mdk {
@@ -306,10 +307,21 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     menu::PauseMenu fallPause;
     FallApply fallApply{front, fall.get()};
     bool fallAudio = false;
+    // THE TEXTURE CENSUS (render_c3d_hd_set.h) of the fall: at its open and over
+    // its frames, measured, not converted (owner, 2026-11-26).
+    MdkTextureCensus fallCensusAtOpen;
+    MdkTextureCensus fallCensusAtRun;
+    bool fallCensusOpen = false;
     auto closeFall = [&]() {
         if (fallAudio) {
             audioDspClose();
             fallAudio = false;
+        }
+        if (fallCensusOpen) {
+            MdkTextureCensus censusAtEnd;
+            mdk_render_texture_census(front->renderer, &censusAtEnd);
+            mdk_render_log_texture_census("fall run", fallCensusAtRun, censusAtEnd);
+            fallCensusOpen = false;
         }
         fall->close(front->renderer);
     };
@@ -327,6 +339,7 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         fall::FallScreen::Print print;
         print.line = printLine;
         std::string why;
+        mdk_render_texture_census(front->renderer, &fallCensusAtOpen);
         if (!fall->open(front->renderer, data, ui->fti, ui->bigFont, ui->smallFont, flow.state().level,
                         (Kurt::Difficulty)front->settings->difficulty, seed, options, print, &why)) {
             log3dsPrintf("flow: the fall of level %d did not load (%s)", (int)flow.state().level,
@@ -344,6 +357,9 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
         front->settings->applyAudio(&device);
         log3dsPrintf("flow: the fall before level %d (seed %d, audio %d)", (int)flow.state().level,
                      (int)seed, fallAudio ? 1 : 0);
+        mdk_render_texture_census(front->renderer, &fallCensusAtRun);
+        mdk_render_log_texture_census("fall open", fallCensusAtOpen, fallCensusAtRun);
+        fallCensusOpen = true;
         return true;
     };
     // The flow's screen after an event, past a fall that did not load (skipped

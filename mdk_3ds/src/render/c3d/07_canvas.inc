@@ -340,3 +340,74 @@ void mdk_render_set_scene_window(MdkRenderer rr, const float* rect) {
     out->drawnMissing = cr->hdDrawnMissing;
     out->imported = cr->hdImported;
  }
+
+// The texture census (render_c3d_hd_set.h). Copies, nothing else.
+void mdk_render_texture_census(MdkRenderer r, MdkTextureCensus* out) {
+    if (!out) return;
+    *out = MdkTextureCensus();
+    RendererC3D* cr = asC3d(r);
+    if (!cr) return;
+    out->made = cr->texturesMade[0] + cr->texturesMade[1] + cr->texturesMade[2] +
+                cr->texturesMade[3];
+    out->madeBytes = cr->madeBytes;
+    out->makeTicks = cr->makeTicks;
+    out->packImported = cr->packImported;
+    out->packImportTicks = cr->packImportTicks;
+    out->packMainReads = cr->packMainReads;
+    out->compressedImported = cr->compressedMade;
+}
+
+void mdk_render_log_texture_census(const char* what, const MdkTextureCensus& from,
+                                   const MdkTextureCensus& to) {
+    const double tickMs = (double)(SYSCLOCK_ARM11 / 1000ull);
+    mdk::log3dsPrintf("textures: census %s: %d made on core 0 (%llu bytes, %.1f ms), %d packed "
+                      "originals imported (%.1f ms), %d compressed imports in all, %d packed "
+                      "originals READ on core 0",
+                      what, (int)(to.made - from.made),
+                      (unsigned long long)(to.madeBytes - from.madeBytes),
+                      (double)(to.makeTicks - from.makeTicks) / tickMs,
+                      (int)(to.packImported - from.packImported),
+                      (double)(to.packImportTicks - from.packImportTicks) / tickMs,
+                      (int)(to.compressedImported - from.compressedImported),
+                      (int)(to.packMainReads - from.packMainReads));
+}
+
+int32_t mdk_render_finish_expansions(MdkRenderer r) {
+    RendererC3D* cr = asC3d(r);
+    if (!cr || cr->inFrame) return 0;
+    // THE LAST FRAME FINISHES FIRST (P3, as mdk_render_settle_streams): the
+    // makes below may evict, and a loading-screen frame may still be on the GPU.
+    if (cr->gpuPending) {
+        gxCmdQueueWait(nullptr, -1);
+        cr->gpuPending = false;
+    }
+    int32_t finished = 0;
+    for (size_t i = 0; i < cr->textures.size(); i++) {
+        C3dTexture& texture = cr->textures[i];
+        if (texture.releasePending) {
+            continue;
+        }
+        if (texture.expandPending) {
+            // Its whole expansion now; a stale re-make swaps its old copy at the
+            // end (advanceExpansionSteps), legal with the GPU idle.
+            const u64 started = svcGetSystemTick();
+            advanceExpansion(cr, texture, true);
+            cr->makeTicks += svcGetSystemTick() - started;   // the census (makeTexture's own)
+        } else if (texture.expandWanted && !texture.valid) {
+            makeTexture(cr, texture, false);
+        } else {
+            continue;
+        }
+        if (texture.valid && !texture.expandPending) {
+            finished++;
+        }
+    }
+    return finished;
+}
+
+void mdk_render_texture_census_log(MdkRenderer r, const char* phase) {
+    RendererC3D* cr = asC3d(r);
+    if (!cr) return;
+    cr->censusPhase = phase;
+    cr->censusLines = 0;
+}
