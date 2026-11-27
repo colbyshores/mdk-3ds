@@ -249,6 +249,11 @@ flow::Screen runFrontScreens(FrontScreens* front) {
     // C# Show for the fall: a new FallScreen. False when it cannot be shown (its
     // data did not load): the caller skips it the C#'s way.
     auto openFall = [&]() -> bool {
+        // The C#'s new FallScreen comes with a new PauseMenu. This one outlives the
+        // fall, and its "Main menu" leaves it open with its answer (Menu) still
+        // set: kept, the next fall's first frame would take that answer and go
+        // straight back to the main menu.
+        fallPause = menu::PauseMenu();
         fall::FallViewOptions options;
         options.lean = front->fallLean;
         // The C#'s `new Random()` is the clock; a test's --seed or --fixed-step is 1.

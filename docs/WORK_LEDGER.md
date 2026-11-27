@@ -3724,3 +3724,42 @@ upstream order after a27ca2f4: 3ebc6a0b, 5e42aeca, 2e3468b7, 6a0e9aee.)
   - Old 3DS appliance (`old3ds-lan167`, model 0, stereo on), the same walk, toggles and harness as the earlier entry, `--profile`, FRESH (`.git/worktrees/bullet-cam/hw-logs/hw-on1eye.log`): the 875 frames with a camera watching, mean **39.5 ms** (max 53.8; 857 over 33.3 ms), against 44.4 ms drawn in both eyes and 33.45 ms with the cameras off. Steady mean 35.7 ms (vblanks 2: 2295, 3: 190), against 37.7 (both eyes) and 33.6 (off). Longest command list 27,844 words (34,302 both eyes).
 - **Not verified:** the picture. No ATM screenshots (owner: suspected cause of the hard hangs), the harness on this base has no capture, Mandarine was not used. Whether the right eye's windows show the copied cam (the memory-row orientation is taken from the screenshot readback and the glow, not seen through the barrier) is open for the owner's look on the console.
 - **Commit:** this one.
+
+### The fall's pause menu -> MAIN MENU sent the next fall back to the menu (2026-11-26, fix/fall-pause-main-menu)
+- **Owner report (combined 11-26 build, 3DS):** a level's fall, START, MAIN MENU, another level:
+  its briefing shows, then the game is back at the main menu instead of the fall.
+- **Root cause (both frontends):** the fall's pause menu (`menu::PauseMenu fallPause`,
+  mdk_3ds/src/menu_screens_3ds.cpp:291, mdk_linux/src/menu_screens.cpp:246, added with upstream
+  75ec50e2) is a local of the screens loop and outlives the fall. Its "Main menu" item
+  (`PauseMenu::act`, mdk_core/src/game/pause_menu.cpp:75) sets the answer `Menu` and leaves the
+  menu open, as the C# does -- but the C# makes a new PauseMenu with each FallScreen. Here the
+  next fall's first frame found `fallPause.open()` still true, took the `update` path
+  (menu_screens_3ds.cpp:454) and got the stale `Menu` back: straight to the main menu.
+  `PauseMenu::show` (which clears the answer) was never reached, because the menu was "open".
+- **Fix:** `openFall` (the C#'s new FallScreen) starts a new `fallPause` before `fall->open`, in
+  both frontends. Nothing is configured on that menu elsewhere, so the fresh one is the same as
+  the first.
+- **Test:** `fall_frontend_test.sh` case 2b (Linux, headless): new game, the fall, Esc, Main
+  menu, new game again -- the second fall must be the run's last flow line, with two falls and
+  two main menus. Without the fix: FAIL (3 main menus, ends at the menu); with it: PASS. Case 0
+  reads both frontends' `openFall` for the reset before `fall->open` (the 3DS's cannot run on a
+  host); a mutant without the 3DS line fails it.
+- **Evidence:** Linux build 0 warnings; `make -C tests/scripts test` rc 0 (`PASS FallFrontend`,
+  `PASS MenuFrontend`, `PASS Main3dsFlow (22 checks, 64 arms, 24 probes)`, tick1 all cases
+  match); `tests/formats` 200670 checks, 0 failures; `tools/check.sh` ALL GATES PASSED
+  (gates_smdh SKIP, no .cia); 3DS build rc 0, 0 compiler warnings. An independent read-only
+  review agreed on the cause and found no defect in the fix. Not run in Mandarine or on a
+  console: the defect is in both frontends' shared shape and is reproduced and pinned on the
+  Linux frontend.
+- **Other ways to the main menu, checked for the same stale state:** the 3DS level's START menu
+  (`EnhancedMenu`, closed with `menu.setOpen(false)` on Menu, statistics and the next fall;
+  `pauseOptions` and the cheats page cannot be open when MAIN MENU is chosen); the Linux level's
+  pause menu (reset at the level's end, main.cpp:3091); death and game-finished (the 3DS does
+  not close the START menu there, but the simulation is paused while it is open, so neither can
+  happen with it open); the fall's own game over (the pause menu is closed then). None has the
+  defect.
+- **Found, not fixed:** the fall pause menu's OPTIONS page is never given the settings
+  (nor the host, the fonts or the print: `items()` is set up for the level's pause menus only),
+  so on its pages the setting rows have blank labels and change nothing, on both frontends.
+  Pre-existing since 75ec50e2; reported, left for its own change.
+- **Commit:** this one (branch fix/fall-pause-main-menu, from test/3ds-combined-11-26).

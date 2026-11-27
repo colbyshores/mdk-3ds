@@ -300,6 +300,11 @@ flow::Screen runFrontScreens3ds(FrontScreens3ds* front) {
     // C# Show for the fall: a new FallScreen and its output. False when its data
     // did not load: the caller skips it the C#'s way.
     auto openFall = [&]() -> bool {
+        // The C#'s new FallScreen comes with a new PauseMenu. This one outlives the
+        // fall, and its "Main menu" leaves it open with its answer (Menu) still
+        // set: kept, the next fall's first frame would take that answer and go
+        // straight back to the main menu.
+        fallPause = menu::PauseMenu();
         fall::FallViewOptions options;
         options.lean = true;
         const int32_t seed = (int32_t)(uint32_t)svcGetSystemTick();   // the C#'s `new Random()`
