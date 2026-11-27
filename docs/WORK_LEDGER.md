@@ -5037,3 +5037,76 @@ already has perf/3ds-view-prebuild's object warm over the bubble's hints).
 - **Not verified:** New 3DS; levels 4-6; HOME/sleep pressed during the scan (it makes no
   applet call for its ~1.7 s, exactly as before it moved).
 - **Commits:** 77c72890 (code) and this one (ledger).
+
+## 2026-11-27 -- level load: the orig pack's name index is a build-time table (branch perf/3ds-byname-index): KEPT
+
+- **What:** `romfs:/orig/byname.bin` (`mdk_core/src/formats/byname_index.h`), written by
+  `mdk_3ds/tools/byname_index.py`, which `stage_romfs.sh` runs on the staged `byname.txt` and
+  `manifest.txt` every build (stdlib only; a failure stops the build). It holds byname.txt's
+  rows cut by level, joined with the manifest's source sizes: a 320-byte header (stamp + one
+  slot per level), then per level a block of an arena table, 20-byte rows in file order, a
+  name-sorted row list and a string block (~42-54 KB a level, 263 KB in all). The game reads
+  the header and its level's block (two checked reads) and the block IS the index: binary
+  search by name, no parse, no per-row allocation (`game/orig_byname.{h,cpp}`). What depends
+  on the loaded level (arena name -> palette object, the corridor/owner collision rule in
+  file order) and on the SD card (the HD pack's content keys, which ship apart from the
+  .3dsx) is still joined at load: ~1300 map finds, no file read. The orig and HD manifests are
+  now read whole in one read (they were read with fgets line by line) and the orig one hashed.
+- **Stamp / fallback:** the header carries the size and FNV-1a 64 of manifest.txt and
+  byname.txt. At load the manifest's are checked against the bytes just read; byname.txt is
+  checked by its size (hashing it means reading it -- the cost removed; the table is remade
+  from the staged text every build, so a same-size edit needs a hand-edited RomFS). Any
+  mismatch, a bad header, a short read, a block whose FNV is wrong, or no table: logged
+  `orig: byname.bin REFUSED (<why>); the index is built from byname.txt`, and the same block
+  is made from the text (`BynameIndex::buildBlock`, byte-identical to the writer's).
+- **Measured** (old3ds-lan167, CFGU model 0, 268 MHz, L2 off, stereo on, default toggles, HD
+  from RomFS, `AUTOQUIT=30 LEVEL=n HDROMFS=1 PROFILE=1`, `hw_cycle.sh --profile`, all FRESH,
+  pushes verified by transfers.log). A = `throwaway/byname-hw` 75ac76f4 (the load probes of
+  `throwaway/load-overlap-hw` + the combined tip 71962017), B = A + this branch (5d049b8c).
+  L3's before is the load-overlap run (`throwaway/load-overlap-hw` 45a37f4a, the same code on
+  this path; not re-run, to keep the appliance for the final pass):
+
+  | level | name index (ld-byname) | run start -> level data (manifests) | level: loaded in |
+  |---|---|---|---|
+  | L3 | 2533 -> **66 ms** (45.9 ms in the loader) | 4423 -> 3107 ms | 14236 -> **11042 ms (-3194)** |
+  | L8 | 2543 -> **69 ms** (60.3 ms in the loader) | 4382 -> 3374 ms | 14785 -> **11374 ms (-3411)** |
+
+  About 3.2-3.4 s (22-23%) off every load: ~2.47 s the index, ~1.0-1.3 s the manifests' one
+  read (the old fgets reads were a file-system request per stdio buffer). Same answers on the
+  console: `793 textures, 634 with an HD copy` (L3) and `826, 493` (L8), as before; the same
+  window resident (90 / 65 files), linear free at the first frame L8 12,945,664 both; heap in
+  use at the first frame L8 22.19 -> 21.98 MB; play frames unchanged (L8 steady 31.37 ->
+  31.17 ms).
+- **Other levels:** the old cost was the whole file's parse, level-independent: 2.53-2.64 s
+  measured on L3, L7, L8 (items 12/13 entry). L4-L6 were not run on the console; their
+  tables are checked on the host (below) and loaded in Mandarine for L3.
+- **Host proof** (`tests/formats/byname_index_tests.cpp`): the old loader kept VERBATIM as
+  the oracle. Real levels 3-8 (the built pack): every (palette, name) key gives the same orig
+  file, source size and HD file, no key more or less, and the same (arena, HD file) window
+  list in order (L3 793 answers ... L8 826); python block bytes == C++ `buildBlock` bytes. A
+  rule-hitting set on level 3's real arenas (corridor/owner collisions both ways, duplicate,
+  unknown arena, other level, paged strip, no size, no key, case, 600-char line, five fields,
+  no final newline). Stale/bad tables (other manifest, byname.txt changed, truncated, header
+  only, bad magic, bad version, corrupt block, none) all fall back with the oracle's answers;
+  neither file gives no index. Mutation check: disabling the corridor rule fails 4 checks.
+- **Emulator:** Mandarine r1.2.1 (md5 0d2adab6), `DISPLAY=:99`, `emurun.sh --secs 40
+  /tmp/kilo/byname/B-L3.3dsx`: `orig: byname index 793 textures, 634 with an HD copy
+  (byname.bin: 1290 rows, 17 arenas, 42540 bytes in 2 reads)`, loaded, frames ran.
+- **Checks:** Linux build 0 warnings; tests/formats 200,926 checks, 0 failures; tests/scripts
+  all cases match the oracle; tools/check.sh ALL GATES PASSED (smdh SKIP, no .cia); 3DS build
+  0 compiler warnings (the 2 make jobserver notices are pre-existing). Independent read-only
+  review (differential fuzz of the old/new/python parsers, 400 cases): no bugs; acted on --
+  `OrigByName` not copyable (pointers into its own map), one shared line splitter for the
+  manifests and the text index, comments; recorded -- byname.txt checked by size only, and a
+  line with a NUL byte is now skipped whole (no pack has one).
+- **Found on the way (the exporter caches):** a copied `build-*-etc1/.work/exporter-host`
+  keeps `.d` files whose rule targets name the OTHER tree's absolute object paths, so make
+  never ties this tree's objects to the mdk_core headers and a header change reuses a stale
+  object (the "stack smashing" exporters on the combined tip). -MMD does list the headers;
+  the copy breaks it. Moved aside here and rebuilt clean; the exporter Makefiles unchanged.
+- **Not verified:** New 3DS; L4-L7 loads after the change on the console; HD from SD (the
+  runs read the HD pack from RomFS; the SD manifest takes the same one-read path); a refused
+  table on the console (host-tested only).
+- **Logs:** `/tmp/kilo/byname/{A-L8,B-L3,B-L8}.{log,session.log,cycle.txt}`,
+  `/tmp/kilo/vram-load/C-L3.session.log`, `/tmp/kilo/byname/emu-B-L3.txt`.
+- **Commits:** e01b39db (code, tests, docs) and this one (ledger).

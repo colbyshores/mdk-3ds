@@ -385,8 +385,15 @@ stream screen's sound placement, LEVEL3/LEVEL4 sound and texture census.
   loading bar still reaches 100%; the first frame looks the same (lighting
   right, no missing HD). **Regression:** a load that stalls, or lighting wrong on
   the first frame.
-- **Not done, your call:** a binary byname index and HD window built at build
-  time would remove another ~2.5–3.5 s of main-core work from every load.
+- [ ] **Name index built at build time** (branch `perf/3ds-byname-index`):
+  `romfs:/orig/byname.bin` replaces the per-load parse of `byname.txt`, and the
+  pack manifests are read in one read. Loaded-in: L3 14.2 → 11.0 s, L8 14.8 →
+  11.4 s. **Look for:** loads ~3 s shorter; the log says `orig: byname index ...
+  (byname.bin: ...)`; HD textures where they were. **Regression:** a load that
+  logs `byname.bin REFUSED` (it still plays, 2.5 s slower), or a surface missing
+  its HD or orig copy.
+- **Not done, your call:** the HD window built at build time would remove
+  another ~1.0-1.4 s of main-core work from every load.
 
 ---
 
