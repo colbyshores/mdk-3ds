@@ -49,6 +49,10 @@ PORTLIBS := $(DEVKITPRO)/portlibs/3ds
 CIA_DIR     := $(CURDIR)/cia
 CIA_ROMFS   := $(BUILD)/romfs
 CIA_SMDH    := $(BUILD)/$(TARGET).smdh
+# The HOME-menu banner: the owner-approved CBMD (3D model + sound) from the
+# banner art project, banner/v3 (README there; rebuilt by its generator zip).
+# It goes into the CIA as is -- makerom does NOT convert a picture into a banner.
+CIA_BANNER  := $(CURDIR)/../banner/v3/mdk_banner_v3.bnr
 
 # The default goal. Without this, make takes the FIRST target in the file,
 # which is the PICA shader's .shbin -- so a bare `make` would build a shader
@@ -294,10 +298,10 @@ data: $(CIA_ROMFS)
 # installed. tools/build_cia.sh discovers it (or $MAKEROM), substitutes the
 # staged RomFS path into cia/mdk.rsf, and exits non-zero when makerom is
 # absent rather than producing a .cia that shows the wrong title.
-$(TARGET).cia: $(TARGET).elf $(CIA_SMDH) $(CIA_ROMFS) $(CIA_DIR)/icon.png $(CIA_DIR)/banner.png $(CIA_DIR)/mdk.rsf tools/build_cia.sh
+$(TARGET).cia: $(TARGET).elf $(CIA_SMDH) $(CIA_ROMFS) $(CIA_DIR)/icon.png $(CIA_BANNER) $(CIA_DIR)/mdk.rsf tools/build_cia.sh
 	@echo "CIA  $@"
 	@$(CURDIR)/tools/build_cia.sh $@ $(TARGET).elf $(CIA_SMDH) $(CIA_ROMFS) \
-	    $(CIA_DIR)/icon.png $(CIA_DIR)/banner.png
+	    $(CIA_DIR)/icon.png $(CIA_BANNER)
 
 #---------------------------------------------------------------------------------
 # Scoped float-literal discipline.

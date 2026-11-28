@@ -2,7 +2,7 @@
 # ============================================================================
 # build_cia.sh -- build the .cia from the .elf, the SMDH and the RomFS tree.
 #
-# USAGE:  build_cia.sh <output.cia> <elf> <smdh> <romfs-dir> <icon.png> <banner.png>
+# USAGE:  build_cia.sh <output.cia> <elf> <smdh> <romfs-dir> <icon.png> <banner.bnr>
 #
 # makerom (Project_CTR, v0.19) is NOT part of the devkitPro toolchain as
 # installed here; it is discovered on PATH, in the devkitPro tools bin, or
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 6 ]; then
-    echo "usage: $0 <out.cia> <elf> <smdh> <romfs-dir> <icon.png> <banner.png>" >&2
+    echo "usage: $0 <out.cia> <elf> <smdh> <romfs-dir> <icon.png> <banner.bnr>" >&2
     exit 2
 fi
 
@@ -50,6 +50,20 @@ for lit in '/3ds/netload_stub.3dsx' 'sdmc:/3ds/mdk/hwcap.bmp.log' 'profile: cons
         exit 2
     fi
 done
+
+# The banner must be a compiled HOME-menu banner (a CBMD: the 3D model, then a
+# CWAV sound), not a picture. makerom copies -banner into the ExeFS byte for
+# byte; given a PNG it builds a CIA whose banner the HOME Menu cannot read.
+# MDK's is banner/v3/mdk_banner_v3.bnr (owner-approved 2026-11-27).
+if [ ! -s "$BANNER" ] || [ "$(head -c 4 "$BANNER")" != "CBMD" ]; then
+    echo "build_cia: $BANNER is not a compiled banner (no CBMD header)." >&2
+    echo "            Use banner/v3/mdk_banner_v3.bnr (see banner/v3/README.md)." >&2
+    exit 2
+fi
+if ! grep -aqF CWAV "$BANNER"; then
+    echo "build_cia: $BANNER has no CWAV sound block." >&2
+    exit 2
+fi
 
 MAKEROM="${MAKEROM:-}"
 if [ -z "$MAKEROM" ]; then
