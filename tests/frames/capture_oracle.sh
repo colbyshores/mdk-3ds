@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # capture_oracle.sh -- one frame from the C# oracle, written as a 32-bit BMP.
 #
-# This is the REFERENCE SOURCE for the frame goldens (SPEC-COMPLETION 3.4): a
+# This is the REFERENCE SOURCE for the frame goldens (SPEC.md 15.2): a
 # reference frame changes only when the oracle changes, never because the C++
 # build produced something. The bytes are ROM-derived pixels, so they live in
 # the scratch directory this script writes to and are never committed; only the

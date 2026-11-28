@@ -10,7 +10,7 @@ is made, record it here and flip the ledger row to `todo` in the same commit.
 | id | blocking decision | unblocks with |
 |---|---|---|
 | hw.cia-boot | **Owner decision 2026-11-17: CIA testing goes LAST, and it is not part of the netload hardware loop.** `netload_stub` and `hw_cycle.sh` are for `.3dsx` payloads only; the loop must never try to install or boot a CIA. **Refined 2026-11-19:** the owner first tests the `.3dsx` on their own New 3DS; the CIA pass follows that. | The owner reports their New 3DS `.3dsx` test, then starts the final CIA pass (install the `make -C mdk_3ds cia` output by the owner's chosen route, then boot it). Record the route and its evidence here and flip the row to `todo` with that acceptance, in the same commit. |
-| re.phase-2-sweep | The Phase 2 post-process gap sweep needs the REA MCP server, which is disabled in `~/.config/kilo/kilo.jsonc`, and `SPEC-COMPLETION.md:146` says "No RE work enters a normal porting batch". | Enable the REA MCP server and authorise a dedicated sweep phase after the C#-driven work is exhausted. This is a config flip plus an authorisation, not hardware. |
+| re.phase-2-sweep | The Phase 2 post-process gap sweep needs the REA MCP server, which is disabled in `~/.config/kilo/kilo.jsonc`, and `SPEC.md` §15.4 says the sweep is a separate pass, never inside an ordinary batch. | Enable the REA MCP server and authorise a dedicated sweep phase after the C#-driven work is exhausted. This is a config flip plus an authorisation, not hardware. |
 
 ## Decided
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gates_frames.py -- the frame golden gate (SPEC-COMPLETION 3.4, SPEC.md 11.3).
+gates_frames.py -- the frame golden gate (SPEC.md 11.3, 15.2).
 
     python3 tools/runner/gates_frames.py [--json] [--keep]
 

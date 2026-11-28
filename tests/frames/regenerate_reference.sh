@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # regenerate_reference.sh -- rebuild the frame golden manifest from the C#
-# oracle (SPEC-COMPLETION 3.4: "a reference frame changes only from the
+# oracle (SPEC.md 15.2: "a reference frame changes only from the
 # reference source").
 #
 #   usage: tests/frames/regenerate_reference.sh [output-directory]
