@@ -5655,8 +5655,31 @@ What is worse, plainly:
   enemy's BIGBOLT shot (2 parts, 48 vertices, scale 1.5) flying through the camera -- 2.1-2.7
   units from it in frames 193-196 of the walk, the camera 5 units above the OLYM_7 floor --
   until it hits the floor (frame 201). Upstream's C++ (origin/main src/game/Viewer.cpp:1061)
-  draws every visible object with no near-camera cull either: parity, not a port bug. Open: the owner's high camera (looking down from a slanted wall) is not
-  reproduced yet.
+  draws every visible object with no near-camera cull either: parity, not a port bug.
+- **Job 1, the owner's high camera and the grazing slope (follow-up, 2026-11-27):** no
+  3DS-only coplanar fight, so the owner-approved general fix (arena-local vertex
+  coordinates) was NOT built -- no payoff to measure. Old 3DS, frame readback, both eyes,
+  FIXED steps, pre-fix (white panels, the owner's video build) and current tree, against
+  Linux `--fixed-step`:
+  - High camera: OLYM_7, `AT=-2250,2950,-2400,0` (Kurt dropped ~530 units; the air pitch
+    tilts the camera down onto the layered mirror floor), frames 140-145. Frame-to-frame
+    differences are edges from the camera's motion only; no area trades colour. The one
+    standing difference from Linux is a mirror panel's CONTENT (the 3DS cube shows the
+    panorama, Linux the dark wall it faces): the cube design, steady, not a fight.
+  - Grazing slope: `AT=-2200,2611,-2800,0` beside the stepped pyramid, frames 20-25: steady,
+    matches Linux.
+  - Near: the camera 5 units above the floor (the walk above, frames 198-203): steady apart
+    from the BIGBOLT.
+  - The dark "beams" in the owner's video are the black gaps between white placeholder
+    panels (geometry; the pre-fix frames show them steady), and the one-frame blue sweep is
+    the BIGBOLT.
+  - A host float24 model of the vertex path predicted layer losses that the console does
+    not show: the model is not the PICA's arithmetic, and it decided nothing.
+  - Evidence (untracked, throwaway worktrees): `mirror-zfight-hw/hw-logs-hicam/`
+    (`hicam-prefix-main-linux-140-145.png`, `consec-diff-main.png`),
+    `mirror-sky-before-hw/hw-logs-hicam/consec-diff-prefix.png`,
+    `mirror-zfight-hw/hw-logs-pyr/pyr-main-LR-linux-20-25.png`,
+    `mirror-sky-before-hw/hw-logs-pyr/pyr-prefix-LR-20-25.png`.
 - **Checks:** Linux build 0 warnings; 3DS build 0 compiler warnings; `make -C tests/scripts
   test` rc 0; tests/formats 200,944 checks, 0 failures; `tools/check.sh` ALL GATES PASSED
   (smdh SKIP).
