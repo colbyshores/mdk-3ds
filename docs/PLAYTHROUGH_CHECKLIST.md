@@ -288,6 +288,24 @@ its fall; run the **Every fall** list (under "Every level") on at least one.
 
 ### Every level
 
+**Every moving platform** (fix/kurt-platform-steady)
+
+- [ ] **Kurt and the platform he rides stay together** -- fix/kurt-platform-steady
+  - Where: LEVEL6 (game level 2) OLYM_8's lift (fast: 25 units a tick) and the
+    flying gun XBGUN in OLYM_4; LEVEL3 (game level 3) HMO_9's hover ship XGS
+    (follows an invisible path); LEVEL7 (game level 1) the tank in DANT_3.
+    Stand still on it while it moves, then walk on it. 3D slider off and on.
+  - Right: the platform is steady under Kurt; his feet stay on its top; the
+    camera moves smoothly with both.
+  - Wrong: the platform shakes or jiggles under a steady Kurt, or his feet/legs
+    dip into it (worst on the lift going down).
+- [ ] **Walking and turning feel the same as before** -- fix/kurt-platform-steady
+  - Kurt and the camera are now drawn between the game's 60 Hz steps (as the PC
+    version does). Walk, run, strafe, turn with the circle pad, jump, ride the XD2
+    and the board, fly the XE, use the scope.
+  - Wrong: Kurt or the view stutters, lags the stick, or jumps when a level starts,
+    after a teleport or a death.
+
 **Every fall**
 
 - [ ] **Missile trails** -- c5221a5b (upstream 04c25852)

@@ -73,6 +73,7 @@
 #include "game/cutscene_camera.h"
 #include "game/strike_view.h"
 #include "game/follow_camera.h"
+#include "game/frame_blend.h"
 #include "fall/fall_sim.h"
 #include "game/game_flow.h"
 #include "game/game_settings.h"
@@ -1037,6 +1038,13 @@ int main(int argc, char** argv) {
     // ---------------------------------------------------------------------
     mdk::Player player;
     mdk::FollowCamera follow;
+    // THE FRAME BETWEEN STEPS (C# FrameBlend, game/frame_blend.h): Kurt drawn between
+    // his last two steps and ON what carries him, the objects between their last two
+    // ticks, and the follow camera placed for Kurt as drawn. Without it the objects
+    // were blended and Kurt and the camera were not, so a moving platform was drawn
+    // up to a tick behind the Kurt standing on it and jiggled with the frame rate
+    // (the owner's 2026-11-27 report).
+    mdk::FrameBlend frameBlend(true);
     // The scripts' cutscene camera (package 13, game/cutscene_camera.h): the C# Viewer's
     // _cutscene (Viewer.cs:142), the view instead of `follow` while a cutscene holds it.
     mdk::CutsceneCamera cutsceneCamera;
@@ -1324,6 +1332,9 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("%s", notice.c_str());
         }
     }
+    // A new level (or a reload): the last one's poses point into the runtime the spawn
+    // freed, and Kurt is drawn where the spawn or the save put him until the first step.
+    frameBlend.reset(player);
     if (playerReady && !runtime) {
         // Said out loud, because a silent half-world is the failure mode: the level
         // plays, Kurt walks, and nothing the scripts own exists. The three assets
@@ -1854,7 +1865,7 @@ int main(int argc, char** argv) {
             // steps, and EACH step updates Kurt and then the camera (UpdateKurt
             // then UpdateCamera) -- so the pitch smoothing and the clearance run
             // once per step, not once per frame.
-            player.mouseLook(input);
+            frameBlend.turn(player.mouseLook(input));
             follow.mouseLook(player, input);
 
             pending += elapsed;
@@ -1911,6 +1922,9 @@ int main(int argc, char** argv) {
                     }
                 }
                 follow.update(&camera, &space, player, target, step, kAspect);
+                // Kurt after the step, where his platform carried him and the
+                // camera's clearance left him (C# Viewer.cs:519, after UpdateCamera).
+                frameBlend.record(player, runtime.get());
                 // The music follows Kurt's arena, which the scripts set (C#
                 // Viewer.cs:521-525: Enter, then Update(Step), every step, after
                 // the camera). A new track is a request to the audio worker,
@@ -1993,6 +2007,16 @@ int main(int argc, char** argv) {
                 pending -= step;
                 steps++;
             }
+            // THE FRAME BETWEEN STEPS (C# Viewer.BlendFrame, Viewer.cs:604-620): Kurt
+            // `pending / step` of the way from his last step to the next, on his carrier
+            // at its blended place, and the follow camera placed for him there -- the
+            // same tick share the objects are drawn at below, so a platform and the Kurt
+            // on it are always drawn together. The cutscene and the strike override the
+            // camera after this, as SceneView does.
+            frameBlend.update(player, pending / step,
+                              runtime ? runtime->tick_blend(pending) : 1.0f);
+            follow.blend(&camera, player, frameBlend.feet(), frameBlend.yaw(), pending / step,
+                         kAspect);
 
             // Death. The C#'s Kurt.Died (Viewer.OnDied) counts it and leaves for
             // Game.Handle(KurtDied), which writes LASTGAME and opens the main menu
@@ -2633,29 +2657,20 @@ int main(int argc, char** argv) {
             // objects in its deque for pointer stability, so they are skipped here
             // too — the C#'s list has already taken them out.
             //
-            // The transform is the BLENDED one. The scripts tick at 1/30 s and this
-            // loop presents faster, so most frames draw an object part-way from its
-            // last tick to its current one: the C# hands ObjectView.Draw
-            // `blend.TransformOf(obj)` (Viewer.cs:959), whose alpha is
-            // ScriptRuntime.TickBlend of the step loop's leftover — which is
-            // exactly what `pending` holds here, after the loop above took every
-            // whole step out of it.
-            //
-            // The other half of TransformOf: `obj == _driven` (the XD2 Kurt rides,
-            // package #9) is drawn at its own transform shifted by Kurt's lag between
-            // two steps. This port draws Kurt at Player::feet (FrameBlend's Kurt pose is
-            // not ported), so his lag is zero and the driven object is drawn at its
-            // current transform -- alpha 1 -- where Rides::follow put it after the
-            // step, under the camera that follows the same feet. The XE Kurt flies
-            // (package #11) is the C#'s Carrier (Viewer.cs:588): the oracle draws Kurt
-            // and its camera blended with the XE, and here Rides::follow puts his feet
-            // -- and so LookDown's camera -- on the XE's current place each step, so the
-            // XE is drawn there too (alpha 1), or it would lag under the camera.
+            // The transform is the BLENDED one (C# `blend.TransformOf(obj)`,
+            // Viewer.cs:959): the scripts tick at 1/30 s and this loop presents
+            // faster, so most frames draw an object part-way from its last tick to
+            // its current one, at ScriptRuntime.TickBlend of the step loop's
+            // leftover -- the share frameBlend.update was given above. What Kurt
+            // drives (the XD2, the board) is drawn at its own transform moved by
+            // Kurt's lag between steps, so it stays under him; the platform or the
+            // XE carrying him is blended like any object, and Kurt is drawn ON it
+            // (FrameBlend::kurtAt), so the two always agree.
             //
             // The ropes and the sniper scope that the C# draws between the
             // objects and Kurt (Viewer.cs:705-706), and the effects
             // (Viewer.cs:707), draw below.
-            const float tickAlpha = runtime->tick_blend(pending);
+            const float tickAlpha = frameBlend.tick();
             // The object cull for this frame: the centre frustum widened for
             // the converged eyes' sideways shift, with the sphere margin
             // covering their translation (half the frame's separation; the eyes
@@ -2698,9 +2713,6 @@ int main(int argc, char** argv) {
                 if (runtime->rides().onBoard() && &obj == runtime->rides().ridden()) {
                     continue;
                 }
-                const bool carried = runtime->rides().bomber() && &obj == runtime->rides().ridden();
-                const float alpha =
-                    &obj == runtime->rides().driven() || carried ? 1.0f : tickAlpha;
                 uint8_t* tinyHidden = nullptr;
                 if (tinyHide > 0.0f) {
                     if (tinyEnemyState.size() <= objectSlot) {
@@ -2725,7 +2737,7 @@ int main(int argc, char** argv) {
                 // after this loop (objectDraw.draw), when the renderer flag would be
                 // off again.
                 objectStream.back = !layeredBack.empty() && obj.arena == layeredBack;
-                objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
+                objectView.addObject(obj, objectLook(obj.arena), frameBlend.transformOf(obj),
                                      &objectStream, tinyHidden, tickAlpha);
             }
             objectStream.back = false;
@@ -2737,7 +2749,7 @@ int main(int argc, char** argv) {
                 runtime->rides().ridden()->model != nullptr) {
                 const mdk::scripts::MdkObject& board = *runtime->rides().ridden();
                 const mdk::Mat4 pulled = mdk::KurtSprite::boardPull(
-                    board.model->bounds, board.transform_at(tickAlpha), sceneCamera.position,
+                    board.model->bounds, frameBlend.transformOf(board), sceneCamera.position,
                     sceneCamera.forward, &space);
                 objectView.addObject(board, objectLook(board.arena), pulled, &objectStream, nullptr,
                                      tickAlpha);
@@ -2841,8 +2853,7 @@ int main(int argc, char** argv) {
             // C# RopeView.Draw (Viewer.cs:705): the objects' ropes after the objects,
             // blended as they are. The PICA200 has no line primitive, so each line is
             // a thin camera-facing quad in its arena's colour (game/rope_view.h).
-            ropeView.draw(renderer, *runtime, level, sceneCamera, runtime->tick_blend(pending),
-                          layeredBack);
+            ropeView.draw(renderer, *runtime, level, sceneCamera, frameBlend, layeredBack);
         }
         if (runtime && !strikeFrame) {
             // The pieces and sprite effects, where the C# draws them:
@@ -2909,7 +2920,8 @@ int main(int argc, char** argv) {
                 mdk::log3dsPrintf("%s", failure);
             }
             // C# Viewer.DrawScene draws Kurt after the level and before the HUD.
-            kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
+            // At his feet as the frame draws them (C# `_blend.Feet`, Viewer.cs:708).
+            kurtSprite.draw(renderer, player, frameBlend.feet(), camera.position, camera.forward,
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
         if (runtime && !strikeFrame) {

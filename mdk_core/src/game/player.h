@@ -327,8 +327,9 @@ public:
 
     // The per-frame mouse look (the C# Kurt.MouseLook + FollowCamera.MouseLook):
     // yaw from the mouse's X, the camera's look pitch from its Y. Consumes the
-    // accumulated mouse so the in-step terms stay zero.
-    void mouseLook(Input& input);
+    // accumulated mouse so the in-step terms stay zero. Returns the degrees it
+    // turned Kurt (C# Kurt.MouseLook's answer), which FrameBlend::turn draws at once.
+    float mouseLook(Input& input);
 
     // Moves Kurt by offset (horizontal) with collision, sliding along what he
     // meets (the camera's push, C# Kurt.Shove). Returns how far he went.
@@ -339,7 +340,7 @@ public:
     // a teleport is not a move he is still carrying. ScriptRuntime::teleportKurt
     // (opcode 112 / 173) is its only caller in this port, as in the oracle.
     // A keeping platform lets him go (`_keeper = null`, Kurt.cs:254). The
-    // `Teleports++` counter below has no reader until FrameBlend's Kurt half does.
+    // `Teleports++` counter below is FrameBlend::record's.
     void teleport(const Vec3& at, float newYaw);
 
     // ---- Platforms, solid objects and touches (package #3) ----
@@ -391,11 +392,8 @@ public:
     // ---- end of platforms, solid objects and touches ----
 
     // C# Kurt.Teleports (Kurt.cs:126, incremented by Teleport at :260). Its only
-    // reader in the oracle is FrameBlend's jump test (FrameBlend.cs:53: a pose whose
-    // teleport count moved is never interpolated), and that half of FrameBlend is
-    // deferred with the ride state (frame_blend.h), so this is written and not yet
-    // read -- the same shape as ScriptRuntime::residentArena_, and for the same
-    // reason: so the write is pinned by a test instead of looking like dead state.
+    // reader is FrameBlend::record's jump test (FrameBlend.cs:53: a pose whose
+    // teleport count moved is never interpolated).
     int teleports = 0;
 
     // ---- The fans' updrafts (C# Kurt.Updraft.cs, damp_gravity 0x469efc) ----

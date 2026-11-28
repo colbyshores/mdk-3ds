@@ -2,6 +2,9 @@
 
 #include <cmath>
 
+#include "game/player.h"
+#include "scripts/script_runtime.h"
+
 namespace mdk {
 namespace frame_blend {
 
@@ -116,4 +119,130 @@ bool jumped(Vec3 from, Vec3 to, float seconds)
 }
 
 } // namespace frame_blend
+
+// ---- class FrameBlend: C# FrameBlend.cs, Kurt's half and the objects' choice ----
+
+namespace {
+
+// C# Viewer.Step: Kurt's poses are a step apart (FrameBlend's Jumped tests at it).
+const float kKurtStep = 1.0f / 60.0f;
+
+Vec3 sub(const Vec3& a, const Vec3& b) { return Vec3{a.x - b.x, a.y - b.y, a.z - b.z}; }
+Vec3 add(const Vec3& a, const Vec3& b) { return Vec3{a.x + b.x, a.y + b.y, a.z + b.z}; }
+
+} // namespace
+
+void FrameBlend::reset(const Player& player) {
+    havePrevious_ = false;
+    previous_ = Pose();
+    current_ = Pose();
+    tick_ = 1.0f;
+    ticks_ = 0;
+    driven_ = nullptr;
+    lag_ = Vec3{0.0f, 0.0f, 0.0f};
+    feet_ = player.feet;
+    yaw_ = player.yaw;
+}
+
+void FrameBlend::record(const Player& player, const scripts::ScriptRuntime* runtime) {
+    // Viewer.Carrier: the XE he flies; else the platform he stands on. Viewer.Driven:
+    // what follows him each step (the XD2, the board), never the XE.
+    const scripts::MdkObject* ridden = runtime != nullptr ? runtime->rides().ridden() : nullptr;
+    const bool bomber = runtime != nullptr && runtime->rides().bomber();
+    const scripts::MdkObject* platform =
+        bomber ? ridden : (player.onFloor ? player.platform() : nullptr);
+    const scripts::MdkObject* driven = bomber ? nullptr : ridden;
+    const int32_t tick = runtime != nullptr ? runtime->tickCount() : 0;
+
+    // What follows him (the board he stands on) doesn't carry him.
+    const scripts::MdkObject* carrier = platform != driven ? platform : nullptr;
+    // The carrier a step ago: before this step's tick if one ran (objects move at ticks).
+    const float was = tick != ticks_ ? 0.0f : 1.0f;
+    ticks_ = tick;
+    Pose now;
+    now.feet = player.feet;
+    now.yaw = player.yaw;
+    now.teleports = player.teleports;
+    now.carrier = carrier;
+    if (carrier != nullptr) {
+        now.carrierAt = carrier->position;
+        now.carrierYaw = carrier->yaw;
+        now.carrierWas = carrier->position_at(was);
+        now.carrierYawWas = carrier->yaw_at(was);
+    }
+    // A teleport is never blended across: the pose before it is forgotten.
+    previous_ = !havePrevious_ || now.teleports != current_.teleports ? now : current_;
+    havePrevious_ = true;
+    current_ = now;
+    driven_ = driven;
+}
+
+void FrameBlend::turn(float degrees) {
+    if (!havePrevious_) {
+        return;
+    }
+    previous_.yaw += degrees;
+    current_.yaw += degrees;
+}
+
+void FrameBlend::update(const Player& player, float step, float tick) {
+    tick_ = tick;
+    if (!blending_ || !havePrevious_) {
+        feet_ = player.feet;
+        yaw_ = player.yaw;
+    } else {
+        kurtAt(previous_, current_, step, tick);
+    }
+    lag_ = sub(feet_, player.feet);
+}
+
+Mat4 FrameBlend::transformOf(const scripts::MdkObject& obj) const {
+    if (!blending_) {
+        return obj.transform();
+    }
+    if (&obj == driven_) {
+        return multiply(obj.transform(), create_translation(lag_.x, lag_.y, lag_.z));
+    }
+    return obj.transform_at(tick_);
+}
+
+Vec3 FrameBlend::positionOf(const scripts::MdkObject& obj) const {
+    if (!blending_) {
+        return obj.position;
+    }
+    if (&obj == driven_) {
+        return add(obj.position, lag_);
+    }
+    return obj.position_at(tick_);
+}
+
+void FrameBlend::kurtAt(const Pose& from, const Pose& to, float step, float tick) {
+    // C# KurtAt: Kurt between two steps; on a carrier at either (landing, leaving, or
+    // his fall missing it a step), his place and yaw on it -- it moves at ticks, he at
+    // steps -- added to the carrier's blended place and yaw.
+    const scripts::MdkObject* carrier = to.carrier != nullptr ? to.carrier : from.carrier;
+    if (carrier == nullptr) {
+        if (frame_blend::jumped(from.feet, to.feet, kKurtStep)) {
+            feet_ = to.feet;
+            yaw_ = to.yaw;
+        } else {
+            feet_ = frame_blend::lerp(from.feet, to.feet, step);
+            yaw_ = frame_blend::lerp_angle(from.yaw, to.yaw, step);
+        }
+        return;
+    }
+    const bool fromOn = from.carrier == carrier;
+    const Vec3 nearPoint = sub(from.feet, fromOn ? from.carrierAt : to.carrierWas);
+    const float nearYaw = from.yaw - (fromOn ? from.carrierYaw : to.carrierYawWas);
+    const bool toOn = to.carrier == carrier;
+    const Vec3 farPoint = sub(to.feet, toOn ? to.carrierAt : carrier->position);
+    const float farYaw = to.yaw - (toOn ? to.carrierYaw : carrier->yaw);
+    const Vec3 on = frame_blend::jumped(nearPoint, farPoint, kKurtStep)
+                        ? farPoint
+                        : frame_blend::lerp(nearPoint, farPoint, step);
+    const float turned = frame_blend::lerp_angle(nearYaw, farYaw, step);
+    feet_ = add(carrier->position_at(tick), on);
+    yaw_ = carrier->yaw_at(tick) + turned;
+}
+
 } // namespace mdk
