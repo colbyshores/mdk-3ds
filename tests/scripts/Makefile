@@ -226,6 +226,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh main_3ds_flow_test.sh
 	@sh run_end_test.sh
 	@sh frontend_solid_pin_test.sh
+	@sh frontend_frame_blend_test.sh
 	@sh linux_binary_fresh_test.sh
 	@sh linux_refusal_report_test.sh
 	@sh linux_arg_parse_test.sh
