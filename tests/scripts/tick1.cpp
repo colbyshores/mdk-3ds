@@ -59,6 +59,7 @@
 #include "game/level_data.h"
 #include "game/messages.h"
 #include "game/object_view.h"
+#include "game/frame_blend.h"
 #include "game/player.h"
 #include "game/sky_modes.h"
 
@@ -4874,6 +4875,156 @@ bool kurtPlatformsDump(int level, int steps, const std::string& schedule, const 
 }
 // ---- end of the platforms dump (package #3) ------------------------------------------
 
+// ---- the frame blend dump (the owner's 2026-11-27 platform jiggle) ----------------------
+// Kurt and the scripts stepped at 1/60 s as kurtPlatformsDump steps them, but in FRAMES:
+// each frame takes the next period (milliseconds, cycled) into the pending time with the
+// frontends' ten-step clamp, runs the whole steps (FrameBlend::record after each), then
+// FrameBlend::update(pending / step, tick_blend(pending)) and prints Kurt as drawn and his
+// carrier as drawn (the ride, else his platform: the C# Viewer.Trace's carrier). The C#
+// twin is tests/scripts/blend_probe (FrameBlend.cs itself), which prints the same columns.
+//
+// `legacy` prints instead what the frontends drew before FrameBlend's Kurt half was
+// ported: Kurt (and so the camera) at Player::feet, the objects at transform_at(tick
+// share) -- the ride the C++ frontends pinned at alpha 1. That is the jiggle's evidence:
+// the platform drawn up to a tick behind the Kurt standing on it.
+bool kurtBlendDump(int level, int steps, const std::string& schedule,
+                   const std::string& periodsText, bool legacy, const MdkData& data,
+                   const Bni* sprites, std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    std::vector<ItemsHold> holds;
+    std::vector<PlatformTeleport> teleports;
+    if (!parsePlatformSchedule(schedule, &holds, &teleports)) {
+        *why = "the schedule did not parse: " + schedule;
+        return false;
+    }
+    std::vector<float> periods;
+    {
+        size_t at = 0;
+        while (at < periodsText.size()) {
+            size_t comma = periodsText.find(',', at);
+            if (comma == std::string::npos) {
+                comma = periodsText.size();
+            }
+            periods.push_back(strtof(periodsText.substr(at, comma - at).c_str(), nullptr) /
+                              1000.0f);
+            at = comma + 1;
+        }
+    }
+    if (periods.empty()) {
+        *why = "no frame periods";
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;
+    player.setMixer(&runtime.mixer());
+
+    *out = "level=" + std::to_string(level) + " steps=" + std::to_string(steps) +
+           " schedule=" + schedule + " periods=" + periodsText + "\n";
+    const auto p64 = [](float v) { return (int)std::floor(v * 64.0f); };
+    const float kStep = 1.0f / 60.0f;
+    FrameBlend blend(true);
+    float pending = 0.0f;
+    int step = 0;
+    char buffer[256];
+    for (size_t frame = 0; step < steps; frame++) {
+        pending = std::min(pending + periods[frame % periods.size()], kStep * 10.0f);
+        while (pending >= kStep && step < steps) {
+            pending -= kStep;
+            step++;
+            for (size_t i = 0; i < teleports.size(); i++) {
+                if (teleports[i].step == step && !teleports[i].spawn) {
+                    runtime.teleportKurt(teleports[i].arena, teleports[i].at, teleports[i].yaw);
+                }
+            }
+            for (size_t i = 0; i < teleports.size(); i++) {
+                if (teleports[i].step == step && teleports[i].spawn) {
+                    runtime.spawn(&runtime.getArenaState(runtime.currentArena()).controller,
+                                  teleports[i].arena, teleports[i].at, teleports[i].yaw, -1,
+                                  teleports[i].script, false);
+                }
+            }
+            Input input;
+            for (size_t i = 0; i < holds.size(); i++) {
+                if (step >= holds[i].from && step < holds[i].to) {
+                    input.down[holds[i].key] = true;
+                }
+            }
+            player.update(input, kStep);
+            runtime.update(kStep);
+            blend.record(player, &runtime);
+        }
+        const float tickShare = runtime.tick_blend(pending);
+        blend.update(player, pending / kStep, tickShare);
+        const scripts::MdkObject* carrier = runtime.rides().ridden() != nullptr
+                                                ? runtime.rides().ridden()
+                                                : player.platform();
+        Vec3 kurt = blend.feet();
+        float yaw = blend.yaw();
+        Vec3 at{0.0f, 0.0f, 0.0f};
+        if (carrier != nullptr) {
+            at = blend.positionOf(*carrier);
+        }
+        if (legacy) {
+            kurt = player.feet;
+            yaw = player.yaw;
+            if (carrier != nullptr) {
+                // The old frontends drew the XD2 and the XE at alpha 1, the board blended.
+                const bool pinned = (carrier == runtime.rides().driven() &&
+                                     !runtime.rides().onBoard()) ||
+                                    (runtime.rides().bomber() && carrier == runtime.rides().ridden());
+                at = carrier->position_at(pinned ? 1.0f : tickShare);
+            }
+        }
+        std::string on = "-";
+        if (carrier != nullptr) {
+            snprintf(buffer, sizeof(buffer), "%s@%d,%d,%d", platformName(carrier).c_str(),
+                     p64(at.x), p64(at.y), p64(at.z));
+            on = buffer;
+        }
+        snprintf(buffer, sizeof(buffer), "f=%d s=%d kurt64=%d,%d,%d yaw=%.3f on=%s\n",
+                 (int)frame, step, p64(kurt.x), p64(kurt.y), p64(kurt.z), yaw, on.c_str());
+        *out += buffer;
+    }
+    return true;
+}
+// ---- end of the frame blend dump ----------------------------------------------------
+
 // ---- the rides dump (package #9) ---------------------------------------------------
 // Kurt and the walker ride, end to end against the oracle probe (tests/scripts/ride_probe):
 // the C++ Player, ScriptRuntime and FollowCamera stepped at 1/60 s in the C# Viewer's order
@@ -8170,6 +8321,19 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "blend" || what == "blend-legacy") {
+            // `tick1 dump blend[-legacy] <level> <steps> <schedule> <periods-ms>`:
+            // kurtBlendDump's text, the C++ side of the frame blend probe.
+            std::string got;
+            std::string why;
+            if (!kurtBlendDump(level, ticks, argc > 5 ? argv[5] : "", argc > 6 ? argv[6] : "33",
+                               what == "blend-legacy", data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "ride") {
             // `tick1 dump ride <level> <steps> <schedule>`: kurtRideDump's text, the C++
             // side of the rides probe (package #9).
@@ -10062,6 +10226,115 @@ int main(int argc, char** argv) {
                 printf("FAIL %s: %s\n", c.golden, firstDifference(got, expected).c_str());
                 failures++;
             }
+        }
+    }
+    // THE FRAME BLEND: Kurt drawn ON what carries him (the owner's 2026-11-27 report: "when
+    // kurt rides platforms that move on an invisible track/spline path the platform begins
+    // to jiggle rapidly and kurt sinks in to it"). Frames at uneven 3DS-like periods
+    // between the 1/60 s steps (kurtBlendDump). L7's tank against the C# FrameBlend's own
+    // frames (tests/scripts/blend_probe at upstream C# 1.2.6, byte for byte); L6's lift
+    // (25 units a tick) and L3's hover ship (a follow_path platform) by the property the
+    // owner sees: while Kurt stands on it, where he is drawn on the carrier never moves
+    // by more than a rounding (2/64) from a frame to the next. The legacy draw -- Kurt at
+    // Player::feet, the platform at transform_at(tick share), what both frontends drew
+    // before -- must FAIL that property, or the check could not see the defect.
+    {
+        const char* kPeriods = "33,41,29,37,52,34,31,45";
+        struct BlendCase {
+            const char* name;
+            int level;
+            int steps;
+            const char* schedule;
+        };
+        static const BlendCase kBlendCases[] = {
+            {"L6 lift", 6, 300, "tp:33:OLYM_8:-1658:3381:-1869.9:0"},
+            {"L3 hover ship", 3, 700,
+             "tp:1:HMO_9:-200:2950:-195:0,spawn:2:XGS:-200:2965:-185:0:117762,"
+             "tp:220:HMO_9:-195:2965:-268:0"},
+        };
+        // The largest frame-to-frame change (1/64 units) of Kurt minus his carrier, over
+        // the frames he is drawn on one (the first three on it skipped: the landing).
+        const auto worstSlip = [](const std::string& text, int* frames) {
+            int worst = 0;
+            int on = 0;
+            int last[3] = {0, 0, 0};
+            size_t at = 0;
+            while (at < text.size()) {
+                size_t end = text.find('\n', at);
+                if (end == std::string::npos) {
+                    end = text.size();
+                }
+                const std::string line = text.substr(at, end - at);
+                at = end + 1;
+                int f = 0;
+                int st = 0;
+                int k[3];
+                int c[3];
+                char yaw[32];
+                char who[64];
+                if (sscanf(line.c_str(), "f=%d s=%d kurt64=%d,%d,%d yaw=%31s on=%63[^@]@%d,%d,%d",
+                           &f, &st, &k[0], &k[1], &k[2], yaw, who, &c[0], &c[1], &c[2]) != 10) {
+                    on = 0;
+                    continue;
+                }
+                const int d[3] = {k[0] - c[0], k[1] - c[1], k[2] - c[2]};
+                if (on >= 3) {
+                    for (int i = 0; i < 3; i++) {
+                        const int change = d[i] > last[i] ? d[i] - last[i] : last[i] - d[i];
+                        worst = change > worst ? change : worst;
+                    }
+                }
+                on++;
+                *frames += on > 3 ? 1 : 0;
+                for (int i = 0; i < 3; i++) {
+                    last[i] = d[i];
+                }
+            }
+            return worst;
+        };
+        for (size_t i = 0; i < sizeof(kBlendCases) / sizeof(kBlendCases[0]); i++) {
+            const BlendCase& c = kBlendCases[i];
+            std::string blended;
+            std::string legacy;
+            std::string why;
+            if (!kurtBlendDump(c.level, c.steps, c.schedule, kPeriods, false, data, spritesArg,
+                               &blended, &why) ||
+                !kurtBlendDump(c.level, c.steps, c.schedule, kPeriods, true, data, spritesArg,
+                               &legacy, &why)) {
+                printf("FAIL FrameBlend %s: %s\n", c.name, why.c_str());
+                failures++;
+                continue;
+            }
+            int frames = 0;
+            int legacyFrames = 0;
+            const int slip = worstSlip(blended, &frames);
+            const int legacySlip = worstSlip(legacy, &legacyFrames);
+            if (frames < 60 || slip > 2 || legacySlip <= 2) {
+                printf("FAIL FrameBlend %s: %d frames on the carrier, Kurt slips %d/64 on it "
+                       "(at most 2), the legacy draw %d/64 (must be over 2)\n",
+                       c.name, frames, slip, legacySlip);
+                failures++;
+            } else {
+                printf("PASS FrameBlend %s: Kurt drawn on his carrier for %d frames, slipping "
+                       "%d/64 at most (the legacy draw: %d/64)\n",
+                       c.name, frames, slip, legacySlip);
+            }
+        }
+        std::string expected;
+        std::string got;
+        std::string why;
+        if (!readText("golden/L7_blend_tank.txt", &expected)) {
+            printf("FAIL L7_blend_tank: no golden file golden/L7_blend_tank.txt\n");
+            failures++;
+        } else if (!kurtBlendDump(7, 300, "tp:1:DANT_3:136:1292:101:0", kPeriods, false, data,
+                                  spritesArg, &got, &why)) {
+            printf("FAIL L7_blend_tank: %s\n", why.c_str());
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L7_blend_tank: Kurt drawn on the tank as the C# FrameBlend draws him\n");
+        } else {
+            printf("FAIL L7_blend_tank: %s\n", firstDifference(got, expected).c_str());
+            failures++;
         }
     }
     // L6 OLYM_4's cannon (in-game level 2): Kurt drops onto the middle XBGUN (script 23159)

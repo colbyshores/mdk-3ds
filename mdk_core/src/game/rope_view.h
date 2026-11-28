@@ -37,6 +37,7 @@
 
 namespace mdk {
 
+class FrameBlend;
 class LevelData;
 
 namespace scripts {
@@ -47,14 +48,15 @@ class RopeView {
 public:
     RopeView() = default;
 
-    // Queues the ropes of the live, visible objects as the frame `tickAlpha` of
-    // the way between ticks draws them (1 = blending off), under `camera` (the
+    // Queues the ropes of the live, visible objects as `blend`'s frame draws them
+    // (C# RopeView.Draw(objects, blend): between ticks, or moved with Kurt's lag
+    // for what he drives), under `camera` (the
     // quads face it). `level` gives each arena's palette. `backArena` is the arena
     // ArenaViews::draw drew `back` this frame ("" for none): an object of it has
     // its rope queued `back` too (MeshDraw::back), as the frontends queue the
     // object itself (ObjectStream::back), so the camera's arena covers both.
     void draw(MdkRenderer renderer, const scripts::ScriptRuntime& runtime, LevelData& level,
-              const Camera& camera, float tickAlpha, const std::string& backArena);
+              const Camera& camera, const FrameBlend& blend, const std::string& backArena);
 
     bool allocationFailed() const { return failed_; }
 

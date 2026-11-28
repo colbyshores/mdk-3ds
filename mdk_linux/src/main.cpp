@@ -45,6 +45,7 @@
 #include "game/cutscene_camera.h"
 #include "game/strike_view.h"
 #include "game/follow_camera.h"
+#include "game/frame_blend.h"
 #include "fall/fall_sim.h"
 #include "game/game_flow.h"
 #include "game/game_settings.h"
@@ -1738,6 +1739,11 @@ int main(int argc, char** argv) {
     mdk::flow::Cheats cheats(&settings, &flow.state());
     bool typeTestDone = false;
     mdk::FollowCamera follow;
+    // THE FRAME BETWEEN STEPS (C# FrameBlend, game/frame_blend.h): Kurt drawn between
+    // his last two steps and ON what carries him, the objects between their last two
+    // ticks, the follow camera placed for Kurt as drawn. A fixed-step capture is the
+    // C#'s Blending.Off (Viewer.cs:280-282): every frame is the step's own picture.
+    mdk::FrameBlend frameBlend(!fixedStep);
     // The scripts' cutscene camera (package 13, game/cutscene_camera.h): the C# Viewer's
     // _cutscene (Viewer.cs:142), the view instead of `follow` while a cutscene holds it.
     mdk::CutsceneCamera cutsceneCamera;
@@ -1990,6 +1996,9 @@ int main(int argc, char** argv) {
             std::printf("[main] %s\n", notice.c_str());
         }
     }
+    // A new level (or a reload): the last one's poses point into the runtime the spawn
+    // freed, and Kurt is drawn where the spawn or the save put him until the first step.
+    frameBlend.reset(player);
 
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
     const float kHudStep = 1.0f / 30.0f; // the C# HUD blink's 30 Hz boundary
@@ -2279,9 +2288,9 @@ int main(int argc, char** argv) {
             // in fixed steps, and EACH step updates Kurt and then the camera
             // (UpdateKurt then UpdateCamera) — so the pitch smoothing and the
             // clearance (C# Clear/Sight) run once per step, not once per frame.
-            // A frame faster than the step runs no step and reuses the camera the
-            // last step placed (the C# blends between steps; that is not ported).
-            player.mouseLook(input);
+            // A frame between two steps draws Kurt and the camera blended between
+            // them (frameBlend, after the steps).
+            frameBlend.turn(player.mouseLook(input));
             follow.mouseLook(player, input);
             pending += elapsed;
             if (pending > kStep * 10.0f) {
@@ -2360,6 +2369,9 @@ int main(int argc, char** argv) {
                     }
                 }
                 follow.update(&camera, &space, player, target, kStep, kAspect);
+                // Kurt after the step, where his platform carried him and the
+                // camera's clearance left him (C# Viewer.cs:519, after UpdateCamera).
+                frameBlend.record(player, runtime.get());
                 // C# input.ClearMouse() after UpdateCamera (Viewer.cs:518): the wheel's
                 // notches and the keys they pressed were this step's.
                 input.wheel = 0.0f;
@@ -2427,6 +2439,18 @@ int main(int argc, char** argv) {
                     hudPending -= kHudStep;
                 }
                 pending -= kStep;
+            }
+            // THE FRAME BETWEEN STEPS (C# Viewer.BlendFrame, Viewer.cs:604-620): Kurt
+            // `pending / kStep` of the way from his last step to the next, on his
+            // carrier at its blended place, and the follow camera placed for him there
+            // -- the same tick share the objects are drawn at below. Off for a fixed
+            // step (the frame is the step's own); the cutscene overrides the camera
+            // after this, as SceneView does.
+            frameBlend.update(player, pending / kStep,
+                              runtime ? runtime->tick_blend(pending) : 1.0f);
+            if (frameBlend.blending()) {
+                follow.blend(&camera, player, frameBlend.feet(), frameBlend.yaw(),
+                             pending / kStep, kAspect);
             }
             // Death: Player::update stays in updateDeath until the skull has faded in,
             // and when the beat ends the level is left for the flow (below).
@@ -2687,17 +2711,12 @@ int main(int argc, char** argv) {
             // so alpha 1 -- which transform_at answers with the raw transform -- is
             // the capture's own picture, byte for byte.
             //
-            // The other half of TransformOf: `obj == _driven` (the XD2 Kurt rides,
-            // package #9) is drawn at its own transform shifted by Kurt's lag between
-            // two steps. This port draws Kurt at Player::feet (FrameBlend's Kurt pose is
-            // not ported), so his lag is zero and the driven object is drawn at its
-            // current transform -- alpha 1 -- where Rides::follow put it after the
-            // step, under the camera that follows the same feet. The XE Kurt flies
-            // (package #11) is the C#'s Carrier (Viewer.cs:588): the oracle draws Kurt
-            // and its camera blended with the XE, and here Rides::follow puts his feet
-            // -- and so LookDown's camera -- on the XE's current place each step, so the
-            // XE is drawn there too (alpha 1), or it would lag under the camera.
-            const float tickAlpha = fixedStep ? 1.0f : runtime->tick_blend(pending);
+            // The other half of TransformOf: what Kurt drives (the XD2, the board) is
+            // drawn at its own transform moved by Kurt's lag between steps, so it
+            // stays under him; the platform or the XE carrying him is blended like
+            // any object and Kurt is drawn ON it (FrameBlend::kurtAt), so the two
+            // always agree (frameBlend.transformOf; game/frame_blend.h).
+            const float tickAlpha = frameBlend.tick();
             objectStream.reset();
             for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
                 if (strikeFrame) {
@@ -2712,9 +2731,6 @@ int main(int argc, char** argv) {
                 if (runtime->rides().onBoard() && &obj == runtime->rides().ridden()) {
                     continue;
                 }
-                const bool carried = runtime->rides().bomber() && &obj == runtime->rides().ridden();
-                const float alpha =
-                    &obj == runtime->rides().driven() || carried ? 1.0f : tickAlpha;
                 // The pose between its frames at the tick's alpha (upstream ae746b5d,
                 // Viewer's blend.PoseOf), the driven and carried ones too.
                 // The other arena's objects with it, under its glass (upstream
@@ -2723,7 +2739,7 @@ int main(int argc, char** argv) {
                 // after this loop (objectDraw.draw), when the renderer flag would be
                 // off again.
                 objectStream.back = !layeredBack.empty() && obj.arena == layeredBack;
-                objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(alpha),
+                objectView.addObject(obj, objectLook(obj.arena), frameBlend.transformOf(obj),
                                      &objectStream, nullptr, tickAlpha);
             }
             objectStream.back = false;
@@ -2735,7 +2751,7 @@ int main(int argc, char** argv) {
                 runtime->rides().ridden()->model != nullptr) {
                 const mdk::scripts::MdkObject& board = *runtime->rides().ridden();
                 const mdk::Mat4 pulled = mdk::KurtSprite::boardPull(
-                    board.model->bounds, board.transform_at(tickAlpha), sceneCamera.position,
+                    board.model->bounds, frameBlend.transformOf(board), sceneCamera.position,
                     sceneCamera.forward, &space);
                 objectView.addObject(board, objectLook(board.arena), pulled, &objectStream, nullptr,
                                      tickAlpha);
@@ -2802,8 +2818,7 @@ int main(int argc, char** argv) {
         if (runtime && !strikeFrame) {
             // C# RopeView.Draw (Viewer.cs:705): the objects' ropes, after the objects and
             // before the sniper view and the effects, blended as the objects are.
-            ropeView.draw(renderer, *runtime, level, sceneCamera,
-                          fixedStep ? 1.0f : runtime->tick_blend(pending), layeredBack);
+            ropeView.draw(renderer, *runtime, level, sceneCamera, frameBlend, layeredBack);
         }
         if (playerReady && !strikeFrame) {
             // The rest of C# SniperView.Draw (Viewer.cs:706): the overlay's state, the
@@ -2843,7 +2858,8 @@ int main(int argc, char** argv) {
         if (kurtSpriteReady && playerReady && !strikeFrame) {
             // C# Viewer.DrawScene draws Kurt after the level, objects and
             // effects, and before the HUD.
-            kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
+            // At his feet as the frame draws them (C# `_blend.Feet`, Viewer.cs:708).
+            kurtSprite.draw(renderer, player, frameBlend.feet(), camera.position, camera.forward,
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
         if (runtime && !strikeFrame) {

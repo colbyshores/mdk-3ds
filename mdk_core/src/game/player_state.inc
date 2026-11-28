@@ -317,7 +317,7 @@ float Player::runRate() const {
     return forwardSpeed < 0.0f ? -rate : rate;
 }
 
-void Player::mouseLook(Input& input) {
+float Player::mouseLook(Input& input) {
     // Kurt's mouse look is the yaw only (C# Kurt.MouseLook); the camera's look
     // offset (its pitch) is the FollowCamera's, applied in FollowCamera::mouseLook.
     // A dead Kurt does not turn (C# MouseLook returns no turn on State.Dead), but
@@ -327,7 +327,7 @@ void Player::mouseLook(Input& input) {
     // (Kurt.cs:137-150, :340-352).
     if (dead || frozen) {
         input.takeMouseX();
-        return;
+        return 0.0f;
     }
     if (_mouseTurnScope) {
         // C# Kurt.MouseLook's scope arm (Kurt.cs:349-357): the last step looked through
@@ -336,17 +336,20 @@ void Player::mouseLook(Input& input) {
         // camera's MouseLook leaves the tilt alone in sniper mode).
         const float mouseX = input.takeMouseX() * kMouseDegrees;
         const float mouseY = input.takeMouseY() * kMouseDegrees;
-        yaw += _scope.look(0.0f, 0.0f, mouseX, mouseY, Scope::TurboOff, 0.0f);
-        return;
+        const float scope = _scope.look(0.0f, 0.0f, mouseX, mouseY, Scope::TurboOff, 0.0f);
+        yaw += scope;
+        return scope;
     }
     // Sliding, the C#'s MouseLook turns nothing (the slide step left _mouseTurn at
     // None) and the step's Steer reads the frame's motion instead; see _slideMouseX.
     if (_sliding) {
         _slideMouseX = input.takeMouseX();
-        return;
+        return 0.0f;
     }
     _slideMouseX = 0.0f;
-    yaw += -input.takeMouseX() * kMouseDegrees;
+    const float turn = -input.takeMouseX() * kMouseDegrees;
+    yaw += turn;
+    return turn;
 }
 
 Vec3 Player::shove(Vec3 offset) {

@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "formats/palette.h"
+#include "game/frame_blend.h"
 #include "game/level_data.h"
 #include "scripts/object.h"
 #include "scripts/script_runtime.h"
@@ -91,7 +92,8 @@ MdkTextureId RopeView::colourTexture(MdkRenderer renderer, uint32_t rgba) {
 }
 
 void RopeView::draw(MdkRenderer renderer, const scripts::ScriptRuntime& runtime, LevelData& level,
-                    const Camera& camera, float tickAlpha, const std::string& backArena) {
+                    const Camera& camera, const FrameBlend& blend,
+                    const std::string& backArena) {
     if (!renderer) {
         return;
     }
@@ -106,13 +108,21 @@ void RopeView::draw(MdkRenderer renderer, const scripts::ScriptRuntime& runtime,
         if (obj.rope_mask == 0 || !obj.visible || obj.dead) {
             continue;
         }
-        // The object pass's alpha (main.cpp): the ride Kurt drives and the XE he
-        // flies are drawn at their tick's place, so their ropes are too.
-        const scripts::Rides& rides = runtime.rides();
-        const bool carried = rides.bomber() && &obj == rides.ridden();
-        const float alpha = &obj == rides.driven() || carried ? 1.0f : tickAlpha;
+        // As the object pass draws the object (FrameBlend::transformOf): between
+        // its ticks, or what Kurt drives at its place moved by his lag (C#
+        // FrameBlend.Carried).
+        const bool driven = blend.drives(obj);
         Vec3 ends[scripts::MdkObject::kMaxRopeEnds];
-        const int32_t count = obj.rope_lines(alpha, ends);
+        const int32_t count = obj.rope_lines(driven ? 1.0f : blend.tick(), ends);
+        if (driven) {
+            // Only the ends ON the object (the even ones: rope_lines writes each line
+            // as the carried end, then the free one), as C# RopeView.AddLines carries
+            // only those through FrameBlend.Carried.
+            const Vec3& lag = blend.lag();
+            for (int32_t k = 0; k < count; k += 2) {
+                ends[k] = Vec3{ends[k].x + lag.x, ends[k].y + lag.y, ends[k].z + lag.z};
+            }
+        }
         const int32_t corners = lines ? count : count / 2 * 6;
         if (count == 0 || (int32_t)vertices_.size() + corners > kMaxVertices) {
             continue;
