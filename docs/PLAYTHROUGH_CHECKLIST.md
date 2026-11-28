@@ -188,7 +188,8 @@ its fall; run the **Every fall** list (under "Every level") on at least one.
     faces baked at build time, was 128x128 blocks); same picture, finer.
   - Owner report 11-27 (New 3DS): "the mirrored room has z-fighting" (OLYM_7,
     moving, 2D). Not reproduced as a 3DS depth fight on the Old 3DS (frame
-    readback, single and consecutive frames, OLYM_6 and OLYM_7); a flicker seen
+    readback, single and consecutive frames, OLYM_6 and OLYM_7, the camera low,
+    high looking down on the floor, and beside the slanted pyramid); a flicker seen
     on BOTH the 3DS and Linux is an object passing through the low camera
     (WORK_LEDGER 2026-11-27). Watch for: panels or floor halves swapping
     frame to frame while you walk or stand on the slanted walls -- say where.
