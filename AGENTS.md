@@ -28,7 +28,7 @@ renderer there is explicitly *ungated*, not compliant.
 
 ## 0. Working loop (autonomous) — do not stop after every turn
 
-The port is driven by the ralph-wiggum loop (`SPEC.md` §13): pick the next
+The port is worked increment by increment (`SPEC.md` §13): pick the next
 unfinished increment, work it to its checked exit criterion, and **keep going**.
 Stopping at the end of a turn to report and wait is a contract violation unless
 the increment is genuinely blocked (no path to the exit criterion, or a decision
@@ -37,12 +37,11 @@ only the user can make). A verified checkpoint is not a reason to stop.
 **The per-increment loop, in order, every increment:**
 
 1. Implement the increment.
-2. Run the checks: the relevant tests/gates (`tests/`, `tools/check.sh`) AND the
-   adversarial validator (`ralph/validator.md`, dispatched by `ralph-pi.sh` as a
-   write-independent review on a different model family than the builder) over
-   the changed code.
-3. Fix what the validator and gates raise.
-4. **Commit** — only after the validator and gates are clean.
+2. Run the checks: the relevant tests/gates (`tests/`, `tools/check.sh`) AND an
+   independent adversarial review (`SPEC.md` §12: a fresh, read-only reviewer
+   that did not write the code) over the changed code.
+3. Fix what the review and gates raise.
+4. **Commit** — only after the review and gates are clean.
 5. Move to the next increment immediately.
 
 Commit is gated on the agent check, not on the turn ending. Never commit un-checked
@@ -94,10 +93,10 @@ not a substitute for creating the MDK index.
   `mdk-sdl` base exists, call `knowledge_plan` on the proposed source set, then
   `knowledge_add` after reviewing its scan counts and exclusions.
 - Index only task-relevant, non-secret project sources. Include the project
-  contract/specification, `ralph/`, selected current `docs/` and tests, and
+  contract/specification, selected current `docs/` and tests, and
   implementation trees (`mdk_core/src/`, `mdk_3ds/src/`). Exclude `.git/`,
   `MDK/`, logs/progress artifacts, build outputs, dependencies/third-party
-  trees, `.kilo/`, and credentials/configuration containing secrets. Prefer
+  trees, and credentials/configuration containing secrets. Prefer
   explicit `include_paths` and `exclude_paths`; do not index the whole machine,
   vault, or sibling projects into this project KB.
 - Refresh a source-backed index after meaningful changes to its indexed files
@@ -108,7 +107,7 @@ not a substitute for creating the MDK index.
 - Do not enable `PI_KNOWLEDGE_WATCH` or `PI_KNOWLEDGE_AUTO_INJECT` globally
   without measuring the indexing/retrieval cost and confirming the intended
   scope. Explicit `knowledge_add`/`knowledge_update` calls are the default
-  lifecycle for this Ralph loop.
+  lifecycle for this project.
 - Pi-knowledge commands and tool schemas are version-dependent. Use the tools
   actually exposed by the installed extension; do not invent flags or claim a
   force-reindex command exists. For a full rebuild, consult `knowledge_doctor`
@@ -1091,7 +1090,7 @@ backend from scratch is wasted time:
 | `../perfect_dark/tools/emurun.sh` | the Mandarine offscreen harness P8 requires (log freshness, process-tree reap, refuse-to-report-on-stale) |
 
 Obsidian notes worth reading before the integration work:
-`10-projects/mdk-sdl/ralph-pi-mandarine-setup.md` (this loop + Mandarine setup),
+`10-projects/mdk-sdl/ralph-pi-mandarine-setup.md` (the retired loop's Mandarine setup),
 `10-projects/forsaken/findings/dsp-adpcm-music-and-sfx-audio.md`,
 `20-runbooks/3ds-cia-release-build-and-publish.md`,
 `30-architecture/patterns/3ds-teardown-every-thread-and-service-on-every-exit.md`,

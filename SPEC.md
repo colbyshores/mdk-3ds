@@ -2,7 +2,8 @@
 
 Status: **v1 — 1:1 reimplementation.** Authored 2026-10-21.
 Target: the Nintendo 3DS (PICA200) and Linux/x86-64 (Vulkan 1.3), from the
-existing C# port in `src/` (which stays in the tree as the behavioural oracle).
+existing C# port: upstream 1.1.1 (`d5bb66ec`, in this repository's history; the
+behavioural oracle, no longer in the tree).
 
 This document is the contract. `AGENTS.md` is the *performance and platform*
 contract that rides alongside it and is enforced by `tools/`.
@@ -20,7 +21,7 @@ contract that rides alongside it and is enforced by `tools/`.
 | G3 | 1:1 gameplay fidelity | Golden-frame and golden-state comparison against the C# port; identical BSP sweeps, script VM, and audio laws |
 | G4 | Performance contract inherited from t2k | `tools/runner/gates_vfp.py` green; hot-path corpus derived from a real capture |
 | G5 | Shippable 3DS artifacts | `mdk.3dsx` and `mdk.cia`, with the GOG MDK data bundled, running in mandarine |
-| G6 | Autonomous completion | The ralph-wiggum loop drives phases P0–P8 to green without intervention |
+| G6 | Checked completion | Phases P0–P8 are worked to green increment by increment, each one tested, gated and independently reviewed before it is committed (`AGENTS.md` §0) |
 
 ### 1.2 Non-goals (v1)
 
@@ -39,11 +40,14 @@ contract that rides alongside it and is enforced by `tools/`.
 
 ### 1.3 The oracle
 
-`src/` (C#) is **not** deleted and **not** modified by this port. It is the
-reference implementation that decides every "is this right?" question:
+The C# port is the reference implementation that decides every "is this
+right?" question. It was removed from the tree on 2026-11-27: it is upstream
+`nautilusbits/mdk-sdl` at 1.1.1 (`d5bb66ec`, also in this repository's history),
+and a later upstream fix the C++ ports is in upstream's history.
 
-- Golden-state tests run the same synthetic inputs through the C# `Mdk.Game`
-  assembly and the C++ `mdk_core` and compare serialized state.
+- Golden-state tests ran the same synthetic inputs through the C# `Mdk.Game`
+  assembly (the probes, in history at `92a72116`) and pin its serialized state;
+  the C++ `mdk_core` is compared against those pins.
 - Golden-frame tests compare rendered RGBA8 output (Linux/Vulkan only) within a
   per-pixel tolerance; the 3DS is compared by screenshot against the same
   golden set, with a looser tolerance and a manual A/B checklist.
@@ -77,7 +81,7 @@ findings are additive, not corrective.
 
 ## 3. Repository layout
 
-Mirrors t2k's three-tree shape; the C# lives under `src/` untouched.
+Mirrors t2k's three-tree shape; the C# is upstream 1.1.1 (`d5bb66ec`), not in the tree.
 
 ```
 mdk-sdl/
@@ -165,7 +169,6 @@ mdk-sdl/
 │   ├── formats/                 ← C++ unit tests (Catch2-free, hand-rolled)
 │   ├── golden/                  ← C#-vs-C++ state + frame comparison
 │   └── shell/                   ← console_test.sh, alloc_test.sh equivalents
-└── src/                        ← the C# port — UNTOUCHED, the oracle
 ```
 
 **Rules.**
@@ -1092,18 +1095,14 @@ target-dependent assumptions.* The 3DS-specific suspects are enumerated in
 
 ## 12. Adversarial validation
 
-The primary coding agent writes the code; a **stronger model** reviews it
-adversarially. Both roles run through the Pi harness (`ralph-pi.sh`) against the
-local LiteLLM router: the builder is `litellm/qwen` and the reviewer is
-`litellm/deepseek-v4.1-flash`. `ralph-pi.sh` is the source of truth for the
-current chains and their fallbacks.
+The primary coding agent writes the code; an **independent reviewer** reviews it
+adversarially.
 
-- `ralph/validator.md` defines the reviewer: its job is to **disprove** the
-  code, not to praise it. It is given the spec, the diff, and the evidence,
-  and it must produce a falsification attempt for each claim.
-- The reviewer is invoked by `ralph-pi.sh` as a separate fresh,
-  write-disabled run on a model from a different family than the builder
-  (`litellm/deepseek-v4.1-flash` by default).
+- The reviewer's job is to **disprove** the code, not to praise it. It is
+  given the spec, the diff, and the evidence, and it must produce a
+  falsification attempt for each claim.
+- The reviewer is a separate, fresh, read-only run that did not write the
+  code.
 - Review dimensions, in priority order:
   1. **Fidelity to the C# oracle** — does the C++ do what the C# does? Name
      the exact method and the exact divergence.
@@ -1136,10 +1135,10 @@ Each phase has an exit criterion that is *checked*, not asserted.
 | **P7** | `mdk_3ds` — the Citro3D renderer, the platform, the audio sink, the RomFS | The 3DS build runs a level in mandarine with the A/B checklist passing. | **Done, with the 3DS work continuing:** the d1 3DS rows, `p7.platform-lifecycle` and `p7.romfs-streaming` (6f973de), `audio.3ds-sink` (34b230a), on-console `hw.harness-cycle`, `hw.pixels-rgba8`, `hw.profile-og`. Open: `hw.sleep-resume`; `spec.voice-pool` (the Forsaken sound system, §8). Beyond the phase: the 3DS Enhanced Mode toggles (§7.9) and the Old-3DS frame-time work (`docs/3DS_PERF_EXPERIMENTS.md`). |
 | **P8** | The packaging (`.cia`), the gates green, the adversarial sweep | `tools/check.sh` is green; the adversarial validator has no open findings. | **Partly done:** `p8.cia-build` (ed9d653). Open: `hw.cia-boot`, which waits for the owner's own `.3dsx` test on a New 3DS first; the final `tools/check.sh` + adversarial sweep at the end. |
 
-**The ralph-wiggum loop** drives P1→P8 automatically: it picks the next
-unfinished phase, works it, runs the phase's exit criterion, and moves on. A
-phase whose exit criterion cannot be met is reported as blocked with the
-evidence, not retried forever.
+**Each phase is worked in increments** (`AGENTS.md` §0): pick the next
+unfinished item, work it, run its exit criterion, and move on. A phase whose
+exit criterion cannot be met is reported as blocked with the evidence, not
+retried forever.
 
 ---
 
@@ -1151,5 +1150,5 @@ evidence, not retried forever.
 | The 8-bit palette path on PICA200 misbehaves (dependent read). | Medium | Option C (CPU expansion, cached per palette) is the documented fallback; the seam does not change. |
 | The Vulkan backend is a lot of new code. | Medium | t2k's `vk_*` structure is a working reference and the vendored headers + volk are already available. The original look needs 5 pipelines, not 9. |
 | The 3DS "enhanced look" is impossible and someone wants it. | Certain | It is out of scope by §1.2 and the capability struct says so. The 3DS shows the original look, which is the *correct* look for the platform. |
-| The C# oracle drifts. | Low | The C# is frozen for the duration of the port; a divergence is resolved by deciding which is right and changing **both**. |
+| The C# oracle drifts. | Low | The C# is frozen at upstream 1.1.1 (`d5bb66ec`) for the duration of the port; a divergence is resolved by deciding which is right, and a later upstream fix is ported deliberately. |
 | The 3DS's 640×360 canvas does not fit 400×240 legibly. | Medium | The canvas is scaled; the HUD is legible because the original's HUD is drawn at 640×360 and the 3DS's 400×240 is a 0.625 scale — the same as a 640×480 original shown at 400×300. If it is too small, the 3DS build uses a **240×320 bottom screen** HUD or a scaled 320×240 letterbox, as Forsaken did. |
