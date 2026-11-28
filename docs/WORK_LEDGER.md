@@ -5517,6 +5517,21 @@ What is worse, plainly:
 - **Not done:** the MDK CIA does not use it yet. `mdk_3ds/Makefile` hands `cia/banner.png` to
   `makerom -banner` (a PNG, not a CBMD) -- fix at the CIA step, with the SMDH banner flag.
 
+## 2026-11-27 -- Production CIA: the approved banner is built in (branch feat/cia-banner-v3)
+
+- **What:** `make -C mdk_3ds cia` passes `banner/v3/mdk_banner_v3.bnr` (CIA_BANNER) to
+  `build_cia.sh` / `makerom -banner`; the unused `mdk_3ds/cia/banner.png` is removed.
+  `build_cia.sh` refuses a banner that is not a CBMD with a CWAV block.
+- **Why:** owner: "make this banner part of the build process because we will need a way to
+  create production cia files". The build used to hand makerom a 256x96 PNG as the banner;
+  makerom copies it into the ExeFS as is, so the HOME Menu would get bytes it cannot read.
+- **Evidence:** clean `make -C mdk_3ds cia` in the worktree: `mdk.cia` 236,569,536 bytes, the
+  v3 .bnr found byte for byte inside it; `gates_smdh` CONTRACT CLEAN (16 language slots);
+  `tools/check.sh` ALL GATES PASSED; `make -C tests/scripts test` 995 PASS 0 FAIL;
+  `build_cia.sh` with the old PNG exits 2 naming the problem.
+- **Not done:** the MDK CIA has not been installed on a console (owner: CIA testing is the
+  final step). SMDH flags unchanged (0x141, the same flags the approved test title used).
+
 ## 2026-11-27 -- cleanup: the C# original, the ralph loop and their leftovers leave the tree
 
 - **What:** removed `src/`, `Directory.Build.props`, `MdkSdl.slnx`, `publish.bat`, the HLSL
