@@ -391,6 +391,51 @@ struct EnhancedToggles {
 // Draw packets
 // ---------------------------------------------------------------------------
 
+// KURT OVER THE SURFACES OF HIS OWN SPACE (docs/DIVERGENCES.md, "Kurt's sprite
+// is hidden only by surfaces between the camera and him"; game/kurt_cover.h). A
+// fork divergence from upstream (its C++ KurtSprite's floor-only pull), owner-
+// approved 2026-11-27. The original has
+// no depth buffer and draws Kurt after the surfaces of the space he stands in,
+// so a wall he walks along or a floor he stands on never cuts his sprite. The
+// backends reproduce that with the stencil:
+//   Mark    a surface Kurt is drawn over (its plane leaves the camera and Kurt
+//           on the same side): no colour, no depth write, depth-tested as the
+//           world was drawn, and the stencil's Kurt bit set where it passes --
+//           where that surface is the nearest thing drawn.
+//   MarkGlass  the same for a GLASS surface of his own space (Blended: it writes
+//           no depth, so it is drawn after him and needs its own bit).
+//   Tested  Kurt's sprite where the bit is NOT set: depth-tested and written
+//           (upstream's draw without its floor pull); it sets the "Kurt drawn"
+//           bit.
+//   Over    Kurt's sprite where the bit IS set: no depth test (written), the
+//           bit cleared (so a later Over draw -- the muzzle flash behind him --
+//           does not pass where he is) and the "Kurt drawn" bit set.
+//   Glass   an arena glass batch (LevelView): drawn as always in the Blended
+//           bucket, except where Kurt was drawn over a glass surface of his own
+//           space (both bits set) -- the original drew that glass before him.
+// Every draw with a role but Glass is DoubleSided and is drawn after the Mirror
+// bucket and before the glass (render/draw_queue.h), so the mirrors' depth is
+// there to mark. A backend without a stencil buffer draws Tested only (upstream's
+// depth test without its floor pull), the glass as always, and says so once.
+enum class KurtPass : uint8_t {
+    None,
+    Mark,
+    MarkGlass,
+    Tested,
+    Over,
+    Glass,
+};
+
+// The stencil bits the Kurt passes use: a surface of his own space is nearest
+// (Mark), a glass surface of his own space is in front of the opaque world
+// (MarkGlass), Kurt's sprite was drawn (Tested, Over). The camera arena's
+// cover/back layering (render/draw_queue.h) writes the whole stencil byte on the
+// 3DS (value 1, mask 0xFF); it is done before any Kurt pass runs and every eye's
+// depth clear zeroes the stencil, so the two never meet.
+static constexpr uint8_t kKurtStencilBit = 0x02;
+static constexpr uint8_t kKurtGlassBit = 0x04;
+static constexpr uint8_t kKurtDrawnBit = 0x08;
+
 // One mesh draw. `world` is a row-major, row-vector 4x4; the identity means
 // "already in world space".
 struct MeshDraw {
@@ -420,6 +465,8 @@ struct MeshDraw {
     // not used. With neither set the frame is drawn exactly as before.
     bool back = false;    // the other drawn arena's batch or object
     bool cover = false;   // the camera's arena's batch, which covers it
+    // Kurt's sprite passes (KurtPass above). None for every other draw.
+    KurtPass kurt = KurtPass::None;
 };
 
 // A sprite is a mesh drawn with the sprite shading (the enhanced look's

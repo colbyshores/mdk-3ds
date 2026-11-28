@@ -180,6 +180,7 @@ SOURCES_VM := \
 	hd_window_tests.cpp \
 	sky_dome_tests.cpp \
 	mirror_cube_tests.cpp \
+	kurt_cover_tests.cpp \
 	object_warm_tests.cpp \
 	$(CORE)/render/sky_dome.cpp \
 	$(CORE)/render/mirror_cube.cpp \
@@ -190,6 +191,7 @@ SOURCES_VM := \
 	$(3DS)/platform/heap_split_policy.cpp \
 	$(3DS)/hd_window_3ds.cpp \
 	$(CORE)/game/kurt_sprite.cpp \
+	$(CORE)/game/kurt_cover.cpp \
 	$(CORE)/formats/kurt_pack.cpp \
 	$(CORE)/game/mod_images.cpp \
 	$(CORE)/game/hd_key.cpp \

@@ -609,7 +609,7 @@ bool ensurePost(RendererVk* r) {
             attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
             attachments[0].initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
             attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-            attachments[1].format = VK_FORMAT_D32_SFLOAT;
+            attachments[1].format = r->ctx.depthFormat;   // the scene pass's (compatible)
             attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
             attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
             attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -815,6 +815,12 @@ void drawCameraDepth(RendererVk* r) {
                 continue;
             }
             if (step == 1 && (!draw.cover || draw.material.pass == mdk::Pass::Mirror)) {
+                continue;
+            }
+            // Kurt's marks are no surface of their own, and his Over draw is his
+            // Tested one again (render_types.h KurtPass): his depth once.
+            if (draw.kurt == mdk::KurtPass::Mark || draw.kurt == mdk::KurtPass::MarkGlass ||
+                draw.kurt == mdk::KurtPass::Over) {
                 continue;
             }
             if (draw.mesh < 0 || draw.mesh >= (int32_t)r->meshes.size() ||

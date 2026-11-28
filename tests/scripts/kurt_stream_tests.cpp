@@ -93,6 +93,12 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer, int32_t) {
     return 1;
 }
 
+// KurtSprite::load's 8x8 white texture for the marks of the surfaces of his own
+// space (game/kurt_cover.h). Not one of the frames' textures, so not counted.
+MdkTextureId mdk_render_create_rgba_texture(MdkRenderer, int32_t, int32_t, const uint8_t*) {
+    return 1000;
+}
+
 void mdk_render_update_mesh(MdkRenderer, MdkMeshId, const mdk::Vertex* vertices, int32_t count) {
     g_backend.mesh.assign(vertices, vertices + (count > 0 ? count : 0));
 }
@@ -248,7 +254,7 @@ struct KurtSpriteTestAccess {
         at.up = mdk::Vec3{0.0f, 1.0f, 0.0f};
         KurtSprite::Pull pull;
         return sprite->drawFrame(kRenderer, sprite->mesh_, animation, frame, mdk::Vec3{0.0f, 0.0f, -1000.0f}, at,
-                                 0, 0, pull);
+                                 0, 0, pull, false);
     }
     static const KurtSprite::Frame& frame(const KurtSprite& sprite, int32_t a, int32_t f) {
         return sprite.animations_[(size_t)a].frames[(size_t)f];

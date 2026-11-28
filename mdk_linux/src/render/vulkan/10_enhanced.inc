@@ -4,7 +4,7 @@
 
 // The enhanced pipeline for a pass/blend/primitive triple: the palette
 // pipeline's states with the enhanced shaders and layout.
-VkPipeline createEnhancedPipeline(RendererVk* r, int pass, int blend, int primitive) {
+VkPipeline createEnhancedPipeline(RendererVk* r, int pass, int blend, int primitive, int kurt) {
     VkPipelineVertexInputStateCreateInfo vi = {};
     vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     VkVertexInputBindingDescription binding = {};
@@ -63,6 +63,7 @@ VkPipeline createEnhancedPipeline(RendererVk* r, int pass, int blend, int primit
     cb.alphaBlendOp = VK_BLEND_OP_ADD;
     cb.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    kurtDepthStencil(kurt, &ds, &cb);   // Kurt's passes (04_pipelines.inc)
     VkPipelineColorBlendStateCreateInfo cbs = {};
     cbs.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     cbs.attachmentCount = 1;
@@ -110,14 +111,14 @@ VkPipeline createEnhancedPipeline(RendererVk* r, int pass, int blend, int primit
     return pipeline;
 }
 
-VkPipeline getEnhancedPipeline(RendererVk* r, int pass, int blend, int primitive) {
-    const int key = pass * 16 + blend * 4 + primitive;
+VkPipeline getEnhancedPipeline(RendererVk* r, int pass, int blend, int primitive, int kurt) {
+    const int key = pass * 16 + blend * 4 + primitive + kurt * 256;   // as getPipeline
     for (size_t i = 0; i < r->enhancedPipelines.size(); i++) {
         if (r->enhancedPipelines[i].key == key) {
             return r->enhancedPipelines[i].pipeline;
         }
     }
-    VkPipeline p = createEnhancedPipeline(r, pass, blend, primitive);
+    VkPipeline p = createEnhancedPipeline(r, pass, blend, primitive, kurt);
     PipelineVk entry;
     entry.key = key;
     entry.pipeline = p;
@@ -427,7 +428,8 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     const int pass = (int)draw->material.pass;
     const int blend = (int)draw->material.blend;
     const int primitive = (draw->primitive == mdk::Primitive::Lines) ? 1 : 0;
-    VkPipeline pipeline = getEnhancedPipeline(r, pass, blend, primitive);
+    VkPipeline pipeline =
+        getEnhancedPipeline(r, pass, blend, primitive, kurtPipelinePass(r, draw));
     if (!pipeline) {
         return;
     }
@@ -557,7 +559,7 @@ void canvasOrtho(float out[16], float width);
 void drawEnhancedCanvas(RendererVk* r, int32_t texture, int32_t palette, int32_t frameCount,
                         const float colour[4], VkDeviceSize bufferOffset) {
     VkPipeline pipeline = getEnhancedPipeline(r, (int)mdk::Pass::Overlay,
-                                              (int)mdk::Blend::Alpha, 0);
+                                              (int)mdk::Blend::Alpha, 0, 0);
     if (!pipeline) {
         return;
     }

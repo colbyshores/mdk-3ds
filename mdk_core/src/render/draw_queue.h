@@ -60,6 +60,15 @@
 // Not like upstream: the other arena's effects (sparks, debris, ropes) are not
 // marked, and Kurt and the camera arena's objects are depth-tested against the
 // other arena's geometry as before (upstream draws them over it).
+//
+// KURT'S PASSES AFTER THE MIRRORS (render_types.h KurtPass; docs/DIVERGENCES.md).
+// A draw with a `kurt` role stays in its DoubleSided bucket (so a loop over the
+// buckets -- the sun's casters, the enhanced view depth -- still sees Kurt), but
+// the scene draws it after the Mirror bucket instead of with the DoubleSided
+// ones: every Solid, every other DoubleSided, every Mirror, then the Kurt passes
+// in queue order, then Blended, OnTop, Overlay. The Mark pass needs the mirrors'
+// depth (LEVEL6's mirror floors under his feet); nothing else in the oracle's
+// order moves. kurtAfterMirrors is the one test both backends use.
 // ============================================================================
 
 #include <stdint.h>
@@ -81,6 +90,12 @@ namespace mdk {
 // this comment's earlier claim that the draw is rejected or voided, which
 // `add()` deliberately never does).
 const int32_t kDrawQueuePassCount = static_cast<int32_t>(Pass::Count);
+
+// Whether the scene draws this record after the Mirror bucket (the header): one
+// of Kurt's passes.
+inline bool kurtAfterMirrors(const MeshDraw& draw) {
+    return draw.kurt != KurtPass::None && draw.kurt != KurtPass::Glass;
+}
 
 // The frame's queued draws, bucketed by pass.
 //

@@ -140,9 +140,35 @@ static void prepareQueue(RendererC3D* r) {
             if (layered && opaque && bucket[i].cover) {
                 continue;   // drawn first, above
             }
+            if (mdk::kurtAfterMirrors(bucket[i])) {
+                continue;   // after the mirrors, below
+            }
             PreparedDraw p;
             if (prepareDraw(r, &bucket[i], &p)) {
+                if (bucket[i].kurt == mdk::KurtPass::Glass) {
+                    p.stencil = kStencilKurtGlass;   // not over Kurt's own glass
+                }
                 pushPrepared(r, &p);
+            }
+        }
+        // KURT'S PASSES after the Mirror bucket, in queue order (draw_queue.h):
+        // the mark needs the mirrors' depth.
+        if (pass == static_cast<int32_t>(mdk::Pass::Mirror)) {
+            const std::vector<mdk::MeshDraw>& kurt =
+                r->queue.bucket(static_cast<int32_t>(mdk::Pass::DoubleSided));
+            for (size_t i = 0; i < kurt.size(); i++) {
+                if (!mdk::kurtAfterMirrors(kurt[i])) {
+                    continue;
+                }
+                PreparedDraw p;
+                if (prepareDraw(r, &kurt[i], &p)) {
+                    const mdk::KurtPass role = kurt[i].kurt;
+                    p.stencil = role == mdk::KurtPass::Mark        ? kStencilKurtMark
+                                : role == mdk::KurtPass::MarkGlass ? kStencilKurtMarkGlass
+                                : role == mdk::KurtPass::Over      ? kStencilKurtOver
+                                                                   : kStencilKurtTested;
+                    pushPrepared(r, &p);
+                }
             }
         }
     }

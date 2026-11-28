@@ -30,7 +30,7 @@ static void drawMirror(RendererVk* r, const mdk::MeshDraw* draw, const float wv[
 
     const int primitive = (draw->primitive == mdk::Primitive::Lines) ? 1 : 0;
     VkPipeline pipeline =
-        getPipeline(r, (int)mdk::Pass::Mirror, (int)draw->material.blend, primitive);
+        getPipeline(r, (int)mdk::Pass::Mirror, (int)draw->material.blend, primitive, 0);
     if (!pipeline) {
         return;
     }
@@ -75,6 +75,13 @@ void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw, bool cover) {
         return;
     }
     if (draw->vertex_count <= 0) {
+        return;
+    }
+    // Kurt's marks and his draw over them need the stencil (render_types.h
+    // KurtPass); without one only his Tested draw is made (upstream's depth test).
+    if (!r->ctx.depthHasStencil &&
+        (draw->kurt == mdk::KurtPass::Mark || draw->kurt == mdk::KurtPass::MarkGlass ||
+         draw->kurt == mdk::KurtPass::Over)) {
         return;
     }
 
@@ -133,7 +140,8 @@ void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw, bool cover) {
     const int blend = (int)draw->material.blend;
     const int primitive = (draw->primitive == mdk::Primitive::Lines) ? 1 : 0;
     VkPipeline pipeline =
-        cover ? getCoverPipeline(r, pass) : getPipeline(r, pass, blend, primitive);
+        cover ? getCoverPipeline(r, pass)
+              : getPipeline(r, pass, blend, primitive, kurtPipelinePass(r, draw));
     if (!pipeline) {
         return;
     }
@@ -261,7 +269,20 @@ void drawBuckets(RendererVk* r, const mdk::DrawQueue& queue, bool overlay) {
             if (!r->toggles.enableMirrors && bucket[i].material.pass == mdk::Pass::Mirror) {
                 continue;
             }
+            if (mdk::kurtAfterMirrors(bucket[i])) {
+                continue;   // after the mirrors, below
+            }
             drawRecorded(r, &bucket[i], false);
+        }
+        // KURT'S PASSES after the Mirror bucket, in queue order (draw_queue.h).
+        if (pass == static_cast<int32_t>(mdk::Pass::Mirror)) {
+            const std::vector<mdk::MeshDraw>& kurt =
+                queue.bucket(static_cast<int32_t>(mdk::Pass::DoubleSided));
+            for (size_t i = 0; i < kurt.size(); i++) {
+                if (mdk::kurtAfterMirrors(kurt[i])) {
+                    drawRecorded(r, &kurt[i], false);
+                }
+            }
         }
     }
 }

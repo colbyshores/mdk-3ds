@@ -66,6 +66,7 @@
 #include "object_warm_tests.h"
 #include "sky_dome_tests.h"
 #include "mirror_cube_tests.h"
+#include "kurt_cover_tests.h"
 #include "mve_audio_tests.h"
 #include "pica_matrix_tests.h"
 #include "scripts/debris.h"
@@ -8527,6 +8528,12 @@ int main(int argc, char** argv) {
     }
     // The 3DS mirrors' cube maps against the oracle's mirror mapping and the
     // PICA's cube convention (mirror_cube_tests.h).
+    // The surfaces Kurt's sprite is drawn over (game/kurt_cover.h, DIVERGENCES D8).
+    const int coverFailures = mdk::test::runKurtCoverTests();
+    failures += coverFailures;
+    if (coverFailures == 0) {
+        printf("PASS KurtCover\n");
+    }
     const int mirrorFailures = mdk::test::runMirrorCubeTests();
     failures += mirrorFailures;
     if (mirrorFailures == 0) {

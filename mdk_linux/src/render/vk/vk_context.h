@@ -82,6 +82,13 @@ struct Context {
     // than its render pass is INVALID, and a driver is entitled to
     // dereference the missing view's null handle. (Lavapipe segfaults
     // inside vkCmdBeginRenderPass on exactly that.)
+    // THE SCENE'S DEPTH FORMAT, with a stencil when the device has one
+    // (pickDepthFormat): Kurt's sprite passes mark the surfaces of his own space
+    // in it (render_types.h KurtPass; docs/DIVERGENCES.md). Chosen once, before
+    // the first render pass; `depthHasStencil` false is the D32 fallback, where
+    // the Kurt marks are not drawn.
+    VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+    bool depthHasStencil = false;
     VkImage depthImage = VK_NULL_HANDLE;
     VkDeviceMemory depthMemory = VK_NULL_HANDLE;
     VkImageView depthView = VK_NULL_HANDLE;
