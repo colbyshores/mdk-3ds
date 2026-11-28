@@ -1,11 +1,11 @@
 #!/bin/bash
 # frame_gate_test.sh -- the frame golden gate, proven able to fail.
 #
-# WHY THIS FILE EXISTS (SPEC-COMPLETION 3.4, p5.0.frame-harness). The renderer
+# WHY THIS FILE EXISTS (SPEC.md 15.2, p5.0.frame-harness). The renderer
 # golden gate (tools/runner/gates_frames.py, wired into tools/check.sh) is the
 # renderer's equivalent of the script goldens: a deterministic headless capture
 # of a pinned scene, a byte-exact regression baseline, and a fidelity ceiling
-# against the C# oracle. SPEC-COMPLETION requires such a gate to be "proven to
+# against the C# oracle. SPEC.md 15.2 requires such a gate to be "proven to
 # fail on a seeded visual regression before it is trusted", and nothing in the
 # tree proved it: a gate whose red side has never been observed is a claim,
 # not an instrument.

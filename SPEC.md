@@ -796,7 +796,7 @@ Forsaken's notes are the guide:
 ### 7.9 3DS Enhanced Mode feature toggles (owner directive 2026-11-14)
 
 The 3DS enhanced look is best-effort against the PC render (§7, and the
-owner direction recorded in `SPEC-COMPLETION.md` §3 item 6). Every
+owner direction of 2026-11-14; `docs/HD_TEXTURES_3DS_SPEC.md`). Every
 enhanced feature on the 3DS is individually switchable, so its cost and
 its look can be A/B-compared on hardware:
 
@@ -1104,8 +1104,9 @@ adversarially.
 - The reviewer is a separate, fresh, read-only run that did not write the
   code.
 - Review dimensions, in priority order:
-  1. **Fidelity to the C# oracle** — does the C++ do what the C# does? Name
-     the exact method and the exact divergence.
+  1. **Fidelity to upstream** — does the C++ do what upstream's C++ does
+     (§15.1), or is the difference a recorded divergence? Name the exact
+     function and the exact divergence.
   2. **The 3DS traps** — depth range, cull enum, the 90° rotation's
      determinant, the float-return ABI, unaligned loads, the PICA viewport
      mapping, the VRAM budget.
@@ -1150,5 +1151,84 @@ retried forever.
 | The 8-bit palette path on PICA200 misbehaves (dependent read). | Medium | Option C (CPU expansion, cached per palette) is the documented fallback; the seam does not change. |
 | The Vulkan backend is a lot of new code. | Medium | t2k's `vk_*` structure is a working reference and the vendored headers + volk are already available. The original look needs 5 pipelines, not 9. |
 | The 3DS "enhanced look" is impossible and someone wants it. | Certain | It is out of scope by §1.2 and the capability struct says so. The 3DS shows the original look, which is the *correct* look for the platform. |
-| The C# oracle drifts. | Low | The C# is frozen at upstream 1.1.1 (`d5bb66ec`) for the duration of the port; a divergence is resolved by deciding which is right, and a later upstream fix is ported deliberately. |
+| Upstream drifts. | Low | Upstream's C++ moves on its own; it is read, not tracked (§15.1). A later upstream fix is ported deliberately, and a difference is resolved by deciding which is right (a deliberate divergence goes in `docs/DIVERGENCES.md`). |
 | The 3DS's 640×360 canvas does not fit 400×240 legibly. | Medium | The canvas is scaled; the HUD is legible because the original's HUD is drawn at 640×360 and the 3DS's 400×240 is a 0.625 scale — the same as a 640×480 original shown at 400×300. If it is too small, the 3DS build uses a **240×320 bottom screen** HUD or a scaled 320×240 letterbox, as Forsaken did. |
+
+---
+
+## 15. Ground rules, references and the remaining work
+
+Folded in from the retired loop's brief (`SPEC-COMPLETION.md`, removed
+2026-11-27 with the loop; it is in git history before that date).
+
+### 15.1 References
+
+- **Upstream's C++ is the behavioural oracle from now on** (owner,
+  2026-11-27). When behaviour must be checked against upstream, read
+  upstream's C++ 2.x (git remote `origin`, nautilusbits/mdk-sdl, `main`;
+  read-only, never pushed to). It is newer than any C#: upstream fixed bugs
+  through C# 1.2.6 and then in its C++.
+- **C# citations in this tree** (`Player.cs:123`, "the C#", "the oracle")
+  are provenance: they mean upstream C# 1.1.1 (`d5bb66ec`, in this repo's
+  history), which the port was made from. `tests/frames/capture_oracle.sh`
+  rebuilds that C# from history when a reference frame must be regenerated.
+- **The original `./MDK/MDKD3D.EXE`** is the authority for what upstream
+  never implemented (§15.4) and for deliberate divergences
+  (`docs/DIVERGENCES.md`), read through Ghidra (`~/re-tools`).
+- This is a fork: a divergence from upstream is allowed when the owner
+  decides it, in its own commit, recorded in `docs/DIVERGENCES.md` with why.
+
+### 15.2 Ground rules
+
+1. **Never weaken a gate, a test or a golden to obtain a pass.**
+2. Goldens change only from the reference source, and "a reference frame
+   changes only from the reference source", never from the implementation's
+   own output. A gate must be "proven to fail on a seeded visual regression
+   before it is trusted": the frame-golden harness (`tests/frames/`,
+   `tools/runner/gates_frames.py`) was, and every new gate is held to the
+   same bar.
+3. Never blind-port a behaviour that cannot be exercised and verified by a
+   test or golden.
+4. Old-3DS timing is never claimed without Old-3DS hardware; an emulator run
+   or a green build is not a hardware pass (`AGENTS.md` P6, P8).
+5. Report honestly: a "passed" names the command that was run; verified
+   results and assumptions are kept apart.
+6. Commit each verified batch; never leave finished work uncommitted.
+
+### 15.3 Left alone on purpose (do not re-litigate without new data)
+
+- The alarm (`move_command` 15): never fires in any level (0 occurrences).
+- Opcodes 240, 241, 244: Kurt's state exists, but none fire in LEVEL3-8.
+- Opcode 248 `push_kurt`: an honest no-op (`state=0` in every golden).
+- Opcode 5: implemented nowhere, upstream included.
+
+Details: `docs/OPCODE_COVERAGE.md`.
+
+### 15.4 Remaining work
+
+- **The post-process gap sweep (RE).** Behaviour upstream itself never
+  implemented: the Rides writer behind the alarm countdown, Kurt's touch
+  writer, the projectile and item-chain writers, and anything else upstream
+  leaves unidentified. It is lifted from the original `./MDK/MDKD3D.EXE` with
+  Ghidra in a SEPARATE pass, never inside an ordinary batch, and the
+  RE-derived behaviour is documented as the behavioural oracle of record for
+  that item. Tracked as `re.phase-2-sweep` (`docs/OWNER_BLOCKS.md`).
+- **Linux P6 leftovers:** the enhanced look's per-face light distribution
+  (the shadowed-face tail the C# had) and the font/overlay mod consumers.
+- **Hardware rows:** `hw.sleep-resume`; `hw.cia-boot` (the owner's final
+  step).
+- **P8's closing sweep:** `tools/check.sh` green on the final tree and an
+  independent full-tree review with no open blocker or major finding.
+
+### 15.5 What "done" means
+
+Every §13 exit criterion met, or explicitly dispositioned when it is
+hardware- or owner-gated (never silently skipped); the gates green on the
+final clean tree; the golden corpus byte-exact; the full-tree review's
+findings closed by reproduction or rebuttal in writing;
+`docs/OPCODE_COVERAGE.md` and `docs/COMPLETION_LEDGER.tsv` reconciled with
+reality; and a final report: the architectural changes and why, the
+subsystems affected, the opcode disposition, the tests and gates run with
+their real results, both targets' build results, the measured performance and
+size deltas, the review findings and their resolutions, and what remains
+unverified or hardware-only.

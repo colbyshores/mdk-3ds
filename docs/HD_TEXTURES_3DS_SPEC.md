@@ -1,6 +1,6 @@
 # Spec: HD textures on the 3DS (ETC1 / ETC1A4)
 
-Owner direction: 2026-11-14 (SPEC-COMPLETION.md item 6, "ETC textures for the 3DS
+Owner direction: 2026-11-14 (formerly SPEC-COMPLETION.md item 6, now in git history; "ETC textures for the 3DS
 build path") and 2026-11-17 ("we will be using ETC1 and ETC1A4 on the 3DS
 specifically. our build system and mip map chain needs to be oriented around
 that fact"; "we will be taking HD textures and making them work on the 3DS").

@@ -11,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[2]
 PROTECTED = {
     "AGENTS.md",
     "SPEC.md",
-    "SPEC-COMPLETION.md",
     # The completion ledger is the definition of "done". A batch that can edit
     # the rows it is judged against can declare itself finished, so the ledger
     # and its owner-block register are protected exactly like the gates.
@@ -136,7 +135,7 @@ def main() -> int:
     # the mission, disable its gates, or replace the configured oracle.
     required = {
         "tools/check.sh": ["tools/runner/gates_frames.py", "gates_vfp.py", "gates_core_parity.py", "gates_batch_integrity.py", "gates_completion.py"],
-        "SPEC-COMPLETION.md": ["behavioural oracle", "post-process gap sweep", "frame-golden harness", "original `./MDK/MDKD3D.EXE`"],
+        "SPEC.md": ["behavioural oracle", "post-process gap sweep", "frame-golden harness", "original `./MDK/MDKD3D.EXE`"],
         "tools/hooks/pre-commit": ["gates_batch_integrity.py", "--staged", "MDK_OWNER_APPROVED"],
     }
     for rel, markers in required.items():

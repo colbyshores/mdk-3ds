@@ -5,7 +5,7 @@
 # level    d1 = the owner's goal (CONTINUATION.md:871): a build that plays a level
 #               end-to-end, verified in Mandarine.
 #          d2 = spec-complete on this host: everything in SPEC.md's P5-P8 and
-#               SPEC-COMPLETION.md's remaining items that needs no console.
+#               SPEC.md §15.4's remaining items that needs no console.
 #          d3 = everything, including the closed-lid autonomous hardware cycle
 #               (netload_stub) and the Phase 2 RE sweep.
 #          Levels are cumulative: d2 requires the d1 rows too.

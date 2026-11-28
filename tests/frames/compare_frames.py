@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""compare_frames.py -- the frame golden comparator (SPEC.md 11.3, SPEC-COMPLETION 3.4).
+"""compare_frames.py -- the frame golden comparator (SPEC.md 11.3, 15.2).
 
 Two uncompressed 32-bit BMPs (the C# oracle's Bmp.Write format: 54-byte
 header, negative height, BGRA, top-down) and a tolerance, and a verdict:

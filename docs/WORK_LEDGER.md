@@ -5592,6 +5592,24 @@ What is worse, plainly:
   `docs/original-engine.md`, `docs/modding.md` (the 3DS HD tools cite it).
 - **Commit:** branch `chore/remove-legacy` (not merged, not pushed).
 
+## 2026-11-27 -- SPEC-COMPLETION.md folded into SPEC.md §15 and removed; upstream's C++ is the reference
+
+- **What:** `SPEC.md` §15 (new): references (upstream's C++ 2.x on `origin` is the behavioural
+  oracle from now on -- owner 2026-11-27; C# citations are provenance for upstream 1.1.1
+  `d5bb66ec`; the original MDKD3D.EXE for what upstream never implemented), the ground rules
+  (never weaken a gate/test/golden; goldens and reference frames only from the reference source;
+  no blind ports; no Old-3DS timing claims without hardware; honest reports; commit verified
+  batches), the left-alone list (alarm, opcodes 240/241/244, 248, 5), the remaining work (RE gap
+  sweep, Linux P6 leftovers, hw.sleep-resume, hw.cia-boot, P8's closing sweep) and what "done"
+  means. §12's fidelity dimension and §14's drift risk now name upstream's C++. The
+  `gates_batch_integrity` mission markers moved from SPEC-COMPLETION.md to SPEC.md, and it
+  leaves the protected list; citations in the frame gate/tests/docs point at §15.
+  `.github/FUNDING.yml` (upstream's sponsor link) removed.
+- **Why:** owner: "what is missing from our current spec?" -> fold the parts that still matter,
+  drop the loop brief; "dont need" FUNDING.yml; "moving forward, if we need to cross reference
+  upstream, its going to be upstream's C++ code since its newer".
+- **Evidence:** `gates_batch_integrity.py` PASS and `--self-test` PASS with the markers in
+  SPEC.md; checks below.
 ## 2026-11-27 -- Mirror cubes: 512x512 ETC1 faces baked at build time (branch feat/3ds-mirror-cubes-512)
 
 - **Owner decision:** mirror cube faces at 512x512 ETC1 (the sky's full source resolution),
