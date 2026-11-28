@@ -8957,6 +8957,14 @@ int main(int argc, char** argv) {
     if (mirrorDataFailures == 0) {
         printf("PASS MirrorRowShiftsOfTheRetailLevels\n");
     }
+    bool mirrorBakedSkipped = false;
+    const int mirrorBakedFailures = mdk::test::runMirrorBakedTests(data, &mirrorBakedSkipped);
+    failures += mirrorBakedFailures;
+    if (mirrorBakedFailures == 0) {
+        printf(mirrorBakedSkipped ? "SKIP MirrorBakedCubes (header checks passed; no baked cubes "
+                                    "in this checkout)\n"
+                                  : "PASS MirrorBakedCubes\n");
+    }
     // The depth layers and the depth pull: the C#'s LayerTests.cs and
     // DepthPullTests.cs, run here.
     const int layerFailures = mdk::test::runDepthLayerTests(data);

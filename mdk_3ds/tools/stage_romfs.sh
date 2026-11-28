@@ -236,6 +236,17 @@ if [ -f "$ARENA_ETC1_DIR/manifest.txt" ]; then
             ln "$file" "$OUT/orig/sky/" 2>/dev/null || cp "$file" "$OUT/orig/sky/"
         done
     fi
+    # The mirror cubes, 512x512 ETC1 faces baked from the mirror panorama
+    # (romfs:/orig/mirror/level<L>_<shift>.bin, mdk_core/src/render/mirror_cube.h),
+    # read whole at level load (level_load_3ds.cpp buildMirrorCubes3ds); absent or
+    # stale, the game builds its 128x128 cubes at load as before.
+    if [ -d "$ARENA_ETC1_DIR/mirror" ]; then
+        mkdir -p "$OUT/orig/mirror"
+        for file in "$ARENA_ETC1_DIR"/mirror/*.bin; do
+            [ -f "$file" ] || continue
+            ln "$file" "$OUT/orig/mirror/" 2>/dev/null || cp "$file" "$OUT/orig/mirror/"
+        done
+    fi
     echo "stage_romfs:   orig ($(find "$OUT/orig" -name '*.t3x' | wc -l) textures, $(du -sh "$OUT/orig" | cut -f1))"
 else
     echo "stage_romfs:   (skip) orig -- no compressed arena set; arena textures are expanded"

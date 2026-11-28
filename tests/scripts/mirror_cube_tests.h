@@ -27,5 +27,11 @@ class MdkData;
 namespace test {
 int runMirrorCubeTests();
 int runMirrorCubeDataTests(const formats::MdkData& data);
+// The baked cubes (render/mirror_cube.h, THE BAKED CUBES): the file header
+// written and refused field by field; and, when this worktree has built the
+// RomFS (build-arena-etc1/mirror), LEVEL6's cubes decoded as the PICA reads ETC1
+// against the runtime formula's colours, right way up. Without them only the
+// header checks run and `*skipped` says so (vm_tests prints SKIP, not PASS).
+int runMirrorBakedTests(const formats::MdkData& data, bool* skipped);
 } // namespace test
 } // namespace mdk

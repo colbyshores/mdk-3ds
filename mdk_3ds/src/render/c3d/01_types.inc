@@ -838,6 +838,9 @@ struct RendererC3D {
         bool valid = false;           // allocated (C3D_TexInitCube succeeded)
         bool releasePending = false;  // given back while the GPU may still read it
         uint8_t faces = 0;            // the faces that have arrived, a bit each
+        bool etc1 = false;            // a baked cube (ETC1), else the runtime RGB565 one
+        int32_t size = 0;             // texels a face edge
+        uint32_t bytes = 0;           // the six faces' linear bytes
         C3D_Tex tex;
         C3D_TexCube cube;
     };
