@@ -120,6 +120,48 @@ int32_t buildSky3ds(MdkRenderer renderer, const formats::Dti& dti, int32_t level
     return count;
 }
 
+// THE BAKED CUBE for `rowShift` (render/mirror_cube.h, THE BAKED CUBES): the
+// build's file, read whole and checked against this level's stamp, into a new
+// ETC1 cube. The slot, or -1 with the reason in `why` (the caller builds the
+// runtime cube instead). `bytes` is the caller's buffer, reused across cubes.
+static int32_t bakedMirrorCube(MdkRenderer renderer, int32_t levelNumber, int32_t rowShift,
+                               uint64_t stamp, std::vector<uint8_t>* bytes, const char** why) {
+    const formats::FileSystem* fs = formats::fileSystem();
+    char path[64];
+    mirrorBakedPath("romfs:/orig", levelNumber, rowShift, path, sizeof(path));
+    if (!fs || !fs->readFile || !fs->readFile(fs->user, path, bytes)) {
+        *why = "no file";
+        return -1;
+    }
+    if (bytes->size() != (size_t)kMirrorBakedHeaderBytes +
+                             (size_t)kMirrorCubeFaces * (size_t)kMirrorBakedFaceBytes) {
+        *why = "not a whole cube";
+        return -1;
+    }
+    if (!mirrorBakedHeaderAccepts(bytes->data(), bytes->size(), rowShift, stamp, why)) {
+        return -1;
+    }
+    const int32_t slot = mdk_render_create_mirror_cube(renderer, rowShift, kMirrorBakedSize, true);
+    if (slot < 0) {
+        *why = "the renderer refused it";
+        return -1;
+    }
+    for (int32_t f = 0; f < kMirrorCubeFaces; f++) {
+        const uint8_t* face = bytes->data() + kMirrorBakedHeaderBytes +
+                              (size_t)f * (size_t)kMirrorBakedFaceBytes;
+        if (!mdk_render_set_mirror_cube_face_etc1(renderer, slot, f, face,
+                                                  kMirrorBakedFaceBytes)) {
+            // Cannot happen with the sizes checked above. The slot stays (a shift
+            // has one slot) but incomplete, so its draws are skipped
+            // (prepareMirror says so) -- not counted as a cube.
+            *why = "a face was refused";
+            return -1;
+        }
+    }
+    *why = nullptr;
+    return slot;
+}
+
 int32_t buildMirrorCubes3ds(MdkRenderer renderer, const LevelData& level) {
     int32_t shifts[kMirrorRowShiftsMax];
     const int32_t count = mirrorRowShifts(level.arenas(), shifts);
@@ -140,14 +182,41 @@ int32_t buildMirrorCubes3ds(MdkRenderer renderer, const LevelData& level) {
     }
     const uint64_t start = svcGetSystemTick();
     int32_t slots[kMirrorRowShiftsMax];
+    const char* whys[kMirrorRowShiftsMax];
     int32_t made = 0;
-    for (int32_t i = 0; i < count; i++) {
-        slots[i] = mdk_render_create_mirror_cube(renderer, shifts[i]);
-        if (slots[i] >= 0) {
-            made++;
+    int32_t baked = 0;
+    // THE BAKED CUBES first: one read each. A missing or stale file is said once
+    // and that shift's cube is built below as before.
+    {
+        const uint64_t stamp = mirrorPanoramaStamp(panorama, pal, dti.skyWrapWidth(),
+                                                   dti.skyHorizonRow(), dti.skyOffset());
+        std::vector<uint8_t> bytes;
+        for (int32_t i = 0; i < count; i++) {
+            whys[i] = nullptr;
+            slots[i] = bakedMirrorCube(renderer, level.number(), shifts[i], stamp, &bytes,
+                                       &whys[i]);
+            if (slots[i] >= 0) {
+                made++;
+                baked++;
+            }
         }
     }
-    if (made > 0) {
+    const uint64_t bakedEnd = svcGetSystemTick();
+    // THE RUNTIME CUBES (kMirrorCubeSize, RGB565) for every shift without one;
+    // `built` holds their slots (-1: baked, or not made).
+    int32_t built[kMirrorRowShiftsMax];
+    int32_t runtime = 0;
+    for (int32_t i = 0; i < count; i++) {
+        built[i] = -1;
+        if (slots[i] < 0) {
+            built[i] = mdk_render_create_mirror_cube(renderer, shifts[i], kMirrorCubeSize, false);
+            if (built[i] >= 0) {
+                made++;
+                runtime++;
+            }
+        }
+    }
+    if (runtime > 0) {
         // One face at a time: its cells (the direction's panorama column and row,
         // the expensive part) once, then each shift's indices from them.
         const int32_t texels = kMirrorCubeSize * kMirrorCubeSize;
@@ -158,11 +227,19 @@ int32_t buildMirrorCubes3ds(MdkRenderer renderer, const LevelData& level) {
             mirrorCubeCells(f, kMirrorCubeSize, dti.skyWrapWidth(), dti.skyHorizonRow(),
                             dti.skyOffset(), panorama.height(), columns.data(), rows.data());
             for (int32_t i = 0; i < count; i++) {
-                if (slots[i] >= 0 && mirrorCubeFace(panorama, columns.data(), rows.data(),
+                if (built[i] >= 0 && mirrorCubeFace(panorama, columns.data(), rows.data(),
                                                     texels, shifts[i], face.data())) {
-                    mdk_render_set_mirror_cube_face(renderer, slots[i], f, face.data(), pal);
+                    mdk_render_set_mirror_cube_face(renderer, built[i], f, face.data(), pal);
                 }
             }
+        }
+    }
+    // A shift whose baked cube was not used, said once with what it got instead.
+    for (int32_t i = 0; i < count; i++) {
+        if (whys[i]) {
+            mdk::log3dsPrintf("mirror: baked cube for row shift %d not used (%s) -- %s",
+                              (int)shifts[i], whys[i],
+                              built[i] >= 0 ? "built at load instead" : "no cube for it");
         }
     }
     char list[kMirrorRowShiftsMax * 6 + 1];
@@ -171,10 +248,15 @@ int32_t buildMirrorCubes3ds(MdkRenderer renderer, const LevelData& level) {
     for (int32_t i = 0; i < count && at < (int32_t)sizeof(list) - 6; i++) {
         at += snprintf(list + at, sizeof(list) - (size_t)at, "%s%d", i ? "," : "", (int)shifts[i]);
     }
-    mdk::log3dsPrintf("mirror: %d of %d cubes (row shifts %s; %s panorama), %u KiB, %.1f ms",
+    const double tick = (double)(SYSCLOCK_ARM11 / 1000ull);
+    mdk::log3dsPrintf("mirror: %d of %d cubes (row shifts %s; %s panorama), %d baked %dx%d ETC1 "
+                      "(read %.1f ms), %d built %dx%d, %u KiB, %.1f ms",
                       (int)made, (int)count, list, dti.hasOwnMirrorSky() ? "its own" : "the sky's",
+                      (int)baked, (int)kMirrorBakedSize, (int)kMirrorBakedSize,
+                      (double)(bakedEnd - start) / tick, (int)runtime, (int)kMirrorCubeSize,
+                      (int)kMirrorCubeSize,
                       (unsigned)(mdk_render_mirror_cube_bytes(renderer) / 1024u),
-                      (double)(svcGetSystemTick() - start) / (double)(SYSCLOCK_ARM11 / 1000ull));
+                      (double)(svcGetSystemTick() - start) / tick);
     return made;
 }
 

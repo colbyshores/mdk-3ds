@@ -15,6 +15,7 @@
 #include "formats/mdk_data.h"
 #include "formats/mto.h"
 #include "formats/texture.h"
+#include "game/level_data.h"
 #include "render/material_resolver.h"
 #include "render/mirror_cube.h"
 #include "render/pica_matrix.h"
@@ -243,7 +244,188 @@ void testFaceExpansion() {
     check(word == pica::rgb565Word(255, 255, 0), "index 0 is palette[0]'s colour (no discard)");
 }
 
+// THE BAKED FILE'S HEADER: written, accepted as itself, refused for each field
+// that differs (render/mirror_cube.h, THE FILE).
+void testBakedHeader() {
+    MirrorBakedHeader h;
+    h.version = kMirrorBakedVersion;
+    h.size = kMirrorBakedSize;
+    h.format = kMirrorBakedEtc1;
+    h.rowShift = -40;
+    h.faceBytes = kMirrorBakedFaceBytes;
+    h.stamp = 0x1234567890abcdefull;
+    uint8_t bytes[kMirrorBakedHeaderBytes];
+    mirrorBakedHeaderWrite(h, bytes);
+    const char* why = "unset";
+    check(mirrorBakedHeaderAccepts(bytes, sizeof(bytes), -40, h.stamp, &why) && !why,
+          "a baked header is accepted by the shift and stamp it was written with");
+    check(!mirrorBakedHeaderAccepts(bytes, sizeof(bytes), 40, h.stamp, &why) && why,
+          "another row shift is refused");
+    check(!mirrorBakedHeaderAccepts(bytes, sizeof(bytes), -40, h.stamp ^ 1u, &why) && why,
+          "a stale stamp is refused");
+    check(!mirrorBakedHeaderAccepts(bytes, 63, -40, h.stamp, &why), "a short header is refused");
+    uint8_t other[kMirrorBakedHeaderBytes];
+    memcpy(other, bytes, sizeof(other));
+    other[8] = (uint8_t)(kMirrorBakedVersion + 1);
+    check(!mirrorBakedHeaderAccepts(other, sizeof(other), -40, h.stamp, &why),
+          "another version is refused");
+    memcpy(other, bytes, sizeof(other));
+    other[12] = 0;   // the face size 512 (0x200, little-endian) made 256 (0x100)
+    other[13] = 1;
+    check(!mirrorBakedHeaderAccepts(other, sizeof(other), -40, h.stamp, &why),
+          "another face size is refused");
+    memcpy(other, bytes, sizeof(other));
+    other[0] = 'X';
+    check(!mirrorBakedHeaderAccepts(other, sizeof(other), -40, h.stamp, &why),
+          "another magic is refused");
+    char path[64];
+    mirrorBakedPath("romfs:/orig", 6, -80, path, sizeof(path));
+    check(strcmp(path, "romfs:/orig/mirror/level6_-80.bin") == 0, "the baked cube's path");
+}
+
+// AN ETC1 BLOCK as the PICA holds it (tex3ds' layout: the standard block's 64
+// bits stored little-endian), decoded to RGB for texel (x, y) of the block,
+// y = 0 the block's first row.
+void etc1Texel(const uint8_t* block, int32_t x, int32_t y, uint8_t* rgb) {
+    uint64_t v = 0;
+    for (int32_t i = 7; i >= 0; i--) {
+        v = (v << 8) | block[i];
+    }
+    static const int32_t kTables[8][2] = {{2, 8},   {5, 17},  {9, 29},  {13, 42},
+                                          {18, 60}, {24, 80}, {33, 106}, {47, 183}};
+    const bool diff = ((v >> 33) & 1u) != 0;
+    const bool flip = ((v >> 32) & 1u) != 0;
+    const int32_t sub = flip ? (y >= 2 ? 1 : 0) : (x >= 2 ? 1 : 0);
+    int32_t base[3];
+    for (int32_t c = 0; c < 3; c++) {
+        const int32_t shift = 59 - c * 8;   // R at 63..59 / 63..60, G at 55.., B at 47..
+        if (diff) {
+            const int32_t a = (int32_t)((v >> shift) & 31u);
+            int32_t d = (int32_t)((v >> (shift - 3)) & 7u);
+            if (d >= 4) d -= 8;
+            const int32_t five = sub == 0 ? a : a + d;
+            base[c] = (five << 3) | (five >> 2);
+        } else {
+            const int32_t four = (int32_t)((v >> (sub == 0 ? shift + 1 : shift - 3)) & 15u);
+            base[c] = (four << 4) | four;
+        }
+    }
+    const int32_t table = (int32_t)((v >> (sub == 0 ? 37 : 34)) & 7u);
+    const int32_t bit = x * 4 + y;
+    const int32_t msb = (int32_t)((v >> (bit + 16)) & 1u);
+    const int32_t lsb = (int32_t)((v >> bit) & 1u);
+    const int32_t magnitude = kTables[table][lsb];
+    const int32_t delta = msb ? -magnitude : magnitude;
+    for (int32_t c = 0; c < 3; c++) {
+        const int32_t value = base[c] + delta;
+        rgb[c] = (uint8_t)(value < 0 ? 0 : value > 255 ? 255 : value);
+    }
+}
+
+// A face's texel (x, y) -- y counted from the first memory row -- of the PICA's
+// tiled ETC1: 8x8 tiles row by row, four 4x4 blocks a tile in Z order.
+void etc1FaceTexel(const uint8_t* face, int32_t size, int32_t x, int32_t y, uint8_t* rgb) {
+    const int32_t tile = (y >> 3) * (size >> 3) + (x >> 3);
+    const int32_t block = ((y >> 2) & 1) * 2 + ((x >> 2) & 1);
+    etc1Texel(face + ((size_t)tile * 4u + (size_t)block) * 8u, x & 3, y & 3, rgb);
+}
+
 } // namespace
+
+// THE BAKED CUBES THE BUILD MADE (build-arena-etc1/mirror, when this worktree has
+// built the 3DS RomFS): every texel of every face, decoded as the PICA reads
+// ETC1, against the palette colour of the cell the runtime formula gives it at
+// kMirrorBakedSize -- within ETC1's loss on average, and much nearer than the
+// same face read upside down (the orientation is what a wrong layout breaks).
+int runMirrorBakedTests(const formats::MdkData& data, bool* skipped) {
+    g_failures = 0;
+    *skipped = false;
+    mathLutInit();
+    testBakedHeader();
+    const char* root = "../../build-arena-etc1/mirror";
+    char path[128];
+    snprintf(path, sizeof(path), "%s/level6_0.bin", root);
+    FILE* probe = fopen(path, "rb");
+    if (!probe) {
+        printf("  mirror baked cubes: %s not built (stage the 3DS RomFS first)\n", path);
+        *skipped = true;
+        return g_failures;
+    }
+    fclose(probe);
+    LevelData level;
+    if (!LevelData::load(&level, &data, 6)) {
+        check(false, "LEVEL6 loads");
+        return g_failures;
+    }
+    const formats::Dti& d = level.dti();
+    const formats::Texture& panorama = d.mirrorSky();
+    const uint8_t* pal = d.palette().rgba();
+    const uint64_t stamp = mirrorPanoramaStamp(panorama, pal, d.skyWrapWidth(),
+                                               d.skyHorizonRow(), d.skyOffset());
+    int32_t shifts[kMirrorRowShiftsMax];
+    const int32_t count = mirrorRowShifts(level.arenas(), shifts);
+    const int32_t size = kMirrorBakedSize;
+    const size_t texels = (size_t)size * (size_t)size;
+    std::vector<int16_t> columns(texels);
+    std::vector<int16_t> rows(texels);
+    std::vector<uint8_t> face(texels);
+    for (int32_t i = 0; i < count; i++) {
+        snprintf(path, sizeof(path), "%s/level6_%d.bin", root, (int)shifts[i]);
+        FILE* file = fopen(path, "rb");
+        std::vector<uint8_t> bytes;
+        if (file) {
+            uint8_t chunk[65536];
+            size_t got = 0;
+            while ((got = fread(chunk, 1, sizeof(chunk), file)) > 0) {
+                bytes.insert(bytes.end(), chunk, chunk + got);
+            }
+            fclose(file);
+        }
+        const char* why = nullptr;
+        const bool whole = bytes.size() == (size_t)kMirrorBakedHeaderBytes +
+                                               6u * (size_t)kMirrorBakedFaceBytes;
+        check(whole && mirrorBakedHeaderAccepts(bytes.data(), bytes.size(), shifts[i], stamp,
+                                                &why),
+              "LEVEL6's baked cube is whole and stamped with this data's panorama");
+        if (!whole) {
+            continue;
+        }
+        for (int32_t f = 0; f < kMirrorCubeFaces; f++) {
+            mirrorCubeCells(f, size, d.skyWrapWidth(), d.skyHorizonRow(), d.skyOffset(),
+                            panorama.height(), columns.data(), rows.data());
+            mirrorCubeFace(panorama, columns.data(), rows.data(), (int32_t)texels, shifts[i],
+                           face.data());
+            const uint8_t* blocks = bytes.data() + kMirrorBakedHeaderBytes +
+                                    (size_t)f * (size_t)kMirrorBakedFaceBytes;
+            double error = 0.0;
+            double flipped = 0.0;
+            for (int32_t y = 0; y < size; y++) {
+                for (int32_t x = 0; x < size; x++) {
+                    uint8_t rgb[3];
+                    etc1FaceTexel(blocks, size, x, y, rgb);
+                    const uint8_t* want = pal + face[(size_t)y * (size_t)size + (size_t)x] * 4;
+                    const uint8_t* upside =
+                        pal + face[(size_t)(size - 1 - y) * (size_t)size + (size_t)x] * 4;
+                    for (int32_t c = 0; c < 3; c++) {
+                        error += fabs((double)rgb[c] - (double)want[c]);
+                        flipped += fabs((double)rgb[c] - (double)upside[c]);
+                    }
+                }
+            }
+            error /= (double)texels * 3.0;
+            flipped /= (double)texels * 3.0;
+            if (i == 0 || f == 0) {
+                printf("  mirror baked: LEVEL6 shift %d face %d: mean |error| %.2f "
+                       "(read upside down %.2f)\n", (int)shifts[i], (int)f, error, flipped);
+            }
+            check(error < 8.0, "a baked face decodes to the runtime formula's colours "
+                               "within ETC1's loss (mean |error| under 8 of 255)");
+            check(error * 2.0 < flipped, "a baked face is the right way up (twice as near as "
+                                         "the same face upside down)");
+        }
+    }
+    return g_failures;
+}
 
 int runMirrorCubeTests() {
     g_failures = 0;

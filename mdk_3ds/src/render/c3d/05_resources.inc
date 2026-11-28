@@ -1164,11 +1164,13 @@ void mdk_render_release(MdkRenderer r, MdkScope s) {
 
 // THE MIRROR CUBES (render_c3d_mirror.h; render/mirror_cube.h). Made between
 // frames (the level load), given back at the level's end.
-int32_t mdk_render_create_mirror_cube(MdkRenderer rr, int32_t rowShift) {
+int32_t mdk_render_create_mirror_cube(MdkRenderer rr, int32_t rowShift, int32_t size,
+                                      bool etc1) {
     RendererC3D* r = asC3d(rr);
     // Without the mirrors' programs nothing would sample a cube: none is made
     // (the 2026-11-27 review's F8), and the draws are skipped.
-    if (!r || !r->mirrorReady || r->inFrame || r->mirrorCubeCount >= mdk::kMirrorRowShiftsMax) {
+    if (!r || !r->mirrorReady || r->inFrame || r->mirrorCubeCount >= mdk::kMirrorRowShiftsMax ||
+        size < 8 || size > 1024 || (size & (size - 1)) != 0) {
         return -1;
     }
     for (int32_t i = 0; i < r->mirrorCubeCount; i++) {
@@ -1194,12 +1196,18 @@ int32_t mdk_render_create_mirror_cube(MdkRenderer rr, int32_t rowShift) {
         cube.releasePending = false;
     }
     cube.faces = 0;
-    if (!C3D_TexInitCube(&cube.tex, &cube.cube, (u16)mdk::kMirrorCubeSize,
-                         (u16)mdk::kMirrorCubeSize, GPU_RGB565)) {
-        mdk::log3dsPrintf("mirror: cube for row shift %d refused by the linear heap (%lu free)",
+    if (!C3D_TexInitCube(&cube.tex, &cube.cube, (u16)size, (u16)size,
+                         etc1 ? GPU_ETC1 : GPU_RGB565)) {
+        mdk::log3dsPrintf("mirror: %dx%d %s cube for row shift %d refused by the linear heap "
+                          "(%lu free)", (int)size, (int)size, etc1 ? "ETC1" : "RGB565",
                           (int)rowShift, (unsigned long)linearSpaceFree());
         return -1;
     }
+    cube.etc1 = etc1;
+    cube.size = size;
+    // ETC1 is half a byte a texel, RGB565 two.
+    const uint32_t texels = (uint32_t)(mdk::kMirrorCubeFaces * size * size);
+    cube.bytes = etc1 ? texels / 2u : texels * 2u;
     // The oracle's mirror is nearest (mirror.hlsl Loads its texel); a cube map
     // is clamped at its faces' edges.
     C3D_TexSetFilter(&cube.tex, GPU_NEAREST, GPU_NEAREST);
@@ -1218,21 +1226,47 @@ void mdk_render_set_mirror_cube_face(MdkRenderer rr, int32_t slot, int32_t face,
         return;
     }
     RendererC3D::MirrorCube& cube = r->mirrorCubes[slot];
-    if (!cube.valid || cube.releasePending) {
+    if (!cube.valid || cube.releasePending || cube.etc1) {
         return;
     }
     u32 bytes = 0;
     uint8_t* texels =
         static_cast<uint8_t*>(C3D_TexCubeGetImagePtr(&cube.tex, (GPU_TEXFACE)face, 0, &bytes));
-    const u32 want = (u32)(mdk::kMirrorCubeSize * mdk::kMirrorCubeSize * 2);
+    const u32 want = (u32)(cube.size * cube.size * 2);
     if (!texels || bytes < want) {
         return;
     }
-    mdk::pica::mirrorFaceTexelsRgb565(indices, mdk::kMirrorCubeSize, paletteRgba, texels);
+    mdk::pica::mirrorFaceTexelsRgb565(indices, cube.size, paletteRgba, texels);
     // The CPU wrote the face; the GPU reads it from memory (AGENTS.md P3: cache
     // visibility). Made between frames, so nothing is reading it now.
     GSPGPU_FlushDataCache(texels, want);
     cube.faces = (uint8_t)(cube.faces | (1u << face));
+}
+
+bool mdk_render_set_mirror_cube_face_etc1(MdkRenderer rr, int32_t slot, int32_t face,
+                                          const uint8_t* blocks, uint32_t bytes) {
+    RendererC3D* r = asC3d(rr);
+    if (!r || slot < 0 || slot >= r->mirrorCubeCount || face < 0 ||
+        face >= mdk::kMirrorCubeFaces || !blocks) {
+        return false;
+    }
+    RendererC3D::MirrorCube& cube = r->mirrorCubes[slot];
+    if (!cube.valid || cube.releasePending || !cube.etc1) {
+        return false;
+    }
+    u32 size = 0;
+    void* texels = C3D_TexCubeGetImagePtr(&cube.tex, (GPU_TEXFACE)face, 0, &size);
+    const u32 want = (u32)(cube.size * cube.size / 2);
+    if (!texels || size < want || bytes != want) {
+        return false;
+    }
+    // The build's blocks are the PICA's layout already (tex3ds): a copy.
+    memcpy(texels, blocks, want);
+    // The CPU wrote the face; the GPU reads it from memory (AGENTS.md P3: cache
+    // visibility). Made between frames, so nothing is reading it now.
+    GSPGPU_FlushDataCache(texels, want);
+    cube.faces = (uint8_t)(cube.faces | (1u << face));
+    return true;
 }
 
 void mdk_render_release_mirror_cubes(MdkRenderer rr) {
@@ -1266,8 +1300,7 @@ uint32_t mdk_render_mirror_cube_bytes(MdkRenderer rr) {
     uint32_t bytes = 0;
     for (int32_t i = 0; i < r->mirrorCubeCount; i++) {
         if (r->mirrorCubes[i].valid) {
-            bytes += (uint32_t)(mdk::kMirrorCubeFaces * mdk::kMirrorCubeSize *
-                                mdk::kMirrorCubeSize * 2);
+            bytes += r->mirrorCubes[i].bytes;
         }
     }
     return bytes;

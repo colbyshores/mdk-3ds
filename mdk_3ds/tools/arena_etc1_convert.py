@@ -78,6 +78,7 @@
 import argparse
 import hashlib
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -349,6 +350,144 @@ def convert_skies(frames_dir, out):
     return encoded, kept, failed
 
 
+# THE MIRROR CUBES (mdk_core/src/render/mirror_cube.h, THE BAKED CUBES): the six
+# faces the exporter made for each (level, row shift), each ETC1 by tex3ds (no
+# mips, no container compression, fed row y = 0 first: tex3ds' top is t = 1, the
+# face's first memory row, as the runtime cube writes it), then ONE file a cube,
+# mirror/level<L>_<shift>.bin: the header mirror_cube.h describes (its stamp the
+# exporter's) and the six faces' ETC1 blocks exactly as tex3ds laid them out.
+# Listed in mirror/manifest.txt; incremental on the faces' digest.
+MIRROR_SETTINGS = "mirror;etc1;q=high;nomips;z=none;v1"
+MIRROR_SIZE = 512                 # kMirrorBakedSize
+MIRROR_FACE_BYTES = MIRROR_SIZE * MIRROR_SIZE // 2
+MIRROR_VERSION = 1                # kMirrorBakedVersion
+MIRROR_ETC1 = 1                   # kMirrorBakedEtc1
+GPU_ETC1 = 0x0C
+
+
+def t3x_etc1_payload(path, size):
+    """The ETC1 blocks of a one-sub-texture, mip-free, uncompressed tex3ds file,
+    or None. tex3ds' header: u16 sub-textures, u8 log2 dims (3 bits each, -3),
+    u8 format, u8 mip levels; per sub-texture six u16; then the container header
+    (type 0 = none, 24-bit size) and the data."""
+    data = open(path, "rb").read()
+    if len(data) < 21:
+        return None
+    subs = data[0] | (data[1] << 8)
+    dims = data[2]
+    want_log = size.bit_length() - 1 - 3
+    if subs != 1 or (dims & 7) != want_log or ((dims >> 3) & 7) != want_log or \
+            data[3] != GPU_ETC1 or data[4] != 0:
+        return None
+    at = 5 + 12 * subs
+    kind = data[at]
+    length = data[at + 1] | (data[at + 2] << 8) | (data[at + 3] << 16)
+    payload = data[at + 4:]
+    if kind != 0 or length != size * size // 2 or len(payload) != length:
+        return None
+    return payload
+
+
+def encode_mirror_face(job):
+    src, size = job
+    rgb = np.fromfile(src, np.uint8)
+    if rgb.size != size * size * 3:
+        return None, "%s: %d bytes, not a %dx%d RGB face" % (src, rgb.size, size, size)
+    with tempfile.TemporaryDirectory() as tmp:
+        staged = os.path.join(tmp, "in.png")
+        Image.fromarray(rgb.reshape(size, size, 3), "RGB").save(staged)
+        out = os.path.join(tmp, "out.t3x")
+        r = subprocess.run([TEX3DS, "-f", "etc1", "-q", "high", "-z", "none", staged, "-o", out],
+                           capture_output=True, text=True)
+        if r.returncode != 0 or not os.path.exists(out):
+            return None, "%s: tex3ds failed: %s" % (src, (r.stderr or r.stdout).strip()[:200])
+        payload = t3x_etc1_payload(out, size)
+        if payload is None:
+            return None, "%s: tex3ds wrote a file this converter does not read" % src
+        return payload, None
+
+
+def mirror_header(shift, stamp):
+    h = bytearray(64)
+    h[0:8] = b"MDKMIRR\0"
+    struct.pack_into("<IIIiII", h, 8, MIRROR_VERSION, MIRROR_SIZE, MIRROR_ETC1, shift,
+                     MIRROR_FACE_BYTES, 0)
+    struct.pack_into("<Q", h, 32, stamp)
+    return bytes(h)
+
+
+def convert_mirrors(frames_dir, out, jobs):
+    """Every exported mirror cube as mirror/level<L>_<shift>.bin, listed in
+    mirror/manifest.txt. Returns (encoded now, kept, failed)."""
+    index_path = os.path.join(frames_dir, "mirror", "index.tsv")
+    mirror_out = os.path.join(out, "mirror")
+    os.makedirs(mirror_out, exist_ok=True)
+    manifest_path = os.path.join(mirror_out, "manifest.txt")
+    old = {}
+    if os.path.exists(manifest_path):
+        for line in open(manifest_path):
+            if not line.startswith("#") and line.strip():
+                f = line.rstrip("\n").split("\t")
+                if len(f) == 5:
+                    old[f[0]] = f
+    rows = [line.rstrip("\n").split("\t") for line in open(index_path)
+            if line.strip() and not line.startswith("#")] if os.path.exists(index_path) else []
+    lines = {}
+    todo = []
+    kept = failed = 0
+    for level, shift, size, stamp in rows:
+        size = int(size)
+        name = "level%s_%s" % (level, shift)
+        if size != MIRROR_SIZE:
+            print("arena_etc1_convert: mirror %s: face size %d is not %d -- not encoded"
+                  % (name, size, MIRROR_SIZE), file=sys.stderr)
+            failed += 1
+            continue
+        faces = [os.path.join(frames_dir, "mirror", "%s_%d.rgb" % (name, f)) for f in range(6)]
+        digest = hashlib.sha256()
+        for face in faces:
+            with open(face, "rb") as fh:
+                digest.update(fh.read())
+        digest = digest.hexdigest()[:16]
+        dst = os.path.join(mirror_out, name + ".bin")
+        prev = old.get(name)
+        if prev and prev[3] == digest and prev[2] == stamp and prev[4] == MIRROR_SETTINGS \
+                and os.path.exists(dst):
+            lines[name] = prev
+            kept += 1
+            continue
+        todo.append((name, int(shift), int(stamp, 16), faces, digest, stamp, dst))
+    encoded = 0
+    if todo:
+        face_jobs = [(face, MIRROR_SIZE) for item in todo for face in item[3]]
+        with ProcessPoolExecutor(max_workers=max(1, min(jobs, 4))) as pool:
+            results = list(pool.map(encode_mirror_face, face_jobs))
+        for i, (name, shift, stamp, faces, digest, stamp_hex, dst) in enumerate(todo):
+            mine = results[i * 6:(i + 1) * 6]
+            errors = [err for _, err in mine if err]
+            if errors:
+                for err in errors:
+                    print("arena_etc1_convert: mirror %s" % err, file=sys.stderr)
+                failed += 1
+                continue
+            with open(dst + ".tmp", "wb") as fh:
+                fh.write(mirror_header(shift, stamp))
+                for payload, _ in mine:
+                    fh.write(payload)
+            os.replace(dst + ".tmp", dst)
+            lines[name] = [name, str(MIRROR_SIZE), stamp_hex, digest, MIRROR_SETTINGS]
+            encoded += 1
+    for f in os.listdir(mirror_out):
+        if f.endswith(".bin") and f[:-4] not in lines:
+            os.remove(os.path.join(mirror_out, f))
+    with open(manifest_path + ".tmp", "w") as f:
+        f.write("# name\tsize\tstamp\tfaces_sha256_16\tsettings\n")
+        for name in sorted(lines):
+            f.write("\t".join(lines[name]) + "\n")
+    os.replace(manifest_path + ".tmp", manifest_path)
+    return encoded, kept, failed
+
+
 def build_exporter(build_dir):
     # THE HOST COMPILER, named on the command line: stage_romfs.sh runs this from
     # the 3DS Makefile, which exports CXX=arm-none-eabi-g++ (a command-line
@@ -526,7 +665,10 @@ def main():
     sky_new, sky_kept, sky_failed = convert_skies(frames_dir, out)
     print("arena_etc1_convert: sky %d slices encoded now, %d kept, %d failed" %
           (sky_new, sky_kept, sky_failed))
-    return 1 if failed or sky_failed else 0
+    mirror_new, mirror_kept, mirror_failed = convert_mirrors(frames_dir, out, a.jobs)
+    print("arena_etc1_convert: mirror %d cubes encoded now, %d kept, %d failed" %
+          (mirror_new, mirror_kept, mirror_failed))
+    return 1 if failed or sky_failed or mirror_failed else 0
 
 
 if __name__ == "__main__":

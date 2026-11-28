@@ -60,8 +60,10 @@
 #include "formats/texture_archive.h"
 #include "game/hd_key.h"
 #include "game/level_data.h"
+#include "render/mirror_cube.h"
 #include "render/sky_dome.h"
 #include "test_support.h"
+#include "util/math_lut.h"
 
 namespace {
 
@@ -138,6 +140,70 @@ bool exportSky(const std::string& dir, FILE* index, int32_t levelNumber,
     return true;
 }
 
+// THE MIRROR CUBES (render/mirror_cube.h, THE BAKED CUBES; the runtime build is
+// level_load_3ds.cpp buildMirrorCubes3ds): for every row shift the level's
+// arenas use, the six faces at kMirrorBakedSize, made by the console's own
+// mirrorCubeCells/mirrorCubeFace from the DTI's mirror panorama and expanded
+// through the level's base palette, index 0 included (its colour, as
+// pica::mirrorFaceTexelsRgb565 keeps it: a mirror is opaque). Row y = 0 first,
+// the face's first memory row. Written to <out>/mirror/:
+//   level<L>_<shift>_<face>.rgb   kMirrorBakedSize^2 RGB
+//   index.tsv                     level, shift, size, stamp (16 hex digits)
+bool exportMirror(const std::string& dir, FILE* index, int32_t levelNumber,
+                  const mdk::LevelData& level) {
+    int32_t shifts[mdk::kMirrorRowShiftsMax];
+    const int32_t count = mdk::mirrorRowShifts(level.arenas(), shifts);
+    if (count == 0) {
+        return true;
+    }
+    const mdk::formats::Dti& dti = level.dti();
+    const mdk::formats::Texture& panorama = dti.mirrorSky();
+    const uint8_t* pal = dti.palette().rgba();
+    if (!panorama.indices() || !pal || dti.skyWrapWidth() <= 0 ||
+        panorama.width() < dti.skyWrapWidth()) {
+        fprintf(stderr, "arena_tex_export: level %d has mirrors but no usable panorama, "
+                        "skipped\n", (int)levelNumber);
+        return true;
+    }
+    const uint64_t stamp = mdk::mirrorPanoramaStamp(panorama, pal, dti.skyWrapWidth(),
+                                                    dti.skyHorizonRow(), dti.skyOffset());
+    const int32_t size = mdk::kMirrorBakedSize;
+    const size_t texels = (size_t)size * (size_t)size;
+    std::vector<int16_t> columns(texels);
+    std::vector<int16_t> rows(texels);
+    std::vector<uint8_t> face(texels);
+    std::vector<uint8_t> rgb(texels * 3u);
+    for (int32_t f = 0; f < mdk::kMirrorCubeFaces; f++) {
+        mdk::mirrorCubeCells(f, size, dti.skyWrapWidth(), dti.skyHorizonRow(), dti.skyOffset(),
+                             panorama.height(), columns.data(), rows.data());
+        for (int32_t i = 0; i < count; i++) {
+            if (!mdk::mirrorCubeFace(panorama, columns.data(), rows.data(), (int32_t)texels,
+                                     shifts[i], face.data())) {
+                fprintf(stderr, "arena_tex_export: level %d mirror shift %d: no face\n",
+                        (int)levelNumber, (int)shifts[i]);
+                return false;
+            }
+            for (size_t t = 0; t < texels; t++) {
+                rgb[t * 3 + 0] = pal[face[t] * 4 + 0];
+                rgb[t * 3 + 1] = pal[face[t] * 4 + 1];
+                rgb[t * 3 + 2] = pal[face[t] * 4 + 2];
+            }
+            char name[64];
+            snprintf(name, sizeof(name), "/level%d_%d_%d.rgb", (int)levelNumber, (int)shifts[i],
+                     (int)f);
+            if (!writeFile(dir + name, rgb)) {
+                fprintf(stderr, "arena_tex_export: cannot write %s%s\n", dir.c_str(), name);
+                return false;
+            }
+        }
+    }
+    for (int32_t i = 0; i < count; i++) {
+        fprintf(index, "%d\t%d\t%d\t%016llx\n", (int)levelNumber, (int)shifts[i], (int)size,
+                (unsigned long long)stamp);
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -156,6 +222,7 @@ int main(int argc, char** argv) {
         }
     }
     mkdir(out.c_str(), 0755);
+    mdk::mathLutInit();   // mirrorCubeCells' trig (AGENTS.md R6)
 
     mdk::formats::setFileSystem(mdk::test::host::fileSystem());
     const mdk::formats::MdkData data = mdk::formats::MdkData::find(mdk::formats::fileSystem());
@@ -179,6 +246,16 @@ int main(int argc, char** argv) {
         return 1;
     }
     fprintf(skyIndex, "# level\tslice\tfirst_column\tstored_width\theight\twrap_width\n");
+    const std::string mirrorDir = out + "/mirror";
+    mkdir(mirrorDir.c_str(), 0755);
+    FILE* mirrorIndex = fopen((mirrorDir + "/index.tsv").c_str(), "w");
+    if (!mirrorIndex) {
+        fprintf(stderr, "arena_tex_export: cannot write %s/index.tsv\n", mirrorDir.c_str());
+        fclose(index);
+        fclose(skyIndex);
+        return 1;
+    }
+    fprintf(mirrorIndex, "# level\tshift\tsize\tstamp\n");
     std::set<std::string> writtenKeys;
     int32_t entries = 0;
     int32_t skipped = 0;
@@ -266,14 +343,17 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        if (!exportSky(skyDir, skyIndex, levels[l], level.dti())) {
+        if (!exportSky(skyDir, skyIndex, levels[l], level.dti()) ||
+            !exportMirror(mirrorDir, mirrorIndex, levels[l], level)) {
             fclose(index);
             fclose(skyIndex);
+            fclose(mirrorIndex);
             return 1;
         }
     }
     fclose(index);
     fclose(skyIndex);
+    fclose(mirrorIndex);
     printf("arena_tex_export: %d texture uses over %d levels, %d distinct images, %d skipped\n",
            (int)entries, (int)levels.size(), (int)writtenKeys.size(), (int)skipped);
     return 0;

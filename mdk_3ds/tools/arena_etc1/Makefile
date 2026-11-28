@@ -38,7 +38,9 @@ SOURCES := \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/game/level_data.cpp \
 	$(CORE)/game/hd_key.cpp \
-	$(CORE)/render/sky_dome.cpp
+	$(CORE)/render/sky_dome.cpp \
+	$(CORE)/render/mirror_cube.cpp \
+	$(CORE)/render/material_resolver.cpp
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))
 VPATH := $(sort $(dir $(SOURCES)))
