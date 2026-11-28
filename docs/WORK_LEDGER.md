@@ -5565,7 +5565,8 @@ What is worse, plainly:
 
 - **What:** removed `src/`, `Directory.Build.props`, `MdkSdl.slnx`, `publish.bat`, the HLSL
   `shaders/`, `assets/` (the C# icon), the C# test projects and `tests/Shared`, the 26
-  `tests/*_test.sh` that drive the C# binary, the C# probes `tests/scripts/*_probe/`, the C#
+  `tests/*_test.sh` that drive the C# binary, the C# probes `tests/scripts/*_probe/` (with
+  `blend_probe`, merged in from main at `c9705c80`; its golden and tick1 checks stay), the C#
   CI workflow, `tools/{publish.sh,gen_icon.py,gen_opcodes.py,godot-reference/}`, upstream's
   `docs/architecture.md` and `docs/media/`; `ralph/`, `ralph-pi.sh`, the loop's service,
   watchdog, retired Muse script, qwen-slot reclaimer, review-state machine, model resolver and

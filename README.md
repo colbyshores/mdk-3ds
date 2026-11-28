@@ -14,8 +14,9 @@ port is the reference the C++ code is checked against; it is no longer in this t
 `d5bb66ec` (also in this repository's history: `git show d5bb66ec:src/Mdk.Game/Kurt/Kurt.cs`),
 unless they name a later upstream fix, which is in upstream's history. The C# probes that
 produced the pinned goldens in `tests/scripts/golden/` (`tests/scripts/*_probe/`) and the C#
-port's own tests are in this repository's history at `92a72116`; the frame oracle
-(`tests/frames/capture_oracle.sh`) builds the C# from `d5bb66ec` by itself.
+port's own tests are in this repository's history at `92a72116` (`blend_probe`, built against
+upstream C# 1.2.6 `1094e273`, at `c9705c80`); the frame oracle (`tests/frames/capture_oracle.sh`)
+builds the C# from `d5bb66ec` by itself.
 
 > [!IMPORTANT]
 > **You need your own copy of the original game.** This repository contains no data from MDK:
