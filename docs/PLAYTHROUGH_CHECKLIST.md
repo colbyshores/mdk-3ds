@@ -497,6 +497,12 @@ stream screen's sound placement, LEVEL3/LEVEL4 sound and texture census.
 
 ## Decisions waiting
 
+- **Kurt cut by walls and ledges** (fix/kurt-sprite-depth, docs only): his
+  sprite is hidden where it overlaps a wall he walks along, or a ledge edge he
+  steps down from -- the C#'s depth rule, which only pulls him in front of
+  floors. Seen in L3 HMO_1 (the ramp wall beside the start), L4 MEAT_1 (the
+  start tube), L5 MUSE_2/3, L6 OLYM_4/7, L7 DANT_1, L8 GUNT_1. Fix it the
+  original's way (BSP draw order, both targets, differs from the PC port)?
 - **Mip cap on wide 2:1 and 16:1 ETC1 textures:** measured right in the test
   program, capped anyway with the other non-square shapes (default: capped).
   Uncap them?
