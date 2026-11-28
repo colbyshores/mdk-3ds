@@ -5499,3 +5499,20 @@ What is worse, plainly:
 - **Not verified:** the New 3DS; LEVEL3/5/8 mirrors and LEVEL6's XF/XBSHARK on hardware; the
   geometry-mode program is inferred from `lighting=1` (no per-draw counter); the face size
   (128) is a memory choice the owner may want to A/B.
+
+## 2026-11-27 -- HOME-menu banner: the approved v3 kept in `banner/` (owner's backup)
+
+- **What:** `banner/` committed: `v3/` (the approved HOME banner `mdk_banner_v3.bnr`, its
+  CGFX, the self-contained generator zip that rebuilds the `.bnr` byte for byte, a preview
+  and README), and the source audio `mdk_clip.wav` with its Audacity project. `Mdk12.flc`
+  (a copy of the game's title FLIC) stays ignored, as `banner/.gitignore` says.
+- **Why:** the owner's art project for MDK's HOME-menu banner, approved on their New 3DS as
+  test title "R3-a MDK ship" (0xF7A58): faces the camera like Forsaken's banner, no flicker at
+  pose changes, plays once and holds. Committed as the owner's online backup.
+- **Evidence:** v2 froze HOME (30 meshes / 29 animated members); bisect on the owner's console:
+  T2K's model + v2 sound ran, v2 model + T2K sound froze; Astra's 4-mesh rebuild ran but
+  rotated, flickered (HOME interpolates the keys) and looped; v3 fixes all three. Details in
+  `banner/v3/README.md`. The other candidates (v1, v2, Astra's, test rounds) were deleted on
+  the owner's word.
+- **Not done:** the MDK CIA does not use it yet. `mdk_3ds/Makefile` hands `cia/banner.png` to
+  `makerom -banner` (a PNG, not a CBMD) -- fix at the CIA step, with the SMDH banner flag.
