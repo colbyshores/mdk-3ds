@@ -7,7 +7,15 @@ which is how it is developed and tested on a PC.
 It is a C++ port of the C# and SDL3 port
 [mdk-sdl](https://github.com/nautilusbits/mdk-sdl) by Marek Draškaba, which in turn reuses the
 reverse engineering of the Godot port [mdk-godot](https://github.com/nemo22/mdk-godot). The C#
-source is kept in `src/` as the reference the C++ code is checked against; it is not built here.
+port is the reference the C++ code is checked against; it is no longer in this tree.
+
+**C# references.** Comments, tests and docs here cite C# files and lines (`Player.cs:123`,
+`src/Mdk.Game/...`, `tests/Mdk.Game.Tests/...`). They refer to upstream C# 1.1.1, commit
+`d5bb66ec` (also in this repository's history: `git show d5bb66ec:src/Mdk.Game/Kurt/Kurt.cs`),
+unless they name a later upstream fix, which is in upstream's history. The C# probes that
+produced the pinned goldens in `tests/scripts/golden/` (`tests/scripts/*_probe/`) and the C#
+port's own tests are in this repository's history at `92a72116`; the frame oracle
+(`tests/frames/capture_oracle.sh`) builds the C# from `d5bb66ec` by itself.
 
 > [!IMPORTANT]
 > **You need your own copy of the original game.** This repository contains no data from MDK:
@@ -165,9 +173,7 @@ tools/check.sh               # the code rules (AGENTS.md)
   (PICA200), `tools/` (data staging, texture and music conversion, HD pack), `music/`, `Makefile`.
 - `mdk_linux/`: the Linux build: `src/` (SDL3, Vulkan renderer), `shaders/`, `third_party/`
   (Vulkan headers, volk), `CMakeLists.txt`.
-- `tests/`: `formats/` and `scripts/` test the C++ code; the `*.sh` scripts at the top test the
-  C# port.
-- `src/`, `shaders/`: the C# port this one is checked against (not built here).
+- `tests/`: `formats/` and `scripts/` test the C++ code; `frames/` is the pinned-frame golden.
 - `docs/`: notes on the original game, its formats and this port. `AGENTS.md` and `SPEC.md` are
   the development rules and plan.
 

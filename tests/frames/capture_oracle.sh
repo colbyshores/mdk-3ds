@@ -25,10 +25,14 @@
 #                          fixed step and nothing on frame 1 draws on the
 #                          unseeded Random), and a later frame needs the
 #                          oracle's own --frames mode.
-#   MDK_ORACLE_ROOT        the C# tree the oracle is built from (default this
-#                          repository: C# 1.1.1). A checkout of upstream at a
-#                          fix the C++ ports (git worktree add --detach <dir>
-#                          <hash>) makes that fix's frame the reference.
+#   MDK_ORACLE_ROOT        a C# tree to build the oracle from. Unset, the oracle
+#                          is MDK_ORACLE_REV out of this repository's history.
+#                          A checkout of upstream at a fix the C++ ports (git
+#                          worktree add --detach <dir> <hash>) makes that fix's
+#                          frame the reference.
+#   MDK_ORACLE_REV         the commit the oracle is extracted from when
+#                          MDK_ORACLE_ROOT is unset (default d5bb66ec, upstream
+#                          C# 1.1.1; the C# is no longer in the working tree).
 #   VK_ICD_FILENAMES       the lavapipe ICD, for a GPU-less host
 #
 # Why the namespace: /tmp/.X11-unix and /tmp/.X99-lock belong to another user
@@ -90,21 +94,33 @@ if [ ! -f "$DATA/TRAVERSE/TRAVSPRT.BNI" ]; then
 fi
 
 # --- the source tree -------------------------------------------------------
-# Copied, not symlinked: the build writes obj/ and bin/ next to the sources,
-# and the repository's own src/ must stay untouched.
+# Copied, not symlinked: the build writes obj/ and bin/ next to the sources.
+# Without MDK_ORACLE_ROOT the tree is extracted from MDK_ORACLE_REV in this
+# repository's history, so the reference does not depend on the working tree.
 mkdir -p "$SCRATCH"
-ORACLE_ROOT=${MDK_ORACLE_ROOT:-$ROOT}
-for item in src assets shaders Directory.Build.props; do
-    if [ ! -e "$ORACLE_ROOT/$item" ]; then
-        echo "capture_oracle: $ORACLE_ROOT/$item is missing" >&2
+ORACLE_ITEMS="src assets shaders Directory.Build.props"
+for item in $ORACLE_ITEMS; do
+    rm -rf "${SCRATCH:?}/$item"
+done
+if [ -n "${MDK_ORACLE_ROOT:-}" ]; then
+    for item in $ORACLE_ITEMS; do
+        if [ ! -e "$MDK_ORACLE_ROOT/$item" ]; then
+            echo "capture_oracle: $MDK_ORACLE_ROOT/$item is missing" >&2
+            exit 1
+        fi
+        # cp -R, not cp -a: the working tree lives on a mount that cannot carry
+        # the source's mode/ownership, so -a spends a line of "Operation not
+        # supported" per file and changes nothing.
+        cp -R "$MDK_ORACLE_ROOT/$item" "$SCRATCH/$item"
+    done
+else
+    REV=${MDK_ORACLE_REV:-d5bb66ec}
+    # shellcheck disable=SC2086 # the item list is meant to split
+    if ! git -C "$ROOT" archive --format=tar "$REV" $ORACLE_ITEMS | tar -x -C "$SCRATCH"; then
+        echo "capture_oracle: could not extract $ORACLE_ITEMS from $REV (set MDK_ORACLE_ROOT)" >&2
         exit 1
     fi
-    rm -rf "${SCRATCH:?}/$item"
-    # cp -R, not cp -a: the working tree lives on a mount that cannot carry the
-    # source's mode/ownership, so -a spends a line of "Operation not supported"
-    # per file and changes nothing.
-    cp -R "$ORACLE_ROOT/$item" "$SCRATCH/$item"
-done
+fi
 
 # --- the shaders -----------------------------------------------------------
 # The repo's build uses dxc; this machine has no dxc that emits SPIR-V, but it

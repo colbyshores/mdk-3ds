@@ -1,8 +1,8 @@
 # The original engine
 
 How MDK (Shiny Entertainment, 1997) works inside, reverse engineered from `MDKD3D.EXE` with
-Ghidra. This page is an overview. The data files are in [formats.md](formats.md), and the port's
-own structure is in [architecture.md](architecture.md).
+Ghidra. This page is an overview. The data files are in [formats.md](formats.md), and the C++
+port's structure is in [SPEC.md](../SPEC.md).
 
 ## In short
 
