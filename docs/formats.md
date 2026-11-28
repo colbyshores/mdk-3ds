@@ -1,7 +1,8 @@
 # MDK file formats
 
 The original game's data files (MDK, Shiny Entertainment, 1997), reverse engineered from the data
-and from `MDKD3D.EXE`. Each section names the parser in `src/Mdk.Formats`. How the engine uses
+and from `MDKD3D.EXE`. Each section names the parser in the C# port's `src/Mdk.Formats` (upstream 1.1.1, `d5bb66ec`;
+the C++ parsers are in `mdk_core/src/formats`). How the engine uses
 the data is in [original-engine.md](original-engine.md).
 
 Conventions:

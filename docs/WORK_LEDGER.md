@@ -5516,3 +5516,33 @@ What is worse, plainly:
   the owner's word.
 - **Not done:** the MDK CIA does not use it yet. `mdk_3ds/Makefile` hands `cia/banner.png` to
   `makerom -banner` (a PNG, not a CBMD) -- fix at the CIA step, with the SMDH banner flag.
+
+## 2026-11-27 -- cleanup: the C# original, the ralph loop and their leftovers leave the tree
+
+- **What:** removed `src/`, `Directory.Build.props`, `MdkSdl.slnx`, `publish.bat`, the HLSL
+  `shaders/`, `assets/` (the C# icon), the C# test projects and `tests/Shared`, the 26
+  `tests/*_test.sh` that drive the C# binary, the C# probes `tests/scripts/*_probe/`, the C#
+  CI workflow, `tools/{publish.sh,gen_icon.py,gen_opcodes.py,godot-reference/}`, upstream's
+  `docs/architecture.md` and `docs/media/`; `ralph/`, `ralph-pi.sh`, the loop's service,
+  watchdog, retired Muse script, qwen-slot reclaimer, review-state machine, model resolver and
+  their test, `.kilo/`, `docs/KILO_RALPH_LOOP_POLICY.md`, two Qwen handoffs and the
+  2026-11-05 loop directive. `tests/frames/capture_oracle.sh` builds the C# from `d5bb66ec`
+  in history by itself; `gates_batch_integrity.py` drops the loop's markers and the
+  parked-Muse check. AGENTS.md §0 and SPEC.md (header, G6, §1.3, §3, §6.2, §11,
+  §12, §13, risks) say the C# is upstream 1.1.1 and keep the implement / gate + independent
+  review / fix / commit discipline without the loop's scripts. README says where C#
+  citations (`Player.cs:123`, `tests/Mdk.Game.Tests/...`) and the probes now live.
+- **Why:** the owner (2026-11-27): the C# original is gone from the project, upstream is the
+  reference, and the ralph loop, `publish.bat` and `Directory.Build.props` are not needed.
+- **Evidence:** no C++ test ran the C# (the host suites compare against pinned goldens);
+  `src/`, `shaders/`, `assets/`, the props and the C# tests were byte-identical to
+  `d5bb66ec`. Linux `cmake` build 0 warnings, its L3 frame equal to the pinned `cpp=` hash;
+  `make -C tests/formats` 0 failures; `make -C tests/scripts test` green; `tools/check.sh` all
+  gates passed (SMDH skipped, no CIA); `make -C mdk_3ds` built `mdk.3dsx`; an independent
+  read-only review of the diff found no blockers (its doc nits fixed).
+- **Kept, owner to decide:** `SPEC-COMPLETION.md` (the loop builder's brief, but the ledger,
+  SPEC 7.9 and the frame gate cite it; protected), `.github/FUNDING.yml` (upstream author's
+  sponsor link). Kept on purpose: `docs/HANDOFF_MUSE.md`, `docs/CONTINUATION.md`,
+  `docs/PROGRESS_LOG.md` (C++ code and tests cite them), `docs/formats.md`,
+  `docs/original-engine.md`, `docs/modding.md` (the 3DS HD tools cite it).
+- **Commit:** branch `chore/remove-legacy` (not merged, not pushed).

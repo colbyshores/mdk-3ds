@@ -167,8 +167,8 @@ mdk-sdl/
 │       └── contracts/{vfp_hotpath.md, hotpath_corpus.json}
 ├── tests/
 │   ├── formats/                 ← C++ unit tests (Catch2-free, hand-rolled)
-│   ├── golden/                  ← C#-vs-C++ state + frame comparison
-│   └── shell/                   ← console_test.sh, alloc_test.sh equivalents
+│   ├── scripts/                 ← the game logic against the C#'s pinned golden state
+│   └── frames/                  ← the pinned-frame golden
 ```
 
 **Rules.**
@@ -405,7 +405,7 @@ builder state. No class hierarchy, no virtuals.
 
 ### 6.2 Shaders
 
-The C# shaders are HLSL (`shaders/*.hlsl`, 930 lines). They are **re-authored in
+The C# shaders are HLSL (`shaders/*.hlsl` at `d5bb66ec`, 930 lines). They are **re-authored in
 GLSL** for the Vulkan backend, keeping the C# structure so the two stay
 diffable:
 
@@ -1045,7 +1045,7 @@ C# format test gets a C++ twin:
 - The BSP node layout: 44-byte retail and 36-byte beta-demo nodes.
 - The script decoder: every opcode of the 251-opcode table.
 
-The C# xUnit tests under `tests/Mdk.Formats.Tests` are the specification; the
+The C# xUnit tests under `tests/Mdk.Formats.Tests` (at `d5bb66ec`) are the specification; the
 C++ tests mirror them one-for-one, including the fixture bytes.
 
 ### 11.2 Golden-state tests

@@ -415,8 +415,8 @@ own cost.
 
 ## 6. Conventions to keep
 
-- Loop: implement → `tools/check.sh` + adversarial validator on a DIFFERENT
-  model family (`ralph/validator.md`) → fix → commit → hardware cycle. Never
+- Loop: implement → `tools/check.sh` + an independent adversarial review
+  (`AGENTS.md` §0; `ralph/validator.md` is retired) → fix → commit → hardware cycle. Never
   commit un-checked; never end a turn with committed work by only summarising.
 - Golden: `gates_frames` pins `L3_f1.bmp` byte-identical — any pixel change
   fails the gate and needs an owner fidelity call.
