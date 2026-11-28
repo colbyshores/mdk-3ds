@@ -185,6 +185,25 @@ bool ArenaViews::refresh(const std::string& arena) {
     return true;
 }
 
+int32_t ArenaViews::kurtCover(const std::vector<std::string>& drawn, KurtCover::Source* out,
+                              int32_t max) const {
+    int32_t count = 0;
+    for (size_t d = 0; d < drawn.size() && count < max && out != nullptr; d++) {
+        bool seen = false;
+        for (size_t k = 0; k < d; k++) {
+            seen = seen || drawn[k] == drawn[d];
+        }
+        const LevelView* view = seen ? nullptr : find(drawn[d]);
+        if (view == nullptr || !view->ready() || view->arena() == nullptr) {
+            continue;
+        }
+        out[count].arena = view->arena();
+        out[count].scene = &view->scene();
+        count++;
+    }
+    return count;
+}
+
 const LevelView* ArenaViews::find(const std::string& name) const {
     for (size_t i = 0; i < views_.size(); i++) {
         if (views_[i].name == name) {

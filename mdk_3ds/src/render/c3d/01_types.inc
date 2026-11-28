@@ -454,6 +454,21 @@ struct PreparedDraw {
 const int8_t kStencilOff = 0;
 const int8_t kStencilMark = 1;
 const int8_t kStencilTest = 2;
+// KURT'S PASSES (render_types.h KurtPass; docs/DIVERGENCES.md), in the bits
+// mdk::kKurt*Bit, after the Mirror bucket (06_queue.inc prepareQueue): a
+// surface of his own space sets its bit where it is in front of everything
+// drawn so far (no colour, no depth written; glass its own bit); his sprite
+// draws depth-tested where the mark is clear, and with no depth test where it is
+// set, clearing it; both set "drawn". An arena glass batch is not drawn where
+// "drawn" and the glass bit are both set.
+const int8_t kStencilKurtMark = 3;
+const int8_t kStencilKurtTested = 4;
+const int8_t kStencilKurtOver = 5;
+const int8_t kStencilKurtMarkGlass = 6;
+const int8_t kStencilKurtGlass = 7;
+// RendererC3D::blendPass while the Kurt mark's keep-the-target blend is
+// installed: no pass has this value, so the next draw installs its own.
+const int kBlendPassKurtMark = -4;
 
 struct RendererC3D {
     C3D_RenderTarget* targetLeft = nullptr;
@@ -664,6 +679,7 @@ struct RendererC3D {
     // the exempt passes neither test nor write.
     bool depthTest = true;
     bool depthWrite = true;
+    bool depthAlways = false;   // DepthState::always (Kurt's Over pass)
     // The stencil use installed (kStencil*, 03_frame_state.inc installStencil),
     // cached as the depth state is: C3D_StencilTest dirties the effect block too.
     int stencilMode = -1;

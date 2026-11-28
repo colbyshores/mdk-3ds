@@ -304,6 +304,10 @@ struct DepthState {
     // The scene insets' depth reset (06_queue.inc drawSceneInsets): every fragment
     // passes and writes its depth, and no colour.
     bool reset = false;
+    // Kurt's Over pass (render_types.h KurtPass): every fragment passes the depth
+    // test (GPU_ALWAYS) and is written as `write` says, colour included. The
+    // stencil is what limits it, to the surfaces of his own space.
+    bool always = false;
 };
 
 // THE SUN SHADOW'S RECEIVE PASS: tested for equality, never written.

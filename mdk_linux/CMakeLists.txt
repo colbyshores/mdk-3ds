@@ -150,6 +150,7 @@ set(SOURCES
     ${CORE}/src/game/hud_view.cpp
     ${CORE}/src/game/kurt.cpp
     ${CORE}/src/game/kurt_sprite.cpp
+    ${CORE}/src/game/kurt_cover.cpp
     ${CORE}/src/game/level_data.cpp
     ${CORE}/src/game/arena_views.cpp
     ${CORE}/src/game/level_flow.cpp

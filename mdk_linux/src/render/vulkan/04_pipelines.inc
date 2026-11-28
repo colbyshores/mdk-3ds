@@ -74,7 +74,74 @@ VkShaderModule createModule(mdk::vk::Context* ctx, const uint32_t* code, size_t 
 // (GREATER_OR_EQUAL; drawBuckets narrows the depth range to the far plane, so
 // that is wherever the draw lies), so the other arena's depth under the camera's
 // arena gives way to it.
-VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive, bool cover) {
+// KURT'S PASSES (render_types.h KurtPass; docs/DIVERGENCES.md): the depth and
+// stencil state of a Mark, Tested or Over draw, over the pass's own. `kurt` is a
+// KurtPass value; None leaves the state alone. Used by the palette pipelines and
+// the enhanced ones alike, so the two looks mark and draw Kurt the same way.
+void kurtDepthStencil(int kurt, VkPipelineDepthStencilStateCreateInfo* ds,
+                      VkPipelineColorBlendAttachmentState* cb) {
+    if (kurt == (int)mdk::KurtPass::None) {
+        return;
+    }
+    const uint32_t mark = mdk::kKurtStencilBit;
+    const uint32_t glass = mdk::kKurtGlassBit;
+    const uint32_t drawn = mdk::kKurtDrawnBit;
+    VkStencilOpState op = {};
+    op.failOp = VK_STENCIL_OP_KEEP;
+    op.depthFailOp = VK_STENCIL_OP_KEEP;
+    op.passOp = VK_STENCIL_OP_KEEP;
+    op.compareOp = VK_COMPARE_OP_ALWAYS;
+    op.compareMask = 0;
+    op.writeMask = 0;
+    op.reference = 0;
+    if (kurt == (int)mdk::KurtPass::Mark || kurt == (int)mdk::KurtPass::MarkGlass) {
+        // No colour, no depth: its bit, where the surface is in front of
+        // everything drawn so far.
+        ds->depthTestEnable = VK_TRUE;
+        ds->depthWriteEnable = VK_FALSE;
+        ds->depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        cb->blendEnable = VK_FALSE;
+        cb->colorWriteMask = 0;
+        op.passOp = VK_STENCIL_OP_REPLACE;
+        op.writeMask = kurt == (int)mdk::KurtPass::Mark ? mark : glass;
+        op.reference = op.writeMask;
+    } else if (kurt == (int)mdk::KurtPass::Tested) {
+        // Where the mark is clear: the pass's own depth state; "drawn" set.
+        op.compareOp = VK_COMPARE_OP_EQUAL;
+        op.compareMask = mark;
+        op.reference = drawn;   // its mark bit is 0
+        op.passOp = VK_STENCIL_OP_REPLACE;
+        op.writeMask = drawn;
+    } else if (kurt == (int)mdk::KurtPass::Over) {
+        // Where the mark is set: no depth test (still written); the mark
+        // cleared and "drawn" set in one replace.
+        ds->depthTestEnable = VK_TRUE;
+        ds->depthWriteEnable = VK_TRUE;
+        ds->depthCompareOp = VK_COMPARE_OP_ALWAYS;
+        op.compareOp = VK_COMPARE_OP_NOT_EQUAL;
+        op.compareMask = mark;
+        op.reference = drawn;   // its mark bit is 0
+        op.passOp = VK_STENCIL_OP_REPLACE;
+        op.writeMask = mark | drawn;
+    } else {
+        // Glass: not where Kurt was drawn over a glass surface of his own space.
+        op.compareOp = VK_COMPARE_OP_NOT_EQUAL;
+        op.compareMask = glass | drawn;
+        op.reference = glass | drawn;
+    }
+    ds->stencilTestEnable = VK_TRUE;
+    ds->front = op;
+    ds->back = op;
+}
+
+// The Kurt pass a draw's pipeline is made for (04_pipelines.inc kurtDepthStencil):
+// its own, or None without a stencil (a Tested draw is then the plain draw).
+int kurtPipelinePass(const RendererVk* r, const mdk::MeshDraw* draw) {
+    return r->ctx.depthHasStencil ? (int)draw->kurt : (int)mdk::KurtPass::None;
+}
+
+VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive, bool cover,
+                          int kurt) {
     VkPipelineVertexInputStateCreateInfo vi = {};
     vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     VkVertexInputBindingDescription binding = {};
@@ -146,6 +213,7 @@ VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive, boo
     cb.colorWriteMask = cover ? 0
                               : (VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                  VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
+    kurtDepthStencil(kurt, &ds, &cb);
     VkPipelineColorBlendStateCreateInfo cbs = {};
     cbs.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     cbs.attachmentCount = 1;
@@ -195,14 +263,18 @@ VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive, boo
     return pipeline;
 }
 
-VkPipeline getPipeline(RendererVk* r, int pass, int blend, int primitive) {
-    const int key = pass * 16 + blend * 4 + primitive;
+VkPipeline getPipeline(RendererVk* r, int pass, int blend, int primitive, int kurt) {
+    // A Kurt pass's pipeline under keys 256.. (no pass/blend/primitive key
+    // reaches them). Kurt's draws are DoubleSided, so Over's 1024 + 16.. stays
+    // clear of the cover keys 1024 + Solid/DoubleSided... -- of 1024 + 1 only by
+    // that; a Kurt pass on another pass would need its own key range.
+    const int key = pass * 16 + blend * 4 + primitive + kurt * 256;
     for (size_t i = 0; i < r->pipelines.size(); i++) {
         if (r->pipelines[i].key == key) {
             return r->pipelines[i].pipeline;
         }
     }
-    VkPipeline p = createPipeline(r, pass, blend, primitive, false);
+    VkPipeline p = createPipeline(r, pass, blend, primitive, false, kurt);
     PipelineVk entry;
     entry.key = key;
     entry.pipeline = p;
@@ -219,7 +291,7 @@ VkPipeline getCoverPipeline(RendererVk* r, int pass) {
             return r->pipelines[i].pipeline;
         }
     }
-    VkPipeline p = createPipeline(r, pass, 0, 0, true);
+    VkPipeline p = createPipeline(r, pass, 0, 0, true, 0);
     PipelineVk entry;
     entry.key = key;
     entry.pipeline = p;

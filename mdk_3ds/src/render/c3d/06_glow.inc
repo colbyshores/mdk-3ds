@@ -156,6 +156,10 @@ static void glowDrawState(RendererC3D* r, C3D_Tex* view) {
 static void drawGlowBillboards(RendererC3D* r);
 
 static void drawGlow(RendererC3D* r) {
+    // The stencil off: the scene's last record may have left one of Kurt's
+    // modes (01_types.inc kStencilKurt*) or the glass's installed, and neither
+    // the halos nor the bloom's blur targets are his.
+    installStencil(r, kStencilOff);
     if (r->billboardsLive) {
         drawGlowBillboards(r);   // the 3DS default (config glowBloom = 0)
         return;

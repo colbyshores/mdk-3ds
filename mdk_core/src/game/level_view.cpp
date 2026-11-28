@@ -432,6 +432,11 @@ void LevelView::draw(ArenaLayer layer, const Vec3& boxMin, const Vec3& boxMax, c
         draw.material.shading = batch.surface.shading;
         draw.material.row_shift = batch.surface.rowShift;
         draw.material.depth_layer = batch.depthLayer;
+        // The glass is not drawn over Kurt where it is a surface of his own
+        // space (render_types.h KurtPass::Glass; docs/DIVERGENCES.md).
+        if (batch.surface.pass == Pass::Blended) {
+            draw.kurt = KurtPass::Glass;
+        }
         // The colour is applied EXACTLY ONCE. A flat surface's colour is
         // already carried by the one-pixel texture above (that is why the
         // flat texture exists -- the PICA200 cannot take a constant), so

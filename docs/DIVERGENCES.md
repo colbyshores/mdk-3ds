@@ -29,6 +29,7 @@ divergences, and rounding that changes behaviour, are fixed and pinned.
 | D5 | L8 GUNT_2: one extra debris piece over s=152-161 | debris bounce scaled by `dot*1.4` instead of `(n*dot)*1.4`; the effects' bounce did the same | port bug (operation order) | **fixed**, golden `L8_hazards_debris` | barely: one piece lasts 1/6 s longer |
 | D6 | Stream: 45 pixels on Kurt | a UV exactly on a texel-row boundary; the matrix grouping's rounding picks the row | rounding (presentation) | accepted | no |
 | D7 | L3 fan room drifts before the save | same as D3 | logic | **resolved by package 8** | as D3 |
+| D8 | What may hide Kurt's sprite: only surfaces between the camera and him, not the walls and floors of his own space | owner decision (fork divergence): upstream's floor-only depth pull replaced by the original's draw-order rule | **deliberate divergence** (owner, 2026-11-27) | **shipped** (fix/kurt-sprite-occlusion) | yes: his gun arm and legs no longer vanish into walls and ledges |
 
 ## D1. Kurt's walk and aim: only the trig table
 
@@ -181,9 +182,83 @@ divergences, and rounding that changes behaviour, are fixed and pinned.
 - **Visible:** no. Rounding, accepted. Matching it would mean porting .NET's matrix
   construction, and lavapipe's interpolation would still decide each boundary pixel.
 
+## D8. Kurt's sprite and the surfaces of his own space (a deliberate divergence)
+
+Unlike D1-D7 this is not a drift measured and explained: it is a **deliberate departure from
+upstream**, decided by the owner and made in its own commit (SPEC.md §15.1: "a divergence from
+upstream is allowed when the owner decides it, in its own commit, recorded in
+docs/DIVERGENCES.md").
+
+- **What upstream does.** Upstream's C++ (`origin/main` 367cc6fc,
+  `src/game/kurt/KurtSprite.cpp` `FloorDepth`, lines 275-299, `FloorBelow = 0.5`) -- and its C#
+  before it, and this port until this change (`KurtSprite::floorDepth`) -- depth-tests Kurt's
+  camera-facing sprite at his feet and pulls it towards the eye only in front of a FLOOR the
+  eye's rays cross at most half a unit above his feet. Walls are never considered. The sprite is
+  ~3 units wide at the follow camera's distance and his collision box is +-0.6, so the wall he
+  walks along hid his gun arm and side, and the edge of a step more than half a unit high hid
+  his legs (found and measured on fix/kurt-sprite-depth, 30caebea: L3 HMO_1/4/5/6, CHMO_8; L4
+  MEAT_1; L5 MUSE_2/3; L6 OLYM_4/7; L7 DANT_1; L8 GUNT_1).
+- **What the original does.** No depth buffer: the arena is drawn back to front by its BSP and
+  an object is drawn in its place in that walk (docs/original-engine.md, Rendering), so the
+  floor he stands on and the walls of the space he is in come BEFORE him and never cut him.
+  (Not re-checked in Ghidra: the ReVa connection was down; the C#'s and upstream's own comments
+  say the same.)
+- **The owner's direction** (2026-11-27): "kurt/kurts sprite needs to not sink in to geometry at
+  all ... fixes that arent individual band-aids but root cause solutions", and "I am good with
+  departing from the C# version at this point as its a fork ... as long as its under its own
+  commit for this with documentation as to why we are doing it".
+- **The rule now** (`mdk_core/src/game/kurt_cover.h`): an arena triangle may hide Kurt only when
+  its own BSP plane has the camera on one side and Kurt's ordering point on the other -- it
+  stands between them. Every other triangle is drawn under him. The ordering point is the centre
+  of his walking collision box, feet + 3.0 (ArenaSpace `kWalkBox.z` 2.5 + `kWalkLift` 0.5), so
+  the floor under him and a step lower than half his height are on his side; a pillar, another
+  room's wall, a ledge taller than that are between. No threshold, no per-room exception. The
+  full painter's order ("the first splitting plane that separates the face from Kurt") was
+  modelled and rejected: the arenas' splitting planes run through whole subtrees and often pass
+  between Kurt and the wall he walks along, so 1701 of the 20036 cut frames below would still be
+  cut.
+- **How it is drawn, the same on both targets** (render_types.h `KurtPass`, draw_queue.h):
+  the triangles of the drawn arenas in the pyramid from the eye through his sprite, cut at his
+  depth, that the rule says he is drawn over, are found through a box tree (Morton order, built
+  a slice a frame) and drawn into the stencil, clipped to the pyramid, where they are the nearest
+  thing drawn; his sprite is drawn depth-tested where no mark is and with no depth test over the
+  marks; glass of his own space gets its own bit and is not drawn over him. His passes run after
+  the mirror bucket (so a mirror floor is marked like any floor) and before the glass. Objects
+  and effects still decide by depth, as before. The Linux scene depth gained a stencil
+  (D32S8/D24S8; without one he is only depth-tested, and the log says so). The 2-unit pull of the
+  rows at his feet stays (his painted shadow over a platform object he rides); the floor pull is
+  gone.
+- **Evidence** (Linux headless, lavapipe; the kurt-sprite-depth detector: 36 scripted walks on
+  L3-L8, 3000 frames each, and 3000 random floor starts with 260 frames of walking; every second
+  opaque sprite pixel ray-cast against the drawn arenas, and the worst frame of every episode
+  rendered with the before and after builds, normally and with Kurt on top -- the pixels that
+  differ are Kurt hidden; `.git/mdk-review/kurt-sprite-occlusion-2026-11-27/`):
+  - Before: 20036 probe frames with Kurt cut (>= 5 samples) by surfaces of his own space, 5792
+    hidden by a surface between camera and him.
+  - 1257 own-space episodes rendered: the before build hid him in 919; the after build shows him
+    whole in 824 of those. Of the 95 left, 41 are hidden in that frame by a surface between
+    (the rule), 11 are random starts under the level, 16 are the first frames of a run (the box
+    tree is built over the first frames of a level or of a newly drawn arena), 9 differ by <= 5
+    pixels, 18 are objects and effects in front of him (laser beams, an explosion, the
+    snowboard, enemies, landing dust). One episode is newly hidden, by 1 pixel.
+  - 432 episodes where a surface between camera and him hid him: 257 hidden before and after,
+    168 not visible either way, 7 visible after (below; known limit).
+- **Cost, Old 3DS** (old3ds-lan167, 268 MHz, L2 off, stereo on; LEVEL3 HMO_1 standing at the
+  ramp wall, a PROFILE A/B on one harness build with the cover off and on, the final code):
+  steady frame period 18.12 -> 19.36 ms (CPU 7.19 -> 7.77 ms, GPU 12.51 -> 12.99 ms); Kurt's
+  draw 51 -> ~360 us of CPU (~48 triangles tested, ~4 marked). The box tree's first slice (~3000 steps) costs one frame ~0.7 ms more than the baseline's
+  first Kurt frame. Before the marks were clipped to the pyramid they cost ~2 ms of GPU (a wall's
+  whole screen area), and the one-frame median-split tree ~8 ms: both measured and replaced.
+- **Known limits.** A glass surface between camera and Kurt that lies in front of a glass surface
+  of his own space does not tint him there (seen only with Kurt fallen under L4's ice); the first
+  frames after an arena is first drawn are depth-tested only while its tree is built; objects and
+  effects in front of him decide by depth as before (upstream draws objects in the BSP walk too).
+- **Visible:** yes, by design. Upstream's and the C#'s pictures differ wherever a wall or ledge
+  cut him.
+
 ## What is left
 
 Nothing in this list is an unexplained divergence. D1, D2, D4, D6 and D5's spin creation are
-accepted rounding. D3 and D7 were fixed by package 8. D5 is fixed here. Should the owner revisit
+accepted rounding. D8 is a deliberate, owner-decided divergence from upstream. D3 and D7 were fixed by package 8. D5 is fixed here. Should the owner revisit
 the trig table, D1 and D4 both close with the one line in `Player::facing()`. D2 needs its own
 one-line `fmaf`.

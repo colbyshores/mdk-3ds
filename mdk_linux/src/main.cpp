@@ -2859,8 +2859,15 @@ int main(int argc, char** argv) {
             // C# Viewer.DrawScene draws Kurt after the level, objects and
             // effects, and before the HUD.
             // At his feet as the frame draws them (C# `_blend.Feet`, Viewer.cs:708).
+            // THE SURFACES OF HIS OWN SPACE are drawn under him, the ones between the
+            // camera and him are not (game/kurt_cover.h; docs/DIVERGENCES.md): the
+            // drawn arenas' views, and the stereo eyes' half distance.
+            mdk::KurtCover::Source kurtCover[2];
+            const int32_t kurtCoverCount =
+                frameDrawn ? arenaViews.kurtCover(*frameDrawn, kurtCover, 2) : 0;
             kurtSprite.draw(renderer, player, frameBlend.feet(), camera.position, camera.forward,
-                            camera.up, mdk::follow_camera::kFieldOfView, &space);
+                            camera.up, mdk::follow_camera::kFieldOfView, kurtCover,
+                            kurtCoverCount, stereo.mode != mdk::StereoMode::Off ? stereo.separation * 0.5f : 0.0f);
         }
         if (runtime && !strikeFrame) {
             // Viewer.cs:699: the scripts' Eye is the camera (an explosion faces it) --

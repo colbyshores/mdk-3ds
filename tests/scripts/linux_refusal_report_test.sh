@@ -334,6 +334,9 @@ VOID_ENTRY_POINTS = {
     # sampler's anisotropy query calls both since the (f) burn-down.
     "vkGetPhysicalDeviceFeatures",
     "vkGetPhysicalDeviceProperties",
+    # Void in the API (its answer is the out-struct): the scene depth format's
+    # stencil query (vk_context pickDepthFormat, Kurt's sprite passes).
+    "vkGetPhysicalDeviceFormatProperties",
 }
 
 # The context file calls three more entry points that are not result-bearing:

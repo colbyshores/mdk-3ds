@@ -56,6 +56,7 @@
 #include <string>
 #include <vector>
 
+#include "game/kurt_cover.h"
 #include "game/level_data.h"
 #include "game/level_view.h"
 #include "render/render.h"
@@ -163,6 +164,12 @@ public:
     // the rebuilt mesh was refused (the view then draws nothing until the next refresh or
     // reload, which the frontend logs); true otherwise, and when the arena has no view.
     bool refresh(const std::string& arena);
+
+    // The drawn arenas whose surfaces Kurt's sprite may be drawn over
+    // (game/kurt_cover.h): each ready view of `drawn` once, at most `max`.
+    // Returns how many were written.
+    int32_t kurtCover(const std::vector<std::string>& drawn, KurtCover::Source* out,
+                      int32_t max) const;
 
     // An arena's view, or null.
     const LevelView* find(const std::string& name) const;

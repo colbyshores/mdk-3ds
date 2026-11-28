@@ -6,8 +6,15 @@
 // This is the rendering half of src/Mdk.Game/Kurt/KurtSprite.cs. A frame is
 // a fixed-size world-space quad at Kurt's feet: one sprite pixel is 1/360 of
 // the view's height, the hotspot is 101 pixels above the feet, and the rows
-// around the feet are brought nearer than the body so the sprite wins over
-// the floor it stands on.
+// around the feet are brought 2 units nearer than the body (the shadow painted
+// in his frames, over a platform he rides).
+//
+// WHAT MAY HIDE HIM IS NOT UPSTREAM'S (docs/DIVERGENCES.md D8, owner 2026-11-27):
+// upstream's C++ (src/game/kurt/KurtSprite.cpp FloorDepth) pulls the sprite in
+// front of floors at most half a unit above his feet, so walls he walked along
+// cut him. This port marks
+// the surfaces of his own space in the stencil and draws him over them
+// (game/kurt_cover.h; render_types.h KurtPass), as the original's BSP order does.
 //
 // The frames come from TRAVERSE/TRAVSPRT.BNI and the level's SNI archives.
 // They are decoded at level load and uploaded when first drawn, subject to the
@@ -30,6 +37,7 @@
 #include <string>
 #include <vector>
 
+#include "game/kurt_cover.h"
 #include "game/player.h"
 #include "render/render.h"
 #include "render/render_types.h"
@@ -438,12 +446,23 @@ public:
     bool pick(const Player& player, Pick* out) const;
 
     // Draws Kurt at `feet` for a camera at `eye`. `forward`, `up` and the
-    // field of view are the camera's, and `space` is the collision world used
-    // to find the floor in front of the sprite.
+    // field of view are the camera's. `cover` names the drawn arenas whose
+    // surfaces of his own space he is drawn over (game/kurt_cover.h; none: he is
+    // only depth-tested), and `eyeSpread` is half the stereo eyes' distance in
+    // world units (0 in mono).
     bool draw(MdkRenderer renderer, const Player& player, const Vec3& feet, const Vec3& eye,
-              const Vec3& forward, const Vec3& up, float fieldOfView, ArenaSpace* space);
+              const Vec3& forward, const Vec3& up, float fieldOfView,
+              const KurtCover::Source* cover, int32_t coverCount, float eyeSpread);
 
-    // The C# KurtSprite's pull constants.
+    // The surfaces of his own space found for the last frame drawn.
+    const KurtCover::Stats& coverStats() const { return cover_.stats(); }
+
+    // The most triangles marked a frame, and the runs (depth layers) they fall in.
+    static constexpr int32_t kMarkTriangles = 512;
+    static constexpr int32_t kMarkRuns = 8;
+
+    // The C# KurtSprite's pull constants (the floor's: the ridden board's,
+    // boardPull; the sprite's own floor pull is gone, see the header).
     static constexpr float kFloorMargin = 0.02f;
     static constexpr float kMinFloorShare = 0.1f;
     static constexpr float kShadowPull = 2.0f;
@@ -473,7 +492,7 @@ public:
                           const Vec3& forward, ArenaSpace* space);
 
     // The scale that brings the rows around the feet two world units nearer,
-    // and still in front of the floor.
+    // and still in front of the floor (the sprite passes no floor now).
     static float nearer(float depth, bool hasFloor, float floorDepth) {
         const float pull = (depth - kShadowPull) / depth;
         const float atLeastHalf = pull < kMinDepthShare ? kMinDepthShare : pull;
@@ -571,11 +590,15 @@ private:
     // is replaced, so its GPU copies do not leak.
     void releaseAnimation(int32_t animation);
 
+    // `marked`: the frame is drawn twice, Tested and Over (render_types.h
+    // KurtPass); otherwise Tested only.
     bool drawFrame(MdkRenderer renderer, int32_t mesh, int32_t animation, int32_t frame,
                    const Vec3& eye,
-                   const Quad& at, int32_t dx, int32_t dy, const Pull& pull);
-    bool floorDepth(ArenaSpace* space, const Vec3& eye, const Vec3& forward, const Quad& at,
-                    const Frame& frame, float rise, float* outDepth);
+                   const Quad& at, int32_t dx, int32_t dy, const Pull& pull, bool marked);
+    // Marks the surfaces of his own space for this frame; true when an opaque
+    // one was (the Over draw is wanted).
+    bool drawMarks(MdkRenderer renderer, const KurtCover::Source* cover, int32_t coverCount,
+                   const KurtCover::View& view);
     static Vec3 corner(const Quad& at, float ax, float ay, float px, float py);
     static int32_t rows(Vertex* into, const Quad& at, float ax, float ay, int32_t width,
                         int32_t height, float top, float bottom, const Vec3& eye, float pull);
@@ -588,6 +611,14 @@ private:
     // C# KurtSprite._muzzleMesh: the muzzle flash's own quad, so the flash drawn behind
     // Kurt does not overwrite the vertices of the frame drawn just before it.
     int32_t muzzleMesh_ = -1;
+    // The surfaces of his own space (game/kurt_cover.h): their search, and the
+    // dynamic mesh their marks are drawn from.
+    KurtCover cover_;
+    int32_t markMesh_ = -1;
+    // An 8x8 white texture for the marks: the 3DS draws nothing untextured (a
+    // flat colour is a texture there), and the mark's colour is never written.
+    int32_t markTexture_ = -1;
+    std::vector<Vertex> markVertices_;
     std::vector<uint8_t> paletteRgba_;
     std::vector<Animation> animations_;
     std::vector<StateSpec> stateSpecs_;

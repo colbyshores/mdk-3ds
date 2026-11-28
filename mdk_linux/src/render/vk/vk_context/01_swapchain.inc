@@ -218,7 +218,30 @@ bool createSwapchain(Context* ctx, uint32_t width, uint32_t height, bool vsync) 
     return true;
 }
 
+// The scene's depth format: the first of D32+S8, D24+S8 the device can use as a
+// depth/stencil attachment, else D32 with no stencil (Context::depthFormat).
+void pickDepthFormat(Context* ctx) {
+    if (ctx->depthFormat != VK_FORMAT_UNDEFINED) {
+        return;
+    }
+    const VkFormat candidates[2] = {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT};
+    for (int i = 0; i < 2; i++) {
+        VkFormatProperties props = {};
+        vkGetPhysicalDeviceFormatProperties(ctx->physicalDevice, candidates[i], &props);
+        if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+            ctx->depthFormat = candidates[i];
+            ctx->depthHasStencil = true;
+            return;
+        }
+    }
+    ctx->depthFormat = VK_FORMAT_D32_SFLOAT;
+    ctx->depthHasStencil = false;
+    std::printf("[vk] no depth/stencil format: Kurt's sprite is depth-tested only "
+                "(the surfaces of his own space can hide him)\n");
+}
+
 bool createRenderPass(Context* ctx) {
+    pickDepthFormat(ctx);
     VkAttachmentDescription attachments[2] = {};
 
     attachments[0].format = ctx->swapchainFormat;
@@ -233,11 +256,12 @@ bool createRenderPass(Context* ctx) {
     // black -- it is what the skeleton's offscreen design left behind.)
     attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-    attachments[1].format = VK_FORMAT_D32_SFLOAT;
+    attachments[1].format = ctx->depthFormat;
     attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
     attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    // Cleared with the depth (Kurt's marks start every pass at 0).
+    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -294,7 +318,8 @@ bool createDepthImage(Context* ctx) {
     VkImageCreateInfo imageInfo = {};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.format = VK_FORMAT_D32_SFLOAT;
+    pickDepthFormat(ctx);
+    imageInfo.format = ctx->depthFormat;
     imageInfo.extent.width = ctx->extent.width;
     imageInfo.extent.height = ctx->extent.height;
     imageInfo.extent.depth = 1;
@@ -358,8 +383,10 @@ bool createDepthImage(Context* ctx) {
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = ctx->depthImage;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_D32_SFLOAT;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    viewInfo.format = ctx->depthFormat;
+    // An attachment view of a depth/stencil image names both aspects.
+    viewInfo.subresourceRange.aspectMask =
+        VK_IMAGE_ASPECT_DEPTH_BIT | (ctx->depthHasStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = 1;
     viewInfo.subresourceRange.baseArrayLayer = 0;

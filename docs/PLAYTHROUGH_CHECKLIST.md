@@ -524,12 +524,14 @@ stream screen's sound placement, LEVEL3/LEVEL4 sound and texture census.
 
 ## Decisions waiting
 
-- **Kurt cut by walls and ledges** (fix/kurt-sprite-depth, docs only): his
-  sprite is hidden where it overlaps a wall he walks along, or a ledge edge he
-  steps down from -- the C#'s depth rule, which only pulls him in front of
-  floors. Seen in L3 HMO_1 (the ramp wall beside the start), L4 MEAT_1 (the
-  start tube), L5 MUSE_2/3, L6 OLYM_4/7, L7 DANT_1, L8 GUNT_1. Fix it the
-  original's way (BSP draw order, both targets, differs from the PC port)?
+- **Kurt cut by walls and ledges -- DECIDED 2026-11-27, done** (owner: fix it the
+  original's way, a fork divergence in its own commit; fix/kurt-sprite-occlusion,
+  docs/DIVERGENCES.md D8). Only a surface whose plane stands between the camera
+  and his middle (feet + 3) can hide him now; the walls, floors and low steps of
+  his own space are drawn under him. Look at: L3 HMO_1's ramp wall at the start
+  (his gun arm now shows), L4 MEAT_1's start tube, L5 MUSE_2/3, L6 OLYM_4/7, L7
+  DANT_1, L8 GUNT_1 -- and that a pillar or another room's wall between the
+  camera and him still hides him. Old 3DS cost ~1 ms a frame at the HMO_1 wall.
 - **Mip cap on wide 2:1 and 16:1 ETC1 textures:** measured right in the test
   program, capped anyway with the other non-square shapes (default: capped).
   Uncap them?

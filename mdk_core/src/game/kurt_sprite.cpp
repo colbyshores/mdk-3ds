@@ -37,7 +37,6 @@ const int32_t kFeetOffset = 101;
 const int32_t kQuadVertices = 6;
 const int32_t kFrameVertices = 2 * kQuadVertices;
 const float kFeetRise = 0.5f;
-const float kFloorBelow = 0.5f;
 const char* kChuteOpening = "K_CHUTE";
 const char* kChuteSway = "K_CHUTEC";
 const int32_t kChuteOpenedFrame = 5;
@@ -178,7 +177,17 @@ bool KurtSprite::load(MdkRenderer renderer, const formats::Bni& sprites,
     // and the feet rows) when a frame's hotspot row is inside it, so it gets the same
     // room as the body's.
     muzzleMesh_ = mdk_render_create_dynamic_mesh(renderer, kFrameVertices);
-    if (palette_ < 0 || mesh_ < 0 || muzzleMesh_ < 0) {
+    // The marks of the surfaces of his own space (game/kurt_cover.h). A level's
+    // arenas are new, so are their box trees.
+    markMesh_ = mdk_render_create_dynamic_mesh(renderer, kMarkTriangles * 3);
+    markVertices_.assign((size_t)kMarkTriangles * 3, Vertex());
+    {
+        uint8_t white[8 * 8 * 4];
+        memset(white, 0xFF, sizeof(white));
+        markTexture_ = mdk_render_create_rgba_texture(renderer, 8, 8, white);
+    }
+    cover_.clear();
+    if (palette_ < 0 || mesh_ < 0 || muzzleMesh_ < 0 || markMesh_ < 0) {
         return false;
     }
 
@@ -427,7 +436,8 @@ bool KurtSprite::pick(const Player& player, Pick* out) const {
 }
 
 bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& feet, const Vec3& eye,
-                      const Vec3& forward, const Vec3& up, float fieldOfView, ArenaSpace* space) {
+                      const Vec3& forward, const Vec3& up, float fieldOfView,
+                      const KurtCover::Source* cover, int32_t coverCount, float eyeSpread) {
     // Kurt.Visible (KurtSprite.cs:182): a cutscene hides him. The C# tests it with the
     // depth, after nothing that has an effect, so returning first is the same draw and
     // asks the frame stream for nothing. `kurt.Sniping` hides him too (the same
@@ -488,35 +498,117 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
     }
     const Frame& frame = animations_[(size_t)drawn.animation].frames[(size_t)drawn.frame];
     const float rise = kFeetRise / pixel;
-    float floor = 0.0f;
-    const bool hasFloor = floorDepth(space, eye, forward, at, frame, rise, &floor);
+    // THE PULL: the rows from half a unit above the feet down two units nearer
+    // (the shadow in his frames, over a platform he rides), the body where it is.
+    // Upstream's floor pull (src/game/kurt/KurtSprite.cpp FloorDepth: in front of
+    // the floors at most half a unit above his feet) is gone -- the surfaces of
+    // his own space are marked instead, walls and ledges as well as floors
+    // (drawMarks, game/kurt_cover.h; docs/DIVERGENCES.md D8, owner 2026-11-27).
     Pull pull;
-    pull.body = inFront(depth, hasFloor, floor);
-    pull.feet = nearer(depth, hasFloor, floor);
+    pull.body = 1.0f;
+    pull.feet = nearer(depth, false, 0.0f);
     pull.rise = rise;
-    if (!drawFrame(renderer, mesh_, drawn.animation, drawn.frame, eye, at, 0, 0, pull)) {
+
+    // The muzzle flash's frame, if one is drawn, so its rectangle is marked too.
+    const bool flashing = player.combat().hasMuzzle() && muzzleFlash_ >= 0 &&
+                          player.combat().muzzle().frame >= 0 &&
+                          player.combat().muzzle().frame <
+                              (int32_t)animations_[(size_t)muzzleFlash_].frames.size() &&
+                          ensureTexture(muzzleFlash_, player.combat().muzzle().frame) ==
+                              Ensure::Ready;
+
+    // THE SURFACES OF HIS OWN SPACE (game/kurt_cover.h): the rectangle the
+    // sprite (and the flash) covers, in the frame's pixels around his feet.
+    const float ax = (float)frame.hotspotX;
+    const float ay = (float)(frame.hotspotY + kFeetOffset);
+    float x0 = 0.0f;
+    float y0 = 0.0f;
+    float x1 = (float)frame.width;
+    float y1 = (float)frame.height;
+    if (flashing) {
+        const Kurt::MuzzleFlash& muzzle = player.combat().muzzle();
+        const Frame& f = animations_[(size_t)muzzleFlash_].frames[(size_t)muzzle.frame];
+        // drawFrame's anchor for the flash, in the body frame's pixels.
+        const float fx = ax - (float)(f.hotspotX - muzzle.x);
+        const float fy = ay - (float)(f.hotspotY + kFeetOffset - muzzle.y);
+        x0 = fx < x0 ? fx : x0;
+        y0 = fy < y0 ? fy : y0;
+        x1 = fx + (float)f.width > x1 ? fx + (float)f.width : x1;
+        y1 = fy + (float)f.height > y1 ? fy + (float)f.height : y1;
+    }
+    KurtCover::View view;
+    view.eye = eye;
+    view.forward = forward;
+    view.spread = eyeSpread;
+    view.corners[0] = corner(at, ax, ay, x0, y0);
+    view.corners[1] = corner(at, ax, ay, x1, y0);
+    view.corners[2] = corner(at, ax, ay, x1, y1);
+    view.corners[3] = corner(at, ax, ay, x0, y1);
+    view.order = Vec3{feet.x, feet.y, feet.z + KurtCover::kOrderHeight};
+    const bool marked = drawMarks(renderer, cover, coverCount, view);
+
+    if (!drawFrame(renderer, mesh_, drawn.animation, drawn.frame, eye, at, 0, 0, pull, marked)) {
         return false;
     }
 
     // The chain gun's muzzle flash (KurtSprite.cs Draw, after the body): its hotspot at
     // Kurt's plus the flash's offset, a little farther from the camera than he is, and
     // pulled towards the eye by the body's scale over all its rows.
-    if (player.combat().hasMuzzle() && muzzleFlash_ >= 0) {
+    if (flashing) {
         const Kurt::MuzzleFlash& muzzle = player.combat().muzzle();
-        const Animation& flash = animations_[(size_t)muzzleFlash_];
-        if (muzzle.frame >= 0 && muzzle.frame < (int32_t)flash.frames.size() &&
-            ensureTexture(muzzleFlash_, muzzle.frame) == Ensure::Ready) {
-            Quad behind = at;
-            behind.feet = addVectors(feet, scale(forward, kMuzzleBehind));
-            Pull flashPull;
-            flashPull.body = pull.body;
-            flashPull.feet = pull.body;
-            flashPull.rise = 0.0f;
-            drawFrame(renderer, muzzleMesh_, muzzleFlash_, muzzle.frame, eye, behind, muzzle.x,
-                      muzzle.y, flashPull);
-        }
+        Quad behind = at;
+        behind.feet = addVectors(feet, scale(forward, kMuzzleBehind));
+        Pull flashPull;
+        flashPull.body = pull.body;
+        flashPull.feet = pull.body;
+        flashPull.rise = 0.0f;
+        drawFrame(renderer, muzzleMesh_, muzzleFlash_, muzzle.frame, eye, behind, muzzle.x,
+                  muzzle.y, flashPull, marked);
     }
     return true;
+}
+
+bool KurtSprite::drawMarks(MdkRenderer renderer, const KurtCover::Source* cover,
+                           int32_t coverCount, const KurtCover::View& view) {
+    if (cover == nullptr || coverCount <= 0 || markMesh_ < 0 || markTexture_ < 0 ||
+        markVertices_.size() < (size_t)kMarkTriangles * 3) {
+        return false;
+    }
+    KurtCover::Run runs[kMarkRuns];
+    const int32_t runCount = cover_.collect(cover, coverCount, view, markVertices_.data(),
+                                            kMarkTriangles, runs, kMarkRuns);
+    if (runCount <= 0) {
+        return false;
+    }
+    const int32_t vertices = runs[runCount - 1].first + runs[runCount - 1].count;
+    bool opaque = false;
+    mdk_render_update_mesh(renderer, markMesh_, markVertices_.data(), vertices);
+    for (int32_t i = 0; i < runCount; i++) {
+        MeshDraw draw;
+        draw.mesh = markMesh_;
+        draw.first_vertex = runs[i].first;
+        draw.vertex_count = runs[i].count;
+        draw.material.texture = markTexture_;
+        draw.material.palette = -1;
+        draw.material.frame_count = 1;
+        draw.material.pass = Pass::DoubleSided;
+        draw.material.shading = Shading::Original;
+        draw.material.colour = Colour{1.0f, 1.0f, 1.0f, 1.0f};
+        // One layer nearer than the surface was drawn (render/depth_pull.cpp, a
+        // 256th of the distance): the mark passes where the surface is the nearest
+        // thing drawn whatever program drew it, and not behind anything else.
+        draw.material.depth_layer = runs[i].layer + 1;
+        draw.world[0] = 1.0f;
+        draw.world[5] = 1.0f;
+        draw.world[10] = 1.0f;
+        draw.world[15] = 1.0f;
+        draw.kurt = runs[i].glass ? KurtPass::MarkGlass : KurtPass::Mark;
+        opaque = opaque || !runs[i].glass;
+        mdk_render_draw_mesh(renderer, &draw);
+    }
+    // Only an opaque mark sets the bit the Over draw is for; a glass mark is
+    // read by the glass itself, after the Tested draw sets "drawn".
+    return opaque;
 }
 
 bool KurtSprite::chooseFrame(const Pick& wanted, Pick* drawn) {
@@ -1110,7 +1202,7 @@ void KurtSprite::releaseAnimation(int32_t animationIndex) {
 
 bool KurtSprite::drawFrame(MdkRenderer renderer, int32_t mesh, int32_t animationIndex,
                            int32_t frameIndex, const Vec3& eye, const Quad& at, int32_t dx,
-                           int32_t dy, const Pull& pull) {
+                           int32_t dy, const Pull& pull, bool marked) {
     if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
         return false;
     }
@@ -1147,42 +1239,15 @@ bool KurtSprite::drawFrame(MdkRenderer renderer, int32_t mesh, int32_t animation
     draw.world[5] = 1.0f;
     draw.world[10] = 1.0f;
     draw.world[15] = 1.0f;
+    // Where no surface of his own space was marked, the draw it always was; over
+    // the marked pixels, the second draw (render_types.h KurtPass).
+    draw.kurt = KurtPass::Tested;
     mdk_render_draw_mesh(renderer, &draw);
+    if (marked) {
+        draw.kurt = KurtPass::Over;
+        mdk_render_draw_mesh(renderer, &draw);
+    }
     return true;
-}
-
-bool KurtSprite::floorDepth(ArenaSpace* space, const Vec3& eye, const Vec3& forward, const Quad& at,
-                            const Frame& frame, float rise, float* outDepth) {
-    if (!space || !outDepth) {
-        return false;
-    }
-
-    const float ax = (float)frame.hotspotX;
-    const float ay = (float)(frame.hotspotY + kFeetOffset);
-    const float columns[3] = {0.0f, ax, (float)frame.width};
-    const float rows[3] = {0.0f, clampf(ay - rise, 0.0f, (float)frame.height), (float)frame.height};
-
-    bool have = false;
-    float nearest = 0.0f;
-    for (int32_t i = 0; i < 9; i++) {
-        const Vec3 point = corner(at, ax, ay, columns[i % 3], rows[i / 3]);
-        ArenaSpace::Floor floor;
-        if (!space->floorCrossing(toVec(eye), toVec(point), &floor)) {
-            continue;
-        }
-        if (dot(subtract(at.feet, fromVec(floor.point)), fromVec(floor.normal)) < -kFloorBelow) {
-            continue;
-        }
-        const float floorAt = dot(subtract(fromVec(floor.point), eye), forward);
-        if (!have || floorAt < nearest) {
-            nearest = floorAt;
-            have = true;
-        }
-    }
-    if (have) {
-        *outDepth = nearest;
-    }
-    return have;
 }
 
 namespace {

@@ -51,7 +51,7 @@ void replayCanvas(RendererVk* r) {
         pc.frame = 0;
         pc.unused_ = 0;
 
-        VkPipeline pipeline = getPipeline(r, (int)mdk::Pass::Overlay, rec.blend, 0);
+        VkPipeline pipeline = getPipeline(r, (int)mdk::Pass::Overlay, rec.blend, 0, 0);
         if (!pipeline) {
             continue;
         }
@@ -156,7 +156,7 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
     // The C#'s AddRect (`Blend = Blend.Add`, Renderer.cs:329) adds; every other
     // canvas quad alpha-blends. The Citro3D canvas reads the same flag.
     VkPipeline pipeline = getPipeline(r, (int)mdk::Pass::Overlay,
-                                      q->additive ? (int)mdk::Blend::Add : (int)mdk::Blend::Alpha, 0);
+                                      q->additive ? (int)mdk::Blend::Add : (int)mdk::Blend::Alpha, 0, 0);
     if (!pipeline) {
         return;
     }
@@ -293,7 +293,8 @@ void renderInsets(RendererVk* r, bool underCanvas) {
         vkCmdSetScissor(cb, 0, 1, &scissor);
         // The C#'s BeginOver: the rectangle's depth cleared.
         VkClearAttachment clear = {};
-        clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT |
+                           (r->ctx.depthHasStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
         clear.clearValue.depthStencil.depth = 1.0f;
         clear.clearValue.depthStencil.stencil = 0;
         VkClearRect clearRect = {};

@@ -318,9 +318,16 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     // scene but does not write depth, so it can be seen through, and the
     // `OnTop`/`Overlay` exemptions exist. The rule itself is
     // `pica::depthStateForPass`, which the host suite holds to the oracle.
-    const mdk::pica::DepthState wantedDepth =
-        mdk::pica::depthStateForPass(draw->material.pass);
-    if (r->depthTest != wantedDepth.test || r->depthWrite != wantedDepth.write) {
+    mdk::pica::DepthState wantedDepth = mdk::pica::depthStateForPass(draw->material.pass);
+    // KURT'S PASSES (01_types.inc kStencilKurt*): the mark is tested and writes
+    // no depth; the sprite over the marked pixels is not tested.
+    if (p->stencil == kStencilKurtMark || p->stencil == kStencilKurtMarkGlass) {
+        wantedDepth.write = false;
+    } else if (p->stencil == kStencilKurtOver) {
+        wantedDepth.always = true;
+    }
+    if (r->depthTest != wantedDepth.test || r->depthWrite != wantedDepth.write ||
+        r->depthAlways != wantedDepth.always) {
         installDepthState(r, wantedDepth);
     }
     // The camera's arena over the other one (06_queue.inc prepareQueue): cached,
@@ -340,7 +347,16 @@ static void drawRecorded(RendererC3D* r, const PreparedDraw* p) {
     // and the queue's pass order cannot tell them apart.
     const int wantedBlendPass = static_cast<int>(draw->material.pass);
     const int wantedBlendMode = static_cast<int>(draw->material.blend);
-    if (r->blendPass != wantedBlendPass || r->blendMode != wantedBlendMode) {
+    if (p->stencil == kStencilKurtMark || p->stencil == kStencilKurtMarkGlass) {
+        // Kurt's mark changes no colour (and no alpha): the target is kept
+        // (ZERO, ONE), and the colour mask is not trusted to say so (the
+        // write mask's note at installDepthState).
+        if (r->blendPass != kBlendPassKurtMark) {
+            const mdk::pica::BlendState keep = {true, mdk::pica::kBlendZero, mdk::pica::kBlendOne,
+                                                mdk::pica::kBlendZero, mdk::pica::kBlendOne};
+            writeBlendState(r, keep, kBlendPassKurtMark, kBlendPassKurtMark);
+        }
+    } else if (r->blendPass != wantedBlendPass || r->blendMode != wantedBlendMode) {
         installBlendState(r, draw->material.pass, draw->material.blend);
     }
 

@@ -235,6 +235,27 @@ static void installStencil(RendererC3D* r, int mode) {
     } else if (mode == kStencilTest) {
         C3D_StencilTest(true, GPU_EQUAL, 0, 0xFF, 0x00);
         C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_KEEP);
+    } else if (mode == kStencilKurtMark || mode == kStencilKurtMarkGlass) {
+        // The surface's bit set wherever the mark passes its depth test.
+        const int bit = mode == kStencilKurtMark ? mdk::kKurtStencilBit : mdk::kKurtGlassBit;
+        C3D_StencilTest(true, GPU_ALWAYS, bit, 0xFF, bit);
+        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_REPLACE);
+    } else if (mode == kStencilKurtTested) {
+        // Only where the mark is clear (the reference's mark bit is 0); "drawn"
+        // set. The PICA compares and replaces with the one reference.
+        C3D_StencilTest(true, GPU_EQUAL, mdk::kKurtDrawnBit, mdk::kKurtStencilBit,
+                        mdk::kKurtDrawnBit);
+        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_REPLACE);
+    } else if (mode == kStencilKurtOver) {
+        // Only where the mark is set; the mark cleared and "drawn" set.
+        C3D_StencilTest(true, GPU_NOTEQUAL, mdk::kKurtDrawnBit, mdk::kKurtStencilBit,
+                        mdk::kKurtStencilBit | mdk::kKurtDrawnBit);
+        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_REPLACE);
+    } else if (mode == kStencilKurtGlass) {
+        // An arena glass batch: not where Kurt was drawn over his own glass.
+        C3D_StencilTest(true, GPU_NOTEQUAL, mdk::kKurtGlassBit | mdk::kKurtDrawnBit,
+                        mdk::kKurtGlassBit | mdk::kKurtDrawnBit, 0x00);
+        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_KEEP);
     } else {
         C3D_StencilTest(false, GPU_ALWAYS, 0, 0xFF, 0x00);
         C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_KEEP);
@@ -259,11 +280,13 @@ static void installStencil(RendererC3D* r, int mode) {
 // `pica::depthPasses` pins that tie.
 static void installDepthState(RendererC3D* r, mdk::pica::DepthState state) {
     C3D_DepthTest(state.test,
-                  state.test && !state.reset ? (state.equal ? GPU_EQUAL : GPU_LEQUAL)
-                                             : GPU_ALWAYS,
+                  state.test && !state.reset && !state.always
+                      ? (state.equal ? GPU_EQUAL : GPU_LEQUAL)
+                      : GPU_ALWAYS,
                   state.reset ? GPU_WRITE_DEPTH : state.write ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
     r->depthTest = state.test;
     r->depthWrite = state.write;
+    r->depthAlways = state.always;
 }
 
 // The host-readable factor to the GPU's. The switch is exhaustive over the
