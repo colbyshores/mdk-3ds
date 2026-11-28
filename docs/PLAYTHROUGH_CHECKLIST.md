@@ -182,8 +182,16 @@ its fall; run the **Every fall** list (under "Every level") on at least one.
     lighting on and off. MIRRORS off: the panels are not drawn at all (as on PC).
   - Wrong: plain white panels (the old placeholder), black panels, a picture
     that does not move with the camera, or a picture upside down or swapped
-    between floor and walls. Log: `mirror: 5 of 5 cubes (...)` at level load,
-    and no `mirror: no cube` line.
+    between floor and walls. Log: `mirror: 5 of 5 cubes (...), 5 baked 512x512 ETC1`
+    at level load, and no `mirror: no cube` / `baked cube ... not used` line.
+  - feat/3ds-mirror-cubes-512: the panorama in the panels is sharp (512x512 ETC1
+    faces baked at build time, was 128x128 blocks); same picture, finer.
+  - Owner report 11-27 (New 3DS): "the mirrored room has z-fighting" (OLYM_7,
+    moving, 2D). Not reproduced as a 3DS depth fight on the Old 3DS (frame
+    readback, single and consecutive frames, OLYM_6 and OLYM_7); a flicker seen
+    on BOTH the 3DS and Linux is an object passing through the low camera
+    (WORK_LEDGER 2026-11-27). Watch for: panels or floor halves swapping
+    frame to frame while you walk or stand on the slanted walls -- say where.
 - [ ] **Decals: hub rims, mirror tiles** -- 2315ec29
   - Where: OLYM_5 hub rims; OLYM_7 mirror/floor tiles.
   - Right: steady. Wrong: flicker.

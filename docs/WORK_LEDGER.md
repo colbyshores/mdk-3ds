@@ -5591,3 +5591,75 @@ What is worse, plainly:
   `docs/PROGRESS_LOG.md` (C++ code and tests cite them), `docs/formats.md`,
   `docs/original-engine.md`, `docs/modding.md` (the 3DS HD tools cite it).
 - **Commit:** branch `chore/remove-legacy` (not merged, not pushed).
+
+## 2026-11-27 -- Mirror cubes: 512x512 ETC1 faces baked at build time (branch feat/3ds-mirror-cubes-512)
+
+- **Owner decision:** mirror cube faces at 512x512 ETC1 (the sky's full source resolution),
+  baked at BUILD time into the build's data and read whole at level load; one size for both
+  console models.
+- **What:**
+  - `mdk_core/src/render/mirror_cube.{h,cpp}`: THE BAKED CUBES -- the file format (64-byte
+    header: magic, version, size, ETC1, row shift, face bytes, stamp; six faces in the
+    PICA's tiled ETC1 order), `mirrorPanoramaStamp` (FNV-1a 64 over the panorama, palette,
+    wrap/horizon/offset, size, version), `mirrorBakedHeaderWrite/Accepts`, `mirrorBakedPath`.
+  - `mdk_3ds/tools/arena_etc1/arena_tex_export.cpp`: `exportMirror` writes each shift's six
+    512x512 faces (RGB, row 0 = the face's first memory row) from the console's own
+    `mirrorCubeCells`/`mirrorCubeFace`; `arena_etc1_convert.py convert_mirrors` encodes each
+    face with tex3ds (`-f etc1 -q high -z none`, no mips), checks and strips tex3ds' header,
+    writes `build-arena-etc1/mirror/level<L>_<shift>.bin` (incremental on the faces' digest);
+    `stage_romfs.sh` links them to `romfs:/orig/mirror/`. 11 cubes: LEVEL3 2, LEVEL5 3,
+    LEVEL6 5, LEVEL8 1 (786,496 bytes each, 8.3 MiB of RomFS).
+  - `mdk_3ds/src/level_load_3ds.cpp buildMirrorCubes3ds`: each shift's baked cube read whole,
+    checked (whole size, header, this level's stamp) and copied into an ETC1 cube
+    (`mdk_render_create_mirror_cube(r, shift, 512, true)` +
+    `mdk_render_set_mirror_cube_face_etc1`, 05_resources.inc); a missing/stale/refused file
+    falls back to the old runtime 128x128 RGB565 build for that shift, said once per shift.
+- **Tests:** `tests/scripts/mirror_cube_tests.cpp` `PASS MirrorBakedCubes`: the header written
+  and refused field by field; LEVEL6's five baked cubes (when the worktree has staged the
+  RomFS) decoded with an independent PICA-layout ETC1 decoder against the runtime formula's
+  colours at 512: mean |error| 1.3-2.2 of 255 per face, the same faces read upside down
+  13-54 (the orientation check). Prints SKIP, not PASS, when no baked cube is present.
+- **Evidence (Old 3DS appliance old3ds-lan167, 268 MHz, stereo on, lighting + edge smoothing on):**
+  - ETC1 cube sampling on the PICA: harness frame readback in OLYM_7 (`hw-logs/tour-j2-*`,
+    both eyes): the panels show the panorama the right way round, much closer to Linux than
+    the 128x128 RGB565 cube (`hw-logs/j2-vs-before-vs-linux.png`); OLYM_6 platforms likewise
+    (`hw-logs/olym6-a.png`, `olym6-b.png`).
+  - HD on (LEVEL6 HD pack staged into the RomFS, HDROMFS=1, 405 textures with an HD copy),
+    PROFILE A/B in OLYM_7 (walk and turns, ~3400 frames each), main vs this branch:
+
+    | | main (128 RGB565) | 512 ETC1 baked |
+    |---|---|---|
+    | cubes' linear | 960 KiB | 3840 KiB |
+    | linear free after the cubes | 18,012,416 | 15,063,296 (-2.81 MiB) |
+    | HD window room / largest set | 10,672,384 / 5,134,912 | 7,723,264 / 5,134,912 (fits) |
+    | linear free in play (min) | 10,818,688 | 7,869,568 (-2.81 MiB) |
+    | cube build/read at load | 436.8 ms (CPU build) | 479.6 ms (5 reads, 3.75 MiB) |
+    | level load (run start -> loop) | 12.27 s | 12.68 s (+0.41 s; +43 ms is the cubes, the rest run-to-run SD variance: identical reads before the cubes differed by 137 ms) |
+    | steady frame period | 26.246 ms (p95 36.0) | 26.355 ms (p95 35.9) |
+
+  - Not moved to the core-1 streaming worker: the read costs what the CPU build cost (+43 ms);
+    a worker hand-off is complexity without a measured payoff.
+- **Review (independent, read-only):** no blocking defects; acted on -- the stamp comment no
+  longer claims to catch a formula change (bump kMirrorBakedVersion and MIRROR_VERSION
+  instead), a skipped baked test prints SKIP, a refused face is not counted as a cube, the
+  per-shift log says what the shift got instead, the converter checks its manifest's column
+  count; recorded -- MIRROR_VERSION duplicates kMirrorBakedVersion in Python.
+- **Job 1 (fix/3ds-mirror-zfight, the owner's "the mirrored room has z-fighting") -- folded
+  in here, no commit of its own:** census of LEVEL6's mirror arenas (OLYM_7: 388 mirror
+  triangles, 263,776 sq units of layered coplanar overlap, 118 at the same layer -- three
+  small mirror/dark pairs at the layer cap 3, as upstream's Layers; OLYM_6: 112, no coplanar
+  overlap; OLYM_5: 52, none). On the Old 3DS (frame readback, single frames in OLYM_6/OLYM_7,
+  consecutive frames walking in OLYM_7 with the pre-fix white panels) the mirror tiles and
+  the dark floor halves do not trade places; a reversed depth map gave pixel-identical frames
+  (precision is not it). The flicker reproduced is on BOTH the 3DS and Linux: the XS
+  enemy's BIGBOLT shot (2 parts, 48 vertices, scale 1.5) flying through the camera -- 2.1-2.7
+  units from it in frames 193-196 of the walk, the camera 5 units above the OLYM_7 floor --
+  until it hits the floor (frame 201). Upstream's C++ (origin/main src/game/Viewer.cpp:1061)
+  draws every visible object with no near-camera cull either: parity, not a port bug. Open: the owner's high camera (looking down from a slanted wall) is not
+  reproduced yet.
+- **Checks:** Linux build 0 warnings; 3DS build 0 compiler warnings; `make -C tests/scripts
+  test` rc 0; tests/formats 200,944 checks, 0 failures; `tools/check.sh` ALL GATES PASSED
+  (smdh SKIP).
+- **Not verified:** the New 3DS; LEVEL3/5/8 baked cubes on hardware (host-decoded only for
+  LEVEL6); the stale-file fallback on hardware (host-tested header refusals only).
+- **Commit:** this one.

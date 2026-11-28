@@ -5,6 +5,7 @@
 #include "render/mirror_cube.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -154,6 +155,99 @@ bool mirrorCubeFace(const formats::Texture& panorama, const int16_t* columns,
         out[i] = indices[(size_t)row * (size_t)width + (size_t)column];
     }
     return true;
+}
+
+namespace {
+
+uint64_t fnv(uint64_t h, const uint8_t* bytes, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+        h ^= bytes[i];
+        h *= 0x100000001b3ull;
+    }
+    return h;
+}
+
+uint64_t fnvWord(uint64_t h, uint32_t value) {
+    const uint8_t bytes[4] = {(uint8_t)value, (uint8_t)(value >> 8), (uint8_t)(value >> 16),
+                              (uint8_t)(value >> 24)};
+    return fnv(h, bytes, 4);
+}
+
+void putWord(uint8_t* at, uint32_t value) {
+    at[0] = (uint8_t)value;
+    at[1] = (uint8_t)(value >> 8);
+    at[2] = (uint8_t)(value >> 16);
+    at[3] = (uint8_t)(value >> 24);
+}
+
+uint32_t getWord(const uint8_t* at) {
+    return (uint32_t)at[0] | ((uint32_t)at[1] << 8) | ((uint32_t)at[2] << 16) |
+           ((uint32_t)at[3] << 24);
+}
+
+const char kMirrorBakedMagic[8] = {'M', 'D', 'K', 'M', 'I', 'R', 'R', '\0'};
+
+} // namespace
+
+uint64_t mirrorPanoramaStamp(const formats::Texture& panorama, const uint8_t* paletteRgba,
+                             int32_t wrapWidth, int32_t horizonRow, int32_t offset) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    h = fnvWord(h, kMirrorBakedVersion);
+    h = fnvWord(h, (uint32_t)kMirrorBakedSize);
+    h = fnvWord(h, (uint32_t)wrapWidth);
+    h = fnvWord(h, (uint32_t)horizonRow);
+    h = fnvWord(h, (uint32_t)offset);
+    h = fnvWord(h, (uint32_t)panorama.width());
+    h = fnvWord(h, (uint32_t)panorama.height());
+    if (panorama.indices() && panorama.width() > 0 && panorama.height() > 0) {
+        h = fnv(h, panorama.indices(), (size_t)panorama.width() * (size_t)panorama.height());
+    }
+    if (paletteRgba) {
+        h = fnv(h, paletteRgba, 256u * 4u);
+    }
+    return h;
+}
+
+void mirrorBakedHeaderWrite(const MirrorBakedHeader& header, uint8_t* out) {
+    memset(out, 0, (size_t)kMirrorBakedHeaderBytes);
+    memcpy(out, kMirrorBakedMagic, sizeof(kMirrorBakedMagic));
+    putWord(out + 8, header.version);
+    putWord(out + 12, (uint32_t)header.size);
+    putWord(out + 16, header.format);
+    putWord(out + 20, (uint32_t)header.rowShift);
+    putWord(out + 24, header.faceBytes);
+    putWord(out + 32, (uint32_t)header.stamp);
+    putWord(out + 36, (uint32_t)(header.stamp >> 32));
+}
+
+bool mirrorBakedHeaderAccepts(const uint8_t* bytes, size_t size, int32_t rowShift,
+                              uint64_t stamp, const char** why) {
+    const char* reason = nullptr;
+    if (!bytes || size < (size_t)kMirrorBakedHeaderBytes) {
+        reason = "short header";
+    } else if (memcmp(bytes, kMirrorBakedMagic, sizeof(kMirrorBakedMagic)) != 0) {
+        reason = "not a mirror cube";
+    } else if (getWord(bytes + 8) != kMirrorBakedVersion) {
+        reason = "another version";
+    } else if ((int32_t)getWord(bytes + 12) != kMirrorBakedSize ||
+               getWord(bytes + 16) != kMirrorBakedEtc1 ||
+               getWord(bytes + 24) != kMirrorBakedFaceBytes) {
+        reason = "another size or format";
+    } else if ((int32_t)getWord(bytes + 20) != rowShift) {
+        reason = "another row shift";
+    } else if ((((uint64_t)getWord(bytes + 36) << 32) | getWord(bytes + 32)) != stamp) {
+        reason = "stale (the stamp is another panorama's)";
+    }
+    if (why) {
+        *why = reason;
+    }
+    return reason == nullptr;
+}
+
+void mirrorBakedPath(const char* root, int32_t level, int32_t rowShift, char* out,
+                     size_t capacity) {
+    snprintf(out, capacity, "%s/mirror/level%d_%d.bin", root ? root : "", (int)level,
+             (int)rowShift);
 }
 
 } // namespace mdk
