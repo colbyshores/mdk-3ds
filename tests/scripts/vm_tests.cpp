@@ -8607,7 +8607,7 @@ int main(int argc, char** argv) {
     MdkData data = locateData();
     if (!data.found()) {
         // The exit code is the ONLY channel the gate reads. `make -C tests/scripts`
-        // and ralph-pi.sh both branch on it and ignore prose, so returning 0 here
+        // branches on it and ignores prose, so returning 0 here
         // would discard every failure counted above — including the archive guards,
         // which are above the data check precisely so that they cannot skip. The
         // FAIL lines would then print over a green exit, which is the exact

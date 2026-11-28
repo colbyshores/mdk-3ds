@@ -28,13 +28,12 @@ __pycache__/
 /tests/**/*.png
 /tests/**/*.json.out
 
-# The C# oracle's build output. The oracle under src/ is kept as the reference
-# implementation; it is not built in this tree.
+# C# build output. The C# is no longer in the tree (it is upstream 1.1.1,
+# d5bb66ec); this keeps an older checkout's left-over src/*/bin and obj quiet.
 bin/
 obj/
 
-# Kilo editor/recovery state.
-# .kilo/ is PROJECT CONFIG (agents + commands) and is tracked.
+# Local logs and per-checkout markers.
 logs/
 
 # Loop and measurement output stays out of the tree; the history of it is on

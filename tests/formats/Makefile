@@ -116,7 +116,7 @@ VM_PATTERN := mdk::ScriptRuntime|mdk::Bsp::|mdk::Kurt::|mdk::Player::|mdk::audio
 # is not on PATH, when it fails on the file, and when it prints nothing, because
 # a pipeline's status is its last command's and grep never saw a line. That is a
 # gate that skips on missing input, which is a pass generator: the same mistake
-# ralph-pi.sh refuses to make about its own reviewer, and the reason batch 95's
+# the retired loop refused to make about its own reviewer, and the reason batch 95's
 # sanitizer gate runs two sanitizers instead of one. So the symbol dump is taken
 # to a file, its exit status is checked, an empty dump is a failure, and a host
 # with no binutils stops the target instead of clearing it. Review-15 R15-8.

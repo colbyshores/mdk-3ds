@@ -1,8 +1,8 @@
 # The original engine
 
 How MDK (Shiny Entertainment, 1997) works inside, reverse engineered from `MDKD3D.EXE` with
-Ghidra. This page is an overview. The data files are in [formats.md](formats.md), and the port's
-own structure is in [architecture.md](architecture.md).
+Ghidra. This page is an overview. The data files are in [formats.md](formats.md), and the C++
+port's structure is in [SPEC.md](../SPEC.md).
 
 ## In short
 
@@ -228,10 +228,11 @@ rides: the snowboard in level 4 and the bomber in level 7.
 
 ## Where to look
 
-- The parsers: `src/Mdk.Formats` (one class per format).
-- The opcode table: `src/Mdk.Formats/Scripts/ScriptOpcodes.g.cs` (operands, names).
-- The VM: `src/Mdk.Game/Scripts/ScriptVm.cs`, `ScriptRuntime.cs`.
-- The object motion: `ObjectMotion.cs`.
+- The parsers: `mdk_core/src/formats` (one file per format).
+- The opcode table: `mdk_core/src/formats/script_opcodes.cpp` (operands, names).
+- The VM: `mdk_core/src/scripts/script_vm.cpp`, `script_runtime.cpp` and its `script_runtime_*.inc`.
+- The C# originals of all of these (`src/Mdk.Formats`, `src/Mdk.Game/Scripts/ScriptVm.cs`,
+  `ObjectMotion.cs`) are upstream C# 1.1.1, commit `d5bb66ec`.
 - The full reverse-engineering notes are in the Godot port's `docs/`
   ([nemo22/mdk-godot](https://github.com/nemo22/mdk-godot/tree/main/docs)). They give the function
   addresses, object fields, constants and every opcode in detail.
