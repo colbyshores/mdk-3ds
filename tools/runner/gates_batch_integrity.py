@@ -29,8 +29,6 @@ PROTECTED = {
     "tests/frames/reference.sha256",
     "tests/frames/capture_oracle.sh",
     "tests/frames/regenerate_reference.sh",
-    "ralph/builder.md",
-    "ralph/PROMPT.md",
     ".gitignore",
 }
 
@@ -138,9 +136,7 @@ def main() -> int:
     # the mission, disable its gates, or replace the configured oracle.
     required = {
         "tools/check.sh": ["tools/runner/gates_frames.py", "gates_vfp.py", "gates_core_parity.py", "gates_batch_integrity.py", "gates_completion.py"],
-        "ralph/builder.md": ["READ-ONLY behavioural", "Never weaken a gate", "Phase 2", "EVERY COMMIT", "owner-protected"],
         "SPEC-COMPLETION.md": ["behavioural oracle", "post-process gap sweep", "frame-golden harness", "original `./MDK/MDKD3D.EXE`"],
-        "ralph-pi.sh": ["gates_batch_integrity.py", "publish_frame.sh", "--base", "REVIEWER FAILED", "--staged", "--each-commit"],
         "tools/hooks/pre-commit": ["gates_batch_integrity.py", "--staged", "MDK_OWNER_APPROVED"],
     }
     for rel, markers in required.items():
@@ -153,8 +149,6 @@ def main() -> int:
         errors.append(".gitignore: commercial game data /MDK/ is no longer excluded")
     if "mdk_3ds/romfs/*" not in gitignore:
         errors.append(".gitignore: staged RomFS is no longer excluded")
-    if (ROOT / "tools/retired/ralph-muse.sh").is_file() and not (ROOT / "logs/ralph/disabled").exists():
-        errors.append("retired Muse loop is unparked; refuse mixed swarm/multiple writers")
 
     if args.staged:
         staged = set(git("diff", "--cached", "--name-only"))

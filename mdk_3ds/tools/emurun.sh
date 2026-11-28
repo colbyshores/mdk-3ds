@@ -122,7 +122,7 @@ FRAME_RE='^frame [0-9][0-9]* '
 # the body is skipped and the code walks past the rejection into the pass. So every
 # `[ field -lt bound ]` over a junk field is a SILENT FALSE. Vault
 # 30-architecture/patterns/a-checker-that-cannot-evaluate-a-condition-must-report-err-
-# not-false, and this repo's own `review_int` (tools/runner/review_state.sh), which
+# not-false, and the retired loop's `review_int` (tools/runner/review_state.sh), which
 # exists because `[ "$REVIEW_FAILS" -ge "$LIMIT" ]` on an empty counter made a review
 # limit never fire. Coercing to a safe-looking value is what batch 156 did and review-2
 # F2 caught: a value that looks safe is how the third outcome gets read as one of the
